@@ -1,0 +1,26 @@
+{
+  "replay": [
+    "!service health",
+    "@network setup",
+    "@grant home on",
+    "@network reply {\"ok\":true,\"result\":{\"status\":\"ok\"}}",
+    "!service health",
+    "@network reject",
+    "!service health",
+    "@advance 61000",
+    "@network unknown",
+    "!service health",
+    "@network hold",
+    "@send !service health",
+    "@cancel",
+    "@network reply {\"ok\":true,\"result\":{\"status\":\"ok\"}}",
+    "@pump 80"
+  ],
+  "expect": [
+    {"type": "reply", "text_contains": "not granted"},
+    {"type": "reply", "text": "Home health: ok"},
+    {"type": "reply", "text_contains": "transport_error"},
+    {"type": "reply", "text_contains": "do not retry blindly"},
+    {"type": "async_reply", "text_contains": "cancelled"}
+  ]
+}

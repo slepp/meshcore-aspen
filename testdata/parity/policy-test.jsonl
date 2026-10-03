@@ -1,0 +1,52 @@
+{"Time":"2026-09-22T13:11:15.839037743-06:00","Action":"start","Package":"meshcore.local/meshcore/internal/policy"}
+{"Time":"2026-09-22T13:11:15.846779632-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDelayBoundaries"}
+{"Time":"2026-09-22T13:11:15.846810961-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDelayBoundaries","Output":"=== RUN   TestNativeDelayBoundaries\n"}
+{"Time":"2026-09-22T13:11:15.846841201-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDelayBoundaries","Output":"--- PASS: TestNativeDelayBoundaries (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.846855751-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDelayBoundaries","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.846860431-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeOriginAndRelayPriorities"}
+{"Time":"2026-09-22T13:11:15.846862091-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeOriginAndRelayPriorities","Output":"=== RUN   TestNativeOriginAndRelayPriorities\n"}
+{"Time":"2026-09-22T13:11:15.846899421-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeOriginAndRelayPriorities","Output":"--- PASS: TestNativeOriginAndRelayPriorities (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.846905761-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeOriginAndRelayPriorities","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.84691513-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRoleAdmissionAndLoopThresholds"}
+{"Time":"2026-09-22T13:11:15.84691782-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRoleAdmissionAndLoopThresholds","Output":"=== RUN   TestRoleAdmissionAndLoopThresholds\n"}
+{"Time":"2026-09-22T13:11:15.84695827-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRoleAdmissionAndLoopThresholds","Output":"--- PASS: TestRoleAdmissionAndLoopThresholds (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.84696347-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRoleAdmissionAndLoopThresholds","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.84697523-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeRegionAndReplyScope"}
+{"Time":"2026-09-22T13:11:15.84697806-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeRegionAndReplyScope","Output":"=== RUN   TestNativeRegionAndReplyScope\n"}
+{"Time":"2026-09-22T13:11:15.847037769-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeRegionAndReplyScope","Output":"--- PASS: TestNativeRegionAndReplyScope (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.847042469-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeRegionAndReplyScope","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.847054519-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestIndependentAdvertisementSchedules"}
+{"Time":"2026-09-22T13:11:15.847057989-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestIndependentAdvertisementSchedules","Output":"=== RUN   TestIndependentAdvertisementSchedules\n"}
+{"Time":"2026-09-22T13:11:15.847086939-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestIndependentAdvertisementSchedules","Output":"--- PASS: TestIndependentAdvertisementSchedules (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.847091079-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestIndependentAdvertisementSchedules","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.847101919-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestTraceEncodingIsIndependent"}
+{"Time":"2026-09-22T13:11:15.847103578-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestTraceEncodingIsIndependent","Output":"=== RUN   TestTraceEncodingIsIndependent\n"}
+{"Time":"2026-09-22T13:11:15.847136238-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestTraceEncodingIsIndependent","Output":"--- PASS: TestTraceEncodingIsIndependent (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.847140408-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestTraceEncodingIsIndependent","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.847152758-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDifferential"}
+{"Time":"2026-09-22T13:11:15.847155338-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDifferential","Output":"=== RUN   TestNativeDifferential\n"}
+{"Time":"2026-09-22T13:11:15.859116742-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDifferential","Output":"--- PASS: TestNativeDifferential (0.01s)\n"}
+{"Time":"2026-09-22T13:11:15.859138162-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDifferential","Elapsed":0.01}
+{"Time":"2026-09-22T13:11:15.859142362-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDefaultsAndPresence"}
+{"Time":"2026-09-22T13:11:15.859144312-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDefaultsAndPresence","Output":"=== RUN   TestNativeDefaultsAndPresence\n"}
+{"Time":"2026-09-22T13:11:15.859261181-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDefaultsAndPresence","Output":"--- PASS: TestNativeDefaultsAndPresence (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.859263781-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestNativeDefaultsAndPresence","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.859274211-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestInvalidPreferences"}
+{"Time":"2026-09-22T13:11:15.859278301-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestInvalidPreferences","Output":"=== RUN   TestInvalidPreferences\n"}
+{"Time":"2026-09-22T13:11:15.85930283-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestInvalidPreferences","Output":"--- PASS: TestInvalidPreferences (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.85930739-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestInvalidPreferences","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.85931912-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRuntimeAirtimeFactorPersistence"}
+{"Time":"2026-09-22T13:11:15.85932095-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRuntimeAirtimeFactorPersistence","Output":"=== RUN   TestRuntimeAirtimeFactorPersistence\n"}
+{"Time":"2026-09-22T13:11:15.86031744-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRuntimeAirtimeFactorPersistence","Output":"--- PASS: TestRuntimeAirtimeFactorPersistence (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.86032168-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestRuntimeAirtimeFactorPersistence","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.860331339-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestPreferenceMergeDoesNotAliasCallerState"}
+{"Time":"2026-09-22T13:11:15.860333039-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestPreferenceMergeDoesNotAliasCallerState","Output":"=== RUN   TestPreferenceMergeDoesNotAliasCallerState\n"}
+{"Time":"2026-09-22T13:11:15.860355329-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestPreferenceMergeDoesNotAliasCallerState","Output":"--- PASS: TestPreferenceMergeDoesNotAliasCallerState (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.860357819-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestPreferenceMergeDoesNotAliasCallerState","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.860367609-06:00","Action":"run","Package":"meshcore.local/meshcore/internal/policy","Test":"TestOrdinaryPathBoundaries"}
+{"Time":"2026-09-22T13:11:15.860369299-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestOrdinaryPathBoundaries","Output":"=== RUN   TestOrdinaryPathBoundaries\n"}
+{"Time":"2026-09-22T13:11:15.860389409-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Test":"TestOrdinaryPathBoundaries","Output":"--- PASS: TestOrdinaryPathBoundaries (0.00s)\n"}
+{"Time":"2026-09-22T13:11:15.860391909-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Test":"TestOrdinaryPathBoundaries","Elapsed":0}
+{"Time":"2026-09-22T13:11:15.860410179-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Output":"PASS\n"}
+{"Time":"2026-09-22T13:11:16.8624499-06:00","Action":"output","Package":"meshcore.local/meshcore/internal/policy","Output":"ok  \tmeshcore.local/meshcore/internal/policy\t1.023s\n"}
+{"Time":"2026-09-22T13:11:16.86248033-06:00","Action":"pass","Package":"meshcore.local/meshcore/internal/policy","Elapsed":1.023}

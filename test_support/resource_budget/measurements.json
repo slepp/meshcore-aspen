@@ -1,0 +1,4014 @@
+{
+  "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+  "upstream": "d92964352441e53b93e8667b802e04f6e072b39e",
+  "source_date_epoch": "1790798400",
+  "toolchain": {
+    "toolchain-xtensa-esp32s3": "8.4.0+2021r2-patch5",
+    "framework-arduinoespressif32": "3.20017.241212+sha.dcc1105b",
+    "tool-esptoolpy": "1.40501.0",
+    "tool-scons": "4.40801.0",
+    "platformio-core": "PlatformIO Core, version 6.1.19",
+    "espressif32": "6.11.0"
+  },
+  "dependency_tree_sha256": {
+    "Adafruit AHTX0": "45a2d1f45ff71c4c1d06c1bc7c572e1f89cffae083d5a383de9ad711dd637f97",
+    "Adafruit BME280 Library": "c16e667200346f77b460bfb288acf518fafe05e852df83bc74de084b2a32e049",
+    "Adafruit BME680 Library": "c02187770afaa326168ed7ad69d1f68d59b97a37555eccb03a7c8c063bee19d7",
+    "Adafruit BMP085 Library": "1dbce325b5844b24e4cf801866ad3bc80dc847e17593ba93be93d34c9d9d69b1",
+    "Adafruit BMP280 Library": "7287484630cda2bd871fc2dfc04abc06489dc4b3809a2e2f581139904588dbe1",
+    "Adafruit BusIO": "6c815f5e27066c9a4f769a8a656878e1ffd96788b3ebab229347f407ca68226e",
+    "Adafruit GFX Library": "ec45c43bf0f3329543d99cf7aab8f81be4bb6d0a23d7262d5dc4c2a01bb959eb",
+    "Adafruit INA219": "2237b005a2c620dd1a4dac85dc5802a8ed191c2c62669adaa7433f0f85d1d7f7",
+    "Adafruit INA260 Library": "92f0ea8441d12f37cb87c08c0b6e39e456cc5ad16cedb04fc0ac59860c875ceb",
+    "Adafruit INA3221 Library": "37304409e0304609b8748a5a3a2258679554ba93357596647a4d75fb1f813cbb",
+    "Adafruit MLX90614 Library": "b12d064d9f9cbc29ad23cc4505f2b7f38c467afcea3479a39e5a179d3b39912e",
+    "Adafruit NeoPixel": "606eb631b60679c1a9ec698d6feeb6b4f3809aad416c172ef1c434191c4a3fdb",
+    "Adafruit SH110X": "6e2d00ebbdbc4bf47b0e4edcaa4948007392a008d34575888471cb6174006e43",
+    "Adafruit SHTC3 Library": "86837bb7694afc0ad447de3c104a211ee7c04ff5d3e7f68757fd90ea449eeb64",
+    "Adafruit SSD1306": "4596b7bee866f96555f8de82207b0c5ae02ae288189674bfb86f93baab187036",
+    "Adafruit Unified Sensor": "730e2719b311126ca44cf082e0e7c3d386d2aec6f36efb31857d57182874c2bf",
+    "Adafruit_VL53L0X": "5fea380ef018d8dc22b468c29f654a7a55f4ee64b64f738786837fe24873ec31",
+    "ArduinoJson": "c9161cb59d9c4ff7b83a5bc0eeb98e9477dfa4652d41ed146714f39744e16ac5",
+    "Arduino_LPS22HB": "cde54cfba904416744e7b8558c813f9a2ba1ddc47953ed66d6d4acdaaccc6409",
+    "CayenneLPP": "e1c62ba2a45710fe1f7c4eb29e6f415f4630a515a6a2af1cd86b07c9e78d9eb2",
+    "Crypto": "3afdb2b1d36c94f00666ab10c79136abfeb60246653e676ebb807f5ad76a5575",
+    "INA226": "43925132a6a4ecdb7f8e22d3b5188f997e5d6f58d5eca379f40487431044a393",
+    "Melopero RV3028": "59da55266ea242f1016820c8de04f42a91cd22901db4aaf9586475176a599dcd",
+    "MicroNMEA": "f9fb975cf49479c8da5e222a384885d2430910995d15eb9ed20db9f35e3d04b8",
+    "RTClib": "56611506385612bc3dd501cb8266248f9aabe803a3da91265536dbeae7db5e2a",
+    "RadioLib": "4e3e8ee2e091fece96f6c0696099e1ae5b6e203367a8a89e9c38878e6431cd21",
+    "Sensirion Core": "09c132bd2c16c876dacdee97bfe97e66979a9f1ab56659b5c3d2a0a207bdfa2a",
+    "Sensirion I2C SHT4x": "41cb9c3c381ffcb17cf8bfe09e6731e7c4e6a7a05f238bd63a8aeb5db664c0a3",
+    "base64": "14f1b2193266d6d8e89198fdb914750340be5c261714edc38d4743c582a0ba30"
+  },
+  "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
+  "wamr_archive_sha256": "c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e",
+  "wamr_revision": "b124f70345d712bead5c0c2393acb2dc583511de",
+  "public_environment": {
+    "MESHCORE_HOSTNAME": "resource-build",
+    "WIFI_SSID": "build-only",
+    "WIFI_PWD": "not-a-secret",
+    "ONCHIP_ADMIN_PASSWORD": "build-only",
+    "ONCHIP_ROOM_PASSWORD": "",
+    "ONCHIP_MQTT_URI": "",
+    "ONCHIP_MAST_PASSWORD": "build-only",
+    "ONCHIP_OPERATOR_PUBKEY": "",
+    "ONCHIP_TRUSTED_COMPANION_PUBKEY": "",
+    "ONCHIP_SERVICE_REGION": ""
+  },
+  "profiles": {
+    "modem": {
+      "environment": "Xiao_S3_WIO_kiss_wifi",
+      "wasm": 0,
+      "profile_sha256": "e2ba45021637aaae45a38fb43ec6c887dba1665dec64073e8fad7de2200c2264",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "KISS_MAX_TCP_CLIENTS": "4",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "KISS_LOCAL_SOURCES": "0",
+        "MAX_CONTACTS": "350",
+        "MAX_GROUP_CHANNELS": "40"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "modem-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "modem-firmware.bin": {
+          "bytes": 1148944,
+          "sha256": "4dc761f615d89aca55a4312c1095335cfc54c6555465c0794db53bf13a40c39a"
+        },
+        "modem-firmware.elf": {
+          "bytes": 23241416,
+          "sha256": "fa00e62cc8719e31dd11174c5e5c8fe1972b74762d99f72c7c0e0e69431eaab2"
+        },
+        "modem-firmware.map": {
+          "bytes": 13738761,
+          "sha256": "d2739c68a0c641d20e24dc077e7cd8b5d364656b612f5113b784b3c53fca4299"
+        },
+        "modem-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "fa00e62cc8719e31dd11174c5e5c8fe1972b74762d99f72c7c0e0e69431eaab2",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73663,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58308,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 91528,
+            "address": 1070162896,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 75528,
+            "address": 1070254424,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 766079,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108062368,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 786432,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007419424,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 216232,
+            "address": 1007419680,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1007635912,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437379,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1148826,
+        "static_dram_data_bytes": 91528,
+        "static_dram_bss_bytes": 75528,
+        "binary_bytes": 1148944,
+        "binary_sha256": "4dc761f615d89aca55a4312c1095335cfc54c6555465c0794db53bf13a40c39a",
+        "map_input_estimates": {
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 185,
+            ".dram0.bss": 211,
+            ".flash.text": 82995,
+            ".flash.rodata": 50831
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66871,
+            ".dram0.data": 84123,
+            ".dram0.bss": 58574,
+            ".flash.text": 393312,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 109294,
+            ".flash.rodata_noload": 43
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7133,
+            ".dram0.bss": 14153,
+            ".flash.text": 282901,
+            ".flash.rodata": 55910,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 991,
+          ".dram0.dummy": 58308,
+          ".dram0.data": 87,
+          ".dram0.bss": 2590,
+          ".flash.text": 6871,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 786432,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 163,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "dashboard",
+            "bytes": 68376,
+            "type": "D",
+            "address": 1070162984
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 48060,
+            "type": "B",
+            "address": 1070254456
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1007465368
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007427584
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107435548
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1107979360
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1107964636
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1107726580
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108019604
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108001300
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108009800
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107429624
+          },
+          {
+            "name": "mdns_parse_packet",
+            "bytes": 5355,
+            "type": "T",
+            "address": 1107659216
+          },
+          {
+            "name": "g_cnxMgr",
+            "bytes": 3800,
+            "type": "B",
+            "address": 1070322296
+          },
+          {
+            "name": "tcp_input",
+            "bytes": 3717,
+            "type": "T",
+            "address": 1107579636
+          },
+          {
+            "name": "nd6_input",
+            "bytes": 3590,
+            "type": "T",
+            "address": 1107610844
+          },
+          {
+            "name": "sha512_compress",
+            "bytes": 3362,
+            "type": "t",
+            "address": 1107414708
+          },
+          {
+            "name": "WifiKissMultiplexer::extension(unsigned char, unsigned char const*, unsigned short)",
+            "bytes": 3258,
+            "type": "T",
+            "address": 1107325640
+          },
+          {
+            "name": "_dtoa_r",
+            "bytes": 3200,
+            "type": "T",
+            "address": 1107992520
+          },
+          {
+            "name": "fe_mul",
+            "bytes": 3178,
+            "type": "T",
+            "address": 1107419696
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 68376,
+          "WifiKissMultiplexer": 48060,
+          "nvs::Storage": 104
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "13842cdd8b9a9f74188bdebfff99befaedbda4bed750ee1b5c5530806a6735b7"
+    },
+    "native": {
+      "environment": "Xiao_S3_WIO_onchip",
+      "wasm": 0,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "4",
+        "KISS_MAX_TCP_CLIENTS": "4",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "native-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "native-firmware.bin": {
+          "bytes": 1236768,
+          "sha256": "7df6cec5211b46cedaa596155726cf0a76bcc557e2b311b6d4d5f9f03aff7782"
+        },
+        "native-firmware.elf": {
+          "bytes": 26822300,
+          "sha256": "3a20a146d0fd2912c8e1f7a15534e51d2c431f31c276a92d69b4f006b656e7be"
+        },
+        "native-firmware.map": {
+          "bytes": 15203842,
+          "sha256": "e8344762af490d511de67ef4c5267b787c9fbe1bbb932705bbaddabf8707c3d5"
+        },
+        "native-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "3a20a146d0fd2912c8e1f7a15534e51d2c431f31c276a92d69b4f006b656e7be",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73723,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58368,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 37892,
+            "address": 1070162944,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 97840,
+            "address": 1070200840,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 877611,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108173900,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 917504,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007550496,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 246104,
+            "address": 1007550752,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1007796856,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437439,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1236654,
+        "static_dram_data_bytes": 37892,
+        "static_dram_bss_bytes": 97840,
+        "binary_bytes": 1236768,
+        "binary_sha256": "7df6cec5211b46cedaa596155726cf0a76bcc557e2b311b6d4d5f9f03aff7782",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".flash.rodata": 680
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6251,
+            ".dram0.bss": 22046,
+            ".flash.text": 124924,
+            ".flash.rodata": 59692
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66929,
+            ".dram0.data": 15759,
+            ".dram0.bss": 58730,
+            ".flash.text": 408373,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 111334,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 23785,
+            ".flash.rodata": 6111
+          },
+          "role_observer": {
+            ".flash.text": 1472,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 14620,
+            ".flash.rodata": 6006
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 9426,
+            ".flash.rodata": 4196
+          },
+          "storage": {
+            ".flash.text": 2655,
+            ".flash.rodata": 945
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7137,
+            ".dram0.bss": 14175,
+            ".flash.text": 284267,
+            ".flash.rodata": 56514,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 993,
+          ".dram0.dummy": 58368,
+          ".dram0.data": 93,
+          ".dram0.bss": 2613,
+          ".flash.text": 8089,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 917504,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 181,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "kiss_stream",
+            "bytes": 48204,
+            "type": "B",
+            "address": 1070200876
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1007608368
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007558664
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070249680
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107527900
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108084072
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108069348
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1107828028
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108126252
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108107948
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108116448
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107351616
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107521976
+          },
+          {
+            "name": "mdns_parse_packet",
+            "bytes": 5355,
+            "type": "T",
+            "address": 1107757792
+          },
+          {
+            "name": "onchip::observer",
+            "bytes": 5328,
+            "type": "d",
+            "address": 1070172432
+          },
+          {
+            "name": "g_cnxMgr",
+            "bytes": 3800,
+            "type": "B",
+            "address": 1070291016
+          },
+          {
+            "name": "tcp_input",
+            "bytes": 3733,
+            "type": "T",
+            "address": 1107677992
+          },
+          {
+            "name": "nd6_input",
+            "bytes": 3590,
+            "type": "T",
+            "address": 1107709216
+          },
+          {
+            "name": "sha512_compress",
+            "bytes": 3362,
+            "type": "t",
+            "address": 1107507060
+          },
+          {
+            "name": "_strtod_l",
+            "bytes": 3312,
+            "type": "T",
+            "address": 1108063756
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 72376,
+          "WifiKissMultiplexer": 48204,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 2792,
+          "onchip::Observer": 5328,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "33eec7612a0d1cbad454028cbf518be200514a24cef79d54a7e792c74ad8915a"
+    },
+    "lua": {
+      "environment": "Xiao_S3_WIO_onchip_bot",
+      "wasm": 0,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "5",
+        "KISS_MAX_TCP_CLIENTS": "4",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40",
+        "MESHCORE_ONCHIP_BOT": "1",
+        "ONCHIP_BOT_WASM": "0"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "lua-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "lua-firmware.bin": {
+          "bytes": 1495936,
+          "sha256": "5a62f1bd29bde40a22b20eefcab4b87c34b4e156b2dc47ec376fd35c62bb6801"
+        },
+        "lua-firmware.elf": {
+          "bytes": 29995892,
+          "sha256": "eeee75245a12e33cc0816a0af8c150e2199b109feeabf835add928db95c94db0"
+        },
+        "lua-firmware.map": {
+          "bytes": 16271745,
+          "sha256": "306ff07bb5a7941a9d89cd1bd832ed69735783c537dbc4be905833efb8177292"
+        },
+        "lua-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "eeee75245a12e33cc0816a0af8c150e2199b109feeabf835add928db95c94db0",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38212,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 101112,
+            "address": 1070201208,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1068127,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108364416,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1114112,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007747104,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 314396,
+            "address": 1007747360,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008061756,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1495822,
+        "static_dram_data_bytes": 38212,
+        "static_dram_bss_bytes": 101112,
+        "binary_bytes": 1495936,
+        "binary_sha256": "5a62f1bd29bde40a22b20eefcab4b87c34b4e156b2dc47ec376fd35c62bb6801",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.bss": 6,
+            ".flash.text": 81196,
+            ".flash.rodata": 54759
+          },
+          "lua": {
+            ".flash.text": 68719,
+            ".flash.rodata": 4689
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25278,
+            ".flash.text": 125954,
+            ".flash.rodata": 59949
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15759,
+            ".dram0.bss": 58766,
+            ".flash.text": 409469,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 111523,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 23166,
+            ".flash.rodata": 5994
+          },
+          "role_observer": {
+            ".flash.text": 1469,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 14604,
+            ".flash.rodata": 6006
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 9442,
+            ".flash.rodata": 4194
+          },
+          "storage": {
+            ".flash.text": 39357,
+            ".flash.rodata": 10070
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7137,
+            ".dram0.bss": 14175,
+            ".flash.text": 285361,
+            ".flash.rodata": 56546,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 93,
+          ".dram0.bss": 2611,
+          ".flash.text": 9390,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1114112,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 221,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "kiss_stream",
+            "bytes": 48240,
+            "type": "B",
+            "address": 1070201244
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1007863904
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007755256
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070250088
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107672760
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107717212
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108271136
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108256412
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1007816408
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108012196
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108312732
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108294428
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108302928
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107465120
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107711288
+          },
+          {
+            "name": "onchip::observer",
+            "bytes": 5648,
+            "type": "d",
+            "address": 1070172480
+          },
+          {
+            "name": "mdns_parse_packet",
+            "bytes": 5355,
+            "type": "T",
+            "address": 1107944680
+          },
+          {
+            "name": "g_cnxMgr",
+            "bytes": 3800,
+            "type": "B",
+            "address": 1070294656
+          },
+          {
+            "name": "onchip::BotDefaultSource",
+            "bytes": 3774,
+            "type": "D",
+            "address": 1007796076
+          },
+          {
+            "name": "tcp_input",
+            "bytes": 3729,
+            "type": "T",
+            "address": 1107864884
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 73016,
+          "WifiKissMultiplexer": 48240,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWorker::Control": 108,
+          "onchip::BotWorker::Storage": 80392,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 2792,
+          "onchip::Observer": 5648,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "d43adb72ab290df7bc26f53e910b0a6d1ef6826bb82529ba2bb1ad12749d283b"
+    },
+    "wasm": {
+      "environment": "Xiao_S3_WIO_onchip_bot",
+      "wasm": 1,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "5",
+        "KISS_MAX_TCP_CLIENTS": "4",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40",
+        "MESHCORE_ONCHIP_BOT": "1",
+        "ONCHIP_BOT_WASM": "1"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "wasm-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "wasm-firmware.bin": {
+          "bytes": 1600048,
+          "sha256": "8e60fa396fb24a0adb534b5e06f6e250542ae6166d0e549d390f63373c90d291"
+        },
+        "wasm-firmware.elf": {
+          "bytes": 32059956,
+          "sha256": "1717efc5e190215bdc8d3be8b1e7500def4cb0db951b7792b30a8628fe844023"
+        },
+        "wasm-firmware.map": {
+          "bytes": 17626023,
+          "sha256": "5eaa4b5e38d32f96cf1049a7bbc8ec98461a2bda28e18a81cabd86b4cfd1bad4"
+        },
+        "wasm-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "1717efc5e190215bdc8d3be8b1e7500def4cb0db951b7792b30a8628fe844023",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38328,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 101192,
+            "address": 1070201320,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1142247,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108438536,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1179648,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007812640,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 344272,
+            "address": 1007812896,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008157168,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1599934,
+        "static_dram_data_bytes": 38328,
+        "static_dram_bss_bytes": 101192,
+        "binary_bytes": 1600048,
+        "binary_sha256": "8e60fa396fb24a0adb534b5e06f6e250542ae6166d0e549d390f63373c90d291",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.bss": 6,
+            ".flash.text": 82437,
+            ".flash.rodata": 55366
+          },
+          "lua": {
+            ".flash.text": 68715,
+            ".flash.rodata": 4672
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25278,
+            ".flash.text": 126162,
+            ".flash.rodata": 59949
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15763,
+            ".dram0.bss": 58786,
+            ".flash.text": 412637,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 120661,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 23166,
+            ".flash.rodata": 5990
+          },
+          "role_observer": {
+            ".flash.text": 1469,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 14660,
+            ".flash.rodata": 6006
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 9510,
+            ".flash.rodata": 4194
+          },
+          "storage": {
+            ".flash.text": 39745,
+            ".flash.rodata": 10070
+          },
+          "wasm": {
+            ".dram0.data": 108,
+            ".dram0.bss": 53,
+            ".flash.text": 68965,
+            ".flash.rodata": 20166
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7137,
+            ".dram0.bss": 14175,
+            ".flash.text": 284961,
+            ".flash.rodata": 56538,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 97,
+          ".dram0.bss": 2618,
+          ".flash.text": 9820,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1179648,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 215,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "kiss_stream",
+            "bytes": 48240,
+            "type": "B",
+            "address": 1070201356
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1007949264
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007820788
+          },
+          {
+            "name": "wasm_interp_call_wasm",
+            "bytes": 21986,
+            "type": "T",
+            "address": 1107719984
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070250216
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107685660
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107783920
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108343712
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108328988
+          },
+          {
+            "name": "onchip::BotWasmSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1007894524
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1007881908
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108084268
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108385308
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108367004
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108375504
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107479616
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107777996
+          },
+          {
+            "name": "wasm_loader_prepare_bytecode$isra$15",
+            "bytes": 5834,
+            "type": "t",
+            "address": 1107746204
+          },
+          {
+            "name": "load_from_sections",
+            "bytes": 5831,
+            "type": "t",
+            "address": 1107752040
+          },
+          {
+            "name": "onchip::observer",
+            "bytes": 5648,
+            "type": "d",
+            "address": 1070172560
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 73016,
+          "WifiKissMultiplexer": 48240,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWasmSession::Impl": 52136,
+          "onchip::BotWorker::Control": 108,
+          "onchip::BotWorker::Storage": 80408,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 2792,
+          "onchip::Observer": 5648,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "d43adb72ab290df7bc26f53e910b0a6d1ef6826bb82529ba2bb1ad12749d283b"
+    },
+    "admin": {
+      "environment": "Xiao_S3_WIO_onchip_beta",
+      "wasm": 0,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "5",
+        "KISS_MAX_TCP_CLIENTS": "4",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40",
+        "MESHCORE_ONCHIP_BOT": "1",
+        "ONCHIP_BOT_WASM": "0",
+        "MESHCORE_MAST_ADMIN": "1"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "admin-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "admin-firmware.bin": {
+          "bytes": 1648160,
+          "sha256": "6f91cf75f39d64dd6526f35111e75847fb097ca3000d993aed0ae19afdfea2c2"
+        },
+        "admin-firmware.elf": {
+          "bytes": 31795188,
+          "sha256": "4a3314176cde349d960e4a9dd46056ca009e2bf03fe90baba3c76306a7307924"
+        },
+        "admin-firmware.map": {
+          "bytes": 17315575,
+          "sha256": "2fd938e34fb48f7a1d09f40b9d3e4679c290bd2b81eba78b9d414f1132903677"
+        },
+        "admin-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "4a3314176cde349d960e4a9dd46056ca009e2bf03fe90baba3c76306a7307924",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38216,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 101688,
+            "address": 1070201208,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1127231,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108423520,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1179648,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007812640,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 407504,
+            "address": 1007812896,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008220400,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1648038,
+        "static_dram_data_bytes": 38216,
+        "static_dram_bss_bytes": 101688,
+        "binary_bytes": 1648160,
+        "binary_sha256": "6f91cf75f39d64dd6526f35111e75847fb097ca3000d993aed0ae19afdfea2c2",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.bss": 10,
+            ".flash.text": 88545,
+            ".flash.rodata": 57553
+          },
+          "lua": {
+            ".flash.text": 68703,
+            ".flash.rodata": 4686
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25262,
+            ".flash.text": 132596,
+            ".flash.rodata": 61600
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15763,
+            ".dram0.bss": 58782,
+            ".flash.text": 420837,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 121064,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 24035,
+            ".flash.rodata": 6106
+          },
+          "role_observer": {
+            ".flash.text": 1477,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 15570,
+            ".flash.rodata": 6025
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 10436,
+            ".flash.rodata": 4216
+          },
+          "storage": {
+            ".flash.text": 41163,
+            ".flash.rodata": 10598
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7137,
+            ".dram0.bss": 14736,
+            ".flash.text": 314121,
+            ".flash.rodata": 134971,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 93,
+          ".dram0.bss": 2622,
+          ".flash.text": 9748,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1179648,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 240,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "MastAdminPage",
+            "bytes": 55759,
+            "type": "d",
+            "address": 1007929780
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 48240,
+            "type": "B",
+            "address": 1070201244
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1008010616
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007820792
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070250664
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107717748
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107762200
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108329740
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108305604
+          },
+          {
+            "name": "__ssvfscanf_r",
+            "bytes": 9341,
+            "type": "T",
+            "address": 1108317652
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1007882152
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108059064
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108371336
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108353032
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108361532
+          },
+          {
+            "name": "onchip::MastAdmin::execute(char const*, onchip::MastAdmin::Reply&, unsigned int, onchip::MastAdmin::Transport, unsigned char const*)",
+            "bytes": 6960,
+            "type": "T",
+            "address": 1107503308
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107475372
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107756276
+          },
+          {
+            "name": "onchip::observer",
+            "bytes": 5648,
+            "type": "d",
+            "address": 1070172480
+          },
+          {
+            "name": "mdns_parse_packet",
+            "bytes": 5355,
+            "type": "T",
+            "address": 1107991548
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 73016,
+          "WifiKissMultiplexer": 48240,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWorker::Control": 108,
+          "onchip::BotWorker::Storage": 80392,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 5752,
+          "onchip::MastSource::Journal": 572,
+          "onchip::Observer": 5648,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "bf02d1f93e76df084a538d8b792385205f2cff4b3e7c82432c19740ff219bdaa"
+    },
+    "https": {
+      "environment": "Xiao_S3_WIO_onchip_https",
+      "wasm": 0,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "5",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40",
+        "MESHCORE_ONCHIP_BOT": "1",
+        "ONCHIP_BOT_WASM": "0",
+        "MESHCORE_MAST_ADMIN": "1",
+        "ONCHIP_BOT_HTTPS": "1",
+        "KISS_MAX_TCP_CLIENTS": "3"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "https-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "https-firmware.bin": {
+          "bytes": 1821680,
+          "sha256": "aa2d09321c0cb472c045426fa64c9af7c09dda1e21474a4294401da61af5ddde"
+        },
+        "https-firmware.elf": {
+          "bytes": 34152252,
+          "sha256": "2aee2594dcac74d4c37ebad1cdc73c58a1b7600e2e38f081d4d620ec1ba48cc5"
+        },
+        "https-firmware.map": {
+          "bytes": 17658723,
+          "sha256": "bda3a11534040f033a7f51813683f134ed686759df5f9f10dc0659956c795c05"
+        },
+        "https-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "2aee2594dcac74d4c37ebad1cdc73c58a1b7600e2e38f081d4d620ec1ba48cc5",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38292,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 99600,
+            "address": 1070201288,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1253651,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108549940,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1310720,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007943712,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 454536,
+            "address": 1007943968,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008398504,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1821566,
+        "static_dram_data_bytes": 38292,
+        "static_dram_bss_bytes": 99600,
+        "binary_bytes": 1821680,
+        "binary_sha256": "aa2d09321c0cb472c045426fa64c9af7c09dda1e21474a4294401da61af5ddde",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.bss": 10,
+            ".flash.text": 93617,
+            ".flash.rodata": 58595
+          },
+          "lua": {
+            ".flash.text": 68683,
+            ".flash.rodata": 4686
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25270,
+            ".flash.text": 132662,
+            ".flash.rodata": 61672
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15827,
+            ".dram0.bss": 56470,
+            ".flash.text": 511719,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 155927,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 24023,
+            ".flash.rodata": 6102
+          },
+          "role_observer": {
+            ".flash.text": 1485,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 15726,
+            ".flash.rodata": 6025
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 10596,
+            ".flash.rodata": 4216
+          },
+          "storage": {
+            ".flash.text": 41425,
+            ".flash.rodata": 10490
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7145,
+            ".dram0.bss": 14949,
+            ".flash.text": 342998,
+            ".flash.rodata": 146109,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 97,
+          ".dram0.bss": 2625,
+          ".flash.text": 10717,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1310720,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 269,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "MastAdminPage",
+            "bytes": 55759,
+            "type": "d",
+            "address": 1008066096
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 45020,
+            "type": "B",
+            "address": 1070201324
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1008152704
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007951856
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070247528
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107755044
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107799496
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108451964
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108427772
+          },
+          {
+            "name": "__ssvfscanf_r",
+            "bytes": 9341,
+            "type": "T",
+            "address": 1108439820
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008017060
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108106776
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108493560
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108475256
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108483756
+          },
+          {
+            "name": "onchip::MastAdmin::execute(char const*, onchip::MastAdmin::Reply&, unsigned int, onchip::MastAdmin::Transport, unsigned char const*)",
+            "bytes": 6976,
+            "type": "T",
+            "address": 1107525796
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107497860
+          },
+          {
+            "name": "mbedtls_ssl_handshake_server_step",
+            "bytes": 6626,
+            "type": "T",
+            "address": 1108140792
+          },
+          {
+            "name": "mbedtls_ssl_handshake_client_step",
+            "bytes": 6150,
+            "type": "T",
+            "address": 1108134080
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107793572
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 72920,
+          "WifiKissMultiplexer": 45020,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotHttps::Workspace": 3585,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWorker::Control": 140,
+          "onchip::BotWorker::Storage": 126368,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 5752,
+          "onchip::MastSource::Journal": 572,
+          "onchip::Observer": 5648,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::SecureTransport::AnchorCache": 4120,
+          "onchip::Workspace": 7920,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "d84a94c4b64d928f106afae88b3b111e3953663793831fb769e3a1d4af11cd7d"
+    },
+    "https-wasm": {
+      "environment": "Xiao_S3_WIO_onchip_https",
+      "wasm": 1,
+      "profile_sha256": "b2c280ca453c496cdf6e869d2587ea6263c79efd8c317ccf6cb5020166e55cb3",
+      "effective_defines": {
+        "BOARD_HAS_PSRAM": "1",
+        "MESHCORE_ONCHIP": "1",
+        "KISS_LOCAL_SOURCES": "5",
+        "ONCHIP_COMPANION_MAX_CLIENTS": "2",
+        "KISS_REQUEST_QUEUE_DEPTH": "12",
+        "MAX_CONTACTS": "350",
+        "MAX_CLIENTS": "20",
+        "MAX_NEIGHBOURS": "16",
+        "MAX_UNSYNCED_POSTS": "32",
+        "MAX_GROUP_CHANNELS": "40",
+        "MESHCORE_ONCHIP_BOT": "1",
+        "ONCHIP_BOT_WASM": "1",
+        "MESHCORE_MAST_ADMIN": "1",
+        "ONCHIP_BOT_HTTPS": "1",
+        "KISS_MAX_TCP_CLIENTS": "3"
+      },
+      "compiler_options": [
+        "-std=gnu++17",
+        "-std=gnu++17",
+        "-Os"
+      ],
+      "artifacts": {
+        "https-wasm-bootloader.bin": {
+          "bytes": 15104,
+          "sha256": "1776e4dd896a69d0a5c2e79957b0e2a88aa4129b1381d6478683515a1f6af343"
+        },
+        "https-wasm-firmware.bin": {
+          "bytes": 1915024,
+          "sha256": "eb50bf0a7356effeb1227d529e6a26034a3af1a77ff4f5de5a1445945cd0e403"
+        },
+        "https-wasm-firmware.elf": {
+          "bytes": 35549788,
+          "sha256": "dbe41c58cc8d8a8b4f8e35d0856a1d9fd3fb5e13e286c84290fa53445b1ef63e"
+        },
+        "https-wasm-firmware.map": {
+          "bytes": 18166371,
+          "sha256": "c6ed8703813062ce024c3b672b442546c658134a5803fabd41ecd4a0c81e119a"
+        },
+        "https-wasm-partitions.bin": {
+          "bytes": 3072,
+          "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+        }
+      },
+      "measurements": {
+        "elf_sha256": "dbe41c58cc8d8a8b4f8e35d0856a1d9fd3fb5e13e286c84290fa53445b1ef63e",
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38404,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 99664,
+            "address": 1070201400,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1325927,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108622216,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1376256,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1008009248,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 475480,
+            "address": 1008009504,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008484984,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1914898,
+        "static_dram_data_bytes": 38404,
+        "static_dram_bss_bytes": 99664,
+        "binary_bytes": 1915024,
+        "binary_sha256": "eb50bf0a7356effeb1227d529e6a26034a3af1a77ff4f5de5a1445945cd0e403",
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.bss": 10,
+            ".flash.text": 95064,
+            ".flash.rodata": 58968
+          },
+          "lua": {
+            ".flash.text": 68703,
+            ".flash.rodata": 4669
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25270,
+            ".flash.text": 132658,
+            ".flash.rodata": 61672
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15827,
+            ".dram0.bss": 56474,
+            ".flash.text": 512306,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 155985,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 24119,
+            ".flash.rodata": 6098
+          },
+          "role_observer": {
+            ".flash.text": 1493,
+            ".flash.rodata": 411
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 15834,
+            ".flash.rodata": 6025
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 10356,
+            ".flash.rodata": 4216
+          },
+          "storage": {
+            ".flash.text": 41485,
+            ".flash.rodata": 10490
+          },
+          "wasm": {
+            ".dram0.data": 108,
+            ".dram0.bss": 53,
+            ".flash.text": 69147,
+            ".flash.rodata": 20166
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7145,
+            ".dram0.bss": 14949,
+            ".flash.text": 343678,
+            ".flash.rodata": 146480,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 101,
+          ".dram0.bss": 2632,
+          ".flash.text": 11084,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1376256,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 266,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        },
+        "largest_symbols": [
+          {
+            "name": "MastAdminPage",
+            "bytes": 55759,
+            "type": "d",
+            "address": 1008144768
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 45020,
+            "type": "B",
+            "address": 1070201436
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1008238224
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1008017392
+          },
+          {
+            "name": "wasm_interp_call_wasm",
+            "bytes": 21986,
+            "type": "T",
+            "address": 1107813904
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070247656
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107769176
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107877840
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108522840
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108498648
+          },
+          {
+            "name": "__ssvfscanf_r",
+            "bytes": 9341,
+            "type": "T",
+            "address": 1108510696
+          },
+          {
+            "name": "onchip::BotWasmSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008095240
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008082624
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108176932
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108564436
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108546132
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108554632
+          },
+          {
+            "name": "onchip::MastAdmin::execute(char const*, onchip::MastAdmin::Reply&, unsigned int, onchip::MastAdmin::Transport, unsigned char const*)",
+            "bytes": 6976,
+            "type": "T",
+            "address": 1107539660
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107511712
+          },
+          {
+            "name": "mbedtls_ssl_handshake_server_step",
+            "bytes": 6626,
+            "type": "T",
+            "address": 1108210948
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "RadioDashboard": 72920,
+          "WifiKissMultiplexer": 45020,
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotHttps::Workspace": 3585,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWasmSession::Impl": 52136,
+          "onchip::BotWorker::Control": 140,
+          "onchip::BotWorker::Storage": 126384,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionSessions": 18472,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 5752,
+          "onchip::MastSource::Journal": 572,
+          "onchip::Observer": 5648,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::SecureTransport::AnchorCache": 4120,
+          "onchip::Workspace": 7920,
+          "onchip::service_name::Record": 36
+        }
+      },
+      "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+      "all_other_effective_defines_sha256": "d84a94c4b64d928f106afae88b3b111e3953663793831fb769e3a1d4af11cd7d"
+    }
+  },
+  "historical_cedar": {
+    "cedar-wasm0": {
+      "source": "420d2bdd1f92b8b675302afd0603aa3faa0ccecf",
+      "documentation": "277ef45b061119367b3d431dd041653f16f33ed2",
+      "measurements": {
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38308,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 99736,
+            "address": 1070201304,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1254907,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108551196,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1310720,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1007943712,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 455328,
+            "address": 1007943968,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008399296,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1823630,
+        "static_dram_data_bytes": 38308,
+        "static_dram_bss_bytes": 99736,
+        "binary_bytes": 1823744,
+        "largest_symbols": [
+          {
+            "name": "MastAdminPage",
+            "bytes": 55759,
+            "type": "d",
+            "address": 1008066696
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 45020,
+            "type": "B",
+            "address": 1070201340
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1008153368
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1007951856
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070247680
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107756068
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107800520
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108453220
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108429028
+          },
+          {
+            "name": "__ssvfscanf_r",
+            "bytes": 9341,
+            "type": "T",
+            "address": 1108441076
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008017612
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108108024
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108494816
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108476512
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108485012
+          },
+          {
+            "name": "onchip::MastAdmin::execute(char const*, onchip::MastAdmin::Reply&, unsigned int, onchip::MastAdmin::Transport, unsigned char const*)",
+            "bytes": 6976,
+            "type": "T",
+            "address": 1107526920
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107498984
+          },
+          {
+            "name": "mbedtls_ssl_handshake_server_step",
+            "bytes": 6626,
+            "type": "T",
+            "address": 1108142040
+          },
+          {
+            "name": "mbedtls_ssl_handshake_client_step",
+            "bytes": 6150,
+            "type": "T",
+            "address": 1108135328
+          },
+          {
+            "name": "sc_reduce",
+            "bytes": 5922,
+            "type": "T",
+            "address": 1107794596
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotHttps::Workspace": 3585,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWorker::Control": 140,
+          "onchip::BotWorker::Storage": 126368,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 5752,
+          "onchip::MastSource::Journal": 572,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::SecureTransport::AnchorCache": 4120,
+          "onchip::Workspace": 7920,
+          "onchip::service_name::Record": 36
+        },
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.data": 8,
+            ".dram0.bss": 139,
+            ".flash.text": 94523,
+            ".flash.rodata": 59112
+          },
+          "lua": {
+            ".flash.text": 68683,
+            ".flash.rodata": 4686
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25270,
+            ".flash.text": 132662,
+            ".flash.rodata": 61727
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15827,
+            ".dram0.bss": 56470,
+            ".flash.text": 511805,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 155923,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 24023,
+            ".flash.rodata": 6094
+          },
+          "role_observer": {
+            ".flash.text": 1485,
+            ".flash.rodata": 408
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 15742,
+            ".flash.rodata": 6025
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 10588,
+            ".flash.rodata": 4216
+          },
+          "storage": {
+            ".flash.text": 41421,
+            ".flash.rodata": 10490
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7145,
+            ".dram0.bss": 14949,
+            ".flash.text": 343245,
+            ".flash.rodata": 146361,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 105,
+          ".dram0.bss": 2632,
+          ".flash.text": 10730,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1310720,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 252,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        }
+      },
+      "environment": "Xiao_S3_WIO_onchip_https_probe",
+      "init_policy_microseconds": 20000,
+      "runtime_native_role_mask": 4,
+      "artifacts": {
+        "elf": {
+          "bytes": 34244520
+        },
+        "bin": {
+          "bytes": 1823744
+        },
+        "map": {
+          "bytes": 17835223
+        }
+      },
+      "raw_artifacts_public_upload_allowed": false,
+      "owner_reported_build_log": {
+        "static_ram_bytes": 138044,
+        "flash_bytes": 1823333
+      }
+    },
+    "cedar-wasm1": {
+      "source": "420d2bdd1f92b8b675302afd0603aa3faa0ccecf",
+      "documentation": "277ef45b061119367b3d431dd041653f16f33ed2",
+      "measurements": {
+        "sections": {
+          ".rtc.text": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": true
+          },
+          ".rtc.dummy": {
+            "bytes": 33,
+            "address": 1611653120,
+            "load": false
+          },
+          ".rtc.force_fast": {
+            "bytes": 8,
+            "address": 1611653156,
+            "load": true
+          },
+          ".rtc_noinit": {
+            "bytes": 16,
+            "address": 1342177280,
+            "load": false
+          },
+          ".iram0.vectors": {
+            "bytes": 1027,
+            "address": 1077362688,
+            "load": true
+          },
+          ".iram0.text": {
+            "bytes": 73763,
+            "address": 1077363716,
+            "load": true
+          },
+          ".dram0.dummy": {
+            "bytes": 58408,
+            "address": 1070104576,
+            "load": false
+          },
+          ".dram0.data": {
+            "bytes": 38404,
+            "address": 1070162992,
+            "load": true
+          },
+          ".dram0.bss": {
+            "bytes": 99792,
+            "address": 1070201400,
+            "load": false
+          },
+          ".flash.text": {
+            "bytes": 1327175,
+            "address": 1107296288,
+            "load": true
+          },
+          ".rtc.entry.literal": {
+            "bytes": 0,
+            "address": 1108623464,
+            "load": true
+          },
+          ".flash_rodata_dummy": {
+            "bytes": 1376256,
+            "address": 1006632992,
+            "load": false
+          },
+          ".flash.appdesc": {
+            "bytes": 256,
+            "address": 1008009248,
+            "load": true
+          },
+          ".flash.rodata": {
+            "bytes": 476288,
+            "address": 1008009504,
+            "load": true
+          },
+          ".flash.rodata_noload": {
+            "bytes": 16009,
+            "address": 1008485792,
+            "load": false
+          },
+          ".iram0.data": {
+            "bytes": 1,
+            "address": 1077437479,
+            "load": false
+          }
+        },
+        "allocated_load_bytes": 1916954,
+        "static_dram_data_bytes": 38404,
+        "static_dram_bss_bytes": 99792,
+        "binary_bytes": 1917072,
+        "largest_symbols": [
+          {
+            "name": "MastAdminPage",
+            "bytes": 55759,
+            "type": "d",
+            "address": 1008145372
+          },
+          {
+            "name": "kiss_stream",
+            "bytes": 45020,
+            "type": "B",
+            "address": 1070201436
+          },
+          {
+            "name": "base",
+            "bytes": 30720,
+            "type": "d",
+            "address": 1008238896
+          },
+          {
+            "name": "RADIO_DASHBOARD_PAGE",
+            "bytes": 23427,
+            "type": "d",
+            "address": 1008017392
+          },
+          {
+            "name": "wasm_interp_call_wasm",
+            "bytes": 21986,
+            "type": "T",
+            "address": 1107815116
+          },
+          {
+            "name": "onchip::companionSessions()::sessions",
+            "bytes": 18472,
+            "type": "b",
+            "address": 1070247784
+          },
+          {
+            "name": "luaV_execute",
+            "bytes": 12552,
+            "type": "T",
+            "address": 1107770388
+          },
+          {
+            "name": "sc_muladd",
+            "bytes": 12277,
+            "type": "T",
+            "address": 1107879052
+          },
+          {
+            "name": "_vfprintf_r",
+            "bytes": 12250,
+            "type": "T",
+            "address": 1108524088
+          },
+          {
+            "name": "_svfprintf_r",
+            "bytes": 11979,
+            "type": "T",
+            "address": 1108499896
+          },
+          {
+            "name": "__ssvfscanf_r",
+            "bytes": 9341,
+            "type": "T",
+            "address": 1108511944
+          },
+          {
+            "name": "onchip::BotWasmSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008095792
+          },
+          {
+            "name": "onchip::BotSession::manifest() const::empty",
+            "bytes": 8643,
+            "type": "d",
+            "address": 1008083176
+          },
+          {
+            "name": "http_parser_execute",
+            "bytes": 8545,
+            "type": "T",
+            "address": 1108178180
+          },
+          {
+            "name": "_vfiprintf_r",
+            "bytes": 8354,
+            "type": "T",
+            "address": 1108565684
+          },
+          {
+            "name": "_svfiprintf_r",
+            "bytes": 8130,
+            "type": "T",
+            "address": 1108547380
+          },
+          {
+            "name": "__ssvfiscanf_r",
+            "bytes": 8077,
+            "type": "T",
+            "address": 1108555880
+          },
+          {
+            "name": "onchip::MastAdmin::execute(char const*, onchip::MastAdmin::Reply&, unsigned int, onchip::MastAdmin::Transport, unsigned char const*)",
+            "bytes": 6976,
+            "type": "T",
+            "address": 1107540868
+          },
+          {
+            "name": "OnchipCompanion::handleCmdFrame(unsigned int)",
+            "bytes": 6838,
+            "type": "T",
+            "address": 1107512920
+          },
+          {
+            "name": "mbedtls_ssl_handshake_server_step",
+            "bytes": 6626,
+            "type": "T",
+            "address": 1108212196
+          }
+        ],
+        "partitions": [
+          {
+            "name": "nvs",
+            "type": 1,
+            "subtype": 2,
+            "offset": 36864,
+            "bytes": 20480,
+            "flags": 0
+          },
+          {
+            "name": "otadata",
+            "type": 1,
+            "subtype": 0,
+            "offset": 57344,
+            "bytes": 8192,
+            "flags": 0
+          },
+          {
+            "name": "app0",
+            "type": 0,
+            "subtype": 16,
+            "offset": 65536,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "app1",
+            "type": 0,
+            "subtype": 17,
+            "offset": 3407872,
+            "bytes": 3342336,
+            "flags": 0
+          },
+          {
+            "name": "spiffs",
+            "type": 1,
+            "subtype": 130,
+            "offset": 6750208,
+            "bytes": 1572864,
+            "flags": 0
+          },
+          {
+            "name": "coredump",
+            "type": 1,
+            "subtype": 3,
+            "offset": 8323072,
+            "bytes": 65536,
+            "flags": 0
+          }
+        ],
+        "debug_type_size_bytes": {
+          "nvs::Storage": 104,
+          "onchip::BotEvent": 1680,
+          "onchip::BotHttps::Workspace": 3585,
+          "onchip::BotIoRequest": 3812,
+          "onchip::BotIoResult": 3144,
+          "onchip::BotManifest": 8643,
+          "onchip::BotReminders::Record": 244,
+          "onchip::BotReminders::Storage": 3996,
+          "onchip::BotSession::Impl": 98808,
+          "onchip::BotStore::Files": 19020,
+          "onchip::BotStore::Journal": 3184,
+          "onchip::BotStore::Record": 392,
+          "onchip::BotTimers::Record": 144,
+          "onchip::BotTimers::Storage": 2972,
+          "onchip::BotWasmSession::Impl": 52136,
+          "onchip::BotWorker::Control": 140,
+          "onchip::BotWorker::Storage": 126384,
+          "onchip::CommandBot::Core": 55256,
+          "onchip::CompanionStorage": 82600,
+          "onchip::Management::Core": 5752,
+          "onchip::MastSource::Journal": 572,
+          "onchip::Record": 133,
+          "onchip::RepeaterStorage": 18472,
+          "onchip::RoomStorage": 23696,
+          "onchip::SecureTransport::AnchorCache": 4120,
+          "onchip::Workspace": 7920,
+          "onchip::service_name::Record": 36
+        },
+        "map_input_estimates": {
+          "bot_native_apis": {
+            ".dram0.data": 8,
+            ".dram0.bss": 139,
+            ".flash.text": 95994,
+            ".flash.rodata": 59485
+          },
+          "lua": {
+            ".flash.text": 68703,
+            ".flash.rodata": 4669
+          },
+          "merged_shared": {
+            ".flash.rodata": 34
+          },
+          "mesh_radio_crypto_shared": {
+            ".dram0.data": 6571,
+            ".dram0.bss": 25270,
+            ".flash.text": 132662,
+            ".flash.rodata": 61727
+          },
+          "platform_shared_unattributed": {
+            ".rtc.text": 32,
+            ".rtc.force_fast": 5,
+            ".rtc_noinit": 16,
+            ".iram0.vectors": 427,
+            ".iram0.text": 66968,
+            ".dram0.data": 15827,
+            ".dram0.bss": 56474,
+            ".flash.text": 512340,
+            ".flash.appdesc": 256,
+            ".flash.rodata": 155981,
+            ".flash.rodata_noload": 43
+          },
+          "role_companion": {
+            ".dram0.data": 2896,
+            ".dram0.bss": 76,
+            ".flash.text": 24119,
+            ".flash.rodata": 6090
+          },
+          "role_observer": {
+            ".flash.text": 1509,
+            ".flash.rodata": 408
+          },
+          "role_repeater": {
+            ".dram0.data": 2884,
+            ".dram0.bss": 100,
+            ".flash.text": 15838,
+            ".flash.rodata": 6025
+          },
+          "role_room": {
+            ".dram0.data": 2872,
+            ".dram0.bss": 100,
+            ".flash.text": 10352,
+            ".flash.rodata": 4216
+          },
+          "storage": {
+            ".flash.text": 41485,
+            ".flash.rodata": 10490
+          },
+          "wasm": {
+            ".dram0.data": 108,
+            ".dram0.bss": 53,
+            ".flash.text": 69147,
+            ".flash.rodata": 20166
+          },
+          "wifi_tls_web_admin": {
+            ".iram0.text": 5801,
+            ".dram0.data": 7145,
+            ".dram0.bss": 14949,
+            ".flash.text": 343929,
+            ".flash.rodata": 146732,
+            ".flash.rodata_noload": 15966
+          }
+        },
+        "map_alignment_and_unattributed_bytes": {
+          ".rtc.text": 1,
+          ".rtc.dummy": 33,
+          ".rtc.force_fast": 3,
+          ".rtc_noinit": 0,
+          ".iram0.vectors": 600,
+          ".iram0.text": 994,
+          ".dram0.dummy": 58408,
+          ".dram0.data": 93,
+          ".dram0.bss": 2631,
+          ".flash.text": 11097,
+          ".rtc.entry.literal": 0,
+          ".flash_rodata_dummy": 1376256,
+          ".flash.appdesc": 0,
+          ".flash.rodata": 265,
+          ".flash.rodata_noload": 0,
+          ".iram0.data": 1
+        }
+      },
+      "environment": "Xiao_S3_WIO_onchip_https_probe",
+      "init_policy_microseconds": 20000,
+      "runtime_native_role_mask": 4,
+      "artifacts": {
+        "elf": {
+          "bytes": 35646172
+        },
+        "bin": {
+          "bytes": 1917072
+        },
+        "map": {
+          "bytes": 18360246
+        }
+      },
+      "raw_artifacts_public_upload_allowed": false,
+      "owner_reported_build_log": {
+        "static_ram_bytes": 138196,
+        "flash_bytes": 1916657
+      }
+    }
+  },
+  "nrf_native": {
+    "environment": "nrfmast_fleet",
+    "platform": "nordicnrf52@11.0.0",
+    "framework_revision": "d541301665b40959682252911e57b11df3ee651a",
+    "framework_package": "1.10701.0+sha.d5413016",
+    "gcc": "7.2.1 20170904",
+    "dependency_tree_sha256": {
+      "Adafruit BusIO": "6c815f5e27066c9a4f769a8a656878e1ffd96788b3ebab229347f407ca68226e",
+      "ArduinoJson": "c9161cb59d9c4ff7b83a5bc0eeb98e9477dfa4652d41ed146714f39744e16ac5",
+      "CayenneLPP": "e1c62ba2a45710fe1f7c4eb29e6f415f4630a515a6a2af1cd86b07c9e78d9eb2",
+      "Crypto": "3afdb2b1d36c94f00666ab10c79136abfeb60246653e676ebb807f5ad76a5575",
+      "CustomLFS": "ae2dca98ef8bcd284a619f706f1e14ac4678cf70ff04c035af49d39d89268f9b",
+      "Melopero RV3028": "59da55266ea242f1016820c8de04f42a91cd22901db4aaf9586475176a599dcd",
+      "RTClib": "56611506385612bc3dd501cb8266248f9aabe803a3da91265536dbeae7db5e2a",
+      "RadioLib": "4e3e8ee2e091fece96f6c0696099e1ae5b6e203367a8a89e9c38878e6431cd21"
+    },
+    "artifacts": {
+      "nrf-fleet-firmware.elf": {
+        "bytes": 595320,
+        "sha256": "175af2372d36bbbf21f55e483db4a3d7cbf1567888cfe10a1e7af1a7e6a67138"
+      },
+      "nrf-fleet-firmware.bin": {
+        "bytes": 383144,
+        "sha256": "93eadfd9b262eca5c60d4ff65dbdc88dd7629edb2ce02f04bcdce74aa652f8d6"
+      },
+      "nrf-fleet-firmware.uf2": {
+        "bytes": 766464,
+        "sha256": "0f09a5fbe5eda06b1aa35bb06fa21ff8dcf11f2ce2c1714679ddd20886ef6c19"
+      }
+    },
+    "memory": {
+      "application_flash_limit_bytes": 811008,
+      "application_flash_bytes": 383144,
+      "application_ram_region_bytes": 237568,
+      "static_ram_bytes": 49444,
+      "linker_heap_capacity_bytes": 186076,
+      "main_stack_reserved_bytes": 2048,
+      "runtime_heap_free_bytes": null,
+      "runtime_heap_note": "Requires mem on the physical target after setup; linker capacity is not free heap.",
+      "binary_bytes": 383144,
+      "uf2_bytes": 766464
+    },
+    "measurements": {
+      "elf_sha256": "175af2372d36bbbf21f55e483db4a3d7cbf1567888cfe10a1e7af1a7e6a67138",
+      "sections": {
+        ".text": {
+          "bytes": 381852,
+          "address": 159744,
+          "load": true
+        },
+        ".ARM.exidx": {
+          "bytes": 8,
+          "address": 541596,
+          "load": true
+        },
+        ".data": {
+          "bytes": 1284,
+          "address": 536895488,
+          "load": true
+        },
+        ".bss": {
+          "bytes": 48160,
+          "address": 536896772,
+          "load": false
+        },
+        ".heap": {
+          "bytes": 186076,
+          "address": 536944932,
+          "load": false
+        }
+      },
+      "allocated_load_bytes": 383144,
+      "static_dram_data_bytes": 1284,
+      "static_dram_bss_bytes": 48160,
+      "binary_bytes": 383144,
+      "binary_sha256": "93eadfd9b262eca5c60d4ff65dbdc88dd7629edb2ce02f04bcdce74aa652f8d6",
+      "largest_symbols": [
+        {
+          "name": "base",
+          "bytes": 30720,
+          "type": "t",
+          "address": 497640
+        },
+        {
+          "name": "sc_muladd",
+          "bytes": 20084,
+          "type": "T",
+          "address": 362772
+        },
+        {
+          "name": "repeater",
+          "bytes": 9408,
+          "type": "b",
+          "address": 536920520
+        },
+        {
+          "name": "sc_reduce",
+          "bytes": 8476,
+          "type": "T",
+          "address": 354296
+        },
+        {
+          "name": "ble",
+          "bytes": 4624,
+          "type": "b",
+          "address": 536908012
+        },
+        {
+          "name": "sha512_compress",
+          "bytes": 4436,
+          "type": "t",
+          "address": 334484
+        },
+        {
+          "name": "_cache_buffer",
+          "bytes": 4096,
+          "type": "b",
+          "address": 536935672
+        },
+        {
+          "name": "notes",
+          "bytes": 4060,
+          "type": "b",
+          "address": 536916300
+        },
+        {
+          "name": "bot",
+          "bytes": 3664,
+          "type": "b",
+          "address": 536912636
+        },
+        {
+          "name": "noteJournal",
+          "bytes": 3440,
+          "type": "b",
+          "address": 536902080
+        },
+        {
+          "name": "CommonCLI::handleSetCmd(unsigned long, char*, char*)",
+          "bytes": 3412,
+          "type": "T",
+          "address": 251944
+        },
+        {
+          "name": "nrfmast::CompanionInterface::handle(unsigned int)",
+          "bytes": 3240,
+          "type": "T",
+          "address": 190016
+        },
+        {
+          "name": "_strtod_l",
+          "bytes": 3048,
+          "type": "T",
+          "address": 462576
+        },
+        {
+          "name": "_dtoa_r",
+          "bytes": 2928,
+          "type": "T",
+          "address": 468064
+        },
+        {
+          "name": "lfs_dir_commit",
+          "bytes": 2784,
+          "type": "t",
+          "address": 325224
+        },
+        {
+          "name": "lfs_file_write",
+          "bytes": 2748,
+          "type": "T",
+          "address": 319872
+        },
+        {
+          "name": "__ieee754_pow",
+          "bytes": 2744,
+          "type": "T",
+          "address": 449344
+        },
+        {
+          "name": "nrfmast::NoteStore::command(unsigned char const*, unsigned char const*, unsigned long, char const*, char*, unsigned int)",
+          "bytes": 2492,
+          "type": "T",
+          "address": 202896
+        },
+        {
+          "name": "CommonCLI::handleCommand(unsigned long, char*, char*)",
+          "bytes": 2424,
+          "type": "T",
+          "address": 259204
+        },
+        {
+          "name": "fe_mul",
+          "bytes": 2398,
+          "type": "T",
+          "address": 343644
+        }
+      ],
+      "debug_type_size_bytes": {}
+    }
+  },
+  "ram_accounting": {
+    "wasm_pool_psram_bytes": 1048576,
+    "wasm_linear_psram_bytes_per_instance": 65536,
+    "wasm_linear_mapping_request_overhead_bytes": 8,
+    "wasm_linear_inside_pool": false,
+    "wasm_exec_stack_bytes": 8192,
+    "wasm_exec_stack_inside_pool": true,
+    "wasm_pool_retained_after_clear": true,
+    "lua_live_allocator_limit_bytes_per_state": 98304,
+    "lua_limit_is_reserved_pool": false,
+    "current_baseline_hardware_measurements": null
+  },
+  "full_https_pair": {
+    "baseline": "45f6f4ffd5574107f1f353344f15c3c8bf220352",
+    "profiles": [
+      "https",
+      "https-wasm"
+    ],
+    "environment": "Xiao_S3_WIO_onchip_https",
+    "matched_input_checks": [
+      "upstream",
+      "source_date_epoch",
+      "lua_archive_sha256",
+      "wamr_archive_sha256",
+      "profile_sha256",
+      "dependencies_sha256",
+      "toolchain",
+      "compiler_options",
+      "all_effective_defines_except_ONCHIP_BOT_WASM",
+      "partitions"
+    ],
+    "exact_deltas": {
+      "binary_bytes": 93344,
+      "allocated_load_bytes": 93332,
+      "static_dram_data_bytes": 112,
+      "static_dram_bss_bytes": 64
+    },
+    "all_other_effective_defines_sha256": "d84a94c4b64d928f106afae88b3b111e3953663793831fb769e3a1d4af11cd7d"
+  }
+}

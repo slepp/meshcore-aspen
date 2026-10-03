@@ -1,0 +1,14 @@
+[env:Xiao_S3_WIO_kiss_wifi]
+extends = Xiao_S3_WIO
+build_src_filter = ${Xiao_S3_WIO.build_src_filter}
+  +<../examples/kiss_modem/>
+build_flags =
+  ${Xiao_S3_WIO.build_flags}
+  -D WIFI_SSID='"replace-with-your-ssid"'
+  -D WIFI_PWD='"replace-with-your-password"'
+  -D KISS_TCP_PORT=8001
+  -D KISS_MAX_TCP_CLIENTS=8
+  -D KISS_REQUEST_QUEUE_DEPTH=12
+  -D KISS_WIFI_TX_POWER=WIFI_POWER_8_5dBm
+  ; Default DHCP/mDNS name: meshcore-radio. Give each additional radio a unique label:
+  ; -D KISS_HOSTNAME='"meshcore-secondary"'

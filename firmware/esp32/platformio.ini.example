@@ -1,0 +1,95 @@
+; Copy into the disposable build tree as platformio.local.ini.
+; Credentials come from the build environment, not tracked files.
+[platformio]
+data_dir = onchip-data
+
+[env:Xiao_S3_WIO_onchip]
+extends = Xiao_S3_WIO
+board_build.filesystem = spiffs
+lib_deps =
+  ${Xiao_S3_WIO.lib_deps}
+  densaugeo/base64 @ ~1.4.0
+build_src_filter = ${Xiao_S3_WIO.build_src_filter}
+  +<../examples/kiss_modem/*.cpp>
+  +<../examples/kiss_modem/onchip/*.cpp>
+build_flags =
+  ${Xiao_S3_WIO.build_flags}
+  -D MESHCORE_ONCHIP=1
+  -D ONCHIP_RADIO_FREQ_MHZ=912.525
+  -D ONCHIP_RADIO_BW_KHZ=250.0
+  -D ONCHIP_RADIO_SF=7
+  -D ONCHIP_RADIO_CR=5
+  -D ONCHIP_RADIO_TX_POWER=2
+  -D LORA_FREQ=ONCHIP_RADIO_FREQ_MHZ
+  -D LORA_BW=ONCHIP_RADIO_BW_KHZ
+  -D LORA_SF=ONCHIP_RADIO_SF
+  -D LORA_CR=ONCHIP_RADIO_CR
+  -D LORA_TX_POWER=ONCHIP_RADIO_TX_POWER
+  -D KISS_LOCAL_SOURCES=4
+  ; Supply a separately generated Ed25519 operator verification key to enable
+  ; RF role selection. Without it the management source is unprovisioned.
+  ; -D ONCHIP_OPERATOR_PUBKEY='"${sysenv.ONCHIP_OPERATOR_PUBKEY}"'
+  -D KISS_MAX_TCP_CLIENTS=4
+  -D ONCHIP_COMPANION_MAX_CLIENTS=2
+  -D KISS_STREAM_ENDPOINT=0
+  -D KISS_REQUEST_QUEUE_DEPTH=12
+  -D KISS_TCP_PORT=8001
+  -D KISS_WIFI_TX_POWER=WIFI_POWER_8_5dBm
+  -D KISS_HOSTNAME='"${sysenv.MESHCORE_HOSTNAME}"'
+  -D WIFI_SSID='"${sysenv.WIFI_SSID}"'
+  -D WIFI_PWD='"${sysenv.WIFI_PWD}"'
+  -D ONCHIP_ADMIN_PASSWORD='"${sysenv.ONCHIP_ADMIN_PASSWORD}"'
+  -D ONCHIP_ROOM_PASSWORD='"${sysenv.ONCHIP_ROOM_PASSWORD}"'
+  -D ONCHIP_MQTT_URI='"${sysenv.ONCHIP_MQTT_URI}"'
+  ; Standard asynchronous SNTP. Set the server to '""' to remain offline.
+  -D ONCHIP_SNTP_SERVER='"pool.ntp.org"'
+  -D ONCHIP_SNTP_INTERVAL_SECONDS=3600
+  -D MAX_CONTACTS=256
+  -D MAX_CLIENTS=20
+  -D MAX_NEIGHBOURS=16
+  -D MAX_UNSYNCED_POSTS=32
+  -D MAX_GROUP_CHANNELS=8
+
+; Opt-in command bot. Build with `make bot-build-test` for an isolated, public
+; compile/size check, or use bot-firmware with an explicit operator profile.
+[env:Xiao_S3_WIO_onchip_bot]
+extends = env:Xiao_S3_WIO_onchip
+build_unflags = -std=gnu++11
+build_flags =
+  ${env:Xiao_S3_WIO_onchip.build_flags}
+  -std=gnu++17
+  -D MESHCORE_ONCHIP_BOT=1
+  -D ONCHIP_BOT_WASM=${sysenv.ONCHIP_BOT_WASM}
+  -D ONCHIP_COMMAND_BOT_DEFAULT_ENABLED=1
+  -D KISS_LOCAL_SOURCES=5
+
+[env:Xiao_S3_WIO_onchip_beta]
+extends = env:Xiao_S3_WIO_onchip_bot
+build_flags =
+  ${env:Xiao_S3_WIO_onchip_bot.build_flags}
+  -D MESHCORE_MAST_ADMIN=1
+  -D ONCHIP_TRUSTED_COMPANION_PUBKEY='"${sysenv.ONCHIP_TRUSTED_COMPANION_PUBKEY}"'
+  -D ONCHIP_MAST_PASSWORD='"${sysenv.ONCHIP_MAST_PASSWORD}"'
+  -D ONCHIP_SERVICE_REGION='"${sysenv.ONCHIP_SERVICE_REGION}"'
+  -D ONCHIP_OPERATOR_PUBKEY='"${sysenv.ONCHIP_OPERATOR_PUBKEY}"'
+  ; Signed WiFi app updates use this embedded board/profile target.
+  -D ONCHIP_UPDATE_TARGET='"xiao-esp32s3"'
+
+; Build-only opt-in until coordinated MKISS rollout and measured TLS acceptance.
+; Native endpoint settings belong in an operator-owned header, never Lua:
+; -D ONCHIP_BOT_HOME_CONFIG_HEADER='"/absolute/private/home-config.h"'
+[env:Xiao_S3_WIO_onchip_https]
+extends = env:Xiao_S3_WIO_onchip_beta
+build_unflags = -std=gnu++11 -DKISS_MAX_TCP_CLIENTS=4
+build_flags =
+  ${env:Xiao_S3_WIO_onchip_beta.build_flags}
+  -D ONCHIP_BOT_HTTPS=1
+  -D KISS_MAX_TCP_CLIENTS=3
+
+; Make-owned operator build: sealed in-memory header, never a credential -D flag.
+[env:Xiao_S3_WIO_onchip_https_probe]
+extends = env:Xiao_S3_WIO_onchip_https
+build_flags =
+  ${env:Xiao_S3_WIO_onchip_https.build_flags}
+  -D ONCHIP_BOT_HTTPS_METRICS=1
+  -include ${sysenv.ONCHIP_OPERATOR_HEADER}

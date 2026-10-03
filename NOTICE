@@ -1,0 +1,14 @@
+MeshCore shared radio
+Copyright 2026 Stephen Olesen (VE6SLP)
+
+Original project code is licensed under the Apache License, Version 2.0.
+
+Native firmware integration and protocol adapters include work adapted from
+MeshCore, Copyright (c) 2025 Scott Powell / rippleradios.com, under the MIT
+License. Its copyright and permission notice are reproduced in
+LICENSES/MeshCore-MIT.txt.
+
+Dependencies retain their own licenses and copyright notices. THIRD_PARTY.md
+identifies the source versions and licensing materials used by the host and
+firmware builds. Generated firmware trees and binary packages must retain
+their upstream notices; this project's license does not replace them.

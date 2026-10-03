@@ -1,0 +1,9 @@
+{
+  "replay": ["!hello mesh", "!hello", "!hello \"two words\"", "!hello one extra"],
+  "expect": [
+    {"type": "reply", "text": "Hello mesh"},
+    {"type": "reply", "text_contains": "!hello: name: required argument missing"},
+    {"type": "reply", "text": "Hello two words"},
+    {"type": "reply", "text_contains": "!hello: too many arguments"}
+  ]
+}

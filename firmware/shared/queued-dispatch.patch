@@ -1,0 +1,416 @@
+--- a/src/Dispatcher.h
++++ b/src/Dispatcher.h
+@@ -1,4 +1,5 @@
+ #pragma once
++#define MESH_QUEUED_RADIO_API 1
+ 
+ #include <MeshCore.h>
+ #include <Identity.h>
+@@ -8,6 +9,23 @@
+ 
+ namespace mesh {
+ 
++struct QueuedTransmitResult {
++  uint32_t job = 0;
++  uint8_t state = 0, reason = 0;
++  uint32_t queue_ms = 0, rf_ms = 0, estimated_ms = 0;
++  bool has_rf_ms = false;
++};
++
++struct QueuedRadioStats {
++  uint32_t generation = 0, configuration_generation = 0, captured_ms = 0;
++  uint32_t aggregate_credit_ms = 0, source_credit_ms = 0;
++  uint32_t aggregate_rf_ms = 0, source_rf_ms = 0;
++  uint32_t aggregate_successes = 0, aggregate_failures = 0;
++  uint32_t source_successes = 0, source_failures = 0;
++  uint8_t aggregate_queued = 0;
++  bool aggregate_transmitting = false;
++};
++
+ /**
+  * \brief  Abstraction of local/volatile clock with Millisecond granularity.
+ */
+@@ -21,6 +39,14 @@
+ */
+ class Radio {
+ public:
++  virtual bool supportsQueuedTransmit() const { return false; }
++  virtual bool queuedReady() const { return false; }
++  virtual bool setQueuedSourcePolicy(float factor) { return false; }
++  virtual bool queueTransmit(const uint8_t*, int, uint8_t, uint32_t, uint32_t,
++                             uint32_t&) { return false; }
++  virtual bool pollQueuedResult(QueuedTransmitResult&) { return false; }
++  virtual bool lastReceiveWasLocal() const { return false; }
++  virtual bool getQueuedRadioStats(QueuedRadioStats&) const { return false; }
+   virtual void begin() { }
+ 
+   /**
+@@ -116,6 +142,10 @@
+  *      and scheduling of outbound Packets.
+ */
+ class Dispatcher {
++  struct QueuedPacket { Packet* packet = nullptr; uint32_t job = 0; };
++  QueuedPacket queued_packets[12]{};
++  bool submitQueued(Packet* packet, uint8_t priority, uint32_t delay);
++  void completeQueued();
+   Packet* outbound;  // current outbound packet
+   unsigned long outbound_expiry, outbound_start, total_air_time, rx_air_time;
+   unsigned long next_tx_time;
+@@ -161,6 +191,7 @@
+   virtual void logRx(Packet* packet, int len, float score) { }   // hooks for custom logging
+   virtual void logTx(Packet* packet, int len) { }
+   virtual void logTxFail(Packet* packet, int len) { }
++  virtual void logQueuedTxResult(Packet*, const QueuedTransmitResult&) { }
+   virtual const char* getLogDateTime() { return ""; }
+ 
+   virtual float getAirtimeBudgetFactor() const;
+@@ -180,9 +211,47 @@
+   void releasePacket(Packet* packet);
+   void sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis=0);
+ 
+-  unsigned long getTotalAirTime() const { return total_air_time; }
++  static constexpr uint32_t UNKNOWN_RADIO_STAT = UINT32_MAX;
++  bool getQueuedRadioStats(QueuedRadioStats& stats) const {
++    return _radio->supportsQueuedTransmit() && _radio->getQueuedRadioStats(stats);
++  }
++  bool tryGetTotalAirTime(uint32_t& rf_ms) const {
++    if (!_radio->supportsQueuedTransmit()) {
++      rf_ms = total_air_time;
++      return true;
++    }
++    QueuedRadioStats stats;
++    if (!getQueuedRadioStats(stats)) return false;
++    rf_ms = stats.source_rf_ms;
++    return true;
++  }
++  bool tryGetRemainingTxBudget(uint32_t& credit_ms) const {
++    if (!_radio->supportsQueuedTransmit()) {
++      credit_ms = tx_budget_ms;
++      return true;
++    }
++    QueuedRadioStats stats;
++    if (!getQueuedRadioStats(stats)) return false;
++    credit_ms = stats.source_credit_ms < stats.aggregate_credit_ms
++                    ? stats.source_credit_ms : stats.aggregate_credit_ms;
++    return true;
++  }
++  unsigned long getTotalAirTime() const {
++    if (!_radio->supportsQueuedTransmit()) return total_air_time;
++    uint32_t value;
++    return tryGetTotalAirTime(value) ? value : UNKNOWN_RADIO_STAT;
++  }
++  uint32_t getTotalAirTimeSeconds() const {
++    if (!_radio->supportsQueuedTransmit()) return total_air_time / 1000;
++    uint32_t value;
++    return tryGetTotalAirTime(value) ? value / 1000 : UNKNOWN_RADIO_STAT;
++  }
+   unsigned long getReceiveAirTime() const {return rx_air_time; }
+-  unsigned long getRemainingTxBudget() const { return tx_budget_ms; }
++  unsigned long getRemainingTxBudget() const {
++    if (!_radio->supportsQueuedTransmit()) return tx_budget_ms;
++    uint32_t value;
++    return tryGetRemainingTxBudget(value) ? value : UNKNOWN_RADIO_STAT;
++  }
+   uint32_t getNumSentFlood() const { return n_sent_flood; }
+   uint32_t getNumSentDirect() const { return n_sent_direct; }
+   uint32_t getNumRecvFlood() const { return n_recv_flood; }
+--- a/src/Dispatcher.cpp
++++ b/src/Dispatcher.cpp
+@@ -64,6 +64,15 @@
+ }
+ 
+ void Dispatcher::loop() {
++  if (_radio->supportsQueuedTransmit()) {
++    _radio->setQueuedSourcePolicy(getAirtimeBudgetFactor());
++    _radio->loop();
++    completeQueued();
++    Packet* packet = _mgr->getNextInbound(_ms->getMillis());
++    if (packet) processRecvPacket(packet);
++    if (_radio->queuedReady()) checkRecv();
++    return;
++  }
+   if (millisHasNowPassed(next_floor_calib_time)) {
+     _radio->triggerNoiseFloorCalibrate(getInterferenceThreshold());
+     _radio->setCADEnabled(getCADEnabled());
+@@ -196,13 +205,20 @@
+     uint8_t raw[MAX_TRANS_UNIT+1];
+     int len = _radio->recvRaw(raw, MAX_TRANS_UNIT);
+     if (len > 0) {
+-      logRxRaw(_radio->getLastSNR(), _radio->getLastRSSI(), raw, len);
++      if (!_radio->lastReceiveWasLocal())
++        logRxRaw(_radio->getLastSNR(), _radio->getLastRSSI(), raw, len);
+ 
+       pkt = _mgr->allocNew();
+       if (pkt == NULL) {
+         MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): WARNING: received data, no unused packets available!", getLogDateTime());
+       } else {
+         if (tryParsePacket(pkt, raw, len)) {
++          pkt->_localReflection = _radio->lastReceiveWasLocal();
++          if (pkt->_localReflection) {
++            pkt->_snr = 0;
++            processRecvPacket(pkt);
++            return;
++          }
+           pkt->_snr = _radio->getLastSNR() * 4.0f;
+           score = _radio->packetScore(_radio->getLastSNR(), len);
+           air_time = _radio->getEstAirtimeFor(len);
+@@ -259,16 +275,22 @@
+ }
+ 
+ void Dispatcher::processRecvPacket(Packet* pkt) {
++  const bool local = pkt->_localReflection;
+   DispatcherAction action = onRecvPacket(pkt);
+   if (action == ACTION_RELEASE) {
+     _mgr->free(pkt);
+   } else if (action == ACTION_MANUAL_HOLD) {
+     // sub-class is wanting to manually hold Packet instance, and call releasePacket() at appropriate time
+   } else {   // ACTION_RETRANSMIT*
++    if (local) {
++      _mgr->free(pkt);
++      return;
++    }
+     uint8_t priority = (action >> 24) - 1;
+     uint32_t _delay = action & 0xFFFFFF;
+ 
+-    _mgr->queueOutbound(pkt, priority, futureMillis(_delay));
++    if (_radio->supportsQueuedTransmit()) sendPacket(pkt, priority, _delay);
++    else _mgr->queueOutbound(pkt, priority, futureMillis(_delay));
+   }
+ }
+ 
+@@ -360,6 +382,7 @@
+   } else {
+     pkt->payload_len = pkt->path_len = 0;
+     pkt->_snr = 0;
++    pkt->_localReflection = false;
+   }
+   return pkt;
+ }
+@@ -372,11 +395,62 @@
+   if (!Packet::isValidPathLen(packet->path_len) || packet->payload_len > MAX_PACKET_PAYLOAD) {
+     MESH_DEBUG_PRINTLN("%s Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", getLogDateTime(), (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
+     _mgr->free(packet);
++  } else if (_radio->supportsQueuedTransmit()) {
++    if (!submitQueued(packet, priority, delay_millis)) {
++      logTxFail(packet, packet->getRawLength());
++      _mgr->free(packet);
++    }
+   } else {
+     _mgr->queueOutbound(packet, priority, futureMillis(delay_millis));
+   }
+ }
+ 
++bool Dispatcher::submitQueued(Packet* packet, uint8_t priority, uint32_t delay) {
++  if (packet->_localReflection || !_radio->queuedReady()) return false;
++  for (auto& entry : queued_packets) {
++    if (entry.packet) continue;
++    uint8_t raw[MAX_TRANS_UNIT];
++    const int length = packet->getRawLength();
++    if (length < 2 || length > MAX_TRANS_UNIT) return false;
++    int n = 0;
++    raw[n++] = packet->header;
++    if (packet->hasTransportCodes()) {
++      memcpy(raw + n, packet->transport_codes, 4); n += 4;
++    }
++    raw[n++] = packet->path_len;
++    n += Packet::writePath(raw + n, packet->path, packet->path_len);
++    memcpy(raw + n, packet->payload, packet->payload_len);
++    if (!_radio->queueTransmit(raw, length, priority, delay, 0,
++                               entry.job)) return false;
++    entry.packet = packet;
++    return true;
++  }
++  _err_flags |= ERR_EVENT_FULL;
++  return false;
++}
++
++void Dispatcher::completeQueued() {
++  QueuedTransmitResult result;
++  while (_radio->pollQueuedResult(result)) {
++    for (auto& entry : queued_packets) {
++      if (!entry.packet || entry.job != result.job) continue;
++      logQueuedTxResult(entry.packet, result);
++      if (result.state == 1) break; // Admission is not RF completion.
++      if (result.has_rf_ms) total_air_time += result.rf_ms;
++      if (result.state == 2) {
++        logTx(entry.packet, entry.packet->getRawLength());
++        if (entry.packet->isRouteFlood()) ++n_sent_flood;
++        else ++n_sent_direct;
++      } else {
++        logTxFail(entry.packet, entry.packet->getRawLength());
++      }
++      _mgr->free(entry.packet);
++      entry.packet = nullptr;
++      break;
++    }
++  }
++}
++
+ // Utility function -- handles the case where millis() wraps around back to zero
+ //   2's complement arithmetic will handle any unsigned subtraction up to HALF the word size (32-bits in this case)
+ bool Dispatcher::millisHasNowPassed(unsigned long timestamp) const {
+--- a/src/Mesh.cpp
++++ b/src/Mesh.cpp
+@@ -86,7 +86,7 @@
+       }
+     }
+ 
+-    if (self_id.isHashMatch(pkt->path, pkt->getPathHashSize()) && allowPacketForward(pkt)) {
++    if (!pkt->_localReflection && self_id.isHashMatch(pkt->path, pkt->getPathHashSize()) && allowPacketForward(pkt)) {
+       if (pkt->getPayloadType() == PAYLOAD_TYPE_MULTIPART) {
+         return forwardMultipartDirect(pkt);
+       } else if (pkt->getPayloadType() == PAYLOAD_TYPE_ACK) {
+@@ -304,6 +304,8 @@
+ 
+         if (type == PAYLOAD_TYPE_ACK && pkt->payload_len >= 5) {    // a multipart ACK
+           Packet tmp;
++          tmp._localReflection = pkt->_localReflection;
++          tmp._snr = pkt->_snr;
+           tmp.header = pkt->header;
+           tmp.path_len = Packet::copyPath(tmp.path, pkt->path, pkt->path_len);
+           tmp.payload_len = pkt->payload_len - 1;
+@@ -362,6 +364,8 @@
+ 
+   if (type == PAYLOAD_TYPE_ACK && pkt->payload_len >= 5) {    // a multipart ACK
+     Packet tmp;
++    tmp._localReflection = pkt->_localReflection;
++    tmp._snr = pkt->_snr;
+     tmp.header = pkt->header;
+     tmp.path_len = Packet::copyPath(tmp.path, pkt->path, pkt->path_len);
+     tmp.payload_len = pkt->payload_len - 1;
+@@ -377,7 +381,7 @@
+ }
+ 
+ void Mesh::routeDirectRecvAcks(Packet* packet, uint32_t delay_millis) {
+-  if (!packet->isMarkedDoNotRetransmit()) {
++  if (!packet->_localReflection && !packet->isMarkedDoNotRetransmit()) {
+     uint8_t extra = getExtraAckTransmitCount();
+     while (extra > 0) {
+       delay_millis += getDirectRetransmitDelay(packet) + 300;
+--- a/src/Packet.h
++++ b/src/Packet.h
+@@ -49,6 +49,7 @@
+   uint8_t path[MAX_PATH_SIZE];
+   uint8_t payload[MAX_PACKET_PAYLOAD];
+   int8_t _snr;
++  bool _localReflection = false;
+ 
+   /**
+    * \brief calculate the hash of payload + type
+--- a/src/helpers/StatsFormatHelper.h
++++ b/src/helpers/StatsFormatHelper.h
+@@ -9,12 +9,20 @@
+                              mesh::MillisecondClock& ms, 
+                              uint16_t err_flags,
+                              mesh::PacketManager* mgr) {
++    formatCoreStats(reply, board, ms, err_flags, uint16_t(mgr->getOutboundTotal()));
++  }
++
++  static void formatCoreStats(char* reply,
++                             mesh::MainBoard& board,
++                             mesh::MillisecondClock& ms,
++                             uint16_t err_flags,
++                             uint16_t queue_length) {
+     sprintf(reply, 
+       "{\"battery_mv\":%u,\"uptime_secs\":%u,\"errors\":%u,\"queue_len\":%u}",
+       board.getBattMilliVolts(),
+-      ms.getMillis() / 1000,
++      static_cast<unsigned>(ms.getMillis() / 1000),
+       err_flags,
+-      mgr->getOutboundTotal()
++      queue_length
+     );
+   }
+ 
+@@ -23,13 +31,14 @@
+                               mesh::Radio* radio,
+                               RadioDriverType& driver,
+                               uint32_t total_air_time_ms,
+-                              uint32_t total_rx_air_time_ms) {
++                              uint32_t total_rx_air_time_ms,
++                              bool tx_air_time_valid = true) {
+     sprintf(reply, 
+       "{\"noise_floor\":%d,\"last_rssi\":%d,\"last_snr\":%.2f,\"tx_air_secs\":%u,\"rx_air_secs\":%u}",
+       (int16_t)radio->getNoiseFloor(),
+       (int16_t)driver.getLastRSSI(),
+       driver.getLastSNR(),
+-      total_air_time_ms / 1000,
++      tx_air_time_valid ? total_air_time_ms / 1000 : UINT32_MAX,
+       total_rx_air_time_ms / 1000
+     );
+   }
+--- a/examples/simple_repeater/MyMesh.cpp
++++ b/examples/simple_repeater/MyMesh.cpp
+@@ -221,7 +221,7 @@
+     stats.last_rssi = (int16_t)radio_driver.getLastRSSI();
+     stats.n_packets_recv = radio_driver.getPacketsRecv();
+     stats.n_packets_sent = radio_driver.getPacketsSent();
+-    stats.total_air_time_secs = getTotalAirTime() / 1000;
++    stats.total_air_time_secs = getTotalAirTimeSeconds();
+     stats.total_up_time_secs = uptime_millis / 1000;
+     stats.n_sent_flood = getNumSentFlood();
+     stats.n_sent_direct = getNumSentDirect();
+@@ -1166,7 +1166,9 @@
+ }
+ 
+ void MyMesh::formatRadioStatsReply(char *reply) {
+-  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, getTotalAirTime(), getReceiveAirTime());
++  uint32_t tx_air_time_ms = 0;
++  const bool tx_air_time_valid = tryGetTotalAirTime(tx_air_time_ms);
++  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, tx_air_time_ms, getReceiveAirTime(), tx_air_time_valid);
+ }
+ 
+ void MyMesh::formatPacketStatsReply(char *reply) {
+--- a/examples/simple_room_server/MyMesh.cpp
++++ b/examples/simple_room_server/MyMesh.cpp
+@@ -162,7 +162,7 @@
+     stats.last_rssi = (int16_t)radio_driver.getLastRSSI();
+     stats.n_packets_recv = radio_driver.getPacketsRecv();
+     stats.n_packets_sent = radio_driver.getPacketsSent();
+-    stats.total_air_time_secs = getTotalAirTime() / 1000;
++    stats.total_air_time_secs = getTotalAirTimeSeconds();
+     stats.total_up_time_secs = uptime_millis / 1000;
+     stats.n_sent_flood = getNumSentFlood();
+     stats.n_sent_direct = getNumSentDirect();
+@@ -888,7 +888,9 @@
+ }
+ 
+ void MyMesh::formatRadioStatsReply(char *reply) {
+-  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, getTotalAirTime(), getReceiveAirTime());
++  uint32_t tx_air_time_ms = 0;
++  const bool tx_air_time_valid = tryGetTotalAirTime(tx_air_time_ms);
++  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, tx_air_time_ms, getReceiveAirTime(), tx_air_time_valid);
+ }
+ 
+ void MyMesh::formatPacketStatsReply(char *reply) {
+--- a/examples/companion_radio/MyMesh.cpp
++++ b/examples/companion_radio/MyMesh.cpp
+@@ -1865,6 +1865,19 @@
+   } else if (cmd_frame[0] == CMD_GET_STATS && len >= 2) {
+     uint8_t stats_type = cmd_frame[1];
++#ifdef MESH_REMOTE_KISS_DIAGNOSTICS
++    if (stats_type == RemoteKissDiagnostics::STATS_TYPE) {
++      const uint8_t index = len >= 3 ? cmd_frame[2] : 0;
++      const size_t n = RemoteKissDiagnostics::format(out_frame + 2, sizeof(out_frame) - 2, index);
++      if (len > 3 || !n) {
++        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
++      } else {
++        out_frame[0] = RESP_CODE_STATS;
++        out_frame[1] = stats_type;
++        _serial->writeFrame(out_frame, n + 2);
++      }
++    } else
++#endif
+     if (stats_type == STATS_TYPE_CORE) {
+       int i = 0;
+       out_frame[i++] = RESP_CODE_STATS;
+       out_frame[i++] = STATS_TYPE_CORE;
+@@ -1883,7 +1896,7 @@
+       int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+       int8_t last_rssi = (int8_t)radio_driver.getLastRSSI();
+       int8_t last_snr = (int8_t)(radio_driver.getLastSNR() * 4); // scaled by 4 for 0.25 dB precision
+-      uint32_t tx_air_secs = getTotalAirTime() / 1000;
++      uint32_t tx_air_secs = getTotalAirTimeSeconds();
+       uint32_t rx_air_secs = getReceiveAirTime() / 1000;
+       memcpy(&out_frame[i], &noise_floor, 2); i += 2;
+       out_frame[i++] = last_rssi;

@@ -1,0 +1,95 @@
+; Before flashing, set the committed LoRa profile in the selected platform's
+; build_flags below. Upstream defaults do not represent your radio network.
+; Set all five: LORA_FREQ (MHz), LORA_BW (kHz), LORA_SF, LORA_CR, LORA_TX_POWER.
+; For example, add -D LORA_FREQ=<operator MHz> and the other four exact values.
+; Existing saved application preferences must match too. The queued adapter
+; verifies the physical profile and refuses mismatches; it never retunes it.
+; Give each ESP32 a unique KISS_HOSTNAME DNS label (default meshcore-phyless).
+; KISS_WIFI_TX_POWER defaults to WIFI_POWER_8_5dBm; override only if appropriate
+; for the board. KISS_MODEM_HOST names the separate physical radio service.
+
+[Phyless_Xiao_S3]
+extends = esp32_base
+board = seeed_xiao_esp32s3
+board_check = true
+board_build.mcu = esp32s3
+build_flags =
+  ${esp32_base.build_flags}
+  ${sensor_base.build_flags}
+  -I variants/phyless_xiao_s3
+  -I variants/xiao_s3
+  -I src/helpers/remote
+  -UENV_INCLUDE_GPS
+  -D SEEED_XIAO_S3
+  -D PIN_VBAT_READ=1
+  -D PIN_USER_BTN=-1
+  -D PIN_STATUS_LED=21
+  -D P_LORA_DIO_1=-1
+  -D P_LORA_NSS=-1
+  -D PIN_BOARD_SDA=D6
+  -D PIN_BOARD_SCL=D7
+  -D WIFI_SSID='"replace-with-your-ssid"'
+  -D WIFI_PWD='"replace-with-your-password"'
+  -D KISS_MODEM_HOST='"meshcore-radio.local"'
+  -D KISS_TCP_PORT=8001
+build_src_filter =
+  ${esp32_base.build_src_filter}
+  +<../variants/phyless_xiao_s3>
+  +<helpers/remote/RemoteKissRadio.cpp>
+  +<helpers/sensors>
+lib_deps =
+  ${esp32_base.lib_deps}
+  ${sensor_base.lib_deps}
+
+[env:Phyless_Xiao_S3_repeater]
+extends = Phyless_Xiao_S3
+build_src_filter =
+  ${Phyless_Xiao_S3.build_src_filter}
+  +<../examples/simple_repeater/*.cpp>
+build_flags =
+  ${Phyless_Xiao_S3.build_flags}
+  -D ADVERT_NAME='"PHY-less ESP32 Repeater"'
+  -D ADVERT_LAT=0.0
+  -D ADVERT_LON=0.0
+  -D ADMIN_PASSWORD='"password"'
+  -D MAX_NEIGHBOURS=50
+lib_deps =
+  ${Phyless_Xiao_S3.lib_deps}
+  ${esp32_ota.lib_deps}
+
+[env:Phyless_Xiao_S3_room]
+extends = Phyless_Xiao_S3
+build_src_filter =
+  ${Phyless_Xiao_S3.build_src_filter}
+  +<../examples/simple_room_server/*.cpp>
+build_flags =
+  ${Phyless_Xiao_S3.build_flags}
+  -D ADVERT_NAME='"PHY-less ESP32 Room"'
+  -D ADVERT_LAT=0.0
+  -D ADVERT_LON=0.0
+  -D ADMIN_PASSWORD='"password"'
+  -D ROOM_PASSWORD='"hello"'
+lib_deps =
+  ${Phyless_Xiao_S3.lib_deps}
+  ${esp32_ota.lib_deps}
+
+[env:Phyless_Xiao_S3_client]
+extends = Phyless_Xiao_S3
+build_src_filter =
+  ${Phyless_Xiao_S3.build_src_filter}
+  +<helpers/esp32/*.cpp>
+  +<helpers/ui/NullDisplayDriver.cpp>
+  +<helpers/ui/MomentaryButton.cpp>
+  +<../examples/companion_radio/*.cpp>
+  +<../examples/companion_radio/ui-new/*.cpp>
+build_flags =
+  ${Phyless_Xiao_S3.build_flags}
+  -I examples/companion_radio/ui-new
+  -D MAX_CONTACTS=350
+  -D MAX_GROUP_CHANNELS=40
+  -D OFFLINE_QUEUE_SIZE=256
+  -D DISPLAY_CLASS=NullDisplayDriver
+  -D ENABLE_USB_INTERFACE
+lib_deps =
+  ${Phyless_Xiao_S3.lib_deps}
+  densaugeo/base64 @ ~1.4.0

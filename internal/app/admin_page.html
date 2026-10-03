@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MeshCore host administration</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:1000px;margin:auto;padding:24px;background:#101a28;color:#edf4ff}
+section{border:1px solid #52657e;border-radius:8px;padding:18px;margin:18px 0}button,input,select,textarea{font:inherit;margin:5px;padding:8px}
+textarea{display:block;width:95%;min-height:180px;font:14px monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.warning{color:#ffd18a}.error{color:#ff9b9b}label{display:block}button:disabled{opacity:.5}a{color:#5ee0bd}
+</style></head><body>
+<h1>Host administration</h1>
+<p>Monitor host roles and configure the native bot through its existing owner console.
+The companion radio's WiFi, firmware, physical sensors and identities belong to that radio, not this host.</p>
+<p class="warning">Use localhost or a trusted TLS tunnel. Plain HTTP exposes the login credential, session and source/private data.
+An authenticated session grants owner access to bot settings, source and scoped backups. Reusing a role admin password also exposes that role's credential if HTTP is intercepted.
+Never paste private keys or service credentials into the console.</p>
+<section><label>Configured host admin password or token <input id="token" type="password" autocomplete="current-password" maxlength="256"></label>
+<button id="login">Connect</button><button id="logout">Logout / forget session</button><span id="session">Disconnected</span>
+<p>Login sends this credential once; subsequent requests use a random ten-minute session retained only in this tab. Four sessions and five login attempts per minute are allowed.</p></section>
+<section><h2>Roles and capabilities</h2><button id="monitor">Refresh host monitoring</button><pre id="monitoring"></pre>
+<p>Host role selection, listeners, MQTT and PHY authority remain in the operator's host configuration; activate those changes with an explicit service restart.
+This page never overwrites that configuration. Running state is shown below; bot settings and source save through native durable helpers.</p></section>
+<section><h2>Relay and room role configuration</h2>
+<label>Running role <select id="host-role"></select></label><button id="role-read">Read name, policy and radio</button>
+<label>Display name <input id="host-role-name" maxlength="31"></label><button id="role-name-save">Save role name</button>
+<label>Role forwarding policy <select id="host-repeat"><option>off</option><option>on</option></select></label><button id="role-repeat-save">Save repeat policy</button>
+<label>Scoped role command <input id="role-command" maxlength="160" value="get name" size="60"></label><button id="role-run">Run role command</button>
+<pre id="role-detail">Role owner controls are enabled only when the host provides its existing role command adapter.</pre>
+<p>These commands use the running relay/room engine and its durable save helpers, not a second configuration store.
+Names preserve identities. Read help for path-hash and advert intervals; native bounds remain authoritative.
+Shared PHY, credentials, identities, ACLs and restart are unavailable here. Companion settings remain in the native app/CLI.</p></section>
+<section><h2>Native bot configuration</h2><button id="bot-status">Read bot status and policy</button>
+<label>Bot display name <input id="name" maxlength="31"></label><button id="name-save">Save bot name</button>
+<label>Grant <select id="grant"><option>shared</option><option>home</option><option>reminders</option><option>channel-wait</option><option>discovery</option></select>
+<select id="grant-value"><option>off</option><option>on</option></select></label><button id="grant-save">Save grant</button>
+<p>Grant revocation fences live work; read native replies for persistence failures. HTTPS uses the already provisioned host service; this page cannot provision credentials.</p></section>
+<section><h2>Lua command source</h2><button id="source-status">Read source API and durable selection</button>
+<label>Lua draft (1..4096 UTF-8 bytes)<textarea id="source" spellcheck="false"></textarea></label>
+<button id="draft-download">Download draft</button><button id="upload">Upload / resume exact draft</button><button id="install">Verify and install uploaded snapshot</button>
+<pre id="upload-info">No snapshot uploaded.</pre>
+<p>Upload saves resumable staging chunks. Install changes the Lua command set and may cancel running work. Later editor changes are not included in the uploaded snapshot.
+Use the owner CLI to read durable source, roll back, recover or install packages outside this editor's envelope. Wasm is unavailable here.</p></section>
+<section><h2>Scoped owner console</h2>
+<label>Native command (160 printable ASCII bytes)<input id="command" value="help" maxlength="160" size="60"></label><button id="run">Run</button>
+<p>Bot diagnostics, grants, source and scoped <code>data</code> export/stage/restore commands use the existing owner API.
+Backups contain private values; use <code>mast_cli.py --unix-socket … data-export/data-restore</code> for verified files.
+There is no whole-host import/export. Role identities, private keys, passwords, channel provisioning and radio retuning are not accepted here.</p>
+<p>The native MeshCore app connects to the companion TCP endpoint for chats, contacts, channels and role-specific radio administration.
+Use the local owner CLI for additional host-role settings reported by its help.</p></section>
+<section aria-live="polite"><button id="inspect">Inspect affected outcome</button><pre id="result"></pre>
+<p class="warning">Accepted means pending. A lost reply blocks writes in this tab; no automatic retry.
+Inspection unlocks only a matching durable source hash and terminal status. Other unknown writes require scoped readback through the owner CLI; do not repeat them.</p></section>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let token='',expires=0,busy=false,nativeOwner=false,uncertain=false,uploaded=null,pending=null,roleOwners=[];
+const readOnly=/^(?:help(?: (?:bot|source|data|role|stats))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|name|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|shared|home|reminders|events|channel-wait|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch))?|read \d+)|data (?:help|status|read [0-9a-f]{16} \d+))$/;
+const writeOnly=/^(?:bot (?:name [\x20-\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|cancel)|source (?:begin [0-9a-f]{16} [0-9]{1,4} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel|rollback|remove|retry|help [\x20-\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel) [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$/;
+const roleRead=/^(?:help(?: (?:get|set|stats))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\.info|radio|freq|tx|stats|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval|rxdelay|txdelay|direct\.txdelay|af|dutycycle))$/;
+const roleWrite=/^set (?:name [\x20-\x7e]{1,31}|repeat (?:on|off)|path\.hash\.mode [012]|advert\.interval [0-9]{1,3}|flood\.advert\.interval [0-9]{1,3})$/;
+const hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
+const digest=async b=>hex(new Uint8Array(await crypto.subtle.digest('SHA-256',b)));
+function controls(){
+  for(const id of ['monitor','bot-status','source-status','run','inspect']) $(id).disabled=busy||!token||(id!=='monitor'&&!nativeOwner);
+  for(const id of ['name-save','grant-save','upload','install']) $(id).disabled=busy||!token||!nativeOwner||uncertain||(id==='install'&&!uploaded);
+  const role=roleOwners.includes($('host-role').value);
+  for(const id of ['role-read','role-run']) $(id).disabled=busy||!token||!role;
+  for(const id of ['role-name-save','role-repeat-save']) $(id).disabled=busy||!token||!role||uncertain;
+  $('host-role').disabled=busy||!token||!roleOwners.length;
+  $('inspect').disabled=busy||!token||(!nativeOwner&&!pending?.role);
+  $('login').disabled=busy; $('logout').disabled=busy; $('source').disabled=false;
+}
+async function request(path,body=''){
+  if(path!=='/admin/login'&&(!token||Date.now()>=expires)){token='';nativeOwner=false;throw Error('Host admin session expired; connect again. Draft and unresolved outcome retained.');}
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  try {
+    const response=await fetch(path,{method:'POST',headers:{'X-Host-Admin':token,'X-Host-Intent':'admin-v1'},body,cache:'no-store',credentials:'omit',redirect:'error',signal:controller.signal});
+    const text=await response.text();
+    if(response.status===401){token='';nativeOwner=false;$('session').textContent='Authentication required';}
+    if(response.status>=500) throw Object.assign(Error(text),{unknown:true});
+    if(!response.ok) throw Object.assign(Error(text),{unknown:/unknown|uncertain|partial changes possible/i.test(text)});
+    return text;
+  } catch(e){if(e.name==='AbortError'||e instanceof TypeError)e.unknown=true;throw e;}
+  finally{clearTimeout(timer);}
+}
+async function command(text){
+  if(!/^[\x20-\x7e]{1,160}$/.test(text))throw Error('Command requires 1..160 printable ASCII bytes.');
+  if(!readOnly.test(text)&&!writeOnly.test(text))throw Error('Unsupported host admin command. Credentials, private keys and radio provisioning are unavailable over HTTP; no request sent.');
+  const write=!readOnly.test(text);
+  if(write){
+    if(uncertain)throw Error('Prior write outcome unknown; inspect affected state. No write sent.');
+    pending={command:text,snapshot:uploaded?{...uploaded}:null};
+  }
+  try{
+    const reply=await request('/admin/command',text);
+    if(/^Error:/.test(reply))throw Error(reply);
+    if(/UNKNOWN|outcome unknown|partial changes possible/i.test(reply))throw Object.assign(Error(reply),{unknown:true});
+    return reply;
+  }catch(e){if(e.unknown&&write){uncertain=true;uploaded=null;}throw e;}
+}
+async function action(work){
+  if(busy)return;busy=true;controls();$('result').textContent='Working; writes are never retried.';
+  try{$('result').textContent=await work();$('result').className='';}
+  catch(e){$('result').textContent=e.message+(e.unknown?' Outcome unknown; inspect before another write.':'');$('result').className='error';}
+  finally{busy=false;controls();}
+}
+async function write(text){
+  if(!writeOnly.test(text))throw Error('Unsupported host admin write; no request sent. Use the permitted owner CLI for credential/provisioning operations.');
+  if(uncertain)throw Error('Prior write outcome unknown; no write sent.');
+  if(!window.confirm('Send this native setting change? A lost reply is not safe to repeat.'))return 'Cancelled; no command sent.';
+  return command(text);
+}
+async function monitor(){
+  const value=JSON.parse(await request('/admin/status'));
+  nativeOwner=value.capabilities.native_owner===true;
+  roleOwners=Array.isArray(value.capabilities.role_owner_commands)?value.capabilities.role_owner_commands.filter(role=>['room','repeater'].includes(role)):[];
+  const selected=$('host-role').value;
+  $('host-role').replaceChildren();
+  for(const role of roleOwners){const option=document.createElement('option');option.value=role;option.textContent=role;$('host-role').appendChild(option);}
+  if(roleOwners.includes(selected))$('host-role').value=selected;
+  $('monitoring').textContent=JSON.stringify(value,null,2);
+  return 'Monitoring connected. Native bot owner '+(nativeOwner?'available':'disabled')+'; role owners: '+(roleOwners.join(', ')||'unavailable')+'.';
+}
+async function roleCommand(role,text){
+  if(!roleOwners.includes(role))throw Error('Owner commands are unavailable for this role.');
+  if(!/^[\x20-\x7e]{1,160}$/.test(text)||(!roleRead.test(text)&&!roleWrite.test(text)))throw Error('Unsupported role command; secrets, identity and shared-radio changes are unavailable over HTTP. No request sent.');
+  const write=!roleRead.test(text);
+  if(write){
+    if(uncertain)throw Error('Prior write outcome unknown; inspect the affected role before another write.');
+    pending={role,command:text};
+  }
+  try{return await request('/admin/role/'+role,text);}
+  catch(e){if(e.unknown&&write)uncertain=true;throw e;}
+}
+async function roleChange(role,text){
+  if(!roleWrite.test(text))throw Error('Unsupported role write; no request sent.');
+  if(uncertain)throw Error('Prior write outcome unknown; no request sent.');
+  if(!window.confirm('Change '+role+' through its native durable owner engine? A lost reply is not safe to repeat.'))return 'Cancelled; no role write sent.';
+  const reply=await roleCommand(role,text);
+  $('role-detail').textContent=role+': '+reply;
+  return reply;
+}
+$('host-role').onchange=controls;
+$('role-read').onclick=()=>action(async()=>{
+  const role=$('host-role').value,lines=[];
+  for(const text of ['get name','get repeat','get radio','stats'])lines.push(text+': '+await roleCommand(role,text));
+  $('role-detail').textContent=role+'\n'+lines.join('\n');return $('role-detail').textContent;
+});
+$('role-name-save').onclick=()=>action(()=>roleChange($('host-role').value,'set name '+$('host-role-name').value));
+$('role-repeat-save').onclick=()=>action(()=>roleChange($('host-role').value,'set repeat '+$('host-repeat').value));
+$('role-run').onclick=()=>action(()=>{const role=$('host-role').value,text=$('role-command').value;return roleRead.test(text)?roleCommand(role,text):roleChange(role,text);});
+$('login').onclick=()=>action(async()=>{
+  const credential=$('token').value;$('token').value='';
+  token=await request('/admin/login',credential);
+  if(!/^[0-9a-f]{64}$/.test(token)){token='';throw Error('Invalid host admin session response.');}
+  expires=Date.now()+600000;
+  const reply=await monitor();$('session').textContent='Authenticated session: ten minutes, retained in this tab only';return reply;
+});
+$('logout').onclick=()=>action(async()=>{
+  try{if(token)return await request('/admin/logout');return 'Disconnected';}
+  finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; draft and unresolved outcome retained';$('monitoring').textContent='';}
+});
+$('monitor').onclick=()=>action(monitor);
+$('bot-status').onclick=()=>action(async()=>await command('bot status')+'\n'+await command('bot policy'));
+$('name-save').onclick=()=>action(()=>{const name=$('name').value;if(!/^[\x20-\x39\x3b-\x7e]{1,31}$/.test(name))throw Error('Name requires 1..31 printable ASCII bytes without colon.');return write('bot name '+name);});
+$('grant-save').onclick=()=>action(()=>write('bot '+$('grant').value+' '+$('grant-value').value));
+$('source-status').onclick=()=>action(async()=>await command('source api')+'\n'+await command('source status')+'\n'+await command('source hash'));
+$('run').onclick=()=>action(()=>{const text=$('command').value;return readOnly.test(text)?command(text):write(text);});
+$('draft-download').onclick=()=>{
+  const url=URL.createObjectURL(new Blob([$('source').value],{type:'text/plain'})),a=document.createElement('a');a.href=url;a.download='meshcore-host-draft.lua';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+$('upload').onclick=()=>action(async()=>{
+  if(uncertain)throw Error('Prior write outcome unknown; no upload sent.');
+  const bytes=new TextEncoder().encode($('source').value);
+  if(!bytes.length||bytes.length>4096||bytes.includes(0)||bytes[0]===27)throw Error('Lua source requires 1..4096 UTF-8 bytes without NUL or bytecode.');
+  if(!/^API named-commands-v1 lua=5\.5\.1 /.test(await command('source api')))throw Error('Supported native Lua API unavailable.');
+  const hash=await digest(bytes),id=hash.slice(0,16),count=Math.ceil(bytes.length/48);
+  if(!window.confirm('Upload this exact draft as resumable staging? Installation is a separate operation.'))return 'Cancelled; no upload sent.';
+  uploaded=null;
+  const ack=await command(`source begin ${id} ${bytes.length} ${hash}`),m=new RegExp('^ACK '+id+' next=(\\d+)$').exec(ack);
+  if(!m||+m[1]>count)throw Error('Invalid upload admission; inspect source status.');
+  for(let n=+m[1];n<count;n++)if(await command(`source chunk ${id} ${n} ${hex(bytes.slice(n*48,(n+1)*48))}`)!==`ACK ${id} next=${n+1}`){uncertain=true;throw Error('Chunk acknowledgement mismatch; inspect before another write.');}
+  uploaded={id,hash,size:bytes.length};$('upload-info').textContent=`Uploaded ${bytes.length} bytes; SHA256 ${hash}. Editor changes are not included.`;
+  return 'Snapshot uploaded; verify and install explicitly.';
+});
+async function inspectSource(){
+  const status=await command('source status'),hash=await command('source hash');
+  const manifest=/^SHA256 ([0-9a-f]{64}) gen=(\d+)$/.exec(hash);
+  if(!manifest)throw Error('Invalid source hash readback; writes remain blocked.');
+  const terminal=/^gen=(\d+) active=[0-3] prev=[0-3] size=(\d+) upload=(?:none|[0-9a-f]{16}) next=\d+\/\d+; source (?:durably saved and active|saved; bot disabled; loads on next enabled boot)$/.exec(status);
+  if(pending?.command==='source commit '+pending.snapshot?.id&&manifest[1]===pending.snapshot.hash&&terminal&&manifest[2]===terminal[1]&&+terminal[2]===pending.snapshot.size){uncertain=false;pending=null;}
+  return status+'\n'+hash+'\n'+(uncertain?'Outcome remains unconfirmed; no writes unlocked.':'Durable selection confirmed.');
+}
+$('install').onclick=()=>action(async()=>{
+  if(!uploaded)throw Error('Upload the exact snapshot first.');
+  if(!window.confirm('Verify and install the uploaded Lua snapshot? Running commands can be cancelled; editor changes are not included.'))return 'Cancelled; no install sent.';
+  const u={...uploaded};
+  if(await command(`source begin ${u.id} ${u.size} ${u.hash}`)!==`ACK ${u.id} next=${Math.ceil(u.size/48)}`)throw Error('Upload changed; no commit sent.');
+  const result=await command('source commit '+u.id);uploaded=null;
+  uncertain=true;
+  for(let n=0;n<30;n++){await new Promise(r=>setTimeout(r,500));const read=await inspectSource();if(!uncertain)return result+'\n'+read;}
+  return 'Activation still pending; writes remain blocked. Inspect source before another write.';
+});
+$('inspect').onclick=()=>action(async()=>{
+  if(pending?.role){
+    const item={...pending},setting=/^set (name|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval) (.+)$/.exec(item.command);
+    if(!setting)return 'Role outcome has no supported exact readback; no writes unlocked.';
+    const result=await roleCommand(item.role,'get '+setting[1]);
+    $('role-detail').textContent=item.role+' get '+setting[1]+': '+result;
+    if(result!=='> '+setting[2])return 'Affected role outcome remains unconfirmed; writes stay blocked.\n'+$('role-detail').textContent;
+    uncertain=false;pending=null;return 'Affected '+item.role+' setting confirmed by exact owner readback; no write was replayed.\n'+$('role-detail').textContent;
+  }
+  if(pending?.command.startsWith('source '))return inspectSource();
+  return await command('bot status')+'\n'+await command('data status')+'\nUnresolved operation: '+(pending?.command||'none')+
+    (uncertain?'\nGeneric status does not confirm this operation; writes stay blocked. Use scoped owner readback.':'');
+});
+controls();
+</script></body></html>

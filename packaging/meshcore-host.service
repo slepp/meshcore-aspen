@@ -1,0 +1,19 @@
+[Unit]
+Description=Independent MeshCore roles on a shared KISS radio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/meshcore-host -config %h/.config/meshcore-host/config.json -state-dir %h/.local/state/meshcore-host
+WorkingDirectory=%h/.local/state/meshcore-host
+EnvironmentFile=-%h/.config/meshcore-host/environment
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=default.target

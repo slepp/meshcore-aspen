@@ -1,0 +1,8 @@
+@seed example:schema=1
+@seed example:note-v1=original
+!note-read
+@restart
+!note-read
+@fault storage
+!note-save write-fails
+!note-read

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "roles": 7,
+  "path_width": 3,
+  "frequency_hz": 912525000,
+  "bandwidth_hz": 250000,
+  "sf": 7,
+  "cr": 5,
+  "tx_dbm": 2,
+  "admin_password": "",
+  "room_password": "",
+  "mast_password": "",
+  "operator_public_key": "REPLACE-WITH-YOUR-64-HEX-VERIFICATION-PUBLIC-KEY",
+  "trusted_companion_public_key": "",
+  "wifi_ssid": "",
+  "wifi_password": "",
+  "wifi_enabled": false
+}

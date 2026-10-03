@@ -1,0 +1,29 @@
+{
+  "replay": [
+    "@context dm alice",
+    "@send !alarm tea 2",
+    "@advance 5000",
+    "!timer-state tea",
+    "@send !alarm cancelled 30",
+    "@cancel",
+    "!timer-cancel cancelled",
+    "@send !alarm reboot 30",
+    "@restart",
+    "!timer-state reboot",
+    "@channel #lab-timers",
+    "@context channel alice Alice",
+    "!wait-channel",
+    "@grant channel-wait on",
+    "@send !wait-channel",
+    "@message channel bob ready"
+  ],
+  "expect": [
+    {"type": "async_reply", "text": "Timer tea claimed"},
+    {"type": "reply", "text": "claimed"},
+    {"type": "async_reply", "text_contains": "cancelled"},
+    {"type": "reply", "text": "cancelled"},
+    {"type": "reply", "text": "pending"},
+    {"type": "reply", "text_contains": "owner grant"},
+    {"type": "async_reply", "kind": "channel", "text": "bob: ready"}
+  ]
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=MQTT broker for MeshCore radio observers
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/libexec/meshcore-mqtt -broker-only -config %h/.config/meshcore-mqtt/config.json
+EnvironmentFile=-%h/.config/meshcore-mqtt/environment
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=default.target
