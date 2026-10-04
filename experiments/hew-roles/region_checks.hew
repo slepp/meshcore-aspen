@@ -1,0 +1,60 @@
+import meshproto.regions;
+
+import wire;
+
+import std.encoding.hex;
+
+import std.encoding.json;
+
+import std.os;
+
+fn main() {
+    let args = os.args();
+    if args.len() > 1 {
+        var table = regions.decode(hex.decode(args[1])).expect("region fixture");
+        var loading: Option<regions.Load> = .None;
+        for i in 2..args.len() {
+            let value = regions.execute(table, loading, args[i], "host-owner-console", 1234);
+            table = value.table;
+            loading = value.loading;
+            var response = json.object();
+            response.set("reply", json.from_string(value.reply)).expect("reply");
+            response.set("state", json.from_string(hex.encode(regions.encode(table).expect("valid region state")))).expect("state");
+            response.set("loading", json.from_bool(loading.is_some())).expect("loading");
+            println(response.stringify().expect("region result"));
+        }
+        return;
+    }
+    var table = regions.empty();
+    let defined = regions.execute(table, .None, "region def can ab edm", "owner", 1234);
+    assert(defined.reply == "*^ F\n can F\n  ab F\n   edm F\n");
+    table = defined.table;
+    table = regions.execute(table, .None, "region home ab", "owner", 1234).table;
+    assert(regions.tree(table) == "* F\n can F\n  ab^ F\n   edm F\n");
+    let encoded = regions.encode(table).expect("encode region table");
+    assert(wire.equal(regions.encode(regions.decode(encoded).expect("decode regions")).expect("re-encode regions"), encoded));
+    for end in 0..encoded.len() {
+        assert(regions.decode(wire.cut(encoded, 0, end)).is_none());
+    }
+    let failed = regions.execute(table, .None, "region put can edm", "owner", 1234);
+    assert(failed.reply == "Err - region parent is missing or cyclic");
+    assert(wire.equal(regions.encode(failed.table).expect("rollback table"), encoded));
+    assert(wire.equal(regions.encode(table).expect("original table"), encoded));
+    var loading = regions.execute(table, .None, "region load", "first", 1234).loading;
+    let denied = regions.execute(table, loading, " north F", "second", 1234);
+    assert(denied.reply == "Err - region load owned by another administrator");
+    loading = regions.execute(table, loading, " north F", "first", 1234).loading;
+    let committed = regions.execute(table, loading, "", "first", 1234);
+    assert(committed.reply == "OK - loaded 1 regions" && committed.table.entries[0].name == "north");
+    var private = regions.empty();
+    let first = hex.decode("0102030405060708090a0b0c0d0e0f10");
+    let second = hex.decode("1112131415161718191a1b1c1d1e1f20");
+    private.entries.push(regions.Entry { id: 1, parent: 0, flags: 128, name: "$rotation", keys: [first, second] });
+    private.next = 2;
+    var packet = wire.packet(0, 15, "rotation fixture".to_bytes());
+    packet.code1 = wire.region_code(second, packet);
+    assert(wire.equal(regions.receive_scope(private, packet).expect("rotation-key admission"), first));
+    private.entries = regions.execute(private, .None, "region denyf $rotation", "owner", 1234).table.entries;
+    assert(private.entries[0].flags == 129 && regions.receive_scope(private, packet).is_none());
+    println("REGION_CHECKS_OK");
+}

@@ -1,0 +1,205 @@
+//! Optional read-only modem sampling. One request at a time, a two-second
+//! deadline, and a 45-second cache. A failed uncorrelated exchange pauses
+//! sampling until a new connection; a late reply cannot become a new sample.
+
+import meshproto.management;
+
+import hostlib.binary;
+
+import std.math;
+
+pub fn packet_score(snr: f64, sf: i64, size: i64) -> f64 {
+    if sf < 7 || sf > 12 {
+        return 0.0;
+    }
+    let floors = [-7.5, -10.0, -12.5, -15.0, -17.5, -20.0];
+    let floor = floors[sf - 7];
+    if snr < floor { return 0.0; }
+    let value = (snr - floor) / 10.0 * (1.0 - size as f64 / 256.0);
+    if value < 0.0 { 0.0 } else if value > 1.0 { 1.0 } else { (value as f32) as f64 }
+}
+
+pub fn receive_delay(base: f64, score: f64, airtime_ms: i64) -> Result<i64, string> {
+    if !base.is_finite() || base < 0.0 || base > 20.0 || !score.is_finite() || airtime_ms < 0 || airtime_ms > 4294967295 {
+        return .Err("invalid receive delay input");
+    }
+    if base == 0.0 { return .Ok(0); }
+    let exponent = ((0.85 as f32) - (score as f32)) as f64;
+    let power = (math.pow((base as f32) as f64, exponent) as f32) as f64;
+    let delay = (power - 1.0) * airtime_ms as f64;
+    if !delay.is_finite() || delay >= 2147483648.0 || delay <= -2147483649.0 {
+        return .Err("receive delay exceeds signed millisecond range");
+    }
+    .Ok(delay as i64)
+}
+
+pub fn receive_hold(delay: i64) -> i64 {
+    if delay < 50 { 0 } else if delay > 32000 { 32000 } else { delay }
+}
+
+pub enum SampleError {
+    Timeout(i64);
+    Malformed(i64);
+    Rejected(i64);
+}
+
+pub type Sampler {
+    current: management.Telemetry;
+    pending: management.Telemetry;
+    sampled: i64;
+    next: i64;
+    position: i64;
+    expected: i64;
+    deadline: i64;
+    revision: i64;
+    tx_ms: i64;
+    tx_sampled: i64;
+    failure: Option<SampleError>;
+}
+
+pub type Poll {
+    sampler: Sampler;
+    command: i64;
+}
+
+pub fn create() -> Sampler {
+    Sampler { current: management.unavailable(), pending: management.unavailable(), sampled: -1, next: 0, position: 0, expected: 0, deadline: 0, revision: 0, tx_ms: 0, tx_sampled: -1, failure: .None }
+}
+
+pub fn poll(value: Sampler, now: i64, other_control_pending: bool) -> Poll {
+    var sample = value;
+    if sample.sampled >= 0 && now - sample.sampled > 45000 {
+        sample.current = management.unavailable();
+        if sample.tx_sampled >= 0 && now - sample.tx_sampled <= 45000 {
+            sample.current.flags = 32;
+            sample.current.tx_ms = sample.tx_ms;
+        }
+        sample.sampled = -1;
+        sample.revision += 1;
+    }
+    if sample.tx_sampled >= 0 && now - sample.tx_sampled > 45000 {
+        sample.tx_sampled = -1;
+        sample.current.flags = sample.current.flags & 479;
+        sample.current.tx_ms = 0;
+        sample.revision += 1;
+    }
+    if sample.expected != 0 && now >= sample.deadline {
+        sample.failure = .Some(SampleError.Timeout(sample.expected));
+        sample.expected = 0;
+    }
+    if sample.failure.is_some() || sample.expected != 0 || other_control_pending || now < sample.next {
+        return Poll { sampler: sample, command: 0 };
+    }
+    let commands = [19, 16, 13, 20, 18];
+    let command = commands[sample.position];
+    sample.expected = command | 128;
+    sample.deadline = now + 2000;
+    Poll { sampler: sample, command: command }
+}
+
+pub fn next_deadline(sample: Sampler, now: i64, other_control_pending: bool) -> i64 {
+    var due: i64 = 9223372036854775807;
+    if sample.sampled >= 0 { due = sample.sampled + 45001; }
+    if sample.tx_sampled >= 0 && sample.tx_sampled + 45001 < due { due = sample.tx_sampled + 45001; }
+    if sample.expected != 0 {
+        if sample.deadline < due { due = sample.deadline; }
+    } else if sample.failure.is_none() && !other_control_pending {
+        let next = if sample.next > now { sample.next } else { now };
+        if next < due { due = next; }
+    }
+    due
+}
+
+fn integer(data: bytes, start: i64, end: i64) -> i64 {
+    binary.integer(binary.slice(data, start, end).expect("validated modem payload")).expect("modem scalar")
+}
+
+pub fn accept(value: Sampler, frame: bytes, now: i64) -> Sampler {
+    var sample = value;
+    if frame.len() == 41 && (frame[0] & 15) == 6 && (frame[0] >> 4) < 3 && frame[1] == 164 && frame[2] == 1 && integer(frame, 3, 7) != 0 && frame[40] <= 1 {
+        sample.tx_ms = integer(frame, 11, 15);
+        sample.tx_sampled = now;
+        sample.current.tx_ms = sample.tx_ms;
+        sample.current.flags = sample.current.flags | 32;
+        sample.revision += 1;
+        return sample;
+    }
+    if sample.expected == 0 || sample.failure.is_some() || frame.len() < 2 || frame[0] != 6 {
+        return sample;
+    }
+    if now >= sample.deadline {
+        sample.failure = .Some(SampleError.Timeout(sample.expected));
+        sample.expected = 0;
+        return sample;
+    }
+    if frame[1] as i64 != sample.expected && frame[1] != 241 {
+        return sample;
+    }
+    let lengths = [4, 4, 3, 4, 14];
+    if frame[1] == 241 {
+        if frame.len() != 3 || (frame[2] != 3 && frame[2] != 5) {
+            sample.failure = .Some(SampleError.Rejected(sample.expected));
+            sample.expected = 0;
+            return sample;
+        }
+    } else if frame.len() != lengths[sample.position] {
+        sample.failure = .Some(SampleError.Malformed(sample.expected));
+        sample.expected = 0;
+        return sample;
+    } else {
+        var pending = sample.pending;
+        match sample.position {
+            0 => {
+                pending.battery_mv = integer(frame, 2, 4);
+                if pending.battery_mv != 0 {
+                    pending.flags = pending.flags | 1;
+                }
+            }
+            1 => {
+                pending.noise_dbm = integer(frame, 2, 4) as i16 as i64;
+                pending.flags = pending.flags | 2;
+            }
+            2 => {
+                pending.current_rssi = frame[2] as i8 as i64;
+                pending.flags = pending.flags | 4;
+            }
+            3 => {
+                let tenths = integer(frame, 2, 4) as i16 as i64;
+                pending.temperature_c = (((tenths as f32) / (10 as f32)) as f64);
+                pending.flags = pending.flags | 8;
+            }
+            4 => {
+                pending.received = integer(frame, 2, 6);
+                pending.sent = integer(frame, 6, 10);
+                pending.errors = integer(frame, 10, 14);
+                pending.flags = pending.flags | 16;
+            }
+            _ => {}
+        }
+        sample.pending = pending;
+    }
+    sample.expected = 0;
+    sample.position += 1;
+    if sample.position == 5 {
+        sample.current = sample.pending;
+        sample.current.flags = sample.current.flags | 256;
+        if sample.tx_sampled >= 0 && now - sample.tx_sampled <= 45000 {
+            sample.current.flags = sample.current.flags | 32;
+            sample.current.tx_ms = sample.tx_ms;
+        }
+        sample.pending = management.unavailable();
+        sample.position = 0;
+        sample.sampled = now;
+        sample.next = now + 15000;
+        sample.revision += 1;
+    }
+    sample
+}
+
+pub fn error_text(error: SampleError) -> string {
+    match error {
+        SampleError.Timeout(code) => f"modem telemetry response={code} timed out; sampling paused until reconnect",
+        SampleError.Malformed(code) => f"modem telemetry response={code} has invalid length; sampling paused until reconnect",
+        SampleError.Rejected(code) => f"modem telemetry response={code} rejected; sampling paused until reconnect",
+    }
+}

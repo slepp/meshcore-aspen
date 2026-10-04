@@ -1,0 +1,106 @@
+//! Checked, owned byte slices and little-endian integers for stream protocols.
+
+import std.encoding.binary as endian;
+
+import std.math;
+
+/// Returns an independent byte value; invalid ranges never index the input.
+pub fn slice(data: bytes, start: i64, end: i64) -> Option<bytes> {
+    if start < 0 || end < start || end > data.len() {
+        return .None;
+    }
+    var out = bytes.new();
+    for index in start..end {
+        out.push(data[index]);
+    }
+    .Some(out)
+}
+
+/// Encodes the low `size` bytes of an integer; sizes outside 0..8 are rejected.
+pub fn little(value: i64, size: i64) -> Option<bytes> {
+    if size < 0 || size > 8 {
+        return .None;
+    }
+    slice(endian.put_u64_le(value), 0, size)
+}
+
+/// Decodes at most eight bytes; an eight-byte value preserves its signed bits.
+pub fn integer(data: bytes) -> Option<i64> {
+    if data.len() > 8 {
+        return .None;
+    }
+    var padded = data;
+    for index in data.len()..8 {
+        padded.push(0);
+    }
+    .Some(endian.get_u64_le(padded))
+}
+
+/// Decodes exactly four IEEE-754 little-endian bytes; non-finite values fail.
+pub fn finite_float32(data: bytes) -> Option<f64> {
+    if data.len() != 4 {
+        return .None;
+    }
+    let bits = integer(data).expect("four-byte scalar");
+    let exponent = (bits >> 23) & 255;
+    var mantissa = bits & 8388607;
+    let sign = (bits & 2147483648) << 32;
+    if exponent == 255 {
+        return .None;
+    }
+    if exponent == 0 {
+        if mantissa == 0 {
+            return .Some(math.from_bits(sign as u64));
+        }
+        var power: i64 = -126;
+        while mantissa < 8388608 {
+            mantissa *= 2;
+            power -= 1;
+        }
+        return .Some(math.from_bits((sign | ((power + 1023) << 52) | ((mantissa & 8388607) << 29)) as u64));
+    }
+    .Some(math.from_bits((sign | ((exponent + 896) << 52) | (mantissa << 29)) as u64))
+}
+
+/// Rounds to binary32 and encodes four bytes; overflow and non-finite values fail.
+pub fn float32(value: f64) -> Option<bytes> {
+    let rounded = (value as f32) as f64;
+    if !rounded.is_finite() {
+        return .None;
+    }
+    let bits = rounded.to_bits() as i64;
+    let sign = if bits < 0 {
+        2147483648
+    } else {
+        0
+    };
+    if rounded == 0.0 {
+        return little(sign, 4);
+    }
+    let power = ((bits >> 52) & 2047) - 1023;
+    let mantissa = ((bits >> 29) & 8388607) | 8388608;
+    let payload = if power < -126 {
+        mantissa >> (-126 - power)
+    } else {
+        ((power + 127) << 23) | (mantissa & 8388607)
+    };
+    little(sign | payload, 4)
+}
+
+pub fn finite_float64(data: bytes) -> Option<f64> {
+    if data.len() != 8 {
+        return .None;
+    }
+    let value = math.from_bits(integer(data).expect("eight-byte scalar") as u64);
+    if !value.is_finite() {
+        return .None;
+    }
+    .Some(value)
+}
+
+pub fn float64(value: f64) -> Option<bytes> {
+    if !value.is_finite() {
+        return .None;
+    }
+    little(value.to_bits() as i64, 8)
+}

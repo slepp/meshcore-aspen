@@ -1,0 +1,291 @@
+//! Checked MQTT5 property blocks and variable integers; no transport or broker state.
+import hostlib.binary;
+
+import hostlib.mqtt;
+
+import std.encoding.utf8;
+
+pub type Integer {
+    value: i64;
+    end: i64;
+}
+
+pub fn variable(data: bytes, start: i64) -> Result<Integer, string> {
+    var value: i64 = 0;
+    var at = start;
+    var multiplier: i64 = 1;
+    while at < data.len() && at - start < 4 {
+        let digit = data[at] as i64;
+        at += 1;
+        value += (digit & 127) * multiplier;
+        if digit < 128 {
+            return .Ok(Integer { value: value, end: at });
+        }
+        multiplier *= 128;
+    }
+    .Err("malformed MQTT variable integer")
+}
+
+pub fn variable_bytes(value: i64) -> bytes {
+    assert(value >= 0 && value <= 268435455);
+    var out = bytes.new();
+    var remaining = value;
+    loop {
+        let digit = remaining % 128;
+        remaining /= 128;
+        out.push((digit | if remaining > 0 {
+            128
+        } else {
+            0
+        }) as u8);
+        if remaining == 0 {
+            break;
+        }
+    }
+    out
+}
+
+pub fn integer(data: bytes, at: i64, size: i64) -> Result<Integer, string> {
+    if at < 0 || at + size > data.len() {
+        return .Err("truncated MQTT property integer");
+    }
+    var value: i64 = 0;
+    for index in at .. at + size {
+        value = value * 256 + data[index] as i64;
+    }
+    .Ok(Integer { value: value, end: at + size })
+}
+
+pub fn big(value: i64, size: i64) -> bytes {
+    var out = bytes.new();
+    for index in 0..size {
+        out.push(((value >> ((size - index - 1) * 8)) & 255) as u8);
+    }
+    out
+}
+
+pub type Field {
+    value: bytes;
+    end: i64;
+}
+
+pub fn field(data: bytes, start: i64) -> Result<Field, string> {
+    let size = integer(data, start, 2)?;
+    let value = binary.slice(data, size.end, size.end + size.value).ok_or("truncated MQTT property field")?;
+    .Ok(Field { value: value, end: size.end + size.value })
+}
+
+pub fn text(data: bytes) -> Result<string, string> {
+    match utf8.decode(data) {
+        .Ok(value) => {
+            if !mqtt.text_valid(value) {
+                return .Err("invalid MQTT property text");
+            }
+            .Ok(value)
+        }
+        .Err(_) => .Err("invalid MQTT property text"),
+    }
+}
+
+pub fn string_field(value: string) -> bytes {
+    var out = big(value.to_bytes().len(), 2);
+    out.append(value.to_bytes());
+    out
+}
+
+pub type Properties {
+    session_expiry: i64;
+    session_expiry_set: bool;
+    message_expiry: i64;
+    will_delay: i64;
+    receive_maximum: i64;
+    maximum_packet: i64;
+    alias_maximum: i64;
+    alias: i64;
+    alias_set: bool;
+    problem_info: bool;
+    response_info: bool;
+    payload_format: i64;
+    content_type: string;
+    response_topic: string;
+    correlation: bytes;
+    authentication_method: string;
+    authentication_data: bytes;
+    user: bytes;
+    identifiers: Vec<i64>;
+}
+
+pub fn empty() -> Properties {
+    Properties { session_expiry: 0, session_expiry_set: false, message_expiry: 0, will_delay: 0, receive_maximum: 65535, maximum_packet: 0, alias_maximum: 0, alias: 0, alias_set: false, problem_info: true, response_info: false, payload_format: -1, content_type: "", response_topic: "", correlation: bytes.new(), authentication_method: "", authentication_data: bytes.new(), user: bytes.new(), identifiers: Vec.new() }
+}
+
+pub type Block {
+    properties: Properties;
+    end: i64;
+}
+
+fn allowed(id: i64, kind: i64) -> bool {
+    if id == 38 {
+        return true;
+    }
+    if id == 1 || id == 2 || id == 3 || id == 8 || id == 9 {
+        return kind == 3 || kind == 16;
+    }
+    if id == 11 {
+        return kind == 3 || kind == 8;
+    }
+    if id == 35 {
+        return kind == 3;
+    }
+    if id == 17 {
+        return kind == 1 || kind == 14;
+    }
+    if id == 21 || id == 22 {
+        return kind == 1 || kind == 15;
+    }
+    if id == 23 || id == 25 || id == 33 || id == 34 || id == 39 {
+        return kind == 1;
+    }
+    if id == 24 {
+        return kind == 16;
+    }
+    if id == 28 {
+        return kind == 14;
+    }
+    if id == 31 {
+        return (kind >= 4 && kind <= 7) || kind == 14 || kind == 15;
+    }
+    false
+}
+
+pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
+    let size = variable(data, start)?;
+    let end = size.end + size.value;
+    if end > data.len() {
+        return .Err("truncated MQTT property block");
+    }
+    // Bound every field to the declared block, not the later packet payload.
+    let bounded = binary.slice(data, 0, end).expect("property block range");
+    var at = size.end;
+    var props = empty();
+    while at < end {
+        let begin = at;
+        let id = bounded[at] as i64;
+        at += 1;
+        if !allowed(id, kind) {
+            return .Err("property is invalid for this MQTT packet");
+        }
+        if id == 1 || id == 23 || id == 25 {
+            let value = integer(bounded, at, 1)?;
+            at = value.end;
+            if id == 1 {
+                props.payload_format = value.value;
+            }
+            if id == 23 {
+                props.problem_info = value.value != 0;
+            }
+            if id == 25 {
+                props.response_info = value.value == 1;
+            }
+        } else if id == 2 || id == 17 || id == 24 || id == 39 {
+            let value = integer(bounded, at, 4)?;
+            at = value.end;
+            if id == 2 {
+                props.message_expiry = value.value;
+            }
+            if id == 17 {
+                props.session_expiry = value.value;
+                props.session_expiry_set = true;
+            }
+            if id == 24 {
+                props.will_delay = value.value;
+            }
+            if id == 39 {
+                props.maximum_packet = value.value;
+            }
+        } else if id == 33 || id == 34 || id == 35 {
+            let value = integer(bounded, at, 2)?;
+            at = value.end;
+            if id == 33 {
+                props.receive_maximum = value.value;
+            }
+            if id == 34 {
+                props.alias_maximum = value.value;
+            }
+            if id == 35 {
+                props.alias = value.value;
+                props.alias_set = true;
+            }
+        } else if id == 11 {
+            let value = variable(bounded, at)?;
+            at = value.end;
+            props.identifiers.push(value.value);
+        } else {
+            let value = field(bounded, at)?;
+            at = value.end;
+            if id == 9 {
+                props.correlation = value.value;
+            } else if id == 22 {
+                props.authentication_data = value.value;
+            } else {
+                let decoded = text(value.value)?;
+                if id == 3 {
+                    props.content_type = decoded;
+                }
+                if id == 8 {
+                    props.response_topic = decoded;
+                }
+                if id == 21 {
+                    props.authentication_method = decoded;
+                }
+                if id == 38 {
+                    let second = field(bounded, at)?;
+                    let _ = text(second.value)?;
+                    at = second.end;
+                    props.user.append(binary.slice(bounded, begin, at).expect("user property range"));
+                }
+            }
+        }
+    }
+    .Ok(Block { properties: props, end: end })
+}
+
+pub fn publication(props: Properties, expiry: i64) -> Result<bytes, string> {
+    var out = bytes.new();
+    if props.payload_format >= 0 {
+        out.push(1);
+        out.push(props.payload_format as u8);
+    }
+    if expiry > 0 {
+        out.push(2);
+        out.append(big(expiry, 4));
+    }
+    if !props.content_type.is_empty() {
+        out.push(3);
+        out.append(string_field(props.content_type));
+    }
+    if !props.response_topic.is_empty() {
+        out.push(8);
+        out.append(string_field(props.response_topic));
+    }
+    if !props.correlation.is_empty() {
+        out.push(9);
+        out.append(big(props.correlation.len(), 2));
+        out.append(props.correlation);
+    }
+    for identifier in props.identifiers {
+        out.push(11);
+        out.append(variable_bytes(identifier));
+    }
+    if props.alias > 0 {
+        out.push(35);
+        out.append(big(props.alias, 2));
+    }
+    out.append(props.user);
+    if out.len() > 268435455 {
+        return .Err("MQTT publication properties exceed the wire limit");
+    }
+    var encoded = variable_bytes(out.len());
+    encoded.append(out);
+    .Ok(encoded)
+}

@@ -1,0 +1,58 @@
+{
+  "command": "MESHCORE_POLICY_ORACLE=.tmp/parity-oracle/events.jsonl TMPDIR=.tmp go test -race -count=1 -json ./internal/policy",
+  "coverage": [
+    "256 path encoding decisions",
+    "12 originated priority frames",
+    "49 airtime/RNG delay vectors across4 role/direction cases",
+    "Observed RNG minimum and exclusive maximum for all196 role/direction comparisons",
+    "21 signed RX delay vectors",
+    "192 SNR score vectors",
+    "8 hop gates",
+    "8 reply-route/scope combinations",
+    "27 loop threshold boundaries across3 widths and3 modes",
+    "5 native runtime AF bit patterns retained across2 host role preference/JSON profiles",
+    "2 public region key/HMAC vectors"
+  ],
+  "native_events_sha256": "a5644d2d9e7b920f1d6d88e0b00ad6587aa982a63277c3576d449455c899d975",
+  "not_covered": [
+    "full application interactions between region admission, loops and capacity",
+    "advert schedules",
+    "private multi-key provisioning",
+    "region persistence",
+    "actual MyMesh application execution",
+    "32-bit rollover",
+    "physical RF"
+  ],
+  "package": "meshcore.local/meshcore/internal/policy",
+  "result_artifact": "testdata/parity/policy-test.jsonl",
+  "result_sha256": "9f593d0e3cebec348216b9046982d21f8b6179373fa4c8ca690850cdd54286f5",
+  "row_ids": [
+    "path.encoding",
+    "path.trace-origin",
+    "scheduler.originated-priorities",
+    "scheduler.role-delay",
+    "scheduler.rx-floatpow-regression",
+    "scheduler.snr-score",
+    "routing.scope-hop-reply",
+    "routing.public-key-code",
+    "routing.loop-thresholds",
+    "preferences.runtime-af-fidelity"
+  ],
+  "schema_version": 1,
+  "source_sha256": {
+    "go.mod": "be06ee4bc29cfe2588fdb861a53543b0449764621934ef930f4f44e310aebdbc",
+    "go.sum": "5edd44ded70312fabf3b7008737f1245b2bab6d8797bae443459489e5dd920e1",
+    "internal/policy/adverts.go": "5bf73fb76808ff3b56d77700831060f6a20a0c6aafed1ecd9d17253d8a4898b1",
+    "internal/policy/context.go": "1da714f825b77d0ea21c0c550537493c91bf99d1838efba22045e556a4dd8f72",
+    "internal/policy/decisions_test.go": "00d09a5f00d3d4b9c81da3ae3ed3e1d974204b7b0d076aee7e88f8cccf75211a",
+    "internal/policy/doc.go": "ddbab9bb2a6c44e8843d48596f26339b0ccd53e21e059249fd5df395b0cd7120",
+    "internal/policy/native_test.go": "6a54daccd2a2209207a7dbc2a5644845c37b5705dd551a27f79a0a2af361ea2d",
+    "internal/policy/path.go": "dd7933b724089906fa738ccfb4bd008d8d48a5c687dd9bb360361526dcfa71e5",
+    "internal/policy/preferences.go": "92e9afc54e5133cf286c93d0ab116766d8a43feea101031256c6cd58a7dd3e48",
+    "internal/policy/preferences_test.go": "2127f85f3308f879f795c0d07f199b53494187b297280f4139bde7dcaa75756c",
+    "internal/policy/regions.go": "4ba88e6b6b71102cb3febeaed9d3f8473ccad2268c01a6652c3aeceb74ff7fc1",
+    "internal/policy/timing.go": "8dbbaab6e6b2c74eb5d3978b4cc93e5d98abdefd93b7c5df1620956a8ea6efc0"
+  },
+  "status": "passed-covered-vectors",
+  "test": "TestNativeDifferential"
+}

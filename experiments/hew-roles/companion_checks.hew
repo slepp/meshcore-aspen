@@ -1,0 +1,73 @@
+import companion;
+
+import companion_radio;
+
+import std.os;
+
+import std.io;
+
+import std.encoding.hex;
+
+import std.string;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 3);
+    let base = companion.open(args[1], hex.decode(args[2])).expect("open companion");
+    let radio = companion_radio.create(base);
+    while let .Some(line) = io.read_line() {
+        let words = line.trim().split(" ");
+        if words.is_empty() {
+            continue;
+        }
+        match words[0] {
+            "CONNECT" => println(f"CONNECTED {base.connect(string.to_int(words[1]).expect("client")).expect("connect")}"),
+            "DISCONNECT" => {
+                base.disconnect(string.to_int(words[1]).expect("client")).expect("disconnect");
+                println("DISCONNECTED");
+            }
+            "CMD" => {
+                for event in base.command(string.to_int(words[1]).expect("client"), hex.decode(words[2]), string.to_int(words[3]).expect("time")).expect("command") {
+                    println(f"FRAME {event.client} {hex.encode(event.frame)}");
+                }
+                println("END");
+            }
+            "JOURNAL" => {
+                for event in base.journal(hex.decode(words[1]), bytes.new(), 0).expect("journal") {
+                    println(f"FRAME {event.client} {hex.encode(event.frame)}");
+                }
+                println("END");
+            }
+            "SEND" => {
+                let client = string.to_int(words[1]).expect("client");
+                let plan = radio.prepare(client, hex.decode(words[2]), string.to_int(words[3]).expect("wall time"), string.to_int(words[4]).expect("monotonic")).expect("prepare");
+                if !plan.raw.is_empty() {
+                    println(f"TX {plan.priority} {plan.delay} {hex.encode(plan.raw)}");
+                    if words[5] == "1" {
+                        radio.transmitted(plan.raw).expect("origin dedup");
+                    }
+                }
+                for event in radio.admitted(plan, words[5] == "1", string.to_int(words[4]).expect("monotonic")).expect("admission") {
+                    println(f"FRAME {event.client} {hex.encode(event.frame)}");
+                }
+                println("END");
+            }
+            "RX" => {
+                let batch = radio.receive_packet(hex.decode(words[1]), string.to_int(words[2]).expect("snr"), string.to_int(words[3]).expect("rssi"), string.to_int(words[4]).expect("wall"), string.to_int(words[5]).expect("monotonic")).expect("RF ingress");
+                for tx in batch.transmissions {
+                    println(f"TX {tx.priority} {tx.delay} {hex.encode(tx.raw)}");
+                }
+                for event in batch.events {
+                    println(f"FRAME {event.client} {hex.encode(event.frame)}");
+                }
+                println("END");
+            }
+            "SNAPSHOT" => println(base.snapshot().expect("snapshot")),
+            "STOP" => {
+                assert(base.shutdown().expect("shutdown"));
+                break;
+            }
+            _ => panic("unknown checker command"),
+        }
+    }
+}

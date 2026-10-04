@@ -1,0 +1,55 @@
+//! Native companion receive and retransmit timing; source admission is separate.
+import meshproto.companion_state as state;
+
+import std.encoding.json;
+
+import std.crypto.crypto;
+
+import std.math;
+
+import wire;
+
+pub fn receive_delay(prefs: json.Value, snr: f64, sf: i64, size: i64, airtime: i64) -> i64 {
+    let base = state.decimal(prefs, "rxdelay") as f32;
+    if base == 0.0 || sf < 7 || sf > 12 {
+        return 0;
+    }
+    let threshold = -7.5 - ((sf - 7) as f64) * 2.5;
+    var score = ((snr - threshold) / 10.0) * (1.0 - (size as f64) / 256.0);
+    if score < 0.0 {
+        score = 0.0;
+    }
+    if score > 1.0 {
+        score = 1.0;
+    }
+    let exponent = (0.85 as f32) - (score as f32);
+    let power = math.pow(base as f64, exponent as f64) as f32;
+    let delay = ((power as f64) - 1.0) * (airtime as f64);
+    if !delay.is_finite() || delay < 50.0 {
+        return 0;
+    }
+    if delay > 32000.0 {
+        32000
+    } else {
+        delay as i64
+    }
+}
+
+pub fn retransmit_delay(prefs: json.Value, direct: bool, airtime: i64) -> i64 {
+    let factor = state.decimal(prefs, if direct {
+        "direct_txdelay"
+    } else {
+        "txdelay"
+    }) as f32;
+    let product = (airtime as f32) * factor;
+    if (product as f64) > 858993458.0 {
+        return 0;
+    }
+    let maximum = 5 * (product as i64) + 1;
+    let limit = (4294967296 / maximum) * maximum;
+    var random = wire.uint(crypto.random_bytes(4).expect("retransmit random bytes"));
+    while random >= limit {
+        random = wire.uint(crypto.random_bytes(4).expect("retransmit random bytes"));
+    }
+    random % maximum
+}

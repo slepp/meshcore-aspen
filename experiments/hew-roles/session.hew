@@ -1,0 +1,696 @@
+import wire;
+
+import transport;
+import meshproto.packet_log;
+
+import std.encoding.hex;
+
+import hostlib.framing;
+
+import hostlib.supervised_io as duplex;
+
+import hostlib.binary;
+
+pub fn frame(tag: i64, body: bytes) -> bytes {
+    framing.length_encode(wire.cat(wire.byte(tag), body), 4096).expect("bounded worker frame")
+}
+
+pub actor WorkerDecoder {
+    var buffer: bytes;
+    var broken: bool = false;
+    mailbox 16;
+    receive fn feed(chunk: bytes) -> Vec<bytes> {
+        if broken {
+            return Vec.new();
+        }
+        match framing.length_feed(buffer, chunk, 4096) {
+            .Ok(batch) => {
+                buffer = batch.pending;
+                batch.frames
+            }
+            .Err(_) => {
+                broken = true;
+                buffer = bytes.new();
+                Vec.new()
+            }
+        }
+    }
+    receive fn healthy() -> bool {
+        !broken
+    }
+}
+
+pub fn response_command(command: i64) -> i64 {
+    // Signal-report SET acknowledges with the GET response, not SET | 0x80.
+    if command == 25 {
+        154
+    } else {
+        command | 128
+    }
+}
+
+fn command_name(command: i64) -> string {
+    match command {
+        15 => "GET_AIRTIME",
+        25 => "SET_SIGNAL_REPORT",
+        32 => "HELLO",
+        34 => "CONFIG_GET",
+        35 => "SOURCE_POLICY",
+        37 => "CAPACITY",
+        38 => "ROLE_PRESENCE",
+        _ => f"command-{command}",
+    }
+}
+
+pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, command: i64, body: bytes) -> bytes {
+    let stage = command_name(command);
+    let response = response_command(command);
+    let expected = hex.encode(wire.byte(response));
+    match duplex.write(fd, wire.kiss(port, 6, wire.cat(wire.byte(command), body))) {
+        .Ok(_) => {}
+        .Err(error) => {
+            let at = transport.now();
+            println(f"MODEM_REQUEST_FAILED stage={stage} port={port} expected_opcode={expected} actual=write-failed committed={error.committed} at_ms={at} reason={to_string(error.error)}");
+            return bytes.new();
+        }
+    }
+    let deadline = transport.monotonic() + (if command == 35 { 5000 } else { 2000 });
+    var last_reply = bytes.new();
+    while transport.running() && transport.monotonic() < deadline {
+        let data = transport.modem_read(fd, 50);
+        if data[0] == 2 {
+            let at = transport.now();
+            println(f"MODEM_REQUEST_FAILED stage={stage} port={port} expected_opcode={expected} actual=connection-closed at_ms={at}");
+            return bytes.new();
+        }
+        if data[0] == 1 {
+            var matching: Option<bytes> = .None;
+            for packet in decoder.feed(wire.cut(data, 1, data.len())).expect("negotiation decoder") {
+                if packet.len() >= 2 && packet[0] as i64 == ((port << 4) | 6) {
+                    last_reply = wire.cut(packet, 1, packet.len());
+                    if packet[1] as i64 == response {
+                        matching = .Some(wire.cut(packet, 2, packet.len()));
+                    }
+                    if packet[1] == 241 {
+                        let at = transport.now();
+                        println(f"MODEM_REQUEST_FAILED stage={stage} port={port} expected_opcode={expected} actual={hex.encode(last_reply)} at_ms={at} reason=hardware-error");
+                        return bytes.new();
+                    }
+                }
+                if !decoder.defer_native(packet).expect("negotiation RF backlog") {
+                    println("MODEM_REQUEST_FAILED reason=negotiation-rf-backlog-full limit=512");
+                    return bytes.new();
+                }
+            }
+            if let .Some(reply) = matching {
+                return reply;
+            }
+        }
+    }
+    let actual = if last_reply.is_empty() {
+        "none"
+    } else {
+        hex.encode(last_reply)
+    };
+    let reason = if transport.running() {
+        "timeout"
+    } else {
+        "shutdown"
+    };
+    let at = transport.now();
+    println(f"MODEM_REQUEST_FAILED stage={stage} port={port} expected_opcode={expected} actual={actual} at_ms={at} reason={reason}");
+    bytes.new()
+}
+
+pub type Negotiated {
+    generations: Vec<i64>;
+    phy_generations: Vec<i64>;
+    airtime: bytes;
+    initial_frames: Vec<bytes>;
+    parser: framing.SlipState;
+}
+
+fn reject(stage: string, port: i64, expected: string, actual: bytes) -> Option<Negotiated> {
+    let observed = if actual.is_empty() {
+        "none"
+    } else {
+        hex.encode(actual)
+    };
+    let at = transport.now();
+    println(f"NEGOTIATION_REJECTED stage={stage} port={port} expected={expected} actual={observed} at_ms={at}");
+    .None
+}
+
+pub fn negotiate(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool) -> Option<Negotiated> {
+    negotiate_ports(fd, decoder, profile, need_worker, 3)
+}
+
+pub fn negotiate_ports(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64) -> Option<Negotiated> {
+    negotiate_factors(fd, decoder, profile, need_worker, ports, Vec.new())
+}
+
+pub fn negotiate_factors(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
+    assert(ports == 3 || ports == 4);
+    negotiate_factor(fd, decoder, profile, need_worker, ports, factors)
+}
+
+/// One ordinary KISS source, without requesting an aggregate logical-port session.
+pub fn negotiate_source(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, factor: f64) -> Option<Negotiated> {
+    decoder.buffer_native().expect("ordinary source RF backlog");
+    let encoded = match binary.float32(factor) {
+        .Some(value) => value,
+        .None => {
+            return .None;
+        }
+    };
+    if factor < 0.0 {
+        return .None;
+    }
+    negotiate_factor(fd, decoder, profile, true, 1, [encoded])
+}
+
+fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
+    assert(factors.is_empty() || factors.len() == ports);
+    var generations: Vec<i64> = Vec.new();
+    var phy_generations: Vec<i64> = Vec.new();
+    for port in 0..ports {
+        let hello = request(fd, decoder, port, 32, hex.decode("0100"));
+        if hello.len() != 12 || hello[0] != 1 || hello[1] != 0 {
+            return reject("HELLO", port, "12-bytes,version=1,reason=0", hello);
+        }
+        let generation = wire.uint(wire.cut(hello, 2, 6));
+        if generation == 0 {
+            return reject("HELLO", port, "nonzero-source-generation", hello);
+        }
+        generations.push(generation);
+        let signal = request(fd, decoder, port, 25, wire.byte(1));
+        if !wire.equal(signal, wire.byte(1)) {
+            return reject("SET_SIGNAL_REPORT", port, "response=9a,enabled=01", signal);
+        }
+        if port == 0 {
+            let capacity = request(fd, decoder, 0, 37, if ports == 1 {
+                wire.byte(1)
+            } else {
+                hex.decode("0101")
+            });
+            if ports == 1 {
+                if capacity.len() != 3 || capacity[0] != 1 || capacity[1] == 0 {
+                    return reject("CAPACITY", 0, "version=1,external-slots>0,ordinary-source", capacity);
+                }
+            } else if capacity.len() != 5 || capacity[0] != 1 || capacity[1] == 0 || (capacity[3] as i64) < ports || capacity[4] != 1 {
+                return reject("CAPACITY", 0, f"version=1,external-slots>0,logical-ports>={ports},session-granted=1;sidecar-radio_session=per_role", capacity);
+            }
+        }
+        let config = request(fd, decoder, port, 34, hex.decode("0100"));
+        if config.len() != 24 || config[0] != 1 || config[1] != 0 || wire.uint(wire.cut(config, 2, 6)) == 0 || !wire.equal(wire.cut(config, 6, 24), profile) {
+            return reject("CONFIG_GET", port, "24-bytes,version=1,reason=0,nonzero-generation,profile=" + hex.encode(profile), config);
+        }
+        phy_generations.push(wire.uint(wire.cut(config, 2, 6)));
+        let bits = if factors.is_empty() { hex.decode("0000803f") } else { factors[port] };
+        let value = match binary.finite_float32(bits) {
+            .Some(value) => value,
+            .None => return reject("SOURCE_POLICY", port, "finite-nonnegative-binary32", bits),
+        };
+        if value < 0.0 { return reject("SOURCE_POLICY", port, "finite-nonnegative-binary32", bits); }
+        let factor = request(fd, decoder, port, 35, wire.cat(wire.cat(wire.byte(1), wire.le(generation, 4)), bits));
+        let expected = wire.cat(hex.decode("0100"), bits);
+        if !wire.equal(factor, expected) {
+            return reject("SOURCE_POLICY", port, hex.encode(expected), factor);
+        }
+    }
+    var airtime = wire.le(0, 4);
+    if need_worker {
+        var previous: i64 = 0;
+        for batch in 0..32 {
+            let size = 1 + batch * 8;
+            let count = if size + 8 <= 256 {
+                8
+            } else {
+                256 - size
+            };
+            var queries = bytes.new();
+            for i in 0..count {
+                queries.append(wire.kiss(0, 6, wire.cat(wire.byte(15), wire.byte(size + i))));
+            }
+            if duplex.write(fd, queries).is_err() {
+                return reject("GET_AIRTIME", 0, f"write-batch-first-size={size},count={count}", bytes.new());
+            }
+            let deadline = transport.monotonic() + 2000;
+            var received: i64 = 0;
+            while received < count && transport.running() && transport.monotonic() < deadline {
+                let data = transport.modem_read(fd, 50);
+                if data[0] == 2 {
+                    return reject("GET_AIRTIME", 0, f"connected,first-size={size},count={count},received={received}", bytes.new());
+                }
+                if data[0] == 1 {
+                    for reply in decoder.feed(wire.cut(data, 1, data.len())).expect("airtime decoder") {
+                        if reply.len() >= 2 && reply[0] == 6 && reply[1] == 143 {
+                            if reply.len() != 6 || received >= count {
+                                return reject("GET_AIRTIME", 0, f"6-byte-frame,remaining={count - received}", reply);
+                            }
+                            let value = wire.cut(reply, 2, 6);
+                            let ms = wire.uint(value);
+                            if ms == 0 || ms > 3600000 || ms < previous {
+                                return reject("GET_AIRTIME", 0, f"size={size + received},1..3600000ms,previous={previous}", value);
+                            }
+                            previous = ms;
+                            airtime.append(value);
+                            received = received + 1;
+                        } else if reply.len() >= 2 && reply[0] == 6 && reply[1] == 241 {
+                            return reject("GET_AIRTIME", 0, f"size={size + received},response=8f,not-hardware-error", reply);
+                        } else if !decoder.defer_native(reply).expect("airtime RF backlog") {
+                            return reject("GET_AIRTIME", 0, "negotiation RF backlog below 512 frames", reply);
+                        }
+                    }
+                }
+            }
+            if received != count {
+                return reject("GET_AIRTIME", 0, f"first-size={size},count={count},received={received},deadline=2000ms", bytes.new());
+            }
+        }
+    }
+    .Some(Negotiated { generations: generations, phy_generations: phy_generations, airtime: airtime, initial_frames: decoder.take_native().expect("negotiation RF backlog"), parser: decoder.parser_state().expect("negotiation parser state") })
+}
+
+pub fn announce(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, generation: i64, key: bytes) {
+    let reply = request(fd, decoder, port, 38, wire.cat(wire.cat(wire.byte(1), wire.byte(port)), key));
+    if reply.len() != 8 || reply[0] != 1 || reply[1] != 0 || wire.uint(wire.cut(reply, 2, 6)) != generation {
+        println(f"ROLE_PRESENCE port={port} overlap=unknown");
+    } else if reply[7] != 0 {
+        println(f"ROLE_PRESENCE port={port} warning_flags={reply[7]}");
+    }
+}
+
+pub fn statistics(generation: i64, data: bytes) -> bytes {
+    if data.len() != 39 || data[0] != 1 || wire.uint(wire.cut(data, 1, 5)) == 0 || data[38] > 1 {
+        return bytes.new();
+    }
+    var body = wire.cat(wire.le(generation, 4), wire.cut(data, 1, 9));
+    body.append(wire.cut(data, 21, 25));
+    body.append(wire.cut(data, 9, 13));
+    body.append(wire.cut(data, 25, 29));
+    body.append(wire.cut(data, 13, 21));
+    body.append(wire.cut(data, 29, 39));
+    frame(5, body)
+}
+
+pub type Pending {
+    port: i64;
+    id: i64;
+    token: i64;
+    deadline: i64;
+    raw: bytes;
+    estimated_ms: i64;
+}
+
+pub type Confirmation {
+    port: i64;
+    raw: bytes;
+}
+
+pub type Outcome {
+    port: i64;
+    raw: bytes;
+    value: packet_log.Outcome;
+}
+
+pub type PolicyResult {
+    port: i64;
+    factor: bytes;
+    ok: bool;
+}
+
+pub fn same_factor(left: bytes, right: bytes) -> bool {
+    let a = match binary.finite_float32(left) { .Some(value) => value, .None => return false };
+    let b = match binary.finite_float32(right) { .Some(value) => value, .None => return false };
+    a == b
+}
+
+pub fn result(token: i64, state: i64, reason: i64, metrics: bytes) -> bytes {
+    frame(3, wire.cat(wire.cat(wire.cat(wire.le(token, 4), wire.byte(state)), wire.byte(reason)), wire.cat(metrics, wire.byte(if state == 2 || state == 3 {
+        1
+    } else {
+        0
+    }))))
+}
+
+pub actor Session {
+    let fd: ChildRef<duplex.Endpoint>;
+    let generations: Vec<i64>;
+    var ids: Vec<i64>;
+    var pending: Vec<Pending>;
+    var online: bool = true;
+    var refresh: bool = false;
+    var confirmations: Vec<Confirmation> = Vec.new();
+    var outcomes: Vec<Outcome> = Vec.new();
+    var dropped_outcomes: i64 = 0;
+    var airtime: bytes = bytes.new();
+    var failure_reported: bool = false;
+    var policy_factors: Vec<bytes> = [hex.decode("0000803f"), hex.decode("0000803f"), hex.decode("0000803f")];
+    var policy_pending: Vec<bytes> = [bytes.new(), bytes.new(), bytes.new()];
+    var policy_deadlines: Vec<i64> = [0, 0, 0];
+    var policy_failed: Vec<bool> = [false, false, false];
+    var policy_events: Vec<PolicyResult> = Vec.new();
+    mailbox 32;
+    fn failed(stage: string, details: string) {
+        if !failure_reported {
+            let at = transport.now();
+            println(f"MODEM_SESSION_FAILED stage={stage} at_ms={at} {details}");
+            failure_reported = true;
+        }
+    }
+    fn record(port: i64, raw: bytes, id: i64, state: i64, reason: i64, metrics: bytes) {
+        if state != 0 && state != 3 && state != 4 { return; }
+        if outcomes.len() >= 96 {
+            dropped_outcomes += 1;
+            failed("TX_LOG_OUTCOMES", "reason=queue-full limit=96; terminal record could not be delivered");
+            online = false;
+            return;
+        }
+        outcomes.push(Outcome { port: port, raw: raw, value: packet_log.Outcome {
+            generation: generations[port], job: id, state: state, reason: reason,
+            queue_ms: wire.uint(wire.cut(metrics, 0, 4)), rf_ms: wire.uint(wire.cut(metrics, 4, 8)),
+            estimated_ms: wire.uint(wire.cut(metrics, 8, 12)) } });
+    }
+    receive fn estimator(table: bytes) -> bool {
+        if table.len() != 1024 { return false; }
+        airtime = table;
+        true
+    }
+    fn estimate(raw: bytes) -> i64 {
+        if airtime.len() == 1024 && raw.len() > 0 && raw.len() <= 255 {
+            return wire.uint(wire.cut(airtime, raw.len() * 4, raw.len() * 4 + 4));
+        }
+        0
+    }
+    fn policy_finish(port: i64, ok: bool, condition: string) {
+        let factor = policy_pending[port];
+        if factor.is_empty() { return; }
+        policy_pending.set(port, bytes.new());
+        policy_deadlines.set(port, 0);
+        if ok {
+            policy_factors.set(port, factor);
+        } else {
+            policy_failed.set(port, true);
+            println(f"ROLE_SOURCE_POLICY_FAILED port={port} generation={generations[port]} factor_bits={hex.encode(factor)} condition={condition}; committed setting retained, role replies suppressed");
+        }
+        policy_events.push(PolicyResult { port: port, factor: factor, ok: ok });
+    }
+    receive fn apply_policy(port: i64, factor: bytes) -> i64 {
+        if port < 0 || port > 1 || !online || policy_failed[port] { return -1; }
+        let value = match binary.finite_float32(factor) {
+            .Some(value) => value,
+            .None => return -1,
+        };
+        if value < 0.0 { return -1; }
+        if !policy_pending[port].is_empty() {
+            return if wire.equal(policy_pending[port], factor) { 0 } else { -1 };
+        }
+        if same_factor(policy_factors[port], factor) { return 1; }
+        policy_pending.set(port, factor);
+        policy_deadlines.set(port, transport.monotonic() + 5000);
+        let request = wire.cat(wire.cat(hex.decode("2301"), wire.le(generations[port], 4)), factor);
+        if let .Err(error) = duplex.write(fd, wire.kiss(port, 6, request)) {
+            policy_finish(port, false, f"write-failed committed={error.committed} reason={to_string(error.error)}");
+            online = false;
+            return -1;
+        }
+        0
+    }
+    receive fn policy_reply(port: i64, reply: bytes, received_at: i64) {
+        if port < 0 || port > 1 || policy_pending[port].is_empty() { return; }
+        if received_at >= policy_deadlines[port] {
+            policy_finish(port, false, "late-response");
+            return;
+        }
+        let valid = reply.len() == 6 && reply[0] == 1 && reply[1] == 0 && wire.equal(wire.cut(reply, 2, 6), policy_pending[port]);
+        policy_finish(port, valid, if valid { "confirmed" } else { "invalid-readback actual=" + hex.encode(reply) });
+    }
+    receive fn policy_results() -> Vec<PolicyResult> {
+        for port in 0..2 {
+            if !policy_pending[port].is_empty() && transport.monotonic() >= policy_deadlines[port] {
+                policy_finish(port, false, "response-timeout");
+            }
+        }
+        let events = policy_events;
+        policy_events = Vec.new();
+        events
+    }
+    receive fn policy_busy() -> bool {
+        !policy_pending[0].is_empty() || !policy_pending[1].is_empty()
+    }
+    receive fn negotiated_factors(factors: Vec<bytes>) {
+        assert(factors.len() == generations.len());
+        for port in 0..3 { policy_factors.set(port, factors[port]); }
+    }
+    receive fn submit(port: i64, packet: bytes, priority: i64, delay: i64, expiry: i64, token: i64) -> i64 {
+        if port < 0 || port >= 3 || priority < 0 || priority > 255 {
+            return 0;
+        }
+        var count: i64 = 0;
+        for p in pending {
+            if p.port == port {
+                count = count + 1;
+            }
+            if token > 0 && p.token == token {
+                failed("TX_SUBMIT", f"port={port} token={token} reason=duplicate-token");
+                online = false;
+                return -1;
+            }
+        }
+        if !online || policy_failed[port] || !policy_pending[port].is_empty() || count >= 32 || ids[port] == 4294967295 || packet.is_empty() || packet.len() > 255 || delay < 0 || delay > 1073741823 || expiry < 0 || expiry > 1073741823 {
+            if !packet.is_empty() && packet.len() <= 255 {
+                record(port, packet, 0, 0, 2, wire.cat(wire.le(0, 8), wire.le(estimate(packet), 4)));
+            }
+            return 0;
+        }
+        let id = ids[port] + 1;
+        ids.set(port, id);
+        let generation = generations[port];
+        let timeout = if expiry > 0 {
+            delay + expiry + 2000
+        } else {
+            delay + 30000
+        };
+        pending.push(Pending { port: port, id: id, token: token, deadline: transport.monotonic() + timeout, raw: packet, estimated_ms: estimate(packet) });
+        var data = wire.cat(wire.byte(33), wire.byte(1));
+        data.append(wire.le(generation, 4));
+        data.append(wire.le(id, 4));
+        data.append(wire.byte(priority));
+        data.append(wire.le(delay, 4));
+        data.append(wire.le(expiry, 4));
+        data.append(packet);
+        if let .Err(error) = duplex.write(fd, wire.kiss(port, 6, data)) {
+            failed("TX_SUBMIT", f"port={port} generation={generation} job={id} committed={error.committed} reason={to_string(error.error)}");
+            online = false;
+            return -1;
+        }
+        let kind = ((packet[0] as i64) >> 2) & 15;
+        let route = (packet[0] as i64) & 3;
+        let at = transport.now();
+        println(f"SUBMITTED port={port} generation={generation} job={id} kind={kind} route={route} at_ms={at}");
+        1
+    }
+    receive fn owns(port: i64, generation: i64, id: i64) -> bool {
+        if port < 0 || port >= generations.len() || generations[port] != generation {
+            return false;
+        }
+        for job in pending {
+            if job.port == port && job.id == id {
+                return true;
+            }
+        }
+        false
+    }
+    receive fn event(port: i64, data: bytes) -> bytes {
+        if data.len() != 23 || data[0] != 1 || data[9] > 4 || port < 0 || port >= 3 || wire.uint(wire.cut(data, 1, 5)) != generations[port] {
+            return bytes.new();
+        }
+        let id = wire.uint(wire.cut(data, 5, 9));
+        let state = data[9] as i64;
+        let reason = data[10] as i64;
+        var keep: Vec<Pending> = Vec.new();
+        var out = bytes.new();
+        for p in pending {
+            if p.id == id && p.port == port {
+                println(f"TX port={port} generation={generations[port]} job={id} state={state} reason={reason}");
+                if state == 1 {
+                    var accepted = p;
+                    accepted.deadline = 0;
+                    keep.push(accepted);
+                } else {
+                    record(port, p.raw, p.id, state, reason, wire.cut(data, 11, 23));
+                    if state == 2 {
+                        if confirmations.len() >= 96 {
+                            failed("TX_CONFIRMATIONS", "reason=queue-full limit=96");
+                            online = false;
+                        } else {
+                            confirmations.push(Confirmation { port: port, raw: p.raw });
+                        }
+                    }
+                    if p.token > 0 {
+                        out = result(p.token, state, reason, wire.cut(data, 11, 23));
+                    }
+                    if state == 0 && reason == 3 {
+                        failed("TX_EVENT", f"port={port} job={id} modem_reason={reason} reason=source-refresh-required");
+                        refresh = true;
+                    }
+                }
+            } else {
+                keep.push(p);
+            }
+        }
+        pending = keep;
+        out
+    }
+    receive fn confirmed() -> Vec<Confirmation> {
+        let out = confirmations;
+        confirmations = Vec.new();
+        out
+    }
+    receive fn outcomes() -> Vec<Outcome> {
+        let out = outcomes;
+        outcomes = Vec.new();
+        if dropped_outcomes != 0 {
+            println(f"PACKET_LOG_OUTCOME_DROPPED count={dropped_outcomes} condition=terminal-queue-full");
+            dropped_outcomes = 0;
+        }
+        out
+    }
+    receive fn queued() -> Vec<i64> {
+        var counts = [0, 0, 0];
+        for job in pending {
+            counts.set(job.port, counts[job.port] + 1);
+        }
+        counts
+    }
+    receive fn outstanding() -> Vec<Pending> {
+        pending
+    }
+    receive fn healthy() -> bool {
+        for p in pending {
+            if p.deadline > 0 && transport.monotonic() >= p.deadline {
+                failed("TX_OUTCOME", f"port={p.port} job={p.id} deadline_ms={p.deadline} reason=deadline");
+                return false;
+            }
+        }
+        online && !refresh
+    }
+    receive fn next_deadline() -> i64 {
+        var due: i64 = 0;
+        for item in pending {
+            if item.deadline > 0 && (due == 0 || item.deadline < due) { due = item.deadline; }
+        }
+        for deadline in policy_deadlines {
+            if deadline > 0 && (due == 0 || deadline < due) { due = deadline; }
+        }
+        due
+    }
+    receive fn disconnect() -> Vec<bytes> {
+        var out: Vec<bytes> = Vec.new();
+        for port in 0..2 { policy_finish(port, false, "connection-closed"); }
+        for p in pending {
+            println(f"TX port={p.port} generation={generations[p.port]} job={p.id} state=4 reason=9");
+            record(p.port, p.raw, p.id, 4, 9, wire.cat(wire.le(0, 8), wire.le(p.estimated_ms, 4)));
+            if p.token > 0 {
+                out.push(result(p.token, 4, 9, wire.le(0, 12)));
+            }
+        }
+        pending = Vec.new();
+        online = false;
+        out
+    }
+    fn fence_port(port: i64) {
+        var keep: Vec<Pending> = Vec.new();
+        for p in pending {
+            if p.port == port {
+                println(f"TX port={port} generation={generations[port]} job={p.id} state=4 reason=9");
+                record(p.port, p.raw, p.id, 4, 9, wire.cat(wire.le(0, 8), wire.le(p.estimated_ms, 4)));
+            } else {
+                keep.push(p);
+            }
+        }
+        pending = keep;
+    }
+    receive fn fence_role(port: i64) {
+        assert(port == 0 || port == 1);
+        fence_port(port);
+    }
+    receive fn fence_worker() {
+        fence_port(2);
+    }
+}
+
+pub fn create(fd: ChildRef<duplex.Endpoint>, generations: Vec<i64>) -> Session {
+    var ids: Vec<i64> = Vec.new();
+    ids.push(0);
+    ids.push(0);
+    ids.push(0);
+    spawn Session(fd: fd, generations: generations, ids: ids, pending: Vec.new())
+}
+
+pub type Reception {
+    port: i64;
+    raw: bytes;
+    metadata: bytes;
+}
+
+pub actor Receivers {
+    var packets: Vec<bytes>;
+    var deadlines: Vec<i64>;
+    mailbox 8;
+    receive fn feed(frame: bytes, now: i64) -> Vec<Reception> {
+        var out: Vec<Reception> = Vec.new();
+        if frame.is_empty() {
+            return out;
+        }
+        let port = (frame[0] as i64) >> 4;
+        let command = (frame[0] as i64) & 15;
+        if port >= packets.len() {
+            return out;
+        }
+        if command == 0 && frame.len() > 1 {
+            if !packets[port].is_empty() {
+                out.push(Reception { port: port, raw: packets[port], metadata: wire.cat(wire.le(0, 8), wire.byte(2)) });
+            }
+            packets.set(port, wire.cut(frame, 1, frame.len()));
+            deadlines.set(port, now + 30);
+        } else if command == 6 && frame.len() == 4 && frame[1] == 249 && !packets[port].is_empty() {
+            let snr = frame[2] as i8 as i64;
+            let rssi = frame[3] as i8 as i64;
+            let metadata = transport.signal(snr, rssi);
+            out.push(Reception { port: port, raw: packets[port], metadata: metadata });
+            packets.set(port, bytes.new());
+        }
+        out
+    }
+    receive fn flush(now: i64) -> Vec<Reception> {
+        var out: Vec<Reception> = Vec.new();
+        for port in 0..packets.len() {
+            if !packets[port].is_empty() && now >= deadlines[port] {
+                out.push(Reception { port: port, raw: packets[port], metadata: wire.cat(wire.le(0, 8), wire.byte(2)) });
+                packets.set(port, bytes.new());
+            }
+        }
+        out
+    }
+    receive fn next_deadline() -> i64 {
+        var due: i64 = 0;
+        for port in 0..packets.len() {
+            if !packets[port].is_empty() && (due == 0 || deadlines[port] < due) {
+                due = deadlines[port];
+            }
+        }
+        due
+    }
+}
+
+pub fn receivers() -> Receivers {
+    var packets: Vec<bytes> = Vec.new();
+    var deadlines: Vec<i64> = Vec.new();
+    for i in 0..4 {
+        packets.push(bytes.new());
+        deadlines.push(0);
+    }
+    spawn Receivers(packets: packets, deadlines: deadlines)
+}

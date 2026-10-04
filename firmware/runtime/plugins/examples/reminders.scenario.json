@@ -1,0 +1,35 @@
+{
+  "replay": [
+    "@context dm alice",
+    "!remind 2s tea",
+    "@grant reminders on",
+    "@clock 1767225600",
+    "@route 1:aa",
+    "!remind 2s tea",
+    "@advance 5000",
+    "!reminders",
+    "!cancel 1",
+    "!remind 5m reboot",
+    "@restart",
+    "@clock 1767225920",
+    "@pump 80",
+    "@route 1:aa",
+    "@pump 800",
+    "!reminders",
+    "@context dm bob",
+    "!reminders",
+    "!cancel 4"
+  ],
+  "expect": [
+    {"type": "reply", "text_contains": "not granted"},
+    {"type": "reply", "text_contains": "#1 pending; due UTC"},
+    {"type": "async_reply", "peer": "alice", "text": "Reminder #1: tea"},
+    {"type": "reply", "text_contains": "1 sent"},
+    {"type": "reply", "text_contains": "#1 sent"},
+    {"type": "reply", "text_contains": "#4 pending"},
+    {"type": "async_reply", "peer": "alice", "text": "Reminder #4: reboot"},
+    {"type": "reply", "text_contains": "4 sent"},
+    {"type": "reply", "text": "No personal reminders"},
+    {"type": "reply", "text_contains": "not found"}
+  ]
+}

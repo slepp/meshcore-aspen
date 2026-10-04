@@ -1,0 +1,58 @@
+package roles
+
+import (
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"testing"
+
+	"meshcore.local/meshcore/internal/policy"
+)
+
+func TestWillowLocationOracle(t *testing.T) {
+	input, output := os.Getenv("MESHCORE_LOCATION_INPUT"), os.Getenv("MESHCORE_LOCATION_OUTPUT")
+	if input == "" || output == "" {
+		t.Skip("isolated location differential paths required")
+	}
+	var commands []string
+	raw, err := os.ReadFile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &commands); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{id: fixedID(1), profile: policy.Repeater,
+		state: diskState{Name: "Hew Room", Preferences: policy.Defaults(policy.Repeater)}}
+	service.state.Preferences.TXDelay = 0
+	service.state.Preferences.DirectTXDelay = 0
+	type step struct {
+		Reply     string
+		Latitude  float64
+		Longitude float64
+		Location  uint8
+		Advert    string
+	}
+	var steps []step
+	for _, command := range commands {
+		reply, _, err := service.commandAt(0, command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A fixed future unique clock removes wall-clock variation from signatures.
+		service.state.Clock = 4294967200
+		advert, err := service.advertisement(true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		steps = append(steps, step{reply, service.state.Latitude, service.state.Longitude,
+			service.state.AdvertLocation, hex.EncodeToString(advert.Payload)})
+	}
+	raw, err = json.Marshal(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,0 +1,145 @@
+import meshproto.observation;
+import std.encoding.hex;
+import std.encoding.json;
+import std.os;
+
+fn config(format: observation.Format) -> observation.Config {
+    var key = bytes.new();
+    let size: i64 = 32;
+    for index in 0..size {
+        key.push(161);
+    }
+    observation.Config { identity: key, format: format, prefix: "/meshcore/",
+        iata: "YYC", origin: "Observer \"test\"", model: "", firmware: "", radio: "", filter: .None }
+}
+
+fn reception(raw: bytes) -> observation.Reception {
+    observation.Reception { raw: raw, timestamp_ms: 1735689600120, sequence: 42,
+        has_signal: true, snr_quarter: 42, rssi: -90 }
+}
+
+fn emit(cfg: observation.Config, item: observation.Reception) {
+    match observation.event(cfg, "fixture", item) {
+        .Ok(text) => println(text),
+        .Err(error) => {
+            var value = json.object();
+            value.set("error", json.from_string(error)).expect("error field");
+            println(value.stringify().expect("error JSON"));
+        }
+    }
+}
+
+fn string_row(text: string) {
+    println(json.from_string(text).stringify().expect("string row"));
+}
+
+fn vectors() {
+    let internal = config(observation.Format.Internal);
+    string_row(observation.topic(internal).expect("internal topic"));
+    string_row(observation.status(internal, "online", 1735689600120).expect("internal status"));
+    let headers: i64 = 256;
+    for header in 0..headers {
+        var raw = bytes.new();
+        raw.push(header as u8);
+        raw.append(hex.decode("000000000001"));
+        emit(internal, reception(raw));
+    }
+    for encoded in ["", "00", "0000", "000000", "00000000", "0000000000",
+                    "01", "0104aa", "01c0", "0181aabbcc0102"] {
+        emit(internal, reception(hex.decode(encoded)));
+    }
+    var large = hex.decode("0100");
+    let maximum: i64 = 185;
+    for index in 0..maximum {
+        large.push(1);
+    }
+    emit(internal, reception(large));
+    var unusual = reception(hex.decode("150001"));
+    unusual.timestamp_ms = -1;
+    emit(internal, unusual);
+    unusual.timestamp_ms = 1735689600120;
+    unusual.has_signal = false;
+    emit(internal, unusual);
+    unusual.has_signal = true;
+    unusual.snr_quarter = -128;
+    unusual.rssi = 127;
+    emit(internal, unusual);
+    for format in [observation.Format.Observer, observation.Format.Capture] {
+        let cfg = config(format);
+        string_row(observation.topic(cfg).expect("public topic"));
+        println(observation.status(cfg, "online", 1735689600120).expect("public status"));
+        let routes: i64 = 4;
+        let widths: i64 = 4;
+        for route in 0..routes {
+            for width in 1..widths {
+                for count in [0, 2] {
+                    var raw = bytes.new();
+                    raw.push((20 | route) as u8);
+                    if route == 0 || route == 3 {
+                        raw.append(hex.decode("01000200"));
+                    }
+                    raw.push((((width - 1) << 6) | count) as u8);
+                    for index in 0..(width * count) {
+                        raw.push(165);
+                    }
+                    raw.append(hex.decode("010203"));
+                    emit(cfg, reception(raw));
+                }
+            }
+        }
+        emit(cfg, reception(hex.decode("2581aabbcc0102")));
+        let end: i64 = 128;
+        for quarter in -128..end {
+            var item = reception(hex.decode("150001"));
+            item.snr_quarter = quarter;
+            emit(cfg, item);
+        }
+        var rejected = reception(hex.decode("150001"));
+        rejected.has_signal = false;
+        emit(cfg, rejected);
+        rejected.has_signal = true;
+        rejected.snr_quarter = -128;
+        rejected.rssi = 127;
+        emit(cfg, rejected);
+        rejected = reception(hex.decode("150001"));
+        rejected.timestamp_ms = 0;
+        emit(cfg, rejected);
+        var filtered = cfg;
+        filtered.filter = .Some(0);
+        emit(filtered, reception(hex.decode("150001")));
+    }
+}
+
+fn checks() {
+    assert(observation.timestamp(1735689600000).expect("whole second") == "2025-01-01T00:00:00Z");
+    assert(observation.timestamp(1735689600001).expect("millisecond") == "2025-01-01T00:00:00.001Z");
+    assert(observation.timestamp(-1).expect("before epoch") == "1969-12-31T23:59:59.999Z");
+    var cfg = config(observation.Format.Observer);
+    cfg.iata = "abc";
+    assert(observation.topic(cfg).is_err());
+    cfg.iata = "YYC";
+    cfg.prefix = "bad/+";
+    assert(observation.topic(cfg).is_err());
+    cfg.prefix = "";
+    assert(observation.topic(cfg).is_ok());
+    cfg.filter = .Some(65536);
+    assert(observation.topic(cfg).is_err());
+    cfg.filter = .None;
+    var reflection = reception(hex.decode("150001"));
+    reflection.snr_quarter = -128;
+    reflection.rssi = 127;
+    assert(!observation.admit(observation.Format.Observer, reflection));
+    assert(observation.admit(observation.Format.Internal, reflection));
+    reflection.rssi = -90;
+    assert(observation.admit(observation.Format.Observer, reflection));
+    println("OBSERVATION_CHECKS_OK");
+}
+
+fn main() {
+    let args = os.args();
+    if args.len() == 2 && args[1] == "vectors" {
+        vectors();
+    } else {
+        checks();
+    }
+}

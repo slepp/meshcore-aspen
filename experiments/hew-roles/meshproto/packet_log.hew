@@ -1,0 +1,37 @@
+import meshproto.observation;
+import std.encoding.json;
+import std.encoding.hex;
+
+pub type Outcome {
+    generation: i64;
+    job: i64;
+    state: i64;
+    reason: i64;
+    queue_ms: i64;
+    rf_ms: i64;
+    estimated_ms: i64;
+}
+
+pub fn entry(raw: bytes, direction: string, local: bool, measured: bool, snr_quarter: i64, rssi: i64, now: i64, outcome: Option<Outcome>) -> bytes {
+    var result = json.object();
+    result.set("time", json.from_string(observation.timestamp(now).expect("packet log timestamp"))).expect("log time");
+    result.set("direction", json.from_string(direction)).expect("log direction");
+    result.set("local_loopback", json.from_bool(local)).expect("log reflection");
+    result.set("raw_packet_hex", json.from_string(hex.encode(raw))).expect("log packet");
+    result.set("snr", if measured && !local {
+        json.from_float((snr_quarter as f64) / 4.0).expect("measured SNR")
+    } else { json.null() }).expect("log SNR");
+    result.set("rssi", if measured && !local { json.from_int(rssi as i8 as i64) } else { json.null() }).expect("log RSSI");
+    if let .Some(value) = outcome {
+        var physical = json.object();
+        physical.set("Generation", json.from_int(value.generation)).expect("log generation");
+        physical.set("JobID", json.from_int(value.job)).expect("log job");
+        physical.set("State", json.from_int(value.state)).expect("log state");
+        physical.set("Reason", json.from_int(value.reason)).expect("log reason");
+        physical.set("QueueWait", json.from_int(value.queue_ms * 1000000)).expect("log queue time");
+        physical.set("RFAirtime", json.from_int(value.rf_ms * 1000000)).expect("log RF time");
+        physical.set("EstimatedAirtime", json.from_int(value.estimated_ms * 1000000)).expect("log estimate");
+        result.set("tx_result", physical).expect("log TX outcome");
+    }
+    (result.stringify().expect("packet log JSON") + "\n").to_bytes()
+}

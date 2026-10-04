@@ -1,0 +1,34 @@
+//! Native companion TCP framing: direction byte and uint16 little-endian size.
+import wire;
+
+pub type Batch {
+    pending: bytes;
+    frames: Vec<bytes>;
+}
+
+pub fn encode(frame: bytes) -> bytes {
+    assert(!frame.is_empty() && frame.len() <= 176);
+    wire.cat(wire.cat(wire.byte(62), wire.le(frame.len(), 2)), frame)
+}
+
+pub fn feed(pending: bytes, chunk: bytes) -> Result<Batch, string> {
+    if pending.len() > 178 || chunk.len() > 4096 {
+        return .Err("companion receive buffer exceeded");
+    }
+    var input = pending;
+    input.append(chunk);
+    var frames: Vec<bytes> = Vec.new();
+    var at: i64 = 0;
+    while input.len() - at >= 3 {
+        let size = wire.uint(wire.cut(input, at + 1, at + 3));
+        if input[at] != 60 || size < 1 || size > 176 {
+            return .Err("companion header has invalid direction or frame length");
+        }
+        if input.len() - at < size + 3 {
+            break;
+        }
+        frames.push(wire.cut(input, at + 3, at + size + 3));
+        at += size + 3;
+    }
+    .Ok(Batch { pending: wire.cut(input, at, input.len()), frames: frames })
+}

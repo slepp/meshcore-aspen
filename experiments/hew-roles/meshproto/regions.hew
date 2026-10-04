@@ -1,0 +1,789 @@
+//! Named region policy, owner-scoped imports and bounded durable records.
+import wire;
+
+import std.crypto.crypto;
+
+import std.encoding.utf8;
+import std.encoding.hex;
+
+pub type Entry {
+    id: i64;
+    parent: i64;
+    flags: i64;
+    name: string;
+    keys: Vec<bytes>;
+}
+
+pub type Table {
+    entries: Vec<Entry>;
+    wildcard: i64;
+    home: i64;
+    next: i64;
+    default_id: i64;
+    managed: bool;
+    default_name: string;
+    default_key: bytes;
+    discovery: i64;
+    legacy_keys: Vec<bytes>;
+    legacy_home: bytes;
+}
+
+pub type Load {
+    owner: string;
+    table: Table;
+    stack: Vec<i64>;
+}
+
+pub type Change {
+    table: Table;
+    loading: Option<Load>;
+    reply: string;
+    changed: bool;
+}
+
+pub fn empty() -> Table {
+    Table { entries: Vec.new(), wildcard: 0, home: 0, next: 1, default_id: 0, managed: false, default_name: "", default_key: bytes.new(), discovery: 0, legacy_keys: Vec.new(), legacy_home: bytes.new() }
+}
+
+pub fn normalized(name: string) -> string {
+    if name.starts_with("#") {
+        name.slice(1, name.len())
+    } else {
+        name
+    }
+}
+
+pub fn lookup(table: Table, name: string) -> i64 {
+    if name == "*" {
+        return -1;
+    }
+    let wanted = normalized(name);
+    var found: i64 = -2;
+    for index in 0..table.entries.len() {
+        let candidate = normalized(table.entries[index].name);
+        if candidate == wanted {
+            return index;
+        }
+        if candidate.starts_with(wanted) {
+            found = index;
+        }
+    }
+    found
+}
+
+pub fn validate(table: Table) -> Result<Table, string> {
+    if table.entries.len() > 32 {
+        return .Err("region table exceeds native capacity 32");
+    }
+    if table.wildcard < 0 || table.wildcard > 255 || table.next < 1 || table.next > 65536 || table.home < 0 || table.home > 65535 || table.default_id < 0 || table.default_id > 65535 || table.discovery < 0 || table.discovery > 4294967295 || table.legacy_keys.len() > 128 {
+        return .Err("invalid region metadata");
+    }
+    if table.default_name.to_bytes().len() > 30 || table.default_name.contains("\0") || (!table.default_key.is_empty() && table.default_key.len() != 16) || (!table.legacy_home.is_empty() && table.legacy_home.len() != 16) {
+        return .Err("default scope name must be at most 30 bytes without NUL");
+    }
+    for key in table.legacy_keys {
+        if key.len() != 16 {
+            return .Err("invalid legacy region key");
+        }
+    }
+    for index in 0..table.entries.len() {
+        let entry = table.entries[index];
+        if entry.id < 1 || entry.id > 65535 || entry.parent < 0 || entry.parent > 65535 || entry.flags < 0 || entry.flags > 255 || entry.name.is_empty() || entry.name.to_bytes().len() > 30 || entry.keys.len() > 4 {
+            return .Err("invalid region identity, name or key count");
+        }
+        for byte in entry.name.to_bytes() {
+            if !(byte == 45 || byte == 36 || byte == 35 || (byte >= 48 && byte <= 57) || byte >= 65) {
+                return .Err("invalid native region name character");
+            }
+        }
+        for key in entry.keys {
+            if key.len() != 16 {
+                return .Err("invalid region identity, name or key count");
+            }
+        }
+        for earlier in 0..index {
+            if entry.id == table.entries[earlier].id || normalized(entry.name) == normalized(table.entries[earlier].name) {
+                return .Err("duplicate region identity or name");
+            }
+        }
+        var parent = entry.parent;
+        var seen: Vec<i64> = [entry.id];
+        while parent != 0 {
+            var next: i64 = -1;
+            for previous in seen {
+                if parent == previous {
+                    return .Err("region parent is missing or cyclic");
+                }
+            }
+            for ancestor in table.entries {
+                if ancestor.id == parent {
+                    next = ancestor.parent;
+                }
+            }
+            if next < 0 {
+                return .Err("region parent is missing or cyclic");
+            }
+            seen.push(parent);
+            parent = next;
+        }
+    }
+    .Ok(table)
+}
+
+pub fn public_key(name: string) -> bytes {
+    wire.cut(crypto.sha256((if name.starts_with("#") {
+        name
+    } else {
+        "#" + name
+    }).to_bytes()), 0, 16)
+}
+
+pub fn keys(entry: Entry) -> Vec<bytes> {
+    if entry.name.starts_with("$") {
+        entry.keys
+    } else {
+        [public_key(entry.name)]
+    }
+}
+
+pub fn first_key(entry: Entry) -> bytes {
+    let available = keys(entry);
+    if available.is_empty() {
+        bytes.new()
+    } else {
+        available[0]
+    }
+}
+
+pub fn activate(saved: Table) -> Result<Table, string> {
+    var table = match validate(saved) { .Ok(value) => value, .Err(error) => return .Err(error) };
+    if table.managed {
+        table.default_key = bytes.new(); table.default_name = "";
+        for entry in table.entries {
+            if entry.id == table.default_id {
+                let key = first_key(entry);
+                if entry.name.starts_with("$") && (key.is_empty() || wire.equal(key, wire.le(0, 16))) {
+                    return .Err("private default region has no usable transport key");
+                }
+                table.default_key = key; table.default_name = entry.name;
+            }
+        }
+    }
+    .Ok(table)
+}
+
+pub fn receive_scope(table: Table, packet: wire.Packet) -> Option<bytes> {
+    for entry in table.entries {
+        if (entry.flags & 1) == 0 {
+            let available = keys(entry);
+            for key in available {
+                if packet.code1 == wire.region_code(key, packet) {
+                    return .Some(available[0]);
+                }
+            }
+        }
+    }
+    for key in table.legacy_keys {
+        if packet.code1 == wire.region_code(key, packet) {
+            return .Some(key);
+        }
+    }
+    .None
+}
+
+pub fn permitted(table: Table) -> Vec<bytes> {
+    var result: Vec<bytes> = Vec.new();
+    for entry in table.entries {
+        if (entry.flags & 1) == 0 { for key in keys(entry) { result.push(key); } }
+    }
+    for key in table.legacy_keys { result.push(key); }
+    result
+}
+
+pub fn home_key(table: Table) -> bytes {
+    for entry in table.entries { if entry.id == table.home { return first_key(entry); } }
+    table.legacy_home
+}
+
+fn key_index(table: Table, wanted: bytes) -> i64 {
+    for i in 0..table.entries.len() {
+        for key in keys(table.entries[i]) { if wire.equal(key, wanted) { return i; } }
+    }
+    -1
+}
+
+fn retain_key(var table: Table, key: bytes) -> Result<Table, string> {
+    if key.is_empty() || key_index(table, key) >= 0 { return .Ok(table); }
+    if key.len() != 16 || table.entries.len() >= 32 || table.next > 65535 {
+        return .Err("region table full");
+    }
+    let name = "$willow-" + hex.encode(key).slice(0, 16);
+    if lookup(table, name) >= 0 { return .Err("generated region name collides with retained name"); }
+    table.entries.push(Entry { id: table.next, parent: 0, flags: 1, name: name, keys: [key] });
+    table.next += 1;
+    .Ok(table)
+}
+
+pub fn override_scopes(original: Table, home: Option<bytes>, default: Option<bytes>,
+    wildcard: Option<bool>, allowed: Option<Vec<bytes>>) -> Result<Table, string> {
+    var table = original;
+    if let .Some(wanted) = allowed {
+        var ids: Vec<i64> = Vec.new();
+        for key in wanted {
+            table = retain_key(table, key)?;
+            let id = table.entries[key_index(table, key)].id;
+            var present = false;
+            for previous in ids { present = present || previous == id; }
+            if !present { ids.push(id); }
+        }
+        var ordered: Vec<Entry> = Vec.new();
+        for id in ids {
+            for item in table.entries {
+                if item.id == id { var entry = item; entry.flags &= ~1; ordered.push(entry); }
+            }
+        }
+        for item in table.entries {
+            var present = false;
+            for id in ids { present = present || id == item.id; }
+            if !present { var entry = item; entry.flags |= 1; ordered.push(entry); }
+        }
+        table.entries = ordered; table.legacy_keys = Vec.new();
+    }
+    if let .Some(key) = home {
+        table = retain_key(table, key)?;
+        table.home = if key.is_empty() { 0 } else { table.entries[key_index(table, key)].id };
+        table.legacy_home = bytes.new();
+    }
+    if let .Some(key) = default {
+        table = retain_key(table, key)?;
+        table.default_id = if key.is_empty() { 0 } else { table.entries[key_index(table, key)].id };
+        table.default_name = if key.is_empty() { "" } else { table.entries[key_index(table, key)].name };
+        table.default_key = key; table.managed = true;
+        if !key.is_empty() && !wire.equal(key, first_key(table.entries[key_index(table, key)])) { table.managed = false; }
+    }
+    if let .Some(flag) = wildcard { table.wildcard = (table.wildcard & ~1) | if flag { 0 } else { 1 }; }
+    validate(table)
+}
+
+fn line(table: Table, id: i64, name: string, flags: i64, depth: i64) -> string {
+    var out = "";
+    for _ in 0..depth {
+        out = out + " ";
+    }
+    out = out + normalized(name);
+    if id == table.home {
+        out = out + "^";
+    }
+    if (flags & 1) == 0 {
+        out = out + " F";
+    }
+    out = out + "\n";
+    for entry in table.entries {
+        if entry.parent == id {
+            out = out + line(table, entry.id, entry.name, entry.flags, depth + 1);
+        }
+    }
+    out
+}
+
+pub fn tree(table: Table) -> string {
+    let out = line(table, 0, "*", table.wildcard, 0);
+    if out.to_bytes().len() <= 159 {
+        out
+    } else {
+        utf8.decode_lossy(wire.cut(out.to_bytes(), 0, 159))
+    }
+}
+
+fn names(table: Table, denied: bool) -> string {
+    var out = if ((table.wildcard & 1) != 0) == denied {
+        "*"
+    } else {
+        ""
+    };
+    var length = out.to_bytes().len();
+    for entry in table.entries {
+        let name = normalized(entry.name);
+        if ((entry.flags & 1) != 0) == denied && length + name.to_bytes().len() + 2 < 160 {
+            if !out.is_empty() {
+                out = out + ",";
+            }
+            out = out + name;
+            length += name.to_bytes().len() + 1;
+        }
+    }
+    if out.is_empty() {
+        "-none-"
+    } else {
+        out
+    }
+}
+
+fn put(var table: Table, name: string, parent: i64) -> Result<Table, string> {
+    if name == "*" {
+        return .Err("region table full");
+    }
+    let index = lookup(table, name);
+    if index >= 0 && normalized(name) == normalized(table.entries[index].name) {
+        var entry = table.entries[index];
+        entry.parent = parent;
+        entry.flags = 0;
+        table.entries.set(index, entry);
+    } else {
+        if table.entries.len() >= 32 || table.next > 65535 {
+            return .Err("region table full");
+        }
+        table.entries.push(Entry { id: table.next, parent: parent, flags: 0, name: name, keys: Vec.new() });
+        table.next += 1;
+    }
+    .Ok(table)
+}
+
+fn identifier(table: Table, index: i64) -> i64 {
+    if index >= 0 {
+        table.entries[index].id
+    } else {
+        0
+    }
+}
+
+fn words(text: string) -> Vec<string> {
+    var result: Vec<string> = Vec.new();
+    for item in text.replace("\t", " ").replace("\r", " ").replace("\n", " ").split(" ") {
+        if !item.is_empty() {
+            result.push(item);
+        }
+    }
+    result
+}
+
+fn unchanged(table: Table, loading: Option<Load>, reply: string) -> Change {
+    Change { table: table, loading: loading, reply: reply, changed: false }
+}
+
+pub fn execute(original: Table, loading: Option<Load>, input: string, owner: string, now: i64) -> Change {
+    if let .Some(active) = loading {
+        return load_line(original, active, input, owner);
+    }
+    let parts = words(input);
+    if parts.len() == 1 {
+        return unchanged(original, .None, tree(original));
+    }
+    if parts.len() < 2 {
+        return unchanged(original, .None, "Err - ??");
+    }
+    var table = original;
+    var reply = "OK";
+    match parts[1] {
+        "load" => {
+            var next = table;
+            next.entries = Vec.new();
+            next.wildcard = 0;
+            next.legacy_keys = Vec.new();
+            return unchanged(original, .Some(Load { owner: owner, table: next, stack: [0, 0, 0, 0, 0, 0, 0, 0] }), "");
+        }
+        "save" => {
+            table.discovery = now;
+        }
+        "list" => {
+            if parts.len() != 3 || (parts[2] != "allowed" && parts[2] != "denied") {
+                return unchanged(original, .None, "Err - use 'allowed' or 'denied'");
+            }
+            reply = names(table, parts[2] == "denied");
+        }
+        "default" => {
+            if parts.len() == 2 {
+                var name = table.default_name;
+                if table.managed {
+                    name = "";
+                    for entry in table.entries {
+                        if entry.id == table.default_id {
+                            name = entry.name;
+                        }
+                    }
+                }
+                return unchanged(original, .None, " default scope is " + if name.is_empty() {
+                    "<null>"
+                } else {
+                    name
+                });
+            }
+            var selected = parts[2];
+            if selected == "<null>" {
+                table.default_key = bytes.new();
+                table.default_name = "";
+                table.default_id = 0;
+            } else {
+                var index = lookup(table, selected);
+                if index < -1 {
+                    table = match put(table, selected, 0) {
+                        .Ok(value) => value,
+                        .Err(_) => return unchanged(original, .None, "Err - region table full"),
+                    };
+                    index = table.entries.len() - 1;
+                }
+                if index == -1 {
+                    table.default_name = "*";
+                    table.default_key = public_key("*");
+                    table.default_id = 0;
+                    table.wildcard = 0;
+                } else {
+                    var entry = table.entries[index];
+                    entry.flags = 0;
+                    table.entries.set(index, entry);
+                    let key = first_key(entry);
+                    if entry.name.starts_with("$") && (key.is_empty() || wire.equal(key, wire.le(0, 16))) {
+                        return unchanged(original, .None, "Err - private default region has no usable transport key");
+                    }
+                    selected = entry.name;
+                    table.default_id = entry.id;
+                    table.default_name = entry.name;
+                    table.default_key = key;
+                }
+            }
+            table.managed = true;
+            reply = " default scope is now " + selected;
+        }
+        "home" => {
+            if parts.len() == 2 {
+                var name = "*";
+                for entry in table.entries {
+                    if entry.id == table.home {
+                        name = entry.name;
+                    }
+                }
+                return unchanged(original, .None, " home is " + name);
+            }
+            let index = lookup(table, parts[2]);
+            if index < -1 {
+                return unchanged(original, .None, "Err - unknown region");
+            }
+            table.home = identifier(table, index);
+            table.legacy_home = bytes.new();
+            reply = " home is now " + if index >= 0 {
+                table.entries[index].name
+            } else {
+                "*"
+            };
+        }
+        "put" => {
+            if parts.len() < 3 {
+                return unchanged(original, .None, "Err - ??");
+            }
+            var parent: i64 = 0;
+            if parts.len() > 3 {
+                let index = lookup(table, parts[3]);
+                if index < -1 {
+                    return unchanged(original, .None, "Err - unknown parent");
+                }
+                parent = identifier(table, index);
+            }
+            table = match put(table, parts[2], parent) {
+                .Ok(value) => value,
+                .Err(_) => return unchanged(original, .None, "Err - unable to put"),
+            };
+            reply = "OK - (flood allowed)";
+        }
+        "allowf" | "denyf" | "get" | "remove" => {
+            if parts.len() < 3 {
+                return unchanged(original, .None, "Err - ??");
+            }
+            let index = lookup(table, parts[2]);
+            if index < -1 {
+                return unchanged(original, .None, "Err - unknown region");
+            }
+            let id = identifier(table, index);
+            var entry = if index >= 0 {
+                table.entries[index]
+            } else {
+                Entry { id: 0, parent: 0, flags: table.wildcard, name: "*", keys: Vec.new() }
+            };
+            if parts[1] == "get" {
+                let flags = if (entry.flags & 1) == 0 {
+                    "F"
+                } else {
+                    ""
+                };
+                for parent in table.entries {
+                    if parent.id == entry.parent {
+                        return unchanged(original, .None, " " + entry.name + " (" + parent.name + ") " + flags);
+                    }
+                }
+                return unchanged(original, .None, " " + entry.name + " " + flags);
+            }
+            if parts[1] == "remove" {
+                if index < 0 {
+                    return unchanged(original, .None, "Err - not empty");
+                }
+                if normalized(parts[2]) != normalized(entry.name) {
+                    return unchanged(original, .None, "Err - not found");
+                }
+                var retained: Vec<Entry> = Vec.new();
+                for item in table.entries {
+                    if item.parent == id {
+                        return unchanged(original, .None, "Err - not empty");
+                    }
+                    if item.id != id {
+                        retained.push(item);
+                    }
+                }
+                table.entries = retained;
+            } else {
+                entry.flags = if parts[1] == "allowf" {
+                    entry.flags & ~1
+                } else {
+                    entry.flags | 1
+                };
+                if index < 0 {
+                    table.wildcard = entry.flags;
+                } else {
+                    table.entries.set(index, entry);
+                }
+            }
+        }
+        "def" => {
+            if parts.len() < 3 {
+                return unchanged(original, .None, "Err - empty def");
+            }
+            var cursor: i64 = 0;
+            for offset in 2..parts.len() {
+                let segment = parts[offset];
+                var name = segment;
+                var jump = "";
+                var has_jump = false;
+                if let .Some(at) = segment.find("|") {
+                    name = segment.slice(0, at);
+                    jump = segment.slice(at + 1, segment.len());
+                    has_jump = true;
+                }
+                if let .Some(at) = name.find(",") {
+                    name = name.slice(0, at);
+                    jump = segment.slice(at + 1, segment.len());
+                    has_jump = true;
+                }
+                if name.is_empty() {
+                    return unchanged(original, .None, "Err - empty name");
+                }
+                if has_jump && jump.is_empty() {
+                    return unchanged(original, .None, "Err - empty jump");
+                }
+                table = match put(table, name, cursor) {
+                    .Ok(value) => value,
+                    .Err(_) => return unchanged(original, .None, "Err - put failed: " + name),
+                };
+                cursor = identifier(table, lookup(table, name));
+                if has_jump {
+                    let index = lookup(table, jump);
+                    if index < -1 {
+                        return unchanged(original, .None, "Err - unknown jump: " + jump);
+                    }
+                    cursor = identifier(table, index);
+                }
+            }
+            reply = tree(table);
+        }
+        _ => return unchanged(original, .None, "Err - unsupported region operation"),
+    }
+    match validate(table) {
+        .Ok(value) => Change { table: value, loading: .None, reply: reply, changed: true },
+        .Err(error) => unchanged(original, .None, "Err - " + error),
+    }
+}
+
+pub fn load_line(original: Table, active: Load, input: string, owner: string) -> Change {
+    if active.owner != owner {
+        return unchanged(original, .Some(active), "Err - region load owned by another administrator");
+    }
+    var load = active;
+    if input.trim().is_empty() {
+        load.table.home = 0;
+        load.table.default_id = 0;
+        load.table.managed = true;
+        load.table.legacy_home = bytes.new();
+        return match validate(load.table) {
+            .Ok(value) => Change { table: value, loading: .None, reply: f"OK - loaded {value.entries.len()} regions", changed: true },
+            .Err(error) => unchanged(original, .Some(active), "Err - " + error),
+        };
+    }
+    let raw = input.to_bytes();
+    var indent: i64 = 0;
+    while indent < raw.len() && raw[indent] == 32 {
+        indent += 1;
+    }
+    if indent == 0 {
+        return unchanged(original, .Some(load), "");
+    }
+    if indent >= 8 {
+        return unchanged(original, .Some(load), "Err - region nesting exceeds 7 levels");
+    }
+    let parts = words(input.slice(indent, input.len()));
+    if parts.is_empty() {
+        return unchanged(original, .Some(load), "");
+    }
+    var name = parts[0];
+    if name.ends_with("^") {
+        name = name.slice(0, name.len() - 1);
+    }
+    var entry = Entry { id: 0, parent: load.stack[indent - 1], flags: if parts.len() > 1 && parts[1] == "F" {
+        0
+    } else {
+        1
+    }, name: name, keys: Vec.new() };
+    if indent > 1 && entry.parent == 0 {
+        return unchanged(original, .Some(load), "Err - missing region parent");
+    }
+    for old in original.entries {
+        if normalized(old.name) == normalized(name) {
+            entry.id = old.id;
+            entry.flags = old.flags;
+            entry.keys = old.keys;
+        }
+    }
+    if entry.id == 0 {
+        if load.table.next > 65535 {
+            return unchanged(original, .Some(load), "Err - region identifiers exhausted");
+        }
+        entry.id = load.table.next;
+    }
+    load.table.entries.push(entry);
+    match validate(load.table) {
+        .Ok(value) => {
+            load.table = value;
+        }
+        .Err(error) => return unchanged(original, .Some(active), "Err - " + error),
+    }
+    if entry.id == load.table.next {
+        load.table.next += 1;
+    }
+    load.stack.set(indent, entry.id);
+    for index in (indent + 1) .. 8 {
+        load.stack.set(index, 0);
+    }
+    unchanged(original, .Some(load), "")
+}
+
+pub fn encode(value: Table) -> Option<bytes> {
+    let table = match validate(value) {
+        .Ok(table) => table,
+        .Err(_) => return .None,
+    };
+    var out = "NGR1".to_bytes();
+    out.append(wire.byte(table.wildcard));
+    out.append(wire.le(table.home, 2));
+    out.append(wire.le(table.next, 4));
+    out.append(wire.le(table.default_id, 2));
+    out.append(wire.byte(if table.managed {
+        1
+    } else {
+        0
+    }));
+    out.append(wire.le(table.discovery, 4));
+    out.append(wire.byte(table.default_name.to_bytes().len()));
+    out.append(table.default_name.to_bytes());
+    out.append(if table.default_key.is_empty() {
+        wire.le(0, 16)
+    } else {
+        table.default_key
+    });
+    out.append(if table.legacy_home.is_empty() {
+        wire.le(0, 16)
+    } else {
+        table.legacy_home
+    });
+    out.append(wire.byte(table.legacy_keys.len()));
+    for key in table.legacy_keys {
+        out.append(key);
+    }
+    out.append(wire.byte(table.entries.len()));
+    for entry in table.entries {
+        out.append(wire.le(entry.id, 2));
+        out.append(wire.le(entry.parent, 2));
+        out.append(wire.byte(entry.flags));
+        out.append(wire.byte(entry.name.to_bytes().len()));
+        out.append(entry.name.to_bytes());
+        out.append(wire.byte(entry.keys.len()));
+        for key in entry.keys {
+            out.append(key);
+        }
+    }
+    .Some(out)
+}
+
+pub fn decode(data: bytes) -> Option<Table> {
+    if data.len() < 53 || data.len() > 8192 || !wire.equal(wire.cut(data, 0, 4), "NGR1".to_bytes()) || data[13] > 1 {
+        return .None;
+    }
+    var table = empty();
+    table.wildcard = data[4] as i64;
+    table.home = wire.uint(wire.cut(data, 5, 7));
+    table.next = wire.uint(wire.cut(data, 7, 11));
+    table.default_id = wire.uint(wire.cut(data, 11, 13));
+    table.managed = data[13] == 1;
+    table.discovery = wire.uint(wire.cut(data, 14, 18));
+    let size = data[18] as i64;
+    if size > 30 || data.len() < 53 + size {
+        return .None;
+    }
+    table.default_name = match utf8.decode(wire.cut(data, 19, 19 + size)) {
+        .Ok(text) => text,
+        .Err(_) => return .None,
+    };
+    var at: i64 = 19 + size;
+    table.default_key = wire.cut(data, at, at + 16);
+    at += 16;
+    if wire.equal(table.default_key, wire.le(0, 16)) {
+        table.default_key = bytes.new();
+    }
+    table.legacy_home = wire.cut(data, at, at + 16);
+    at += 16;
+    if wire.equal(table.legacy_home, wire.le(0, 16)) {
+        table.legacy_home = bytes.new();
+    }
+    let legacy = data[at] as i64;
+    at += 1;
+    if legacy > 128 || data.len() < at + legacy * 16 + 1 {
+        return .None;
+    }
+    for _ in 0..legacy {
+        table.legacy_keys.push(wire.cut(data, at, at + 16));
+        at += 16;
+    }
+    let count = data[at] as i64;
+    at += 1;
+    if count > 32 {
+        return .None;
+    }
+    for _ in 0..count {
+        if data.len() < at + 7 {
+            return .None;
+        }
+        var entry = Entry { id: wire.uint(wire.cut(data, at, at + 2)), parent: wire.uint(wire.cut(data, at + 2, at + 4)), flags: data[at + 4] as i64, name: "", keys: Vec.new() };
+        let length = data[at + 5] as i64;
+        at += 6;
+        if data.len() < at + length + 1 {
+            return .None;
+        }
+        entry.name = match utf8.decode(wire.cut(data, at, at + length)) {
+            .Ok(text) => text,
+            .Err(_) => return .None,
+        };
+        at += length;
+        let keys = data[at] as i64;
+        at += 1;
+        if keys > 4 || data.len() < at + keys * 16 {
+            return .None;
+        }
+        for _ in 0..keys {
+            entry.keys.push(wire.cut(data, at, at + 16));
+            at += 16;
+        }
+        table.entries.push(entry);
+    }
+    if at != data.len() {
+        return .None;
+    }
+    match validate(table) {
+        .Ok(value) => .Some(value),
+        .Err(_) => .None,
+    }
+}

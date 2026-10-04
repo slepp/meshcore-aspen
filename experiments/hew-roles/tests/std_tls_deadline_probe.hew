@@ -1,0 +1,15 @@
+import std.net.tls;
+import std.os;
+import std.string;
+
+fn main() {
+    let args = os.args();
+    let stream = tls.connect("127.0.0.1", string.to_int(args[1]).expect("port"));
+    println("STD_TLS_CONNECT_RETURNED");
+    let result = stream.write("probe".to_bytes());
+    if result.is_err() {
+        println("STD_TLS_WRITE_RETURNED_ERROR");
+    } else {
+        println("STD_TLS_WRITE_RETURNED_OK");
+    }
+}

@@ -1,0 +1,377 @@
+//! Go-compatible companion documents. Unknown fields remain in the document.
+import std.encoding.json;
+
+import std.encoding.base64;
+
+import std.encoding.utf8;
+
+import wire;
+
+extern "C" {
+    #[offload]
+    fn mc_commit_bounded(path: bytes, data: bytes, limit: i32) -> i32;
+    #[offload]
+    fn mc_read_bounded(path: bytes, limit: i32) -> bytes;
+    fn mc_expanded(key: bytes) -> bytes;
+}
+
+pub fn read(path: string) -> bytes {
+    unsafe {
+        mc_read_bounded(path.to_bytes(), 16777216)
+    }
+}
+
+pub fn commit(path: string, value: json.Value) -> i64 {
+    let data = value.stringify().expect("validated companion document").to_bytes();
+    unsafe {
+        mc_commit_bounded(path.to_bytes(), data, 16777216) as i64
+    }
+}
+
+pub fn expanded(key: bytes) -> bytes {
+    unsafe {
+        mc_expanded(key)
+    }
+}
+
+pub fn field(value: json.Value, name: string) -> json.Value {
+    match value.get_field(name).expect("object field") {
+        .Some(v) => v,
+        .None => json.null(),
+    }
+}
+
+pub fn integer(value: json.Value, name: string) -> i64 {
+    match field(value, name).get_int() {
+        .Ok(v) => v,
+        .Err(_) => 0,
+    }
+}
+
+pub fn text(value: json.Value, name: string) -> string {
+    match field(value, name).get_string() {
+        .Ok(v) => v,
+        .Err(_) => "",
+    }
+}
+
+pub fn decimal(value: json.Value, name: string) -> f64 {
+    let item = field(value, name);
+    if item.type_of() == json.Kind.Integer {
+        item.get_int().expect("integer") as f64
+    } else {
+        match item.get_float() {
+            .Ok(v) => v,
+            .Err(_) => 0.0,
+        }
+    }
+}
+
+pub fn blob(value: json.Value) -> bytes {
+    if value.type_of() == json.Kind.String {
+        return base64.decode(value.get_string().expect("base64 text"));
+    }
+    var data = bytes.new();
+    if value.type_of() == json.Kind.Array {
+        for i in 0..value.array_len().expect("array") {
+            let n = match value.array_get(i).expect("array").expect("index").get_int() {
+                .Ok(v) => v,
+                .Err(_) => -1,
+            };
+            if n < 0 || n > 255 {
+                return bytes.new();
+            }
+            data.push(n as u8);
+        }
+    }
+    data
+}
+
+pub fn array(data: bytes) -> json.Value {
+    var value = json.array();
+    for b in data {
+        value.push(json.from_int(b as i64)).expect("byte array");
+    }
+    value
+}
+
+pub fn encoded(data: bytes) -> json.Value {
+    json.from_string(base64.encode(data))
+}
+
+pub fn count(value: json.Value) -> i64 {
+    if value.type_of() == json.Kind.Null {
+        0
+    } else {
+        value.array_len().expect("array")
+    }
+}
+
+pub fn item(value: json.Value, i: i64) -> json.Value {
+    value.array_get(i).expect("array").expect("array index")
+}
+
+pub fn replace(value: json.Value, index: i64, child: json.Value) -> json.Value {
+    var output = json.array();
+    for i in 0..count(value) {
+        output.push(if i == index {
+            child
+        } else {
+            item(value, i)
+        }).expect("array append");
+    }
+    output
+}
+
+pub fn remove(value: json.Value, index: i64) -> json.Value {
+    var output = json.array();
+    for i in 0..count(value) {
+        if i != index {
+            output.push(item(value, i)).expect("array append");
+        }
+    }
+    output
+}
+
+pub fn cstring(data: bytes) -> string {
+    var size: i64 = 0;
+    while size < data.len() && data[size] != 0 {
+        size += 1;
+    }
+    match utf8.decode(wire.cut(data, 0, size)) {
+        .Ok(v) => v,
+        .Err(_) => "",
+    }
+}
+
+pub fn padded(data: bytes, size: i64) -> bytes {
+    var result = wire.cut(data, 0, if data.len() < size {
+        data.len()
+    } else {
+        size
+    });
+    while result.len() < size {
+        result.push(0);
+    }
+    result
+}
+
+pub fn path_size(encoded: i64) -> i64 {
+    if encoded == 255 {
+        return 0;
+    }
+    if encoded < 0 || encoded > 191 {
+        return -1;
+    }
+    let size = ((encoded >> 6) + 1) * (encoded & 63);
+    if size > 64 {
+        -1
+    } else {
+        size
+    }
+}
+
+pub fn contact_frame(value: json.Value, code: i64) -> bytes {
+    var out = wire.cat(wire.byte(code), blob(field(value, "PublicKey")));
+    for name in ["Type", "Flags", "OutPathLen"] {
+        out.push(integer(value, name) as u8);
+    }
+    out.append(padded(blob(field(value, "OutPath")), 64));
+    out.append(padded(text(value, "AdvertName").to_bytes(), 32));
+    for name in ["LastAdvert", "AdvertLatitude", "AdvertLongitude", "LastModified"] {
+        out.append(wire.le(integer(value, name), 4));
+    }
+    out
+}
+
+pub fn policy_valid(prefs: json.Value) -> bool {
+    if prefs.type_of() != json.Kind.Object || integer(prefs, "version") != 1 || integer(prefs, "path_hash_mode") < 0 || integer(prefs, "path_hash_mode") > 2 {
+        return false;
+    }
+    for name in ["rxdelay", "airtime_factor", "txdelay", "direct_txdelay"] {
+        let item = field(prefs, name);
+        if item.type_of() != json.Kind.Null && item.type_of() != json.Kind.Integer && item.type_of() != json.Kind.Float {
+            return false;
+        }
+        let value = decimal(prefs, name) as f32 as f64;
+        if !value.is_finite() || value < 0.0 {
+            return false;
+        }
+    }
+    for name in ["path_hash_mode", "flood_max_hops", "unscoped_max_hops", "advert_max_hops", "loop", "wildcard_flags", "local_advert_seconds", "flood_advert_seconds"] {
+        let setting = field(prefs, name);
+        if setting.type_of() != json.Kind.Null && setting.type_of() != json.Kind.Integer {
+            return false;
+        }
+    }
+    let repeat = field(prefs, "repeat");
+    if repeat.type_of() != json.Kind.Null && repeat.get_bool().is_err() {
+        return false;
+    }
+    if decimal(prefs, "rxdelay") > 20.0 || (decimal(prefs, "txdelay") as f32) != (0.5 as f32) || (decimal(prefs, "direct_txdelay") as f32) != (0.2 as f32) {
+        return false;
+    }
+    for name in ["flood_max_hops", "unscoped_max_hops", "advert_max_hops"] {
+        if integer(prefs, name) < 0 || integer(prefs, name) > 64 {
+            return false;
+        }
+    }
+    if integer(prefs, "loop") < 0 || integer(prefs, "loop") > 3 || integer(prefs, "wildcard_flags") < 0 || integer(prefs, "wildcard_flags") > 255 || integer(prefs, "local_advert_seconds") < 0 || integer(prefs, "local_advert_seconds") > 30600 || integer(prefs, "flood_advert_seconds") < 0 || integer(prefs, "flood_advert_seconds") > 918000 {
+        return false;
+    }
+    let owner = text(prefs, "owner_info");
+    let scope_setting = field(prefs, "default_scope");
+    let scope_name = text(scope_setting, "name");
+    let scope_bytes = blob(field(scope_setting, "key"));
+    if owner.to_bytes().len() > 119 || owner.contains("\0") || scope_name.to_bytes().len() > 30 || scope_name.contains("\0") || (scope_bytes.len() != 0 && scope_bytes.len() != 16) {
+        return false;
+    }
+    let regions = field(prefs, "regions");
+    if regions.type_of() != json.Kind.Null && regions.type_of() != json.Kind.Array {
+        return false;
+    }
+    if count(regions) > 32 {
+        return false;
+    }
+    for i in 0..count(regions) {
+        let region = item(regions, i);
+        let id = integer(region, "id");
+        let parent = integer(region, "parent");
+        let name = text(region, "name");
+        let keys = field(region, "keys");
+        if keys.type_of() != json.Kind.Null && keys.type_of() != json.Kind.Array {
+            return false;
+        }
+        if id <= 0 || id > 65535 || parent < 0 || parent > 65535 || integer(region, "flags") < 0 || integer(region, "flags") > 255 || name.is_empty() || name.to_bytes().len() > 30 || count(keys) > 4 {
+            return false;
+        }
+        for byte in name.to_bytes() {
+            if byte != 45 && byte != 36 && byte != 35 && !(byte >= 48 && byte <= 57) && byte < 65 {
+                return false;
+            }
+        }
+        for k in 0..count(keys) {
+            if blob(item(keys, k)).len() != 16 {
+                return false;
+            }
+        }
+        let unmarked = if name.starts_with("#") {
+            name.slice(1, name.len())
+        } else {
+            name
+        };
+        for j in 0..i {
+            let previous = item(regions, j);
+            let previous_name = text(previous, "name");
+            let previous_unmarked = if previous_name.starts_with("#") {
+                previous_name.slice(1, previous_name.len())
+            } else {
+                previous_name
+            };
+            if integer(previous, "id") == id || previous_unmarked == unmarked {
+                return false;
+            }
+        }
+        var ancestor = parent;
+        var steps: i64 = 0;
+        while ancestor != 0 {
+            if ancestor == id || steps >= count(regions) {
+                return false;
+            }
+            var found = false;
+            for j in 0..count(regions) {
+                let previous = item(regions, j);
+                if integer(previous, "id") == ancestor {
+                    ancestor = integer(previous, "parent");
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+            steps += 1;
+        }
+    }
+    true
+}
+
+pub fn validate(value: json.Value, key: bytes) -> bool {
+    if value.type_of() != json.Kind.Object || integer(value, "Version") != 1 || !wire.equal(blob(field(value, "PublicKey")), wire.public_key(key)) {
+        return false;
+    }
+    let name = text(value, "Name");
+    if name.is_empty() || name.to_bytes().len() > 31 || name.contains("\0") {
+        return false;
+    }
+    let prefs = field(value, "Preferences");
+    if !policy_valid(prefs) {
+        return false;
+    }
+    if prefs.type_of() != json.Kind.Object || integer(prefs, "version") != 1 || integer(prefs, "path_hash_mode") < 0 || integer(prefs, "path_hash_mode") > 2 {
+        return false;
+    }
+    for name in ["rxdelay", "airtime_factor", "txdelay", "direct_txdelay"] {
+        let n = decimal(prefs, name);
+        if !n.is_finite() || n < 0.0 {
+            return false;
+        }
+    }
+    if decimal(prefs, "rxdelay") > 20.0 || decimal(prefs, "txdelay") > 2.0 || decimal(prefs, "direct_txdelay") > 2.0 || field(value, "Sequence").get_u64().is_err() {
+        return false;
+    }
+    let contacts = field(value, "Contacts");
+    if count(contacts) > 350 {
+        return false;
+    }
+    for i in 0..count(contacts) {
+        let contact = item(contacts, i);
+        if blob(field(contact, "PublicKey")).len() != 32 || blob(field(contact, "OutPath")).len() != 64 || path_size(integer(contact, "OutPathLen")) < 0 {
+            return false;
+        }
+    }
+    let channels = field(value, "Channels");
+    if count(channels) != 40 {
+        return false;
+    }
+    for i in 0..40 {
+        let channel = item(channels, i);
+        if channel.type_of() != json.Kind.Null && blob(field(channel, "PSK")).len() != 16 {
+            return false;
+        }
+    }
+    let messages = field(value, "Messages");
+    if count(messages) > 256 {
+        return false;
+    }
+    var previous: u64 = 0;
+    let sequence = unsigned(value, "Sequence");
+    for i in 0..count(messages) {
+        let message = item(messages, i);
+        let n = unsigned(message, "Sequence");
+        let frame = blob(field(message, "Frame"));
+        if n == 0 || n <= previous || n > sequence || frame.is_empty() || frame.len() > 176 || (frame[0] != 16 && frame[0] != 17 && frame[0] != 27) {
+            return false;
+        }
+        if blob(field(message, "Digest")).len() != 32 || (frame[0] == 16 && (frame.len() < 16 || frame[11] > 2 || (frame[11] == 2 && frame.len() < 20))) || (frame[0] == 17 && frame.len() < 11) || (frame[0] == 27 && (frame.len() < 9 || frame[8] > 167 || frame.len() != 9 + (frame[8] as i64))) {
+            return false;
+        }
+        previous = n;
+    }
+    let retention = text(value, "Retention");
+    retention == "" || retention == "native-queue" || retention == "durable-replay"
+}
+
+pub fn unsigned(value: json.Value, name: string) -> u64 {
+    match field(value, name).get_u64() {
+        .Ok(v) => v,
+        .Err(_) => 0,
+    }
+}
+
+pub fn boolean(value: json.Value, name: string) -> bool {
+    match field(value, name).get_bool() {
+        .Ok(v) => v,
+        .Err(_) => false,
+    }
+}

@@ -1,0 +1,180 @@
+import meshproto.observation;
+import std.crypto.crypto;
+import std.encoding.hex;
+import hostlib.events;
+
+pub type Plan {
+    config: observation.Config;
+    capacity: i64;
+    active: bool;
+}
+
+pub type Delivery {
+    token: string;
+    payload: bytes;
+}
+
+pub type Statistics {
+    observed: i64;
+    published: i64;
+    dropped: i64;
+    queued: i64;
+    pending: bool;
+    connected: bool;
+    closed: bool;
+}
+
+pub type State {
+    incarnation: string;
+    closed: bool;
+    work: bool;
+}
+
+/// Admission never performs broker I/O. One pending encoded event lives
+/// outside the bounded queue and is retried unchanged until acknowledged.
+pub actor Outbox {
+    let plan: Plan;
+    var initialized: bool = false;
+    var active: bool = false;
+    var closed: bool = false;
+    var connected: bool = false;
+    var session: string = "";
+    var queue: Vec<observation.Reception> = Vec.new();
+    var pending: Option<Delivery> = .None;
+    var observed: i64 = 0;
+    var published: i64 = 0;
+    var dropped: i64 = 0;
+    var event_group: Option<events.Group> = .None;
+    var retirement: Option<events.Notify> = .None;
+    mailbox 32;
+
+    fn changed() {
+        if let .Some(group) = event_group { events.wake(group).expect("wake observer admission driver"); }
+    }
+    receive fn bind(consume group: events.Group) {
+        if event_group.is_none() {
+            retirement = .Some(events.notify_on_drop(group));
+            event_group = .Some(events.share(group));
+        }
+    }
+    receive fn state() -> State {
+        let _ = ensure();
+        State { incarnation: session, closed: closed, work: active && (pending.is_some() || !queue.is_empty()) }
+    }
+    fn ensure() -> bool {
+        if initialized {
+            return !closed;
+        }
+        initialized = true;
+        if plan.capacity < 1 || plan.capacity > 4096 || observation.topic(plan.config).is_err() {
+            closed = true;
+            return false;
+        }
+        match crypto.random_bytes(16) {
+            .Ok(nonce) => { session = hex.encode(nonce); }
+            .Err(_) => {
+                closed = true;
+                return false;
+            }
+        }
+        active = plan.active;
+        true
+    }
+
+    receive fn start() -> bool {
+        if !ensure() || active {
+            return false;
+        }
+        active = true;
+        changed();
+        true
+    }
+
+    receive fn incarnation() -> string {
+        let _ = ensure();
+        session
+    }
+
+    receive fn observe(item: observation.Reception) -> bool {
+        if !observation.admit(plan.config.format, item) {
+            return false;
+        }
+        observed += 1;
+        if !ensure() || !active || item.raw.len() > 4096 || queue.len() >= plan.capacity {
+            dropped += 1;
+            return false;
+        }
+        var accepted = item;
+        accepted.sequence = observed;
+        queue.push(accepted);
+        if queue.len() == 1 { changed(); }
+        true
+    }
+
+    receive fn next() -> Option<Delivery> {
+        if !ensure() || !active {
+            return .None;
+        }
+        if pending.is_some() {
+            return pending;
+        }
+        var attempts: i64 = 0;
+        while !queue.is_empty() && attempts < 16 {
+            let item = queue.remove(0);
+            attempts += 1;
+            match observation.event(plan.config, session, item) {
+                .Ok(encoded) => {
+                    let delivery = Delivery {
+                        token: session + "-" + to_string(item.sequence),
+                        payload: encoded.to_bytes(),
+                    };
+                    pending = .Some(delivery);
+                    return pending;
+                }
+                .Err(_) => { dropped += 1; }
+            }
+        }
+        .None
+    }
+
+    receive fn acknowledge(token: string) -> bool {
+        if let .Some(delivery) = pending {
+            if delivery.token == token {
+                published += 1;
+                pending = .None;
+                if !queue.is_empty() { changed(); }
+                return true;
+            }
+        }
+        false
+    }
+
+    receive fn connection(value: bool) {
+        connected = !closed && value;
+    }
+
+    receive fn statistics() -> Statistics {
+        Statistics { observed: observed, published: published, dropped: dropped,
+            queued: queue.len(), pending: pending.is_some(), connected: connected, closed: closed }
+    }
+
+    receive fn close() {
+        let _ = ensure();
+        closed = true;
+        active = false;
+        connected = false;
+        dropped += queue.len();
+        if pending.is_some() {
+            dropped += 1;
+        }
+        queue = Vec.new();
+        pending = .None;
+        changed();
+    }
+}
+
+pub supervisor QueueBranch(plan: Plan) {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child outbox: Outbox(plan: plan);
+}

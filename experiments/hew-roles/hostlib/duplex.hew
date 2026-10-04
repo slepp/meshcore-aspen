@@ -1,0 +1,274 @@
+//! Deadline-bounded byte streams with one owning actor per TCP connection.
+//!
+//! Read timeout is an ordinary Idle event. Write failure includes the committed
+//! prefix length: callers must not replay a whole frame after an uncertain write.
+//! Expected I/O failures are values, not actor panics. Native functions perform
+//! individual syscalls; deadlines, retries and ownership remain in Hew.
+
+import hostlib.binary;
+
+import hostlib.events;
+
+extern "C" {
+    fn mc_dial_start(host: bytes, port: i32) -> i32;
+    fn mc_socket_error(fd: i32) -> i32;
+    #[offload]
+    fn mc_wait(fd: i32, writable: i32, timeout: i32) -> i32;
+    fn mc_read_once(fd: i32) -> bytes;
+    fn mc_write_once(fd: i32, data: bytes) -> i32;
+    fn mc_errno_kind(code: i32) -> i32;
+    fn mc_close(fd: i32);
+    fn mc_monotonic() -> i64;
+    fn mc_running() -> i32;
+}
+
+pub enum IoError {
+    InvalidArgument;
+    Closed;
+    TimedOut;
+    Cancelled;
+    System(i64);
+    ActorStopped;
+}
+
+impl Display for IoError {
+    fn fmt(self) -> string {
+        match self {
+            IoError.InvalidArgument => "invalid stream address, port, size or deadline",
+            IoError.Closed => "stream is closed",
+            IoError.TimedOut => "stream deadline expired",
+            IoError.Cancelled => "stream operation cancelled",
+            IoError.System(code) => f"stream syscall failed: errno={code}",
+            IoError.ActorStopped => "stream owner stopped; write completion may be unknown",
+        }
+    }
+}
+
+pub enum Read {
+    Data(bytes);
+    Idle;
+    End;
+    Failed(IoError);
+}
+
+pub type WriteFailure {
+    error: IoError;
+    /// -1 means the actor stopped before its committed prefix was reported.
+    committed: i64;
+}
+
+impl Display for WriteFailure {
+    fn fmt(self) -> string {
+        f"{to_string(self.error)}; committed_prefix={self.committed}"
+    }
+}
+
+/// Sole close authority. Moving this resource into Connection also gives the
+/// runtime its cleanup obligation on actor stop or recoverable Hew actor crash.
+#[resource]
+pub type Descriptor {
+    fd: i32;
+}
+
+impl Descriptor {
+    fn close(consume self) {
+        unsafe {
+            mc_close(self.fd);
+        };
+    }
+}
+
+pub fn monotonic() -> i64 {
+    unsafe {
+        mc_monotonic()
+    }
+}
+
+fn running() -> bool {
+    unsafe {
+        mc_running() == 1
+    }
+}
+
+fn retry_kind(code: i64) -> i32 {
+    unsafe {
+        mc_errno_kind(code as i32)
+    }
+}
+
+/// Borrows fd for this call; never closes it. Duration is checked before i32
+/// narrowing. A call returns at most 4096 data bytes.
+pub fn read_fd(fd: i32, timeout_ms: i64) -> Read {
+    if fd < 0 {
+        return Read.Failed(IoError.Closed);
+    }
+    if timeout_ms < 0 || timeout_ms > 30000 {
+        return Read.Failed(IoError.InvalidArgument);
+    }
+    if timeout_ms > 0 {
+        let ready = unsafe {
+            mc_wait(fd, 0, timeout_ms as i32)
+        };
+        if ready == 0 {
+            return Read.Idle;
+        }
+        if ready < 0 {
+            if retry_kind(-(ready as i64)) == 1 {
+                return Read.Idle;
+            }
+            return Read.Failed(IoError.System(-(ready as i64)));
+        }
+    }
+    let raw = unsafe {
+        mc_read_once(fd)
+    };
+    if raw.is_empty() {
+        return Read.Failed(IoError.System(0));
+    }
+    match raw[0] {
+        0 => Read.Idle,
+        1 => Read.Data(binary.slice(raw, 1, raw.len()).expect("bounded syscall result")),
+        2 => Read.End,
+        _ => {
+            if raw.len() != 5 {
+                Read.Failed(IoError.System(0))
+            } else {
+                Read.Failed(IoError.System(binary.integer(binary.slice(raw, 1, 5).expect("errno bytes")).expect("errno integer")))
+            }
+        }
+    }
+}
+
+/// Borrows fd and data, with a 64 KiB per-call bound and a 0..30000 ms deadline.
+/// Partial writes are continued from their suffix only within this invocation.
+pub fn write_fd(fd: i32, data: bytes, timeout_ms: i64) -> Result<i64, WriteFailure> {
+    if fd < 0 {
+        return .Err(WriteFailure { error: IoError.Closed, committed: 0 });
+    }
+    if timeout_ms < 0 || timeout_ms > 30000 || data.len() > 65536 {
+        return .Err(WriteFailure { error: IoError.InvalidArgument, committed: 0 });
+    }
+    let deadline = monotonic() + timeout_ms;
+    var at: i64 = 0;
+    while at < data.len() {
+        if !running() {
+            return .Err(WriteFailure { error: IoError.Cancelled, committed: at });
+        }
+        if at > 0 && monotonic() > deadline {
+            return .Err(WriteFailure { error: IoError.TimedOut, committed: at });
+        }
+        let suffix = binary.slice(data, at, data.len()).expect("write suffix");
+        let sent = unsafe {
+            mc_write_once(fd, suffix)
+        } as i64;
+        if sent > 0 {
+            at = at + sent;
+        } else {
+            let code = -sent;
+            let kind = retry_kind(code);
+            if kind == 0 {
+                return .Err(WriteFailure { error: IoError.System(code), committed: at });
+            }
+            let left = deadline - monotonic();
+            if left <= 0 {
+                return .Err(WriteFailure { error: IoError.TimedOut, committed: at });
+            }
+            let ready = unsafe {
+                mc_wait(fd, 1, left as i32)
+            };
+            if ready == 0 {
+                return .Err(WriteFailure { error: IoError.TimedOut, committed: at });
+            }
+            if ready < 0 && retry_kind(-(ready as i64)) != 1 {
+                return .Err(WriteFailure { error: IoError.System(-(ready as i64)), committed: at });
+            }
+        }
+    }
+    .Ok(at)
+}
+
+/// One serialized duplex endpoint. All actor handles refer to this same owner;
+/// callers never receive its descriptor. Mailbox admission is bounded at 32.
+pub actor Connection {
+    let socket: Descriptor;
+    let write_timeout_ms: i64 = 1500;
+    mailbox 32;
+    receive fn read(timeout_ms: i64) -> Read {
+        read_fd(socket.fd, timeout_ms)
+    }
+    receive fn write(data: bytes) -> Result<i64, WriteFailure> {
+        write_fd(socket.fd, data, write_timeout_ms)
+    }
+    receive fn watch(consume group: events.Group) -> Result<i64, i64> {
+        events.add(group, socket.fd, 1)
+    }
+}
+
+/// Numeric IPv4; default write deadline 1500 ms. Expected failures are values.
+pub fn connect(host: string, port: i64, timeout_ms: i64) -> Result<Connection, IoError> {
+    connect_with_deadlines(host, port, timeout_ms, 1500)
+}
+
+/// Owns the descriptor immediately and closes it on every failed connection.
+pub fn connect_with_deadlines(host: string, port: i64, timeout_ms: i64, write_timeout_ms: i64) -> Result<Connection, IoError> {
+    if port < 1 || port > 65535 || timeout_ms < 0 || timeout_ms > 30000 || write_timeout_ms < 1 || write_timeout_ms > 30000 || host.is_empty() || host.to_bytes().len() > 63 {
+        return .Err(IoError.InvalidArgument);
+    }
+    let fd = unsafe {
+        mc_dial_start(host.to_bytes(), port as i32)
+    };
+    if fd < 0 {
+        return .Err(IoError.System(-(fd as i64)));
+    }
+    let socket = Descriptor { fd: fd };
+    let deadline = monotonic() + timeout_ms;
+    loop {
+        let left = deadline - monotonic();
+        if left < 0 {
+            socket.close();
+            return .Err(IoError.TimedOut);
+        }
+        let ready = unsafe {
+            mc_wait(fd, 1, left as i32)
+        };
+        if ready == 0 {
+            socket.close();
+            return .Err(IoError.TimedOut);
+        }
+        if ready < 0 {
+            if retry_kind(-(ready as i64)) == 1 {
+                continue;
+            }
+            socket.close();
+            return .Err(IoError.System(-(ready as i64)));
+        }
+        let error = unsafe {
+            mc_socket_error(fd)
+        };
+        if error != 0 {
+            socket.close();
+            return .Err(IoError.System(error as i64));
+        }
+        return .Ok(spawn Connection(socket: socket, write_timeout_ms: write_timeout_ms));
+    }
+}
+
+pub fn read(connection: Connection, timeout_ms: i64) -> Read {
+    match connection.read(timeout_ms) {
+        .Ok(value) => value,
+        .Err(_) => Read.Failed(IoError.ActorStopped),
+    }
+}
+
+pub fn write(connection: Connection, data: bytes) -> Result<i64, WriteFailure> {
+    match connection.write(data) {
+        .Ok(value) => value,
+        .Err(_) => .Err(WriteFailure { error: IoError.ActorStopped, committed: -1 }),
+    }
+}
+
+/// Waits for actor stop/resource cleanup before a later dial can reuse its fd.
+pub fn close(connection: Connection) {
+    stop(connection);
+    stopped(connection);
+}

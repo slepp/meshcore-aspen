@@ -1,0 +1,248 @@
+import wire;
+
+import roles;
+
+import modem;
+
+import storage;
+
+import std.encoding.hex;
+
+import std.encoding.utf8;
+
+import std.crypto.crypto;
+
+import std.io;
+
+import std.os;
+
+import std.string;
+
+import std.stream;
+
+import meshproto.management;
+import meshproto.packet_log;
+import meshproto.radio as rxradio;
+
+import hostlib.binary;
+
+fn number(value: string) -> i64 {
+    string.to_int(value).expect("integer argument")
+}
+
+fn output(frames: Vec<roles.Tx>, role: roles.Role, state: string) {
+    if state != "-" && !role.save(state).expect("state commit") {
+        println("ERROR state commit; role stopped");
+        return;
+    }
+    for frame in frames {
+        println(f"TX {frame.delay} {hex.encode(frame.raw)}");
+    }
+}
+
+fn selftest() {
+    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101");
+    let peer = wire.public_key(hex.decode("0202020202020202020202020202020202020202020202020202020202020202"));
+    let key = wire.shared(seed, peer);
+    assert(key.len() == 32);
+    let encrypted = wire.seal(key, "hello".to_bytes());
+    assert(hex.encode(wire.cut(wire.open(key, encrypted), 0, 5)) == "68656c6c6f");
+    assert(wire.verify_advert(wire.advert(seed, 123, 3, "Hew Room")));
+    let decoder = spawn wire.Decoder(buffer: bytes.new());
+    assert(decoder.feed(wire.kiss(1, 0, hex.decode("c0db00"))).expect("decoder").len() == 1);
+    let room = roles.create(seed, 3, "Hew Room", "guest", "owner", 3, bytes.new(), bytes.new());
+    let first = spawn modem.Producer(target: room);
+    let second = spawn modem.Producer(target: room);
+    let a = fork first.produce(hex.decode("1200"), 1);
+    let b = fork second.produce(hex.decode("1200"), 1);
+    assert((await a).expect("first producer") == 0);
+    assert((await b).expect("second producer") == 0);
+    let relay = roles.create(seed, 2, "Hew Relay", "", "", 3, bytes.new(), bytes.new());
+    let producer1 = spawn modem.Producer(target: relay);
+    let producer2 = spawn modem.Producer(target: relay);
+    let batch1 = fork producer1.burst(1, 500);
+    let batch2 = fork producer2.burst(1001, 500);
+    assert((await batch1).expect("producer one burst") == 500);
+    assert((await batch2).expect("producer two burst") == 500);
+    let (sink, input): (stream.Sink<i64>, stream.Stream<i64>) = stream.pipe(2).expect("bounded pipe");
+    assert(sink.try_send(1).is_ok());
+    assert(sink.try_send(2).is_ok());
+    assert(sink.try_send(3).is_err());
+    assert(input.recv().expect("pipe item") == 1);
+    sink.finish();
+    let radio = spawn modem.Modem(port: 2, generation: 17, jobs: Vec.new());
+    for i in 0..32 {
+        assert(!radio.submit(hex.decode("1200"), 1, 0, 0).expect("submit").is_empty());
+    }
+    assert(radio.submit(hex.decode("1200"), 1, 0, 0).expect("bounded submission").is_empty());
+    assert(radio.disconnect().expect("disconnect") == 32);
+    assert(radio.submit(hex.decode("1200"), 1, 0, 0).expect("offline").is_empty());
+    room.shutdown().expect("shutdown");
+    assert(!room.acl(peer, 2).expect("closed ACL"));
+    println("PASS crypto, actors, concurrent producers, bounded channel, queued modem, shutdown");
+}
+
+fn main() {
+    let args = os.args();
+    if args.len() == 1 || args[1] == "selftest" {
+        selftest();
+        return;
+    }
+    if args[1] == "identity" {
+        assert(args.len() == 3);
+        let lock = storage.lock(args[2]);
+        assert(lock >= 0);
+        if !storage.recover(args[2], lock) {
+            panic("identity staging recovery failed; check private pending-file ownership: " + args[2] + ".pending");
+        }
+        // Identity creation is exclusive: never overwrite an existing key.
+        assert(storage.absent(args[2]));
+        let seed = crypto.random_bytes(32).expect("identity entropy");
+        assert(storage.commit(args[2], seed) == 0);
+        println(hex.encode(wire.public_key(seed)));
+        storage.unlock(lock);
+        return;
+    }
+    if args.len() != 10 || args[1] != "serve" {
+        println("Usage: roles serve ROLE SEED_HEX_OR_@FILE NAME PASSWORD ADMIN WIDTH REGION_HEX_OR_- CHANNEL_HEX_OR_-");
+        return;
+    }
+    let seed = if args[3].starts_with("@") {
+        storage.read(args[3].slice(1, args[3].len()))
+    } else {
+        hex.decode(args[3])
+    };
+    let role_kind = number(args[2]);
+    let width = number(args[7]);
+    assert(seed.len() == 32 && role_kind >= 1 && role_kind <= 3 && width >= 1 && width <= 3);
+    assert(!args[4].is_empty() && args[4].len() <= 31 && args[5].len() <= 63 && args[6].len() <= 63);
+    let region = hex.decode(args[8]);
+    let channel = hex.decode(args[9]);
+    assert((region.is_empty() || region.len() == 16) && (channel.is_empty() || channel.len() == 16));
+    let role = roles.create(seed, role_kind, args[4], args[5], args[6], width, region, channel);
+    let decoder = spawn wire.Decoder(buffer: bytes.new());
+    let radio = spawn modem.Modem(port: 0, generation: 1, jobs: Vec.new());
+    var state = "-";
+    var lock: i32 = -1;
+    println("READY " + hex.encode(wire.public_key(seed)));
+    while let .Some(line) = io.read_line() {
+        let words = line.split(" ");
+        if words.is_empty() {
+            continue;
+        }
+        let command = words[0];
+        if command == "packet" && words.len() == 4 {
+            output(role.ingest(hex.decode(words[3]), number(words[1]), words[2] == "1").expect("packet"), role, state);
+        } else if command == "configure" && words.len() == 2 {
+            println(role.configure(utf8.decode(hex.decode(words[1])).expect("configuration UTF8")).expect("configuration"));
+        } else if command == "signal" && words.len() == 2 {
+            role.signal(number(words[1])).expect("signal metadata");
+        } else if command == "measurement" && words.len() == 2 {
+            role.measurement(hex.decode(words[1])).expect("measured signal");
+        } else if command == "profile" && words.len() == 2 {
+            role.profile(hex.decode(words[1])).expect("verified profile fixture");
+        } else if command == "airtime" && words.len() == 2 {
+            println(role.airtime(hex.decode(words[1])).expect("verified airtime fixture"));
+        } else if command == "source-policy" && words.len() == 1 {
+            role.bind_source_policy().expect("source policy fixture");
+        } else if command == "rxdelay" && words.len() == 4 {
+            let score = binary.finite_float32(hex.decode(words[2])).expect("finite score");
+            let base = binary.finite_float32(hex.decode(words[1])).expect("finite receive delay");
+            match rxradio.receive_delay(base, score, number(words[3])) {
+                .Ok(delay) => println(f"{delay} {rxradio.receive_hold(delay)}"),
+                .Err(error) => println("ERROR " + error),
+            }
+        } else if command == "score" && words.len() == 4 {
+            let snr = binary.finite_float32(hex.decode(words[1])).expect("finite SNR");
+            println(hex.encode(binary.float32(rxradio.packet_score(snr, number(words[2]), number(words[3]))).expect("score")));
+        } else if command == "telemetry" && words.len() == 12 {
+            role.telemetry(management.Telemetry { flags: number(words[1]), battery_mv: number(words[2]), noise_dbm: number(words[3]), current_rssi: number(words[4]), temperature_c: binary.finite_float32(hex.decode(words[5])).expect("finite sensor"), received: number(words[6]), sent: number(words[7]), errors: number(words[8]), tx_ms: number(words[9]), rx_ms: number(words[10]), error_events: number(words[11]) }).expect("telemetry fixture");
+        } else if command == "confirmed" && words.len() == 2 {
+            role.confirmed(hex.decode(words[1])).expect("confirmed TX fixture");
+        } else if command == "logfile" && words.len() == 3 {
+            println(role.logfile(words[1], number(words[2])).expect("logfile fixture"));
+        } else if command == "outcome" && words.len() == 10 {
+            role.outcome(hex.decode(words[9]), packet_log.Outcome { generation: number(words[2]),
+                job: number(words[3]), state: number(words[4]), reason: number(words[5]),
+                queue_ms: number(words[6]), rf_ms: number(words[7]), estimated_ms: number(words[8]) },
+                number(words[1])).expect("TX outcome fixture");
+            output(Vec.new(), role, state);
+        } else if command == "tick" && words.len() == 2 {
+            output(role.tick(number(words[1])).expect("tick"), role, state);
+        } else if command == "acl" && words.len() == 3 {
+            println(role.acl(hex.decode(words[1]), number(words[2])).expect("ACL"));
+            output(Vec.new(), role, state);
+        } else if command == "cursor" && words.len() == 2 {
+            println(role.cursor(hex.decode(words[1])).expect("cursor"));
+        } else if command == "status" {
+            println(role.status().expect("status"));
+        } else if command == "owner" && words.len() == 3 {
+            println(role.owner_command(utf8.decode(hex.decode(words[2])).expect("owner command UTF8"), number(words[1])).expect("owner command"));
+            output(Vec.new(), role, state);
+        } else if command == "advert" && words.len() == 2 {
+            println("WIRE " + hex.encode(role.advert(number(words[1])).expect("advert")));
+        } else if command == "wire" && words.len() == 2 {
+            match wire.decode(hex.decode(words[1])) {
+                .Some(p) => println("WIRE " + hex.encode(wire.encode(p))),
+                .None => println("INVALID"),
+            }
+        } else if command == "path" && words.len() == 2 {
+            let n = number(words[1]);
+            println(wire.valid_path(n, ((n >> 6) + 1) * (n & 63)));
+        } else if command == "region" && words.len() == 4 {
+            println(wire.region_code(hex.decode(words[1]), wire.packet(1, number(words[2]), hex.decode(words[3]))));
+        } else if command == "ack" && words.len() == 3 {
+            println("HEX " + hex.encode(wire.ack(hex.decode(words[1]), hex.decode(words[2]))));
+        } else if command == "seal" && words.len() == 3 {
+            println("HEX " + hex.encode(wire.seal(hex.decode(words[1]), hex.decode(words[2]))));
+        } else if command == "open" && words.len() == 3 {
+            println("HEX " + hex.encode(wire.open(hex.decode(words[1]), hex.decode(words[2]))));
+        } else if command == "kiss" && words.len() == 2 {
+            for frame in decoder.feed(hex.decode(words[1])).expect("KISS") {
+                println("FRAME " + hex.encode(frame));
+            }
+        } else if command == "rx" && words.len() == 3 {
+            for frame in decoder.feed(hex.decode(words[2])).expect("KISS RX") {
+                if frame.len() > 1 && frame[0] == 0 {
+                    output(role.ingest(wire.cut(frame, 1, frame.len()), number(words[1]), false).expect("RX"), role, state);
+                }
+            }
+        } else if command == "submit" && words.len() == 5 {
+            println("KISS " + hex.encode(radio.submit(hex.decode(words[4]), number(words[1]), number(words[2]), number(words[3])).expect("modem submit")));
+        } else if command == "event" && words.len() == 2 {
+            println(radio.event(hex.decode(words[1])).expect("modem event"));
+        } else if command == "disconnect" {
+            println(radio.disconnect().expect("disconnect"));
+        } else if command == "save" && words.len() == 2 {
+            println(role.save(words[1]).expect("save"));
+        } else if command == "load" && words.len() == 2 {
+            println(role.load(words[1]).expect("load"));
+        } else if command == "state" && words.len() == 2 && state == "-" {
+            lock = storage.lock(words[1]);
+            if lock < 0 {
+                println("ERROR state lock");
+            } else if !storage.recover(words[1], lock) {
+                storage.unlock(lock);
+                lock = -1;
+                role.shutdown().expect("pending state recovery failed");
+                println("ERROR abandoned state staging file could not be recovered; role stopped");
+            } else if !storage.absent(words[1]) && !role.load(words[1]).expect("load existing state") {
+                storage.unlock(lock);
+                lock = -1;
+                role.shutdown().expect("bad state");
+                println("ERROR invalid state; role stopped");
+            } else {
+                state = words[1];
+                role.persistent().expect("persistence mode");
+                println("LOCKED");
+            }
+        } else if command == "close" {
+            role.shutdown().expect("close");
+        } else {
+            println("ERROR invalid command");
+        }
+        println("END");
+    }
+    role.shutdown().expect("shutdown");
+    storage.unlock(lock);
+}

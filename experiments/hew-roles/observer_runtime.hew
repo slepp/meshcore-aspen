@@ -1,0 +1,242 @@
+import observer_client;
+import observer_queue;
+import meshproto.observation;
+import meshproto.mqtt_endpoint;
+import hostlib.binary;
+import hostlib.mqtt;
+import hostlib.events;
+import std.stream;
+import session;
+import storage;
+import transport;
+import wire;
+import std.string;
+
+pub type Settings {
+    enabled: bool;
+    config: observation.Config;
+    capacity: i64;
+    url: string;
+    ca_file: string;
+    client_id: string;
+    username: string;
+    password: bytes;
+    audience: string;
+    seed: bytes;
+}
+
+pub fn configure(root: string, options: string, lock: i32) -> Settings {
+    var enabled = false;
+    var format = observation.Format.Internal;
+    var prefix = "meshcore";
+    var iata = "";
+    var origin = "";
+    var model = "";
+    var firmware = "";
+    var radio = "";
+    var filter: Option<i64> = .None;
+    var capacity: i64 = 256;
+    var url = "";
+    var ca_file = "";
+    var client_id = "";
+    var username = "";
+    var password = bytes.new();
+    var audience = "";
+    for line in options.split("\n") {
+        if line.is_empty() { continue; }
+        let at = line.find("=").expect("observer setting requires key=value");
+        let key = line.slice(0, at);
+        let value = line.slice(at + 1, line.len());
+        match key {
+            "enabled" => {
+                assert(value == "0" || value == "1");
+                enabled = value == "1";
+            }
+            "format" => {
+                format = match value {
+                    "internal-v1" => observation.Format.Internal,
+                    "observer-v1" => observation.Format.Observer,
+                    "capture-v1" => observation.Format.Capture,
+                    _ => panic("observer.format requires internal-v1, observer-v1 or capture-v1"),
+                };
+            }
+            "url" => { url = value; }
+            "ca_file" => { ca_file = value; }
+            "client_id" => { client_id = value; }
+            "username" => { username = value; }
+            "password" => { password = value.to_bytes(); }
+            "audience" => { audience = value; }
+            "topic_prefix" => { prefix = value; }
+            "iata" => { iata = value; }
+            "origin" => { origin = value; }
+            "model" => { model = value; }
+            "firmware_version" => { firmware = value; }
+            "radio" => { radio = value; }
+            "queue_size" => { capacity = string.to_int(value).expect("observer.queue_size requires an integer"); }
+            "packet_filter" => {
+                if !value.is_empty() {
+                    filter = .Some(string.to_int(value).expect("observer.packet_filter requires a decimal uint16 mask"));
+                }
+            }
+            _ => panic("unknown observer configuration field: " + key),
+        }
+    }
+    var seed = wire.le(0, 32);
+    if enabled {
+        assert(storage.recover(root + "/observer.expanded", lock));
+        if !storage.absent(root + "/observer.expanded") {
+            seed = storage.read(root + "/observer.expanded");
+            if seed.len() != 64 {
+                panic("observer.expanded invalid; restore the authoritative observer identity");
+            }
+        } else {
+            assert(storage.recover(root + "/observer.seed", lock));
+            seed = storage.read(root + "/observer.seed");
+            if seed.len() != 32 {
+                panic("observer identity missing or invalid; migrate the Go observer identity before enabling observer");
+            }
+        }
+        if wire.public_key(seed).len() != 32 {
+            panic("observer identity scalar invalid; restore the authoritative observer identity");
+        }
+        if url.is_empty() {
+            panic("observer.url required when observer.enabled=1");
+        }
+        let _ = mqtt_endpoint.parse(url).expect("observer.url");
+        if !ca_file.is_empty() && !ca_file.starts_with("/") {
+            panic("observer.ca_file requires an absolute path");
+        }
+    }
+    let config = observation.Config { identity: wire.public_key(seed), format: format,
+        prefix: prefix, iata: iata, origin: origin, model: model, firmware: firmware,
+        radio: radio, filter: filter };
+    let _ = observation.topic(config).expect("observer topic configuration");
+    assert(capacity >= 1 && capacity <= 4096);
+    assert(mqtt.text_valid(client_id) && mqtt.text_valid(username) && password.len() <= 65535);
+    if !password.is_empty() && username.is_empty() {
+        panic("observer.password requires observer.username");
+    }
+    if !audience.is_empty() && (!observation.public_format(format) || !username.is_empty() || !password.is_empty()) {
+        panic("observer.audience requires observer-v1/capture-v1 and no static MQTT credentials");
+    }
+    if enabled {
+        let identity_path = root + "/observer.initialized";
+        assert(storage.recover(identity_path, lock));
+        if storage.absent(identity_path) {
+            assert(storage.commit(identity_path, config.identity) == 0);
+        } else if !wire.equal(storage.read(identity_path), config.identity) {
+            panic("observer identity changed; restore the retained observer identity file");
+        }
+        println("OBSERVER_CONFIGURED topic=" + observation.topic(config).expect("validated observer topic") + " queue_size=" + to_string(capacity));
+    }
+    Settings { enabled: enabled, config: config, capacity: capacity, url: url,
+        ca_file: ca_file, client_id: client_id, username: username, password: password,
+        audience: audience, seed: seed }
+}
+
+pub fn observe(outbox: ChildRef<observer_queue.Outbox>, received: session.Reception) {
+    let origin = received.metadata[8];
+    let reflected = origin == 1;
+    let rssi = binary.finite_float32(wire.cut(received.metadata, 0, 4)).expect("receiver RSSI");
+    let snr = binary.finite_float32(wire.cut(received.metadata, 4, 8)).expect("receiver SNR");
+    let item = observation.Reception { raw: received.raw, timestamp_ms: transport.now(), sequence: 0,
+        has_signal: origin != 2,
+        snr_quarter: if reflected { -128 } else { (snr * 4.0) as i64 },
+        rssi: if reflected { 127 } else { rssi as i64 } };
+    if outbox.observe(item).is_err() {
+        println("OBSERVER_DROPPED reason=outbox-actor-unavailable");
+    }
+}
+
+pub actor Lifetime {
+    var closing: bool = false;
+    var group: Option<events.Group> = .None;
+    mailbox 4;
+    receive fn bind(consume value: events.Group) { group = .Some(events.share(value)); }
+    receive fn close() {
+        closing = true;
+        if let .Some(value) = group { events.wake(value).expect("wake observer driver shutdown"); }
+    }
+    receive fn ending() -> bool {
+        closing
+    }
+}
+
+/// Run as a scoped native task, independently of modem negotiation/reconnect.
+/// Expected broker failures stay values; the stable child reference survives
+/// a publisher panic without replacing its independently owned outbox.
+pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, lifetime: Lifetime,
+    end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
+    if !enabled { return; }
+    let shutdown = events.driver(group, input);
+    lifetime.bind(events.share(group)).expect("bind observer driver lifetime");
+    var previous = "";
+    var unavailable = false;
+    while transport.running() && (end == 0 || transport.monotonic() < end) {
+        let closing = match lifetime.ending() {
+            .Ok(value) => value,
+            .Err(_) => true,
+        };
+        if closing {
+            break;
+        }
+        let now = transport.monotonic();
+        let _ = outbox.bind(events.share(group));
+        if publisher.step(now, transport.now()).is_err() {
+            if !unavailable {
+                println(f"OBSERVER_MQTT state=unavailable at_ms={transport.now()} reason=publisher-actor-unavailable");
+            }
+            unavailable = true;
+            if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, now + 50) {
+                panic(f"observer readiness failed: errno={code}");
+            }
+            continue;
+        }
+        match publisher.snapshot() {
+            .Ok(state) => {
+                let status = to_string(state.connected) + ":" + state.reason;
+                if status != previous || unavailable {
+                    println(f"OBSERVER_MQTT state={to_string(state.phase)} connected={state.connected} epoch={state.epoch} at_ms={transport.now()} reason={state.reason}");
+                    previous = status;
+                }
+                unavailable = false;
+            }
+            .Err(_) => {}
+        }
+        var deadline = transport.monotonic() + 1000;
+        if end > 0 && end < deadline { deadline = end; }
+        match publisher.wait(events.share(group), transport.monotonic(), transport.now()) {
+            .Ok(value) => { if value < deadline { deadline = value; } }
+            .Err(_) => { deadline = transport.monotonic() + 50; }
+        }
+        if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, deadline) {
+            panic(f"observer readiness failed: errno={code}");
+        }
+    }
+    let started = transport.monotonic();
+    let _ = publisher.shutdown(started);
+    while transport.monotonic() < started + 1100 {
+        let _ = publisher.step(transport.monotonic(), transport.now());
+        match publisher.snapshot() {
+            .Ok(state) => {
+                if state.phase == observer_client.Phase.Stopped {
+                    break;
+                }
+            }
+            .Err(_) => {}
+        }
+        var deadline = started + 1100;
+        match publisher.wait(events.share(group), transport.monotonic(), transport.now()) {
+            .Ok(value) => { if value < deadline { deadline = value; } }
+            .Err(_) => break,
+        }
+        if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, deadline) {
+            panic(f"observer shutdown readiness failed: errno={code}");
+        }
+    }
+    println(f"OBSERVER_MQTT state=stopped connected=false at_ms={transport.now()}");
+    if let .Ok(stats) = outbox.statistics() {
+        println(f"OBSERVER_STATS observed={stats.observed} published={stats.published} dropped={stats.dropped} queued={stats.queued} pending={stats.pending}");
+    }
+    shutdown.close();
+}

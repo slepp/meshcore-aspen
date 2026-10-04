@@ -1,0 +1,520 @@
+//! Owner-only local control. No plaintext enters the journal or MQTT observer.
+import hostlib.duplex;
+import hostlib.process;
+import hostlib.events;
+import std.stream;
+import storage;
+import transport;
+import session;
+import wire;
+import std.crypto.crypto;
+import std.encoding.utf8;
+import std.encoding.hex;
+import host_admin;
+import host_health;
+
+extern "C" {
+    fn mc_owner_listen(path: bytes) -> i32;
+    fn mc_owner_inode(path: bytes) -> i64;
+    fn mc_owner_close(fd: i32, path: bytes, inode: i64);
+    fn mc_owner_accept(fd: i32) -> i32;
+    fn mc_owner_receive(fd: i32) -> bytes;
+    fn mc_write_once(fd: i32, data: bytes) -> i32;
+}
+
+#[resource]
+type Listener { fd: i32; path: bytes; inode: i64; }
+impl Listener {
+    fn close(consume self) {
+        unsafe { mc_owner_close(self.fd, self.path, self.inode); };
+    }
+}
+type Send { id: bytes; digest: bytes; phase: i64; flags: i64; reason: i64; }
+type Message { sequence: i64; body: bytes; }
+pub type Plan { root: string; lock: i32; worker: ChildRef<process.WorkerOwner>; }
+pub type RoleRequest { id: i64; role: i64; command: string; }
+
+pub actor Control {
+    let plan: Plan;
+    var listener: Option<Listener> = .None;
+    var client: Option<duplex.Descriptor> = .None;
+    var deadline: i64 = 0;
+    var outgoing: bytes = bytes.new();
+    var sends: Vec<Send> = Vec.new();
+    var inbox: Vec<Message> = Vec.new();
+    var generation: i64 = 0;
+    var sequence: i64 = 0;
+    var dropped: i64 = 0;
+    var available: bool = false;
+    var health: Option<host_health.Snapshot> = .None;
+    var health_updated: i64 = 0;
+    var event_group: Option<events.Group> = .None;
+    var retirement: Option<events.Notify> = .None;
+    var listener_watch: Option<events.Watch> = .None;
+    var client_watch: Option<events.Watch> = .None;
+    mailbox 64;
+
+    fn release_client() {
+        client_watch = .None;
+        client = .None;
+        outgoing = bytes.new();
+    }
+    receive fn wait(consume group: events.Group) -> i64 {
+        if event_group.is_none() {
+            retirement = .Some(events.notify_on_drop(group));
+            event_group = .Some(events.share(group));
+        }
+        let owner = match listener { .Some(value) => value.fd, .None => return 9223372036854775807 };
+        if client.is_none() {
+            if listener_watch.is_none() {
+                listener_watch = .Some(events.watch(group, owner, 1).expect("watch owner control listener"));
+            }
+            if let .Some(watch) = listener_watch { events.rearm(watch, 1).expect("arm owner control listener"); }
+        } else {
+            listener_watch = .None;
+            let fd = match client { .Some(value) => value.fd, .None => return 9223372036854775807 };
+            let flags: i32 = if outgoing.is_empty() { 1 } else { 2 };
+            if client_watch.is_none() {
+                client_watch = .Some(events.watch(group, fd, flags).expect("watch owner control client"));
+            } else if let .Some(watch) = client_watch { events.rearm(watch, flags).expect("arm owner control client"); }
+            return deadline;
+        }
+        9223372036854775807
+    }
+    fn save() {
+        var blob = wire.cat("OWN1".to_bytes(), wire.le(generation, 8));
+        blob.push(sends.len() as u8);
+        for item in sends {
+            blob.append(item.id); blob.append(item.digest);
+            blob.push(item.phase as u8); blob.push(item.flags as u8); blob.push(item.reason as u8);
+        }
+        if storage.commit(plan.root + "/owner.state", blob) != 0 {
+            panic("owner control ledger commit failed; submissions stopped");
+        }
+    }
+    fn initialize() {
+        assert(storage.recover(plan.root + "/owner.state", plan.lock));
+        if !storage.absent(plan.root + "/owner.state") {
+            let blob = storage.read(plan.root + "/owner.state");
+            assert(blob.len() >= 13 && wire.equal(wire.cut(blob, 0, 4), "OWN1".to_bytes()));
+            generation = wire.uint(wire.cut(blob, 4, 12));
+            let count = blob[12] as i64;
+            assert(count <= 128 && blob.len() == 13 + count * 51);
+            for i in 0..count {
+                let at = 13 + i * 51;
+                var item = Send { id: wire.cut(blob, at, at + 16), digest: wire.cut(blob, at + 16, at + 48),
+                    phase: blob[at + 48] as i64, flags: blob[at + 49] as i64, reason: blob[at + 50] as i64 };
+                assert(item.phase <= 6 && item.flags <= 7 && item.reason <= 8 && find(item.id) < 0);
+                assert(!wire.equal(item.id, wire.le(0, 16)));
+                if item.phase < 4 { item.phase = 6; item.reason = 8; }
+                sends.push(item);
+            }
+        }
+        assert(generation >= 0 && generation < 9223372036854775806);
+        generation += 1;
+        save();
+        let path = (plan.root + "/owner.sock").to_bytes();
+        let fd = unsafe { mc_owner_listen(path) };
+        if fd < 0 { panic("owner control socket unavailable; check private directory, socket ownership and path length"); }
+        listener = .Some(Listener { fd: fd, path: path, inode: unsafe { mc_owner_inode(path) } });
+    }
+    fn find(id: bytes) -> i64 {
+        for i in 0..sends.len() { if wire.equal(id, sends[i].id) { return i; } }
+        -1
+    }
+    fn result(index: i64) -> bytes {
+        let item = sends[index];
+        var response = wire.cat(wire.byte(1), wire.byte(0));
+        response.append(item.id); response.push(item.phase as u8);
+        response.push(item.flags as u8); response.push(item.reason as u8);
+        response
+    }
+    fn error(code: i64) -> bytes { wire.cat(wire.byte(1), wire.byte(code)) }
+    fn request(data: bytes) -> bytes {
+        if data.len() < 2 || data[0] != 1 { return error(1); }
+        let opcode = data[1] as i64;
+        if opcode == 6 {
+            if data.len() != 3 || data[2] > 1 { return error(1); }
+            if transport.monotonic() - health_updated > 3000 { return error(10); }
+            return match health {
+                .Some(snapshot) => wire.cat(error(0), (if data[2] == 0 { snapshot.roles } else { snapshot.readiness }).to_bytes()),
+                .None => error(10),
+            };
+        }
+        if opcode == 3 {
+            if data.len() != 18 { return error(1); }
+            let epoch = wire.uint(wire.cut(data, 2, 10));
+            let after = wire.uint(wire.cut(data, 10, 18));
+            if (epoch != 0 && epoch != generation) || after < 0 { return error(6); }
+            var response = wire.cat(error(0), wire.cat(wire.le(generation, 8), wire.le(dropped, 8)));
+            var entries = bytes.new();
+            var count: i64 = 0;
+            for item in inbox {
+                if item.sequence > after && count < 16 {
+                    entries.append(wire.le(item.sequence, 8));
+                    entries.push(item.body.len() as u8);
+                    entries.append(item.body); count += 1;
+                }
+            }
+            response.push(count as u8); response.append(entries);
+            return response;
+        }
+        if (opcode != 1 && opcode != 2) || data.len() < 18 { return error(1); }
+        let id = wire.cut(data, 2, 18);
+        if wire.equal(id, wire.le(0, 16)) { return error(1); }
+        let index = find(id);
+        if opcode == 2 {
+            if data.len() != 18 { return error(1); }
+            return if index < 0 { error(7) } else { result(index) };
+        }
+        if data.len() < 51 || data.len() > 212 { return error(1); }
+        for i in 50..data.len() { if data[i] < 32 || data[i] > 126 { return error(1); } }
+        let digest = crypto.sha256(wire.cut(data, 18, data.len()));
+        if index >= 0 {
+            return if wire.equal(sends[index].digest, digest) { result(index) } else { error(4) };
+        }
+        if !available { return error(2); }
+        if sends.len() == 128 { return error(3); }
+        sends.push(Send { id: id, digest: digest, phase: 0, flags: 0, reason: 0 });
+        save();
+        let at = sends.len() - 1;
+        if !transport.native_send(.Some(plan.worker), session.frame(7, wire.cut(data, 2, data.len()))) {
+            var item = sends[at]; item.phase = 6; item.reason = 8; sends.set(at, item); save();
+        }
+        result(at)
+    }
+    receive fn poll() {
+        if listener.is_none() { initialize(); }
+        if client.is_none() {
+            let listener_fd = match listener { .Some(owner) => owner.fd, .None => return };
+            let fd = unsafe { mc_owner_accept(listener_fd) };
+            if fd < 0 { return; }
+            client = .Some(duplex.Descriptor { fd: fd });
+            deadline = transport.monotonic() + 2000;
+            outgoing = bytes.new();
+        }
+        let client_fd = match client { .Some(connection) => connection.fd, .None => return };
+        if transport.monotonic() >= deadline {
+            release_client(); return;
+        }
+        if outgoing.is_empty() {
+            let received = unsafe { mc_owner_receive(client_fd) };
+            if received[0] == 0 { return; }
+            if received[0] != 1 { release_client(); return; }
+            outgoing = request(wire.cut(received, 1, received.len()));
+        }
+        if outgoing.is_empty() { return; }
+        let written = unsafe { mc_write_once(client_fd, outgoing) };
+        if written == -(11 as i32) { return; }
+        release_client();
+    }
+    receive fn ready(value: bool) {
+        if listener.is_none() { initialize(); }
+        if value && !available {
+            available = transport.native_send(.Some(plan.worker), session.frame(8, wire.byte(1)));
+        } else if !value { available = false; }
+    }
+    receive fn record_health(value: host_health.Snapshot) {
+        health = .Some(value);
+        health_updated = transport.monotonic();
+    }
+    receive fn fence() -> bool {
+        available = false;
+        var pending = false;
+        var changed = false;
+        for i in 0..sends.len() {
+            var item = sends[i];
+            if item.phase < 4 {
+                if (item.flags & 1) == 0 { pending = true; }
+                item.phase = 6; item.reason = 8; sends.set(i, item); changed = true;
+            }
+        }
+        if changed { save(); }
+        pending
+    }
+    receive fn event(frame: bytes) -> bool {
+        if frame.is_empty() { return false; }
+        if frame[0] == 136 {
+            if frame.len() != 20 || frame[17] > 6 || frame[18] > 7 || frame[19] > 8 { return false; }
+            let index = find(wire.cut(frame, 1, 17));
+            if index < 0 { return false; }
+            var item = sends[index];
+            if item.phase == 6 || item.phase == 5 { return true; }
+            item.flags |= frame[18] as i64;
+            item.phase = if (item.flags & 2) != 0 { 4 } else { frame[17] as i64 };
+            item.reason = frame[19] as i64; sends.set(index, item); save();
+            return true;
+        }
+        if frame[0] != 137 { return false; }
+        if frame.len() == 1 { dropped += 1; return true; }
+        if frame.len() < 38 || frame.len() > 199 { return false; }
+        let body = wire.cut(frame, 1, frame.len());
+        for item in inbox { if wire.equal(item.body, body) { return true; } }
+        sequence += 1;
+        if inbox.len() == 32 {
+            var retained: Vec<Message> = Vec.new();
+            for i in 1..inbox.len() { retained.push(inbox[i]); }
+            inbox = retained; dropped += 1;
+        }
+        inbox.push(Message { sequence: sequence, body: body });
+        true
+    }
+    receive fn close() {
+        available = false; release_client(); listener_watch = .None; listener = .None;
+        retirement = .None; event_group = .None;
+    }
+}
+
+pub actor Admin {
+    let plan: Plan;
+    var listener: Option<Listener> = .None;
+    var client: Option<duplex.Descriptor> = .None;
+    var deadline: i64 = 0;
+    var outgoing: bytes = bytes.new();
+    var management_ready: bool = false;
+    var admin_clock: i64 = 1073741823;
+    var admin_pending: i64 = 0;
+    var admin_name: string = "";
+    var role_pending: Option<RoleRequest> = .None;
+    var role_waiting: i64 = 0;
+    var bot_key: string = "";
+    var event_group: Option<events.Group> = .None;
+    var retirement: Option<events.Notify> = .None;
+    var listener_watch: Option<events.Watch> = .None;
+    var client_watch: Option<events.Watch> = .None;
+    var host_group: Option<events.Group> = .None;
+    mailbox 64;
+
+    fn changed() {
+        if let .Some(group) = event_group { events.wake(group).expect("wake owner admin driver"); }
+    }
+    fn release_client() {
+        client_watch = .None;
+        client = .None;
+        outgoing = bytes.new();
+    }
+    receive fn bind_host(consume group: events.Group) {
+        if host_group.is_none() { host_group = .Some(events.share(group)); }
+    }
+    receive fn wait(consume group: events.Group) -> i64 {
+        if event_group.is_none() {
+            retirement = .Some(events.notify_on_drop(group));
+            event_group = .Some(events.share(group));
+        }
+        let owner = match listener { .Some(value) => value.fd, .None => return 9223372036854775807 };
+        if client.is_none() {
+            if listener_watch.is_none() {
+                listener_watch = .Some(events.watch(group, owner, 1).expect("watch owner admin listener"));
+            }
+            if let .Some(watch) = listener_watch { events.rearm(watch, 1).expect("arm owner admin listener"); }
+        } else {
+            listener_watch = .None;
+            let fd = match client { .Some(value) => value.fd, .None => return 9223372036854775807 };
+            let flags: i32 = if !outgoing.is_empty() { 2 } else if admin_pending == 0 && role_waiting == 0 { 1 } else { 0 };
+            if flags == 0 {
+                client_watch = .None;
+            } else if client_watch.is_none() {
+                client_watch = .Some(events.watch(group, fd, flags).expect("watch owner admin client"));
+            } else if let .Some(watch) = client_watch { events.rearm(watch, flags).expect("arm owner admin client"); }
+            return deadline;
+        }
+        9223372036854775807
+    }
+    receive fn fault_for_test() {
+        if transport.supervision_testing() { panic("injected owner admin actor failure"); }
+    }
+    fn initialize() {
+        let seed = storage.read(plan.root + "/bot.seed");
+        assert(seed.len() == 32);
+        bot_key = hex.encode(wire.public_key(seed));
+        if !storage.absent(plan.root + "/native/host-name") {
+            assert(storage.recover(plan.root + "/native/host-name", plan.lock));
+        }
+        assert(storage.recover(plan.root + "/admin.clock", plan.lock));
+        if !storage.absent(plan.root + "/admin.clock") {
+            let clock = storage.read(plan.root + "/admin.clock");
+            assert(clock.len() == 8 && wire.equal(wire.cut(clock, 0, 4), "ADM1".to_bytes()));
+            admin_clock = wire.uint(wire.cut(clock, 4, 8));
+            assert(admin_clock >= 1073741824 && admin_clock <= 2147483647);
+        }
+        let path = (plan.root + "/admin.sock").to_bytes();
+        let fd = unsafe { mc_owner_listen(path) };
+        if fd < 0 { panic("owner admin socket unavailable; check private directory, socket ownership and path length"); }
+        listener = .Some(Listener { fd: fd, path: path, inode: unsafe { mc_owner_inode(path) } });
+    }
+    fn error(code: i64) -> bytes { wire.cat(wire.byte(1), wire.byte(code)) }
+    fn request(data: bytes) -> bytes {
+        if data.len() < 2 || data[0] != 1 { return error(1); }
+        let opcode = data[1] as i64;
+        if opcode != 4 && opcode != 5 { return error(1); }
+        let start: i64 = if opcode == 4 { 2 } else { 3 };
+        if data.len() <= start || data.len() > start + 160 { return error(1); }
+        for i in start..data.len() { if data[i] < 32 || data[i] > 126 { return error(1); } }
+        let command = utf8.decode(wire.cut(data, start, data.len())).expect("ASCII owner command");
+        if opcode == 5 {
+            if (data[2] != 2 && data[2] != 3) || !host_admin.role_allowed(command) { return error(1); }
+        } else {
+            if !host_admin.bot_allowed(command) { return error(1); }
+            if command == "bot key" { return wire.cat(error(0), ("KEY " + bot_key).to_bytes()); }
+            if !management_ready { return error(2); }
+        }
+        if admin_clock >= 2147483647 { return error(9); }
+        admin_clock += 1;
+        if storage.commit(plan.root + "/admin.clock", wire.cat("ADM1".to_bytes(), wire.le(admin_clock, 4))) != 0 {
+            panic("owner admin request clock commit failed; command was not submitted");
+        }
+        deadline = transport.monotonic() + 8500;
+        if opcode == 5 {
+            role_pending = .Some(RoleRequest { id: admin_clock, role: data[2] as i64, command: command });
+            role_waiting = admin_clock;
+            if let .Some(group) = host_group { events.wake(group).expect("wake host role command"); }
+        } else {
+            admin_pending = admin_clock;
+            admin_name = if command.starts_with("bot name ") { command.slice(9, command.len()) } else { "" };
+            if !transport.native_send(.Some(plan.worker), session.frame(4, wire.cat(wire.le(admin_pending, 4), host_admin.native_command(command).to_bytes()))) {
+                admin_pending = 0;
+                admin_name = "";
+                return error(8);
+            }
+        }
+        bytes.new()
+    }
+    receive fn poll() {
+        if listener.is_none() { initialize(); }
+        if client.is_none() {
+            let listener_fd = match listener { .Some(owner) => owner.fd, .None => return };
+            let fd = unsafe { mc_owner_accept(listener_fd) };
+            if fd < 0 { return; }
+            client = .Some(duplex.Descriptor { fd: fd });
+            deadline = transport.monotonic() + 2000;
+            outgoing = bytes.new();
+        }
+        let client_fd = match client { .Some(connection) => connection.fd, .None => return };
+        if transport.monotonic() >= deadline {
+            if admin_pending != 0 || role_waiting != 0 {
+                outgoing = error(8); admin_pending = 0; admin_name = ""; role_waiting = 0; role_pending = .None;
+                deadline = transport.monotonic() + 2000;
+            } else { release_client(); return; }
+        }
+        if outgoing.is_empty() && admin_pending == 0 && role_waiting == 0 {
+            let received = unsafe { mc_owner_receive(client_fd) };
+            if received[0] == 0 { return; }
+            if received[0] != 1 { release_client(); return; }
+            outgoing = request(wire.cut(received, 1, received.len()));
+        }
+        if outgoing.is_empty() { return; }
+        let written = unsafe { mc_write_once(client_fd, outgoing) };
+        if written == -(11 as i32) { return; }
+        release_client();
+    }
+    receive fn management(value: bool) {
+        if listener.is_none() { initialize(); }
+        management_ready = value;
+    }
+    receive fn take_role() -> Option<RoleRequest> {
+        let pending = role_pending;
+        role_pending = .None;
+        pending
+    }
+    receive fn role_reply(id: i64, reply: string, unknown: bool) {
+        if role_waiting == 0 || role_waiting != id { return; }
+        role_waiting = 0;
+        outgoing = if unknown { error(8) } else { wire.cat(error(0), reply.to_bytes()) };
+        changed();
+    }
+    receive fn fence() {
+        management_ready = false;
+        if admin_pending != 0 || role_waiting != 0 { outgoing = error(8); }
+        admin_pending = 0; admin_name = ""; role_waiting = 0; role_pending = .None;
+        changed();
+    }
+    receive fn event(frame: bytes) -> bool {
+        if frame.len() < 5 || frame.len() > 261 || frame[0] != 133 { return false; }
+        if admin_pending != 0 && wire.uint(wire.cut(frame, 1, 5)) == admin_pending {
+            let reply = utf8.decode(wire.cut(frame, 5, frame.len()));
+            if !admin_name.is_empty() {
+                if let .Ok(text) = reply {
+                    if text == "Saved and applied bot name; identity unchanged" {
+                        if storage.commit(plan.root + "/native/host-name", wire.cat("HNM1".to_bytes(), admin_name.to_bytes())) != 0 {
+                            panic("native bot name override commit failed; outcome unknown, inspect bot name before another write");
+                        }
+                    }
+                }
+            }
+            admin_name = "";
+            admin_pending = 0;
+            outgoing = wire.cat(error(0), wire.cut(frame, 5, frame.len()));
+            changed();
+        }
+        true
+    }
+    receive fn close() {
+        management_ready = false; admin_pending = 0; admin_name = "";
+        role_waiting = 0; role_pending = .None; release_client(); listener_watch = .None; listener = .None;
+        retirement = .None; event_group = .None; host_group = .None;
+    }
+}
+
+pub supervisor Branch(plan: Plan) {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child control: Control(plan: plan);
+    child admin: Admin(plan: plan);
+}
+pub actor Lifetime {
+    var done: bool = false;
+    var group: Option<events.Group> = .None;
+    receive fn bind(consume value: events.Group) { group = .Some(events.share(value)); }
+    receive fn close() {
+        done = true;
+        if let .Some(value) = group { events.wake(value).expect("wake owner driver shutdown"); }
+    }
+    receive fn ending() -> bool { done }
+}
+pub fn drive(control: ChildRef<Control>, admin: ChildRef<Admin>, lifetime: Lifetime, end: i64) {
+    let group = events.open().expect("open owner control readiness");
+    let (output, input) = stream.pipe<events.Event>(64).expect("owner readiness stream");
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start owner readiness pump");
+    drive_events(control, admin, lifetime, end, events.share(group), input, .None);
+    stop(pump);
+    stopped(pump);
+}
+pub fn drive_events(control: ChildRef<Control>, admin: ChildRef<Admin>, lifetime: Lifetime, end: i64,
+    consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: Option<events.Channel>) {
+    let shutdown = events.driver(group, input);
+    lifetime.bind(events.share(group)).expect("bind owner driver lifetime");
+    var failed = false;
+    var admin_failed = false;
+    while transport.running() && (end == 0 || transport.monotonic() < end) {
+        let ending = match lifetime.ending() { .Ok(value) => value, .Err(_) => true };
+        if ending { break; }
+        if control.poll().is_err() {
+            if !failed { println("OWNER_CONTROL_OFFLINE reason=control-actor-unavailable"); }
+            failed = true;
+        } else { failed = false; }
+        if admin.poll().is_err() {
+            if !admin_failed { println("OWNER_ADMIN_OFFLINE reason=admin-actor-unavailable"); }
+            admin_failed = true;
+        } else { admin_failed = false; }
+        let now = transport.monotonic();
+        var deadline = now + 1000;
+        if end > 0 && end < deadline { deadline = end; }
+        match control.wait(events.share(group)) {
+            .Ok(value) => { if value < deadline { deadline = value; } }
+            .Err(_) => { deadline = now + 50; }
+        }
+        match admin.wait(events.share(group)) {
+            .Ok(value) => { if value < deadline { deadline = value; } }
+            .Err(_) => { deadline = now + 50; }
+        }
+        if let events.Event.Failed(code) = events.routed_wait(shutdown, channel, deadline) {
+            panic(f"owner control readiness failed: errno={code}");
+        }
+    }
+    let _ = control.fence();
+    let _ = admin.fence();
+    let _ = control.close();
+    let _ = admin.close();
+    shutdown.close();
+}

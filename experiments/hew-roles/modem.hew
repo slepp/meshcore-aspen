@@ -1,0 +1,84 @@
+import wire;
+
+import roles;
+
+pub type Job {
+    id: i64;
+    state: i64;
+}
+
+pub actor Modem {
+    let port: i64;
+    let generation: i64;
+    var jobs: Vec<Job>;
+    var next_id: i64 = 0;
+    var online: bool = true;
+    mailbox 32;
+    receive fn submit(raw: bytes, priority: i64, delay: i64, expiry: i64) -> bytes {
+        if !online || raw.is_empty() || raw.len() > 255 || priority < 0 || priority > 255 || delay < 0 || delay > 1073741823 || expiry < 0 || expiry > 1073741823 || jobs.len() >= 32 || next_id == 4294967295 {
+            return bytes.new();
+        }
+        next_id = next_id + 1;
+        jobs.push(Job { id: next_id, state: 4 });
+        var payload = wire.cat(wire.byte(33), wire.byte(1));
+        payload.append(wire.le(generation, 4));
+        payload.append(wire.le(next_id, 4));
+        payload.append(wire.byte(priority));
+        payload.append(wire.le(delay, 4));
+        payload.append(wire.le(expiry, 4));
+        payload.append(raw);
+        wire.kiss(port, 6, payload)
+    }
+    receive fn event(data: bytes) -> string {
+        if data.len() != 23 || data[0] != 1 || data[9] > 4 {
+            return "ignored";
+        }
+        let epoch = wire.uint(wire.cut(data, 1, 5));
+        let id = wire.uint(wire.cut(data, 5, 9));
+        let state = data[9] as i64;
+        if epoch != generation {
+            return "ignored";
+        }
+        var found = false;
+        var keep: Vec<Job> = Vec.new();
+        for job in jobs {
+            if job.id == id {
+                found = true;
+                if state == 1 {
+                    keep.push(Job { id: id, state: state });
+                }
+            } else {
+                keep.push(job);
+            }
+        }
+        if !found {
+            return "ignored";
+        }
+        jobs = keep;
+        f"job={id} state={state}"
+    }
+    receive fn disconnect() -> i64 {
+        let uncertain = jobs.len();
+        jobs = Vec.new();
+        online = false;
+        uncertain
+    }
+    receive fn pending() -> i64 {
+        jobs.len()
+    }
+}
+
+pub actor Producer {
+    let target: roles.Role;
+    receive fn produce(raw: bytes, now: i64) -> i64 {
+        target.ingest(raw, now, false).expect("role admission").len()
+    }
+    receive fn burst(start: i64, count: i64) -> i64 {
+        var total: i64 = 0;
+        for n in start .. (start + count) {
+            let raw = wire.encode(wire.packet(1, 5, wire.le(n, 4)));
+            total = total + target.ingest(raw, n, false).expect("burst admission").len();
+        }
+        total
+    }
+}

@@ -1,0 +1,38 @@
+import std.crypto.crypto;
+
+import std.encoding.hex;
+
+type Entry {
+    key: string;
+    stamp: i64;
+}
+
+actor Store {
+    var entries: Vec<Entry>;
+    mailbox 4;
+    receive fn add(key: string, stamp: i64) -> i64 {
+        entries.push(Entry { key: key, stamp: stamp });
+        entries.len()
+    }
+    receive fn total() -> i64 {
+        var n: i64 = 0;
+        for e in entries {
+            n = n + e.stamp;
+        }
+        n
+    }
+}
+
+fn main() {
+    let s = spawn Store(entries: Vec.new());
+    let a = fork s.add("a", 20);
+    let b = fork s.add("b", 22);
+    assert((await a).is_ok());
+    assert((await b).is_ok());
+    assert(s.total().expect("actor") == 42);
+    let data = hex.decode("00010200ff");
+    assert(data.len() == 5);
+    assert(hex.encode(data) == "00010200ff");
+    assert(hex.encode(crypto.sha256("abc".to_bytes())) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    println("PASS actors, tasks, structured records, bytes, SHA256");
+}

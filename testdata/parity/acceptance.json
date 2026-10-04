@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "gate_order": [
+    "clean pinned reference and real-crypto known answers",
+    "native core behaviour and policy arithmetic reference execution",
+    "consumer differential comparisons against native events",
+    "native application execution or stock transcripts for application obligations",
+    "combined real KissModem and custom multiplexer competing-client tests",
+    "synthetic-state isolated staging",
+    "authorized stock-vs-host physical interoperability campaign",
+    "recoverable state migration and explicitly approved promotion"
+  ],
+  "additional_native_obligations": {
+    "paths": ["trace-specific encoding", "multipart ACKs", "all payload limits", "malformed short-header reference safety exceptions"],
+    "scheduling": ["pool exhaustion", "target MCU/library confirmation beyond executed ELF32 timer/queue rollover", "actual role end-to-end deadlines", "advert overlap and interval-zero disable"],
+    "room": ["login/password/permission combinations", "replay timestamps", "history ring rollover and author exclusion", "six-second eligibility", "round-robin liveness", "random retry low bits", "flood/direct timeout boundaries", "late and wrong ACK", "three failures and keepalive recovery", "response and extra-ACK timings", "restart and indeterminate persistence"],
+    "companion": ["each matrix command native_form and optional length branch", "each push and receive version", "session-local ownership extensions", "location-disabled exports", "discovery without route mutation", "atomic message and room SyncSince commit"],
+    "phy": ["all writers share one aggregate budget", "eligible priority/FIFO", "budget waits beyond30s", "control liveness under CAD/budget/backpressure", "owner and generation completion", "no reflection before successful RF", "no uncertain replay", "failed/uncertain occupancy charging"]
+  },
+  "executed_room_substrate_boundaries": [
+    {
+      "scenario": "room-post-copy-boundary",
+      "source": "src/helpers/TxtDataHelpers.cpp:StrHelper::strncpy",
+      "application_anchor": "examples/simple_room_server/MyMesh.h:MAX_POST_TEXT_LEN and MyMesh.cpp:storePost",
+      "observations": "A 151-byte buffer argument retains at most 150 bytes for inputs of 149/150/151/152 bytes; byte copying can split a UTF-8 sequence.",
+      "limits": "Helper execution with the source-derived application buffer size, not actual storePost/history-ring execution. Preserving older151-byte durable history is a host persistence decision."
+    },
+    {
+      "scenario": "response-datagram-capacity",
+      "source": "src/Mesh.cpp:Mesh::createDatagram",
+      "observations": "Response plaintext165/167 bytes accepted with real encryption/decryption;168/172 rejected without leaking packet capacity.",
+      "application_relation": "The source-derived four-byte header plus seven bytes per ACL entry gives23 entries/165 bytes versus24 entries/172 bytes.",
+      "limits": "Core packet-capacity execution, not native MyMesh ACL enumeration. Complete host AccessList and explicit oversized-RF errors remain separate implementation evidence."
+    },
+    {
+      "scenario": "cayenne-role-telemetry",
+      "source": "Installed firmware CayenneLPP/src/CayenneLPP.cpp:addVoltage/addTemperature/addField",
+      "observations": "Actual serializer emits 01740192 for 4020 mV, 017401a3 for 4200 mV, and 026700d5 for 21.3 C on channel 2.",
+      "limits": "Actual host64 library serialization under the recorded floating-point profile, not sensor acquisition, native role dispatch or physical RF. ELF32 library case is explicitly blocked: unchanged non-Arduino CayenneLPPPolyline.cpp:206 cannot deduce std::max(size_t,unsigned long). Core ELF32 tests remain separate."
+    }
+  ],
+  "native_application_execution": {
+    "status": "blocked-no-executable-MyMesh-application-harness",
+    "reference": "d92964352441e53b93e8667b802e04f6e072b39e",
+    "probe": "make -C test_support/parity spike",
+    "provenance": "portability.json records commands, source hashes, diagnostic hashes and syntax-only status; these hashes were checked against preserved sources/logs.",
+    "first_observed_failures": [
+      {
+        "surfaces": ["src/helpers/CommonCLI.cpp", "examples/simple_repeater/MyMesh.cpp", "examples/simple_room_server/MyMesh.cpp", "examples/companion_radio/MyMesh.cpp"],
+        "diagnostic": "RTClib/Adafruit BusIO reaches Adafruit_I2CDevice.h:5: fatal error: Wire.h: No such file or directory",
+        "required_boundary": "Declare a native target/HAL profile for RTC/I2C, board/radio/sensor globals, serial and storage; compile and link unchanged application handlers.",
+        "caution": "This is the first observed blocker, not proof that adding Wire.h alone completes portability."
+      },
+      {
+        "surfaces": ["examples/companion_radio/DataStore.cpp"],
+        "diagnostic": "DataStore.cpp:180: #error \"need to implement format()\"",
+        "required_boundary": "Choose and implement the platform storage/format seam, preserving native DataStore and caller behaviour, including failures."
+      }
+    ],
+    "required_evidence": [
+      "Execute actual pinned MyMesh/CommonCLI handlers, not a rewritten reference implementation.",
+      "Record board profile, feature macros and capacities; source/dependency/compiler hashes; synthetic identities; explicit clock/RNG inputs.",
+      "Capture real input/output bytes, enqueue priority/eligibility, state changes and persistence outcomes.",
+      "Compare the corresponding Go application outputs and state, including failure paths; successful compilation is insufficient.",
+      "Alternatively attach authorized isolated stock-device transcripts with the same profile/input/provenance requirements; RF acceptance stays separate."
+    ],
+    "gates": [
+      {
+        "id": "native-app.login-acl",
+        "source": ["examples/simple_room_server/MyMesh.cpp", "examples/simple_repeater/MyMesh.cpp"],
+        "cases": ["blank/wrong/user/admin passwords", "15-byte password storage including split UTF-8; encrypted CLI change, restart, login, replacement and second restart", "firmware-dependent login response bytes", "replay timestamps", "upper ACL bits and read-only permissions", "least-active admission and all-admin safety exception", "role-specific persistence filtering and write failures"],
+        "host_persistence_note": "Roles reports binary-safe private password overrides with legacy string compatibility and a passing restart regression. This is Go persistence evidence, not execution of native CommonCLI or MyMesh.",
+        "not_closed_by": "Actual ClientACL helper tests or source-derived Go role tests alone."
+      },
+      {
+        "id": "native-app.room-delivery",
+        "source": ["examples/simple_room_server/MyMesh.cpp"],
+        "cases": ["signed post acceptance and history-ring rollover", "author exclusion and sync cursor", "six-second push eligibility and round-robin fairness", "retry attempt bits and direct/flood timeout boundaries", "late/wrong/duplicate ACK", "three failures and keepalive recovery", "exact response/extra-ACK priority and delay", "restart and indeterminate persistence"],
+        "not_closed_by": "BaseChatMesh signed ACK hashes/timing; the room application's handlers are different."
+      },
+      {
+        "id": "native-app.routing-management-adverts",
+        "source": ["examples/simple_repeater/MyMesh.cpp", "examples/simple_room_server/MyMesh.cpp", "src/helpers/CommonCLI.cpp"],
+        "cases": ["actual scope/admission decisions around decrypted requests and replies", "scope CLI authorization/mutation/persistence", "anonymous clock/owner/discovery layouts and rate limits", "neighbour queries", "overlapping local/flood advert schedules and disabled intervals", "CommonCLI::savePrefs disables sub-60-minute initial fast adverts after password and gps-advert changes", "location-disabled advert/export", "management response priority/delay and persistence errors"],
+        "not_closed_by": "Extracted loop/delay kernels, RoutingPolicy helpers or source-derived CommonCLI arithmetic.",
+        "reference_limitation": "TransportKeyStore::saveKeysFor is unimplemented; host private multi-key provisioning remains an explicit extension."
+      },
+      {
+        "id": "native-app.companion-protocol",
+        "source": ["examples/companion_radio/MyMesh.cpp", "examples/companion_radio/DataStore.cpp"],
+        "cases": ["every defined command/push/version branch in matrix.json, including commands20/22/38/54/61/62/63/64/65", "offline queue full-channel eviction versus all-direct rejection", "discovery without learning/reciprocation", "signed-message and resume-cursor commit failure", "identity import/export and restart/reset management integration", "raw encoded-path and UTF-8 truncation discrepancy disposition"],
+        "not_closed_by": "Go-to-Go command fixtures, BaseChatMesh substrate execution or advertised protocol version."
+      }
+    ]
+  },
+  "physical_campaign": {
+    "status": "blocked-requires-arrangement",
+    "reason": "Primary remains on public mesh; sole secondary cannot simultaneously run custom KISS and stock peer firmware.",
+    "minimum_arrangement": "An additional isolated radio or an explicitly authorized bounded maintenance window.",
+    "safety": ["synthetic identities only", "no production state", "conducted attenuation or shielding with safe RF loads", "authorized frequency and power", "no public-mesh test transmissions", "record firmware, board, radio parameters and source hashes"],
+    "pairwise": ["stock companion versus host companion and room", "stock repeater versus host forwarding", "stock room versus host companion", "both directions and widths1/2/3", "scoped/unscoped/denied replies", "post/login/ACK/retry/persistence interoperation"],
+    "contention": ["concurrent built-in roles and direct KISS/bot clients", "record actual RF start/end separately from TCP timestamps", "queue and control responsiveness during depleted budget", "busy carrier and retry behaviour", "disconnect and uncertain TX completion"],
+    "additional_arrangement": "Controlled multiple nodes/attenuation and independent RF observation are needed for multi-hop, weak-signal competition and actual occupancy evidence.",
+    "not_proven_by": ["successful packet reception alone", "Go-to-Go conversations", "host clock duration alone", "native synthetic radio timing"]
+  }
+}

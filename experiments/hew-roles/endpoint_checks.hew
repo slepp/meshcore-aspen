@@ -1,0 +1,28 @@
+import meshproto.mqtt_endpoint;
+
+fn main() {
+    for pair in [
+        ("tcp://127.0.0.1:1883", "http://127.0.0.1:1883/"),
+        ("tls://localhost:8883/", "https://localhost:8883/"),
+        ("ssl://localhost:8883", "https://localhost:8883/"),
+        ("ws://localhost/mqtt", "ws://localhost:80/mqtt"),
+        ("wss://mqtt-meshcore-1.ve6slp.ca/mqtt", "wss://mqtt-meshcore-1.ve6slp.ca:443/mqtt"),
+        ("tcp://[::1]:1883", "http://[::1]:1883/"),
+        ("wss://[::1]/", "wss://[::1]:443/"),
+        ("wss://localhost:443/a%20b", "wss://localhost:443/a%20b"),
+        ("TCP://LOCALHOST:1883", "http://LOCALHOST:1883/"),
+    ] {
+        let endpoint = mqtt_endpoint.parse(pair.0).expect("valid endpoint");
+        assert(endpoint.transport_url == pair.1);
+    }
+    for value in ["", "http://localhost:1883", "tcp://localhost", "tls://localhost",
+        "tcp://localhost:", "tcp://localhost:0", "tcp://localhost:65536", "tcp://localhost:-1",
+        "tcp://localhost:1883/topic", "tcp://127.1:1883", "tcp://[::2]:1883", "tcp://localhost:1:2",
+        "wss://localhost/mqtt?key=fixture", "wss://localhost/mqtt#fragment", "wss://localhost/%",
+        "wss://localhost/%zz", "wss://localhost\\@example.invalid/", "wss://example.invalid/",
+        "tcp://fixture@localhost:1883", "ws://localhost/\r\n", "tcp://localhost:123456",
+        "ws://localhost/#", "ws://localhost/?", "tcp://localhost:1883\0"] {
+        assert(mqtt_endpoint.parse(value).is_err());
+    }
+    println("MQTT_ENDPOINT_CHECKS_OK");
+}

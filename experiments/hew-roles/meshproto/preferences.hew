@@ -1,0 +1,382 @@
+//! Validated role-local RF preferences. Shared physical-radio authority is
+//! deliberately outside this value API. Decode validates the entire record
+//! before a caller may replace committed preferences.
+
+import hostlib.binary;
+
+import meshproto.management;
+
+import std.encoding.utf8;
+
+import std.string;
+
+pub type Preferences {
+    name: string;
+    guest: string;
+    admin: string;
+    owner: string;
+    width: i64;
+    repeat: bool;
+    read_only: bool;
+    multi_acks: i64;
+    loop_mode: i64;
+    flood: i64;
+    unscoped: i64;
+    adverts: i64;
+    local_seconds: i64;
+    flood_seconds: i64;
+    txdelay: f64;
+    direct_delay: f64;
+    latitude: f64;
+    longitude: f64;
+    advert_location: i64;
+    rtc_offset: i64;
+    rxdelay: f64;
+    airtime_factor: f64;
+    native_factor: bool;
+}
+
+pub fn validate(p: Preferences) -> Result<Preferences, string> {
+    if !p.rxdelay.is_finite() || p.rxdelay < 0.0 || p.rxdelay > 20.0 {
+        return .Err("rxdelay must be finite and in 0..20");
+    }
+    if !p.airtime_factor.is_finite() || p.airtime_factor < 0.0 || binary.float32(p.airtime_factor).is_none() {
+        return .Err("invalid airtime value");
+    }
+    if !p.latitude.is_finite() || p.latitude < -90.0 || p.latitude > 90.0 ||
+        !p.longitude.is_finite() || p.longitude < -180.0 || p.longitude > 180.0 {
+        return .Err("invalid coordinate");
+    }
+    if p.advert_location != 0 && p.advert_location != 2 {
+        return .Err("invalid advert location mode");
+    }
+    if p.width < 1 || p.width > 3 {
+        return .Err("path hash mode must be 0, 1 or 2");
+    }
+    if !p.txdelay.is_finite() || p.txdelay < 0.0 || p.txdelay > 2.0 {
+        return .Err("txdelay must be finite and in 0..2");
+    }
+    if !p.direct_delay.is_finite() || p.direct_delay < 0.0 || p.direct_delay > 2.0 {
+        return .Err("direct_txdelay must be finite and in 0..2");
+    }
+    if p.loop_mode < 0 || p.loop_mode > 3 || p.flood < 0 || p.flood > 64 || p.unscoped < 0 || p.unscoped > 64 || p.adverts < 0 || p.adverts > 64 {
+        return .Err("invalid flood hop limit or loop policy");
+    }
+    if p.local_seconds < 0 || p.local_seconds > 86400 || p.flood_seconds < 0 || p.flood_seconds > 918000 {
+        return .Err("advert interval exceeds native storage range");
+    }
+    if p.owner.to_bytes().len() > 119 || p.owner.contains("\0") {
+        return .Err("owner information must be at most 119 bytes without NUL");
+    }
+    if p.name.is_empty() || p.name.to_bytes().len() > 31 || p.guest.to_bytes().len() > 63 || p.admin.to_bytes().len() > 63 || p.multi_acks < 0 || p.multi_acks > 1 {
+        return .Err("invalid role name, credential length, or multi.acks");
+    }
+    .Ok(p)
+}
+
+pub fn encode(value: Preferences) -> Option<bytes> {
+    let p = match validate(value) {
+        .Ok(p) => p,
+        .Err(_) => {
+            return .None;
+        }
+    };
+    var out = binary.little(3, 1).expect("preference version");
+    for text in [p.name, p.guest, p.admin, p.owner] {
+        let data = text.to_bytes();
+        out.append(binary.little(data.len(), 2).expect("text length"));
+        out.append(data);
+    }
+    let flags = (if p.repeat {
+        1
+    } else {
+        0
+    }) | (if p.read_only {
+        2
+    } else {
+        0
+    });
+    for value in [p.width, flags, p.multi_acks, p.loop_mode, p.flood, p.unscoped, p.adverts, p.local_seconds, p.flood_seconds] {
+        out.append(binary.little(value, 4).expect("preference scalar"));
+    }
+    out.append(binary.float32(p.txdelay).expect("validated delay"));
+    out.append(binary.float32(p.direct_delay).expect("validated delay"));
+    out.append(binary.float64(p.latitude).expect("validated latitude"));
+    out.append(binary.float64(p.longitude).expect("validated longitude"));
+    out.append(binary.little(p.rtc_offset, 8).expect("clock offset"));
+    out.append(binary.little(p.advert_location, 1).expect("location mode"));
+    out.append(binary.float32(p.rxdelay).expect("validated receive delay"));
+    out.append(binary.float32(p.airtime_factor).expect("validated source factor"));
+    out.append(binary.little(if p.native_factor { 0 } else { 1 }, 1).expect("preference profile"));
+    .Some(out)
+}
+
+pub fn decode(data: bytes) -> Option<Preferences> {
+    if data.len() < 54 || data.len() > 364 || data[0] < 1 || data[0] > 3 {
+        return .None;
+    }
+    var at: i64 = 1;
+    var texts: Vec<string> = Vec.new();
+    for index in 0..4 {
+        if at + 2 > data.len() {
+            return .None;
+        }
+        let size = binary.integer(binary.slice(data, at, at + 2).expect("length")).expect("length scalar");
+        at += 2;
+        if at + size > data.len() {
+            return .None;
+        }
+        match utf8.decode(binary.slice(data, at, at + size).expect("bounded text")) {
+            .Ok(text) => texts.push(text),
+            .Err(_) => {
+                return .None;
+            }
+        }
+        at += size;
+    }
+    if data.len() != at + 44 + (if data[0] == 1 { 0 } else if data[0] == 2 { 25 } else { 34 }) {
+        return .None;
+    }
+    var numbers: Vec<i64> = Vec.new();
+    for index in 0..9 {
+        numbers.push(binary.integer(binary.slice(data, at, at + 4).expect("scalar")).expect("four bytes"));
+        at += 4;
+    }
+    if numbers[1] > 3 {
+        return .None;
+    }
+    let txdelay = match binary.finite_float32(binary.slice(data, at, at + 4).expect("delay")) {
+        .Some(value) => value,
+        .None => {
+            return .None;
+        }
+    };
+    let direct = match binary.finite_float32(binary.slice(data, at + 4, at + 8).expect("direct delay")) {
+        .Some(value) => value,
+        .None => {
+            return .None;
+        }
+    };
+    var latitude = 0.0;
+    var longitude = 0.0;
+    var rtc_offset: i64 = 0;
+    var advert_location: i64 = 0;
+    if data[0] >= 2 {
+        latitude = match binary.finite_float64(binary.slice(data, at + 8, at + 16).expect("latitude")) {
+            .Some(value) => value,
+            .None => return .None,
+        };
+        longitude = match binary.finite_float64(binary.slice(data, at + 16, at + 24).expect("longitude")) {
+            .Some(value) => value,
+            .None => return .None,
+        };
+        rtc_offset = binary.integer(binary.slice(data, at + 24, at + 32).expect("clock offset")).expect("signed offset");
+        advert_location = data[at + 32] as i64;
+    }
+    var rxdelay = 0.0;
+    var factor = 1.0;
+    var native_factor = true;
+    if data[0] == 3 {
+        rxdelay = match binary.finite_float32(binary.slice(data, at + 33, at + 37).expect("receive delay")) {
+            .Some(value) => value,
+            .None => return .None,
+        };
+        factor = match binary.finite_float32(binary.slice(data, at + 37, at + 41).expect("source factor")) {
+            .Some(value) => value,
+            .None => return .None,
+        };
+        if data[at + 41] > 1 { return .None; }
+        native_factor = data[at + 41] == 0;
+    }
+    let p = Preferences { name: texts[0], guest: texts[1], admin: texts[2], owner: texts[3], width: numbers[0], repeat: (numbers[1] & 1) != 0, read_only: (numbers[1] & 2) != 0, multi_acks: numbers[2], loop_mode: numbers[3], flood: numbers[4], unscoped: numbers[5], adverts: numbers[6], local_seconds: numbers[7], flood_seconds: numbers[8], txdelay: txdelay, direct_delay: direct, latitude: latitude, longitude: longitude, rtc_offset: rtc_offset, advert_location: advert_location, rxdelay: rxdelay, airtime_factor: factor, native_factor: native_factor };
+    match validate(p) {
+        .Ok(value) => .Some(value),
+        .Err(_) => .None,
+    }
+}
+
+pub fn change(value: Preferences, key: string, text: string) -> Result<Preferences, string> {
+    var p = value;
+    match key {
+        "lat" | "lon" => {
+            let n = match string.to_float(text) {
+                .Ok(coordinate) => coordinate,
+                .Err(_) => return .Err("invalid coordinate"),
+            };
+            if key == "lat" { p.latitude = n; } else { p.longitude = n; }
+        }
+        "name" => {
+            if text.is_empty() || text.to_bytes().len() > 31 {
+                return .Err("bad chars or name length");
+            }
+            for byte in text.to_bytes() {
+                if byte == 0 || byte == 91 || byte == 93 || byte == 92 || byte == 58 || byte == 44 || byte == 63 || byte == 42 {
+                    return .Err("bad chars or name length");
+                }
+            }
+            p.name = text;
+        }
+        "guest.password" => {
+            p.guest = management.truncate(text, 15);
+        }
+        "multi.acks" => {
+            let n = match string.to_int(text) {
+                .Ok(n) => n,
+                .Err(_) => {
+                    return .Err("multi.acks must be 0 or 1");
+                }
+            };
+            if n < 0 || n > 1 {
+                return .Err("multi.acks must be 0 or 1");
+            }
+            p.multi_acks = n;
+        }
+        "allow.read.only" | "repeat" => {
+            if text != "on" && text != "off" {
+                return .Err("must be on or off");
+            }
+            if key == "repeat" {
+                p.repeat = text == "on";
+            } else {
+                p.read_only = text == "on";
+            }
+        }
+        "owner.info" => {
+            p.owner = string.replace(text, "|", "\n");
+        }
+        "loop.detect" => {
+            p.loop_mode = match text {
+                "off" => 0,
+                "minimal" => 1,
+                "moderate" => 2,
+                "strict" => 3,
+                _ => {
+                    return .Err("must be: off, minimal, moderate, or strict");
+                }
+            };
+        }
+        "txdelay" | "direct.txdelay" | "rxdelay" => {
+            let special = management.upper(text);
+            if key == "rxdelay" && (special == "NAN" || special == "INF" || special == "+INF" || special == "-INF" || special == "INFINITY" || special == "+INFINITY" || special == "-INFINITY") {
+                return .Err("rxdelay must be finite and in 0..20");
+            }
+            let n = match string.to_float(text) {
+                .Ok(n) => (n as f32) as f64,
+                .Err(_) => {
+                    return .Err("invalid numeric value");
+                }
+            };
+            if key == "rxdelay" {
+                p.rxdelay = n;
+            } else if key == "txdelay" {
+                p.txdelay = n;
+            } else {
+                p.direct_delay = n;
+            }
+        }
+        "af" | "dutycycle" => {
+            let n = match string.to_float(text) {
+                .Ok(parsed) => (parsed as f32) as f64,
+                .Err(_) => return .Err("invalid airtime value"),
+            };
+            if !n.is_finite() || n < 0.0 { return .Err("invalid airtime value"); }
+            if key == "dutycycle" {
+                if n < 1.0 || n > 100.0 { return .Err("dutycycle must be 1-100"); }
+                p.airtime_factor = ((100.0 as f32) / (n as f32) - (1.0 as f32)) as f64;
+            } else { p.airtime_factor = n; }
+        }
+        "path.hash.mode" | "flood.max" | "flood.max.unscoped" | "flood.max.advert" | "advert.interval" | "flood.advert.interval" => {
+            let n = match string.to_int(text) {
+                .Ok(n) => n,
+                .Err(_) => {
+                    return .Err("invalid integer");
+                }
+            };
+            if n < 0 || n > 255 {
+                return .Err("invalid integer");
+            }
+            match key {
+                "path.hash.mode" => {
+                    p.width = n + 1;
+                }
+                "flood.max" => {
+                    p.flood = n;
+                }
+                "flood.max.unscoped" => {
+                    p.unscoped = n;
+                }
+                "flood.max.advert" => {
+                    p.adverts = n;
+                }
+                "advert.interval" => {
+                    if n != 0 && (n < 60 || n > 240) {
+                        return .Err("interval range is 60-240 minutes");
+                    }
+                    p.local_seconds = (n / 2) * 120;
+                }
+                _ => {
+                    if n != 0 && (n < 3 || n > 168) {
+                        return .Err("interval range is 3-168 hours");
+                    }
+                    p.flood_seconds = n * 3600;
+                }
+            }
+        }
+        _ => {
+            return .Err("unsupported by host role");
+        }
+    }
+    if p.local_seconds < 3600 {
+        p.local_seconds = 0;
+    }
+    validate(p)
+}
+
+pub fn get(p: Preferences, key: string) -> Option<string> {
+    let value = match key {
+        "name" => p.name,
+        "guest.password" => p.guest,
+        "owner.info" => string.replace(p.owner, "\n", "|"),
+        "multi.acks" => to_string(p.multi_acks),
+        "allow.read.only" => if p.read_only {
+            "on"
+        } else {
+            "off"
+        }
+        "repeat" => if p.repeat {
+            "on"
+        } else {
+            "off"
+        }
+        "path.hash.mode" => to_string(p.width - 1),
+        "flood.max" => to_string(p.flood),
+        "flood.max.unscoped" => to_string(p.unscoped),
+        "flood.max.advert" => to_string(p.adverts),
+        "advert.interval" => to_string(p.local_seconds / 60),
+        "flood.advert.interval" => to_string(p.flood_seconds / 3600),
+        "rxdelay" => management.native_float(p.rxdelay),
+        "txdelay" => management.native_float(p.txdelay),
+        "direct.txdelay" => management.native_float(p.direct_delay),
+        "af" => management.native_float(p.airtime_factor),
+        "dutycycle" => duty(p.airtime_factor),
+        "lat" => management.native_float(p.latitude),
+        "lon" => management.native_float(p.longitude),
+        "bridge.type" => "none",
+        "loop.detect" => {
+            let names = ["off", "minimal", "moderate", "strict"];
+            names[p.loop_mode]
+        }
+
+        _ => {
+            return .None;
+        }
+    };
+    .Some("> " + value)
+}
+
+pub fn duty(factor: f64) -> string {
+    let value = (100.0 as f32) / ((factor as f32) + (1.0 as f32));
+    let whole = value as i64;
+    let fraction = ((value - whole as f32) * (10.0 as f32) + (0.5 as f32)) as i64;
+    f"{whole}.{fraction}%"
+}

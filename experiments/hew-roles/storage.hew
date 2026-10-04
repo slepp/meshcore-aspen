@@ -1,0 +1,67 @@
+extern "C" {
+    #[offload]
+    fn mc_storage_usage(path: bytes) -> bytes;
+    #[offload]
+    fn mc_commit(path: bytes, data: bytes) -> i32;
+    #[offload]
+    fn mc_recover(path: bytes, lock: i32) -> i32;
+    #[offload]
+    fn mc_read(path: bytes) -> bytes;
+    fn mc_lock(path: bytes) -> i32;
+    fn mc_unlock(fd: i32);
+    fn mc_absent(path: bytes) -> i32;
+    #[offload]
+    fn mc_append_private(path: bytes, data: bytes, limit: i64) -> i32;
+    #[offload]
+    fn mc_erase_private(path: bytes) -> i32;
+}
+
+pub fn usage(path: string) -> bytes {
+    unsafe {
+        mc_storage_usage(path.to_bytes())
+    }
+}
+
+pub fn commit(path: string, data: bytes) -> i64 {
+    unsafe {
+        mc_commit(path.to_bytes(), data) as i64
+    }
+}
+
+pub fn recover(path: string, lock: i32) -> bool {
+    unsafe {
+        mc_recover(path.to_bytes(), lock) == 0
+    }
+}
+
+pub fn read(path: string) -> bytes {
+    unsafe {
+        mc_read(path.to_bytes())
+    }
+}
+
+pub fn lock(path: string) -> i32 {
+    unsafe {
+        mc_lock(path.to_bytes())
+    }
+}
+
+pub fn unlock(fd: i32) {
+    unsafe {
+        mc_unlock(fd)
+    };
+}
+
+pub fn absent(path: string) -> bool {
+    unsafe {
+        mc_absent(path.to_bytes()) == 1
+    }
+}
+
+pub fn append_private(path: string, data: bytes, limit: i64) -> i64 {
+    unsafe { mc_append_private(path.to_bytes(), data, limit) as i64 }
+}
+
+pub fn erase_private(path: string) -> i64 {
+    unsafe { mc_erase_private(path.to_bytes()) as i64 }
+}

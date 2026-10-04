@@ -1,0 +1,177 @@
+//! Serialized read-only physical modem queries; samples never invent measurements.
+import wire;
+
+import std.encoding.json;
+
+pub actor Probe {
+    let profile: bytes;
+    var sample_at: i64 = 0;
+    var battery: bytes = bytes.new();
+    var noise: bytes = bytes.new();
+    var rssi: bytes = bytes.new();
+    var temperature: bytes = bytes.new();
+    var counters: bytes = bytes.new();
+    var draft_battery: bytes = bytes.new();
+    var draft_noise: bytes = bytes.new();
+    var draft_rssi: bytes = bytes.new();
+    var draft_temperature: bytes = bytes.new();
+    var draft_counters: bytes = bytes.new();
+    var stage: i64 = 0;
+    var pending: bool = false;
+    var deadline: i64 = 0;
+    var next: i64 = 0;
+    var fault: bool = false;
+    mailbox 16;
+
+    receive fn reset() {
+        sample_at = 0;
+        battery = bytes.new();
+        noise = bytes.new();
+        rssi = bytes.new();
+        temperature = bytes.new();
+        counters = bytes.new();
+        stage = 0;
+        pending = false;
+        next = 0;
+        fault = false;
+    }
+    receive fn busy() -> bool {
+        pending
+    }
+    receive fn next_deadline() -> i64 {
+        if pending { deadline } else { next }
+    }
+    receive fn healthy(now: i64) -> bool {
+        !fault && (!pending || now < deadline)
+    }
+    receive fn snapshot(now: i64) -> bytes {
+        if fault || sample_at == 0 || now - sample_at > 45000 {
+            wire.cat(wire.le(0, 8), wire.byte(0))
+        } else {
+            wire.cat(wire.cat(wire.le(sample_at, 8), wire.byte(battery.len())), wire.cat(battery, counters))
+        }
+    }
+    receive fn report(now: i64) -> string {
+        if fault || sample_at == 0 || now - sample_at > 45000 {
+            return "{}";
+        }
+        var out = json.object();
+        let has_battery = battery.len() == 2 && wire.uint(battery) != 0;
+        out.set("has_battery", json.from_bool(has_battery)).expect("physical telemetry");
+        out.set("battery_mv", json.from_int(if has_battery {
+            wire.uint(battery)
+        } else {
+            0
+        })).expect("physical telemetry");
+        out.set("has_noise_floor", json.from_bool(noise.len() == 2)).expect("physical telemetry");
+        out.set("noise_floor_dbm", json.from_int(if noise.len() == 2 {
+            wire.uint(noise) as i16 as i64
+        } else {
+            0
+        })).expect("physical telemetry");
+        out.set("has_current_rssi", json.from_bool(rssi.len() == 1)).expect("physical telemetry");
+        out.set("current_rssi_dbm", json.from_int(if rssi.len() == 1 {
+            rssi[0] as i8 as i64
+        } else {
+            0
+        })).expect("physical telemetry");
+        out.set("has_mcu_temperature", json.from_bool(temperature.len() == 2)).expect("physical telemetry");
+        out.set("mcu_temperature_c", json.from_float(if temperature.len() == 2 {
+            ((wire.uint(temperature) as i16 as f32) / (10.0 as f32)) as f64
+        } else {
+            0.0
+        }).expect("finite physical temperature")).expect("physical telemetry");
+        out.set("has_counters", json.from_bool(counters.len() == 12)).expect("physical telemetry");
+        var counts = json.object();
+        counts.set("PacketsRecv", json.from_int(if counters.len() == 12 {
+            wire.uint(wire.cut(counters, 0, 4))
+        } else {
+            0
+        })).expect("physical counters");
+        counts.set("PacketsSent", json.from_int(if counters.len() == 12 {
+            wire.uint(wire.cut(counters, 4, 8))
+        } else {
+            0
+        })).expect("physical counters");
+        counts.set("PacketsErrors", json.from_int(if counters.len() == 12 {
+            wire.uint(wire.cut(counters, 8, 12))
+        } else {
+            0
+        })).expect("physical counters");
+        out.set("counters", counts).expect("physical telemetry");
+        out.stringify().expect("physical telemetry")
+    }
+    receive fn query(now: i64) -> bytes {
+        if fault || pending || now < next {
+            return bytes.new();
+        }
+        let operations = [34, 19, 16, 13, 20, 18];
+        pending = true;
+        deadline = now + 3000;
+        var command = wire.byte(operations[stage]);
+        if stage == 0 {
+            command.append(wire.cat(wire.byte(1), wire.byte(0)));
+        }
+        command
+    }
+    receive fn response(frame: bytes, now: i64) -> bool {
+        if !pending || frame.len() < 2 || frame[0] != 6 {
+            return false;
+        }
+        let operations = [34, 19, 16, 13, 20, 18];
+        let expected = operations[stage] | 128;
+        if frame[1] as i64 != expected && frame[1] != 241 {
+            return false;
+        }
+        pending = false;
+        let unavailable = frame.len() == 3 && frame[1] == 241 && (frame[2] == 3 || frame[2] == 5);
+        let data = wire.cut(frame, 2, frame.len());
+        if stage == 0 {
+            if data.len() != 24 || data[0] != 1 || data[1] != 0 || wire.uint(wire.cut(data, 2, 6)) == 0 || !wire.equal(wire.cut(data, 6, 24), profile) {
+                fault = true;
+                return true;
+            }
+            draft_battery = bytes.new();
+            draft_noise = bytes.new();
+            draft_rssi = bytes.new();
+            draft_temperature = bytes.new();
+            draft_counters = bytes.new();
+        } else if !unavailable {
+            let minimum = if stage == 3 {
+                1
+            } else if stage == 5 {
+                12
+            } else {
+                2
+            };
+            if frame[1] == 241 || data.len() < minimum {
+                fault = true;
+                return true;
+            }
+            let value = wire.cut(data, 0, minimum);
+            if stage == 1 {
+                draft_battery = value;
+            } else if stage == 2 {
+                draft_noise = value;
+            } else if stage == 3 {
+                draft_rssi = value;
+            } else if stage == 4 {
+                draft_temperature = value;
+            } else {
+                draft_counters = value;
+            }
+        }
+        stage += 1;
+        if stage == 6 {
+            sample_at = now;
+            battery = draft_battery;
+            noise = draft_noise;
+            rssi = draft_rssi;
+            temperature = draft_temperature;
+            counters = draft_counters;
+            stage = 0;
+            next = now + 15000;
+        }
+        true
+    }
+}

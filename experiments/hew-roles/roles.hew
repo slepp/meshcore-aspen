@@ -1,0 +1,2421 @@
+import wire;
+
+import std.crypto.crypto;
+
+import std.encoding.hex;
+
+import std.encoding.utf8;
+
+import storage;
+import transport;
+
+import std.string;
+
+import hostlib.binary;
+
+import meshproto.management;
+
+import meshproto.preferences;
+
+import meshproto.regions;
+
+import meshproto.cli;
+import meshproto.packet_log;
+import meshproto.radio;
+
+type Held {
+    raw: bytes;
+    deadline: i64;
+    snr: i64;
+    rssi: i64;
+    measured: bool;
+}
+
+fn without_leading_spaces(text: string) -> string {
+    var at: i64 = 0;
+    while at < text.len() && text.slice(at, at + 1) == " " {
+        at = at + 1;
+    }
+    text.slice(at, text.len())
+}
+
+fn valid_note(key: string, value: string) -> bool {
+    let size = key.to_bytes().len();
+    size > 0 && size <= 32 && value.to_bytes().len() <= 120
+}
+
+// Avoid rc7 O2's malformed boolean interpolation in persistent-role status.
+fn flag_text(value: bool) -> string {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+pub type Member {
+    key: bytes;
+    permission: i64;
+    stamp: i64;
+    since: i64;
+    saved_attempt: i64;
+    active: bool;
+    activity: i64;
+    known: bool;
+    pathlen: i64;
+    path: bytes;
+    pending: i64;
+    pending_post: i64;
+    deadline: i64;
+    failures: i64;
+}
+
+pub fn member(key: bytes) -> Member {
+    Member { key: key, permission: 0, stamp: 0, since: 0, saved_attempt: 0, active: false, activity: 0, known: false, pathlen: 0, path: bytes.new(), pending: 0, pending_post: 0, deadline: 0, failures: 0 }
+}
+
+pub type Post {
+    key: bytes;
+    stamp: i64;
+    text: bytes;
+}
+
+pub type Seen {
+    hash: string;
+    at: i64;
+}
+
+pub type Tx {
+    raw: bytes;
+    delay: i64;
+    relayed: bool;
+}
+
+pub type Note {
+    owner: string;
+    key: string;
+    value: string;
+}
+
+type CommandReply {
+    text: string;
+    frames: Vec<Tx>;
+}
+
+pub type Deferred {
+    request: string;
+    member: Member;
+    group: bool;
+    deadline: i64;
+    window: i64;
+    paths: Vec<string>;
+}
+
+pub fn path_text(p: wire.Packet) -> string {
+    f"{(p.pathlen >> 6) + 1}:{hex.encode(p.path)}"
+}
+
+pub fn tx(p: wire.Packet, delay: i64) -> Tx {
+    Tx { raw: wire.encode(p), delay: delay, relayed: false }
+}
+
+pub fn flood(p: wire.Packet) -> bool {
+    p.route == 0 || p.route == 1
+}
+
+pub fn text(data: bytes, start: i64) -> bytes {
+    var end = start;
+    while end < data.len() && data[end] != 0 {
+        end = end + 1;
+    }
+    wire.cut(data, start, end)
+}
+
+pub fn routed(seed: bytes, m: Member, kind: i64, plain: bytes, width: i64, region: bytes) -> wire.Packet {
+    var p = wire.datagram(seed, m.key, kind, plain);
+    if m.known {
+        p.pathlen = m.pathlen;
+        p.path = m.path;
+    } else {
+        p.route = 1;
+        p.pathlen = (width - 1) << 6;
+        if region.len() == 16 {
+            p.route = 0;
+            p.code1 = wire.region_code(region, p);
+            p.code2 = p.code1;
+        }
+    }
+    p
+}
+
+pub fn ack_packet(m: Member, proof: bytes, width: i64) -> wire.Packet {
+    var p = wire.packet(1, 3, proof);
+    p.pathlen = (width - 1) << 6;
+    if m.known {
+        p.route = 2;
+        p.pathlen = m.pathlen;
+        p.path = m.path;
+    }
+    p
+}
+
+pub fn response(seed: bytes, m: Member, request: wire.Packet, plain: bytes, width: i64, region: bytes) -> wire.Packet {
+    if !flood(request) {
+        return routed(seed, m, 1, plain, width, region);
+    }
+    var unknown = m;
+    unknown.known = false;
+    let body = wire.cat(wire.cat(wire.byte(request.pathlen), request.path), wire.cat(wire.byte(1), plain));
+    routed(seed, unknown, 8, body, width, region)
+}
+
+fn response_capacity(request: wire.Packet) -> i64 {
+    if flood(request) {
+        161 - request.path.len()
+    } else {
+        167
+    }
+}
+
+pub actor Role {
+    let seed: bytes;
+    let role: i64;
+    var name: string;
+    var password: string;
+    var admin: string;
+    var width: i64;
+    var region: bytes;
+    let channel: bytes;
+    var members: Vec<Member>;
+    var history: Vec<Post>;
+    var durable_history: bool = false;
+    var public_access: bool = false;
+    var evict: bool = false;
+    var seen: Vec<Seen>;
+    var requests: Vec<Seen>;
+    var notes: Vec<Note>;
+    var deferred: Vec<Deferred>;
+    var clock: i64 = 0;
+    var posted: i64 = 0;
+    var pushed: i64 = 0;
+    var next_push: i64 = 0;
+    var next_user: i64 = 0;
+    var seen_next: i64 = 0;
+    var commands: i64 = 0;
+    var duplicates: i64 = 0;
+    var denied: i64 = 0;
+    var closed: bool = false;
+    var durable: bool = false;
+    var configured_scopes: bool = false;
+    var scope_keys: Vec<bytes>;
+    var named_regions: regions.Table = regions.empty();
+    var regions_saved: bool = false;
+    var region_load: Option<regions.Load> = .None;
+    var configured_home: Option<bytes> = .None;
+    var configured_default: Option<bytes> = .None;
+    var configured_wildcard: Option<bool> = .None;
+    var configured_allowed: Option<Vec<bytes>> = .None;
+    var wildcard: bool = true;
+    var repeat: bool;
+    var loop_mode: i64 = 3;
+    var flood_max: i64 = 16;
+    var unscoped_max: i64 = 16;
+    var advert_max: i64 = 8;
+    var local_advert_seconds: i64 = 0;
+    var flood_advert_seconds: i64 = 0;
+    var next_local_advert: i64 = 0;
+    var next_flood_advert: i64 = 0;
+    var txdelay_milli: i64 = 0;
+    var direct_txdelay_milli: i64 = 0;
+    var txdelay_value: f64 = 0.0;
+    var direct_delay_value: f64 = 0.0;
+    var rxdelay_value: f64 = 0.0;
+    var airtime_factor: f64 = 1.0;
+    var native_factor: bool = true;
+    var native_factor_override: Option<bool> = .None;
+    var source_policy_bound: bool = false;
+    var restart_enabled: bool = false;
+    var restart_requested: bool = false;
+    var held: Vec<Held> = Vec.new();
+    var rx_processed: bool = false;
+    var airtime_table: bytes;
+    var received_snr: i64 = 0;
+    var received_rssi: i64 = -32768;
+    var received_measured: bool = false;
+    var metrics: management.Counters = management.counters();
+    var readings: management.Telemetry = management.unavailable();
+    var neighbours: Vec<management.Neighbour> = Vec.new();
+    var started: i64 = -1;
+    var owner_info: string = "";
+    var multi_acks: i64 = 0;
+    var read_only: bool = false;
+    var latitude: f64 = 0.0;
+    var longitude: f64 = 0.0;
+    var advert_location: i64 = 0;
+    var rtc_offset: i64 = 0;
+    var logging: bool = false;
+    var log_path: string = "";
+    var log_limit: i64 = 4194304;
+    var erase_log: bool = false;
+    var preferences_changed: bool = false;
+    var physical_profile: bytes = bytes.new();
+    var discovery_tag: i64 = 0;
+    var discovery_until: i64 = 0;
+    var discovery_window: i64 = -1;
+    var discovery_count: i64 = 0;
+    var anonymous_window: i64 = -1;
+    var anonymous_count: i64 = 0;
+    mailbox 64;
+
+    receive fn configure(options: string) -> bool {
+        var metadata = false;
+        var has_home = false;
+        var home_value = bytes.new();
+        var has_default = false;
+        var has_wildcard = false;
+        var has_allowed = false;
+        for line in options.split("\n") {
+            if line.is_empty() {
+                continue;
+            }
+            let at = line.find("=").expect("role setting requires key=value");
+            let key = line.slice(0, at);
+            let value = line.slice(at + 1, line.len());
+            match key {
+                "name" => {
+                    name = value;
+                }
+                "retention" => {
+                    if value != "native" && value != "durable-replay" {
+                        return false;
+                    }
+                    durable_history = value == "durable-replay";
+                }
+                "preference_profile" => {
+                    if value != "native-preferences" && value != "durable-host-preferences" { return false; }
+                    native_factor = value == "native-preferences";
+                    native_factor_override = .Some(native_factor);
+                }
+                "public" => {
+                    if value != "0" && value != "1" {
+                        return false;
+                    }
+                    public_access = value == "1";
+                }
+                "evict" => {
+                    if value != "0" && value != "1" {
+                        return false;
+                    }
+                    evict = value == "1";
+                }
+                "password" => {
+                    password = value;
+                }
+                "admin" => {
+                    admin = value;
+                }
+                "default_scope" => {
+                    region = hex.decode(value);
+                    configured_scopes = true;
+                    has_default = true;
+                }
+                "home" => {
+                    let home = hex.decode(value);
+                    if !home.is_empty() && home.len() != 16 {
+                        return false;
+                    }
+                    named_regions.legacy_home = home;
+                    has_home = true; home_value = home;
+                }
+                "region_state" => {
+                    named_regions = match regions.decode(hex.decode(value)) {
+                        .Some(table) => table,
+                        .None => return false,
+                    };
+                    metadata = true;
+                }
+                "regions" => {
+                    has_allowed = true;
+                    scope_keys = Vec.new();
+                    configured_scopes = true;
+                    if !value.is_empty() {
+                        for item in value.split(",") {
+                            let region_key = hex.decode(item);
+                            if region_key.len() != 16 || scope_keys.len() >= 128 {
+                                return false;
+                            }
+                            scope_keys.push(region_key);
+                        }
+                    }
+                }
+                "wildcard" => {
+                    has_wildcard = true;
+                    if value != "0" && value != "1" {
+                        return false;
+                    }
+                    wildcard = value == "1";
+                    configured_scopes = true;
+                }
+                "repeat" => {
+                    if value != "0" && value != "1" {
+                        return false;
+                    }
+                    repeat = value == "1";
+                }
+                "loop" => {
+                    let mode = string.to_int(value).expect("loop");
+                    if mode < 0 || mode > 3 {
+                        return false;
+                    }
+                    loop_mode = mode;
+                }
+                "flood_max" => {
+                    flood_max = string.to_int(value).expect("flood_max");
+                }
+                "unscoped_max" => {
+                    unscoped_max = string.to_int(value).expect("unscoped_max");
+                }
+                "advert_max" => {
+                    advert_max = string.to_int(value).expect("advert_max");
+                }
+                "txdelay_milli" => {
+                    txdelay_milli = string.to_int(value).expect("txdelay_milli");
+                    txdelay_value = ((txdelay_milli as f32) / (1000 as f32)) as f64;
+                }
+                "direct_txdelay_milli" => {
+                    direct_txdelay_milli = string.to_int(value).expect("direct_txdelay_milli");
+                    direct_delay_value = ((direct_txdelay_milli as f32) / (1000 as f32)) as f64;
+                }
+                "local_advert_seconds" => {
+                    local_advert_seconds = string.to_int(value).expect("local_advert_seconds");
+                }
+                "flood_advert_seconds" => {
+                    flood_advert_seconds = string.to_int(value).expect("flood_advert_seconds");
+                }
+                _ => {
+                    return false;
+                }
+            }
+        }
+        if metadata {
+            let baseline = match regions.activate(named_regions) {
+                .Ok(value) => value,
+                .Err(_) => return false,
+            };
+            if has_home && !wire.equal(home_value, regions.home_key(baseline)) { configured_home = .Some(home_value); }
+            if has_default && !wire.equal(region, baseline.default_key) { configured_default = .Some(region); }
+            if has_wildcard && wildcard != ((baseline.wildcard & 1) == 0) { configured_wildcard = .Some(wildcard); }
+            if has_allowed {
+                var actual = bytes.new(); var expected = bytes.new();
+                for key in scope_keys { actual.append(key); }
+                for key in regions.permitted(baseline) { expected.append(key); }
+                if !wire.equal(actual, expected) { configured_allowed = .Some(scope_keys); }
+            }
+            match regions.override_scopes(baseline, configured_home, configured_default, configured_wildcard, configured_allowed) {
+                .Ok(value) => adopt_regions(value),
+                .Err(_) => return false,
+            }
+        } else {
+            named_regions.legacy_keys = scope_keys;
+            named_regions.default_key = region;
+            named_regions.wildcard = if wildcard { 0 } else { 1 };
+        }
+        (role != 3 || (password.is_empty() == public_access)) && !name.is_empty() && name.len() <= 31 && password.len() <= 63 && admin.len() <= 63 && (region.is_empty() || region.len() == 16) && flood_max >= 0 && flood_max <= 64 && unscoped_max >= 0 && unscoped_max <= 64 && advert_max >= 0 && advert_max <= 64 && local_advert_seconds >= 0 && local_advert_seconds <= 86400 && flood_advert_seconds >= 0 && flood_advert_seconds <= 604800 && txdelay_milli >= 0 && txdelay_milli <= 2000 && direct_txdelay_milli >= 0 && direct_txdelay_milli <= 2000
+    }
+
+    fn adopt_regions(value: regions.Table) {
+        named_regions = value;
+        regions_saved = true;
+        configured_scopes = true;
+        region = value.default_key;
+        wildcard = (value.wildcard & 1) == 0;
+    }
+
+    receive fn airtime(table: bytes) -> bool {
+        airtime_table = table;
+        table.len() == 1024 || (rxdelay_value == 0.0 && txdelay_value == 0.0 && direct_delay_value == 0.0)
+    }
+    receive fn profile(value: bytes) {
+        physical_profile = value;
+    }
+    receive fn bind_source_policy() {
+        source_policy_bound = true;
+    }
+    receive fn bind_restart() {
+        restart_enabled = true;
+    }
+    receive fn restart_pending() -> bool {
+        restart_requested
+    }
+    receive fn source_factor() -> bytes {
+        binary.float32(airtime_factor).expect("validated source factor")
+    }
+    receive fn begin(now: i64) {
+        if started < 0 {
+            started = now;
+        }
+    }
+    receive fn queue(depth: i64) {
+        if depth >= 0 && depth <= 32 {
+            metrics.queued = depth;
+        }
+    }
+    fn settings() -> preferences.Preferences {
+        preferences.Preferences { name: name, guest: password, admin: admin, owner: owner_info, width: width, repeat: repeat, read_only: read_only, multi_acks: multi_acks, loop_mode: loop_mode, flood: flood_max, unscoped: unscoped_max, adverts: advert_max, local_seconds: local_advert_seconds, flood_seconds: flood_advert_seconds, txdelay: txdelay_value, direct_delay: direct_delay_value, latitude: latitude, longitude: longitude, rtc_offset: rtc_offset, advert_location: advert_location, rxdelay: rxdelay_value, airtime_factor: airtime_factor, native_factor: native_factor }
+    }
+    fn adopt(p: preferences.Preferences) {
+        name = p.name;
+        password = p.guest;
+        admin = p.admin;
+        owner_info = p.owner;
+        width = p.width;
+        repeat = p.repeat;
+        read_only = p.read_only;
+        multi_acks = p.multi_acks;
+        loop_mode = p.loop_mode;
+        flood_max = p.flood;
+        unscoped_max = p.unscoped;
+        advert_max = p.adverts;
+        local_advert_seconds = p.local_seconds;
+        flood_advert_seconds = p.flood_seconds;
+        txdelay_value = p.txdelay;
+        direct_delay_value = p.direct_delay;
+        rxdelay_value = p.rxdelay;
+        airtime_factor = p.airtime_factor;
+        native_factor = p.native_factor;
+        latitude = p.latitude;
+        longitude = p.longitude;
+        advert_location = p.advert_location;
+        rtc_offset = p.rtc_offset;
+        if role == 3 {
+            public_access = password.is_empty();
+        }
+        preferences_changed = true;
+    }
+    fn timestamp(now: i64) -> i64 {
+        ((now / 1000) + (rtc_offset & 4294967295)) & 4294967295
+    }
+    fn advertisement(now: i64) -> wire.Packet {
+        clock = if timestamp(now) > clock { timestamp(now) } else { (clock + 1) & 4294967295 };
+        wire.advert_location(seed, clock, role, name, advert_location != 0, latitude, longitude)
+    }
+    fn capture(raw: bytes, direction: string, local: bool, now: i64, outcome: Option<packet_log.Outcome>) {
+        if !logging { return; }
+        let record = packet_log.entry(raw, direction, local, direction == "RX" && received_measured,
+            received_snr, received_rssi, now, outcome);
+        let result = storage.append_private(log_path, record, log_limit);
+        if result != 0 {
+            logging = false;
+            let condition = if result == 1 { "limit-reached" } else if result == -2 { "write-outcome-unknown" } else { "private-file-write-failed" };
+            println(f"PACKET_LOG_STOPPED path={log_path} condition={condition}; erase or archive the log before restarting capture");
+        }
+    }
+    receive fn logfile(path: string, limit: i64) -> bool {
+        if path.is_empty() || limit < 1024 || limit > 16777216 { return false; }
+        log_path = path;
+        log_limit = limit;
+        if logging {
+            let result = storage.append_private(log_path, bytes.new(), log_limit);
+            if result != 0 {
+                println(f"PACKET_LOG_UNAVAILABLE path={log_path} result={result}; check ownership and retained size");
+                return false;
+            }
+        }
+        true
+    }
+    receive fn outcome(raw: bytes, value: packet_log.Outcome, now: i64) {
+        if value.state == 0 || value.state == 3 || value.state == 4 {
+            capture(raw, "TX_RESULT", false, now, .Some(value));
+        }
+    }
+    fn permission_command(words: Vec<string>) -> string {
+        if words.len() != 3 {
+            return "Err - bad params";
+        }
+        let key = hex.decode(words[1]);
+        if key.is_empty() || key.len() > 32 {
+            return "Err - bad pubkey";
+        }
+        let permission = match string.to_int(words[2]) {
+            .Ok(value) => value,
+            .Err(_) => {
+                return "Err - bad permissions";
+            }
+        };
+        if permission < 0 || permission > 255 {
+            return "Err - bad permissions";
+        }
+        if (permission & 3) == 0 {
+            var matches: i64 = 0;
+            var kept: Vec<Member> = Vec.new();
+            for peer in members {
+                if wire.equal(wire.cut(peer.key, 0, key.len()), key) {
+                    matches += 1;
+                } else {
+                    kept.push(peer);
+                }
+            }
+            if matches != 1 {
+                return "Err - ambiguous or unknown pubkey";
+            }
+            members = kept;
+            return "OK";
+        }
+        if key.len() != 32 || wire.shared(seed, key).len() != 32 {
+            return "Err - bad pubkey";
+        }
+        for index in 0..members.len() {
+            if wire.equal(members[index].key, key) {
+                var peer = members[index];
+                peer.permission = permission;
+                members.set(index, peer);
+                return "OK";
+            }
+        }
+        var peer = member(key);
+        peer.permission = permission;
+        if members.len() < 20 {
+            members.push(peer);
+            return "OK";
+        }
+        var candidate: i64 = -1;
+        if evict {
+            for index in 0..members.len() {
+                if (members[index].permission & 3) != 3 && (candidate < 0 || members[index].activity < members[candidate].activity) {
+                    candidate = index;
+                }
+            }
+        }
+        if candidate < 0 {
+            return "Err - client table full";
+        }
+        members.set(candidate, peer);
+        "OK"
+    }
+    fn command(input: string, stamp: i64, now: i64, owner: string) -> CommandReply {
+        if started >= 0 { metrics.uptime = (now - started) / 1000; }
+        if region_load.is_some() {
+            let result = regions.execute(named_regions, region_load, input, owner, timestamp(now));
+            region_load = result.loading;
+            if result.changed { adopt_regions(result.table); }
+            return CommandReply { text: result.reply, frames: Vec.new() };
+        }
+        var command = management.trim_left(input);
+        var prefix = "";
+        if command.to_bytes().len() > 3 && command.to_bytes()[2] == 124 {
+            prefix = command.slice(0, 3);
+            command = management.trim_left(command.slice(3, command.len()));
+        }
+        var reply = "Err - unsupported by host role";
+        var frames: Vec<Tx> = Vec.new();
+        if command == "help" {
+            reply = cli.help("");
+        } else if command.starts_with("help ") {
+            reply = cli.help(string.trim(command.slice(5, command.len())));
+        } else if command == "wifi" || command.starts_with("wifi ") {
+            reply = cli.help("wifi");
+        } else if command == "stats" || command.starts_with("stats ") {
+            reply = cli.stats(string.trim(command.slice(5, command.len())), readings, metrics);
+        } else if command == "get stats" {
+            reply = f"recv={metrics.received} sent={metrics.sent} uptime={metrics.uptime}s";
+        } else if command == "board" {
+            reply = "Host; external KISS modem";
+        } else if command == "ver" {
+            let level: i64 = if role == 3 {
+                1
+            } else {
+                2
+            };
+            reply = f"meshcore-host willow (MeshCore room/repeater protocol level {level}; native Hew 0.6.0-rc7)";
+        } else if command == "clock" {
+            reply = management.utc(timestamp(now));
+        } else if command == "clock sync" || command.starts_with("time ") {
+            var requested = stamp + 1;
+            var valid = true;
+            if command.starts_with("time ") {
+                let text = string.trim(command.slice(5, command.len()));
+                valid = !text.is_empty();
+                var digits = text;
+                if text.starts_with("+") { digits = text.slice(1, text.len()); }
+                if digits.is_empty() { valid = false; }
+                for byte in digits.to_bytes() {
+                    if byte < 48 || byte > 57 { valid = false; }
+                }
+                requested = match string.to_int(digits) {
+                    .Ok(value) => value,
+                    .Err(_) => { valid = false; 0 }
+                };
+                if requested < 0 || requested > 4294967295 { valid = false; }
+            }
+            if !valid {
+                reply = "Error, invalid time";
+            } else if requested <= timestamp(now) || requested > 4294967295 {
+                reply = "ERR: clock cannot go backwards";
+            } else {
+                var p = settings();
+                p.rtc_offset = requested - now / 1000;
+                adopt(p);
+                reply = "OK - clock set: " + management.utc(requested);
+            }
+        } else if command == "gps advert" {
+            reply = if advert_location == 2 { "> prefs" } else { "> none" };
+        } else if command == "gps advert none" || command == "gps advert prefs" {
+            var p = settings();
+            p.advert_location = if command == "gps advert prefs" { 2 } else { 0 };
+            if p.local_seconds < 3600 { p.local_seconds = 0; }
+            adopt(p);
+            reply = "ok";
+        } else if command.starts_with("set prv.key ") {
+            reply = "Error, key import disabled";
+        } else if command.starts_with("reboot") {
+            if restart_enabled {
+                restart_requested = true;
+                closed = true;
+                reply = "";
+            } else {
+                reply = "Error, role restart unavailable";
+            }
+        } else if command == "log start" {
+            let result = if log_path.is_empty() { -1 } else { storage.append_private(log_path, bytes.new(), log_limit) };
+            if result == 0 {
+                logging = true;
+                reply = "   logging on";
+            } else {
+                println(f"PACKET_LOG_UNAVAILABLE path={log_path} result={result}; check private ownership or erase a full log");
+                reply = "Error, packet log unavailable; check private ownership or erase a full log";
+            }
+        } else if command == "log stop" {
+            logging = false;
+            reply = "   logging off";
+        } else if command == "log erase" {
+            if log_path.is_empty() { reply = "Error, packet log unavailable"; }
+            else { erase_log = true; reply = "   log erased"; }
+        } else if command == "tempradio" || command.starts_with("tempradio ") || command.starts_with("set radio ") || command == "set radio" || command.starts_with("set freq ") || command == "set freq" || command.starts_with("set tx ") || command == "set tx" {
+            reply = "Error: mast-admin required for shared radio";
+        } else if command.starts_with("password ") {
+            var p = settings();
+            p.admin = management.truncate(command.slice(9, command.len()), 15);
+            if p.local_seconds < 3600 {
+                p.local_seconds = 0;
+            }
+            adopt(p);
+            reply = "password now: " + p.admin;
+        } else if command.starts_with("setperm ") {
+            var words: Vec<string> = Vec.new();
+            for word in string.replace(command, "\t", " ").split(" ") {
+                if !word.is_empty() {
+                    words.push(word);
+                }
+            }
+            reply = permission_command(words);
+        } else if command == "advert" || command == "advert.zerohop" {
+            var packet = advertisement(now);
+            packet.pathlen = (width - 1) << 6;
+            if command == "advert.zerohop" {
+                packet.route = 2;
+                reply = "OK - zerohop advert sent";
+            } else {
+                if region.len() == 16 {
+                    packet.route = 0;
+                    packet.code1 = wire.region_code(region, packet);
+                    packet.code2 = packet.code1;
+                }
+                reply = "OK - Advert sent";
+            }
+            frames.push(tx(packet, 1500));
+        } else if role == 2 && command.starts_with("discover.neighbors") {
+            if !string.trim(command.slice(18, command.len())).is_empty() {
+                reply = "Err - discover.neighbors has no options";
+            } else {
+                let tag = crypto.random_bytes(4).expect("discovery tag entropy");
+                discovery_tag = wire.uint(tag);
+                discovery_until = now + 60000;
+                let data = wire.cat(wire.cat(hex.decode("8004"), tag), wire.le(0, 4));
+                frames.push(tx(wire.packet(2, 11, data), 0));
+                reply = "OK - Discover sent";
+            }
+        } else if role == 2 && command == "neighbors" {
+            let data = management.neighbours(neighbours, hex.decode("002000000004"), timestamp(now)).expect("neighbour display");
+            reply = "";
+            let count = wire.uint(wire.cut(data, 2, 4));
+            for index in 0..count {
+                if reply.to_bytes().len() >= 134 {
+                    break;
+                }
+                let offset = 4 + index * 9;
+                let key = management.upper(hex.encode(wire.cut(data, offset, offset + 4)));
+                let age = wire.uint(wire.cut(data, offset + 4, offset + 8));
+                let snr = data[offset + 8] as i8 as i64;
+                if !reply.is_empty() {
+                    reply = reply + "\n";
+                }
+                reply = reply + f"{key}:{age}:{snr}";
+            }
+            if reply.is_empty() {
+                reply = "-none-";
+            }
+        } else if role == 2 && command.starts_with("neighbor.remove ") {
+            let key = hex.decode(string.trim(command.slice(16, command.len())));
+            if key.is_empty() || key.len() > 32 {
+                reply = "ERR: bad pubkey";
+            } else {
+                var kept: Vec<management.Neighbour> = Vec.new();
+                for item in neighbours {
+                    if !wire.equal(wire.cut(item.key, 0, key.len()), key) {
+                        kept.push(item);
+                    }
+                }
+                neighbours = kept;
+                reply = "OK";
+            }
+        } else if command == "region" || command.starts_with("region ") {
+            if !regions_saved {
+                named_regions.legacy_keys = scope_keys;
+                named_regions.default_key = region;
+                named_regions.wildcard = if wildcard { 0 } else { 1 };
+            }
+            let result = regions.execute(named_regions, region_load, command, owner, timestamp(now));
+            region_load = result.loading;
+            if result.changed { adopt_regions(result.table); }
+            reply = result.reply;
+        } else if role == 3 && (command == "room.post" || command.starts_with("room.post ")) {
+            let body = string.trim(command.slice(9, command.len()));
+            if body.is_empty() {
+                reply = "ERR empty message";
+            } else {
+                clock += 1;
+                if history.len() >= 32 {
+                    var kept: Vec<Post> = Vec.new();
+                    for index in 1..history.len() {
+                        kept.push(history[index]);
+                    }
+                    history = kept;
+                }
+                history.push(Post { key: wire.public_key(seed), stamp: clock, text: management.truncate(body, 151).to_bytes() });
+                posted += 1;
+                metrics.posted += 1;
+                next_push = now + 2000;
+                reply = "OK";
+            }
+        } else if command == "get" || command == "set" {
+            reply = "Error: usage: " + cli.help(command);
+        } else if command.starts_with("get ") {
+            let words = command.split(" ");
+            if words.len() != 2 {
+                reply = "Error: usage: get SETTING; use help get";
+            } else {
+                let key = words[1];
+                if key == "public.key" {
+                    reply = "> " + management.upper(hex.encode(wire.public_key(seed)));
+                } else if key == "role" {
+                    reply = if role == 3 {
+                        "> room_server"
+                    } else {
+                        "> repeater"
+                    };
+                } else if key == "radio" || key == "freq" || key == "tx" {
+                    reply = cli.physical(key, physical_profile);
+                } else if key.starts_with("wifi.") {
+                    reply = cli.help("wifi");
+                } else if let .Some(value) = preferences.get(settings(), key) {
+                    reply = value;
+                }
+            }
+        } else if command.starts_with("set ") {
+            let words = command.split(" ");
+            if words.len() < 3 {
+                reply = "Error: usage: set SETTING VALUE; use help set";
+            } else if words[1].starts_with("wifi.") {
+                reply = cli.help("wifi");
+            } else if (words[1] == "af" || words[1] == "dutycycle") && !source_policy_bound {
+                reply = "Error, physical source-policy management is not connected";
+            } else {
+                let key = words[1];
+                let value = command.slice(5 + key.len(), command.len());
+                match preferences.change(settings(), key, value) {
+                    .Ok(p) => {
+                        if (p.rxdelay != 0.0 || (p.repeat && (p.txdelay != 0.0 || p.direct_delay != 0.0))) && airtime_table.len() != 1024 {
+                            reply = "Error, active receive/relay delays require an airtime estimator";
+                        } else {
+                            adopt(p);
+                            reply = if key == "repeat" {
+                                "OK - repeat is now " + management.upper(value)
+                            } else if key == "dutycycle" {
+                                "OK - " + preferences.duty(p.airtime_factor)
+                            } else {
+                                "OK"
+                            };
+                        }
+                    }
+                    .Err(error) => {
+                        if error == "unsupported by host role" {
+                            reply = "Err - " + error;
+                        } else if key == "dutycycle" && error == "dutycycle must be 1-100" {
+                            reply = "ERROR: " + error;
+                        } else if key == "advert.interval" || key == "flood.advert.interval" {
+                            reply = "Error: " + error;
+                        } else {
+                            reply = "Error, " + error;
+                        }
+                    }
+                }
+            }
+        }
+        CommandReply { text: prefix + reply, frames: frames }
+    }
+    receive fn signal(snr: i64) {
+        received_snr = snr;
+    }
+    receive fn measurement(metadata: bytes) {
+        received_measured = false;
+        received_snr = 0;
+        if metadata.len() != 9 || metadata[8] != 0 {
+            return;
+        }
+        let rssi = binary.finite_float32(wire.cut(metadata, 0, 4));
+        let snr = binary.finite_float32(wire.cut(metadata, 4, 8));
+        if let .Some(r) = rssi {
+            if let .Some(s) = snr {
+                if r >= -32768.0 && r <= 32767.0 && s >= -32.0 && s <= 31.75 {
+                    received_rssi = r as i64;
+                    received_snr = (s * 4.0) as i64;
+                    received_measured = true;
+                }
+            }
+        }
+    }
+    receive fn telemetry(value: management.Telemetry) {
+        readings = value;
+    }
+    receive fn confirmed(raw: bytes) {
+        capture(raw, "TX", false, transport.now(), .None);
+        if let .Some(p) = wire.decode(raw) {
+            metrics.sent += 1;
+            if flood(p) {
+                metrics.flood_sent += 1;
+            } else {
+                metrics.direct_sent += 1;
+            }
+        }
+    }
+    fn put_neighbour(key: bytes, advert: i64, now: i64) {
+        let item = management.Neighbour { key: key, advert: advert, heard: timestamp(now), snr_quarter: received_snr };
+        var oldest: i64 = 0;
+        for index in 0..neighbours.len() {
+            if wire.equal(neighbours[index].key, key) {
+                neighbours.set(index, item);
+                return;
+            }
+            if neighbours[index].heard < neighbours[oldest].heard {
+                oldest = index;
+            }
+        }
+        if neighbours.len() < 50 {
+            neighbours.push(item);
+        } else {
+            neighbours.set(oldest, item);
+        }
+    }
+
+    receive fn owner_command(input: string, now: i64) -> string {
+        let answer = command(input, 0, now, "host-owner-console");
+        assert(answer.frames.is_empty());
+        answer.text
+    }
+    receive fn status() -> string {
+        let closed_text = flag_text(closed);
+        f"members={members.len()} posts={history.len()} posted={posted} pushed={pushed} commands={commands} duplicates={duplicates} denied={denied} closed={closed_text}"
+    }
+    receive fn shutdown() {
+        closed = true;
+        deferred = Vec.new();
+    }
+    receive fn persistent() {
+        durable = true;
+    }
+    receive fn save(path: string) -> bool { persist(path) }
+    fn persist(path: string) -> bool {
+        let with_preferences = preferences_changed || regions_saved;
+        var with_attempts = with_preferences;
+        for m in members {
+            if m.saved_attempt != 0 {
+                with_attempts = true;
+            }
+        }
+        var blob = wire.cat((if regions_saved {
+            "HEW6"
+        } else if with_preferences {
+            "HEW5"
+        } else if with_attempts {
+            "HEW4"
+        } else if durable_history {
+            "HEW3"
+        } else {
+            "HEW2"
+        }).to_bytes(), wire.public_key(seed));
+        blob.append(wire.le(clock, 4));
+        blob.append(wire.le(posted, 4));
+        blob.append(wire.le(pushed, 4));
+        blob.append(wire.byte(members.len()));
+        blob.append(wire.byte(role));
+        for m in members {
+            blob.append(m.key);
+            blob.append(wire.byte(m.permission));
+            blob.append(wire.le(m.stamp, 4));
+            blob.append(wire.le(m.since, 4));
+            blob.append(wire.byte(if m.known {
+                1
+            } else {
+                0
+            }));
+            blob.append(wire.byte(m.pathlen));
+            blob.append(wire.byte(m.path.len()));
+            blob.append(m.path);
+        }
+        blob.append(wire.byte(notes.len()));
+        for note in notes {
+            if !valid_note(note.key, note.value) {
+                closed = true;
+                return false;
+            }
+            blob.append(hex.decode(note.owner));
+            blob.append(wire.byte(note.key.to_bytes().len()));
+            blob.append(note.key.to_bytes());
+            blob.append(wire.byte(note.value.to_bytes().len()));
+            blob.append(note.value.to_bytes());
+        }
+        if with_attempts {
+            blob.append(wire.byte(if durable_history {
+                1
+            } else {
+                0
+            }));
+            for m in members {
+                blob.append(wire.byte(m.saved_attempt));
+            }
+        }
+        if durable_history {
+            if history.len() > 32 {
+                closed = true;
+                return false;
+            }
+            blob.append(wire.byte(history.len()));
+            var previous: i64 = 0;
+            for post in history {
+                if post.key.len() != 32 || post.stamp <= previous || post.stamp > clock || post.text.is_empty() || post.text.len() > 151 {
+                    closed = true;
+                    return false;
+                }
+                for value in post.text {
+                    if value == 0 {
+                        closed = true;
+                        return false;
+                    }
+                }
+                blob.append(post.key);
+                blob.append(wire.le(post.stamp, 4));
+                blob.append(wire.byte(post.text.len()));
+                blob.append(post.text);
+                previous = post.stamp;
+            }
+        }
+        if with_preferences {
+            match preferences.encode(settings()) {
+                .Some(data) => {
+                    if regions_saved { blob.append(wire.le(data.len(), 2)); }
+                    blob.append(data);
+                }
+                .None => {
+                    closed = true;
+                    return false;
+                }
+            }
+            if regions_saved {
+                match regions.encode(named_regions) {
+                    .Some(data) => { blob.append(wire.le(data.len(), 2)); blob.append(data); }
+                    .None => { closed = true; return false; }
+                }
+            }
+        }
+        let result = storage.commit(path, blob);
+        if result != 0 {
+            closed = true;
+            return false;
+        }
+        if erase_log {
+            erase_log = false;
+            let erased = storage.erase_private(log_path);
+            if erased != 0 {
+                println(f"PACKET_LOG_ERASE_FAILED path={log_path} result={erased}; inspect the private file before another write");
+                closed = true;
+                return false;
+            }
+        }
+        true
+    }
+    receive fn load(path: string) -> bool {
+        let blob = storage.read(path);
+        if blob.len() < 51 {
+            return false;
+        }
+        let with_regions = wire.equal(wire.cut(blob, 0, 4), "HEW6".to_bytes());
+        let with_preferences = with_regions || wire.equal(wire.cut(blob, 0, 4), "HEW5".to_bytes());
+        let with_attempts = with_preferences || wire.equal(wire.cut(blob, 0, 4), "HEW4".to_bytes());
+        var with_history = wire.equal(wire.cut(blob, 0, 4), "HEW3".to_bytes());
+        if (!with_attempts && !with_history && !wire.equal(wire.cut(blob, 0, 4), "HEW2".to_bytes())) || !wire.equal(wire.cut(blob, 4, 36), wire.public_key(seed)) {
+            return false;
+        }
+        let count = blob[48] as i64;
+        if count > 20 || blob[49] as i64 != role || blob.len() < 51 + count * 44 {
+            return false;
+        }
+        var loaded: Vec<Member> = Vec.new();
+        var at: i64 = 50;
+        for i in 0..count {
+            if blob.len() < at + 44 {
+                return false;
+            }
+            var m = member(wire.cut(blob, at, at + 32));
+            for previous in loaded {
+                if wire.equal(previous.key, m.key) {
+                    return false;
+                }
+            }
+            m.permission = blob[at + 32] as i64;
+            m.stamp = wire.uint(wire.cut(blob, at + 33, at + 37));
+            m.since = wire.uint(wire.cut(blob, at + 37, at + 41));
+            if blob[at + 41] > 1 {
+                return false;
+            }
+            m.known = blob[at + 41] == 1;
+            m.pathlen = blob[at + 42] as i64;
+            let path_size = blob[at + 43] as i64;
+            if !wire.valid_path(m.pathlen, path_size) || blob.len() < at + 44 + path_size + 1 {
+                return false;
+            }
+            m.path = wire.cut(blob, at + 44, at + 44 + path_size);
+            loaded.push(m);
+            at = at + 44 + path_size;
+        }
+        let note_count = blob[at] as i64;
+        at = at + 1;
+        if note_count > 64 {
+            return false;
+        }
+        var loaded_notes: Vec<Note> = Vec.new();
+        for i in 0..note_count {
+            if blob.len() < at + 33 {
+                return false;
+            }
+            let owner = hex.encode(wire.cut(blob, at, at + 32));
+            let key_size = blob[at + 32] as i64;
+            at = at + 33;
+            if key_size == 0 || key_size > 32 || blob.len() < at + key_size + 1 {
+                return false;
+            }
+            let key = utf8.decode_lossy(wire.cut(blob, at, at + key_size));
+            at = at + key_size;
+            let size = blob[at] as i64;
+            at = at + 1;
+            if size > 120 || blob.len() < at + size {
+                return false;
+            }
+            let value = utf8.decode_lossy(wire.cut(blob, at, at + size));
+            at = at + size;
+            loaded_notes.push(Note { owner: owner, key: key, value: value });
+        }
+        if with_attempts {
+            if blob.len() < at + 1 + count || blob[at] > 1 {
+                return false;
+            }
+            with_history = blob[at] == 1;
+            at = at + 1;
+            for i in 0..count {
+                var m = loaded[i];
+                m.saved_attempt = blob[at + i] as i64;
+                loaded.set(i, m);
+            }
+            at = at + count;
+        }
+        var loaded_history: Vec<Post> = Vec.new();
+        if with_history {
+            if at >= blob.len() {
+                return false;
+            }
+            let post_count = blob[at] as i64;
+            at = at + 1;
+            if post_count > 32 {
+                return false;
+            }
+            var previous: i64 = 0;
+            for i in 0..post_count {
+                if blob.len() < at + 37 {
+                    return false;
+                }
+                let author = wire.cut(blob, at, at + 32);
+                let stamp = wire.uint(wire.cut(blob, at + 32, at + 36));
+                let size = blob[at + 36] as i64;
+                at = at + 37;
+                if stamp <= previous || stamp > wire.uint(wire.cut(blob, 36, 40)) || size == 0 || size > 151 || blob.len() < at + size {
+                    return false;
+                }
+                let text = wire.cut(blob, at, at + size);
+                for value in text {
+                    if value == 0 {
+                        return false;
+                    }
+                }
+                loaded_history.push(Post { key: author, stamp: stamp, text: text });
+                at = at + size;
+                previous = stamp;
+            }
+        }
+        var loaded_preferences: Option<preferences.Preferences> = .None;
+        var loaded_regions: Option<regions.Table> = .None;
+        if with_preferences {
+            var end = blob.len();
+            if with_regions {
+                if blob.len() < at + 2 { return false; }
+                let size = wire.uint(wire.cut(blob, at, at + 2));
+                at += 2; end = at + size;
+                if end > blob.len() { return false; }
+            }
+            loaded_preferences = preferences.decode(wire.cut(blob, at, end));
+            if loaded_preferences.is_none() {
+                return false;
+            }
+            at = end;
+        }
+        if with_regions {
+            if blob.len() < at + 2 { return false; }
+            let size = wire.uint(wire.cut(blob, at, at + 2)); at += 2;
+            if at + size != blob.len() { return false; }
+            loaded_regions = regions.decode(wire.cut(blob, at, at + size));
+            if loaded_regions.is_none() { return false; }
+            at += size;
+        }
+        if at != blob.len() {
+            return false;
+        }
+        if let .Some(saved) = loaded_regions {
+            loaded_regions = match regions.activate(saved) {
+                .Ok(value) => .Some(value),
+                .Err(_) => return false,
+            };
+            if let .Some(value) = loaded_regions {
+                loaded_regions = match regions.override_scopes(value, configured_home, configured_default, configured_wildcard, configured_allowed) {
+                    .Ok(table) => .Some(table),
+                    .Err(_) => return false,
+                };
+            }
+        }
+        if let .Some(value) = loaded_preferences {
+            var saved = value;
+            if let .Some(profile) = native_factor_override { saved.native_factor = profile; }
+            if saved.native_factor && saved.airtime_factor > 9.0 { saved.airtime_factor = 9.0; }
+            adopt(saved);
+        }
+        if let .Some(value) = loaded_regions { adopt_regions(value); }
+        region_load = .None;
+        logging = false;
+        held = Vec.new();
+        rx_processed = false;
+        erase_log = false;
+        members = loaded;
+        notes = loaded_notes;
+        history = loaded_history;
+        durable_history = durable_history || with_history;
+        requests = Vec.new();
+        seen = Vec.new();
+        deferred = Vec.new();
+        clock = wire.uint(wire.cut(blob, 36, 40));
+        posted = wire.uint(wire.cut(blob, 40, 44));
+        pushed = wire.uint(wire.cut(blob, 44, 48));
+        if configured_home.is_some() || configured_default.is_some() ||
+            configured_wildcard.is_some() || configured_allowed.is_some() {
+            return persist(path);
+        }
+        true
+    }
+    receive fn advert(now: i64) -> bytes {
+        var packet = advertisement(now * 1000);
+        packet.pathlen = (width - 1) << 6;
+        if configured_scopes && region.len() == 16 {
+            packet.route = 0;
+            packet.code1 = wire.region_code(region, packet);
+            packet.code2 = packet.code1;
+        }
+        next_local_advert = now * 1000 + local_advert_seconds * 1000;
+        next_flood_advert = now * 1000 + flood_advert_seconds * 1000;
+        wire.encode(packet)
+    }
+    fn schedule_adverts(now: i64, last_flood: i64, reconnect: bool) -> bool {
+        let minimum = if flood_advert_seconds > 60 {
+            flood_advert_seconds
+        } else {
+            60
+        };
+        let send_flood = !reconnect && (last_flood == 0 || now >= last_flood + minimum);
+        next_local_advert = now * 1000 + local_advert_seconds * 1000;
+        next_flood_advert = (if send_flood || last_flood == 0 {
+            now
+        } else {
+            last_flood
+        }) * 1000 + flood_advert_seconds * 1000;
+        send_flood
+    }
+    receive fn advert_timers(now: i64, last_flood: i64) {
+        let _ = schedule_adverts(now, last_flood, true);
+    }
+    receive fn startup_advert(now: i64, last_flood: i64, reconnect: bool) -> bytes {
+        let send_flood = schedule_adverts(now, last_flood, reconnect);
+        var packet = advertisement(now * 1000);
+        packet.pathlen = (width - 1) << 6;
+        if !send_flood {
+            packet.route = 2;
+        } else if configured_scopes && region.len() == 16 {
+            packet.route = 0;
+            packet.code1 = wire.region_code(region, packet);
+            packet.code2 = packet.code1;
+        }
+        wire.encode(packet)
+    }
+    receive fn acl(key: bytes, permission: i64) -> bool {
+        if closed || key.len() != 32 || permission < 0 || permission > 255 {
+            return false;
+        }
+        for i in 0..members.len() {
+            if wire.equal(members[i].key, key) {
+                var m = members[i];
+                m.permission = permission;
+                members.set(i, m);
+                return true;
+            }
+        }
+        if members.len() >= 20 {
+            return false;
+        }
+        var m = member(key);
+        m.permission = permission;
+        members.push(m);
+        true
+    }
+    receive fn ingest(raw: bytes, now: i64, local: bool) -> Vec<Tx> {
+        if closed { return Vec.new(); }
+        let packet = match wire.decode(raw) {
+            .Some(value) => value,
+            .None => { denied += 1; return Vec.new(); }
+        };
+        capture(raw, "RX", local, now, .None);
+        var forward = true;
+        var hold: i64 = 0;
+        if !local && flood(packet) && rxdelay_value != 0.0 {
+            let result = if !received_measured {
+                .Err("RX score requires an over-the-air signal measurement")
+            } else if physical_profile.len() != 18 || airtime_table.len() != 1024 || raw.len() > 255 {
+                .Err("receive delay requires verified PHY and airtime")
+            } else {
+                radio.receive_delay(rxdelay_value,
+                    radio.packet_score(received_snr as f64 / 4.0, physical_profile[8] as i64, raw.len()),
+                    wire.uint(wire.cut(airtime_table, raw.len() * 4, raw.len() * 4 + 4)))
+            };
+            match result {
+                .Ok(value) => { hold = radio.receive_hold(value); }
+                .Err(error) => {
+                    println(f"ROLE_RX_DELAY_FAILED role={role} reason={error}; packet processing continues without forwarding");
+                    forward = false;
+                }
+            }
+        }
+        if hold > 0 {
+            if held.len() >= 64 {
+                println(f"ROLE_RX_QUEUE_FULL role={role} limit=64; received flood packet dropped");
+            } else {
+                held.push(Held { raw: raw, deadline: now + hold, snr: received_snr, rssi: received_rssi, measured: received_measured });
+            }
+            return Vec.new();
+        }
+        process(raw, now, local, forward)
+    }
+    fn process(raw: bytes, now: i64, local: bool, allow_forward: bool) -> Vec<Tx> {
+        var out: Vec<Tx> = Vec.new();
+        if closed {
+            return out;
+        }
+        let p = match wire.decode(raw) {
+            .Some(value) => value,
+            .None => {
+                denied = denied + 1;
+                return out;
+            }
+        };
+        if started < 0 {
+            started = now;
+        }
+        metrics.uptime = (now - started) / 1000;
+        if !local {
+            metrics.received += 1;
+            if flood(p) {
+                metrics.flood_received += 1;
+            } else {
+                metrics.direct_received += 1;
+            }
+            if received_measured {
+                metrics.measured = true;
+                metrics.rssi = received_rssi;
+                metrics.snr_quarter = received_snr;
+            }
+        }
+        let selfkey = wire.public_key(seed);
+        var request_scope = region;
+        var scope_known = false;
+        if configured_scopes {
+            if p.route == 1 && wildcard {
+                request_scope = bytes.new();
+            }
+            if p.route == 0 {
+                if regions_saved {
+                    if let .Some(key) = regions.receive_scope(named_regions, p) {
+                        request_scope = key; scope_known = true;
+                    }
+                } else {
+                    for region_key in scope_keys {
+                        if !scope_known && p.code1 == wire.region_code(region_key, p) {
+                            request_scope = region_key;
+                            scope_known = true;
+                        }
+                    }
+                }
+            }
+        }
+        let incoming_width = (p.pathlen >> 6) + 1;
+        if p.kind == 9 {
+            if flood(p) || p.pathlen >= 64 || p.payload.len() < 9 {
+                return out;
+            }
+            let trace_width = 1 << ((p.payload[8] as i64) & 3);
+            let hashes = p.payload.len() - 9;
+            let offset = 9 + p.pathlen * trace_width;
+            if hashes % trace_width != 0 || hashes / trace_width > 64 || offset + trace_width > p.payload.len() || !wire.equal(wire.cut(p.payload, offset, offset + trace_width), wire.cut(selfkey, 0, trace_width)) {
+                return out;
+            }
+        }
+        if p.kind != 9 && !flood(p) && (p.pathlen & 63) > 0 && !wire.equal(wire.cut(p.path, 0, incoming_width), wire.cut(selfkey, 0, incoming_width)) {
+            return out;
+        }
+        let identity = wire.hash(p);
+        var duplicate = false;
+        for s in seen {
+            if s.hash == identity {
+                duplicate = true;
+            }
+        }
+        if !duplicate {
+            let entry = Seen { hash: identity, at: now };
+            if seen.len() < 160 {
+                seen.push(entry);
+            } else {
+                seen.set(seen_next, entry);
+                seen_next = (seen_next + 1) % 160;
+            }
+        }
+        // Repeater forwarding is independent of local application admission.
+        if (role == 2 || role == 3) && repeat && allow_forward && !local && !duplicate {
+            var forward = p;
+            let w = (p.pathlen >> 6) + 1;
+            let count = p.pathlen & 63;
+            var allowed = true;
+            if p.kind == 9 {
+                forward.path.append(wire.byte(received_snr));
+                forward.pathlen = p.pathlen + 1;
+            } else if flood(p) {
+                allowed = p.kind != 9 && count < flood_max && (count + 1) * w <= 64;
+                if p.route == 1 && count >= unscoped_max {
+                    allowed = false;
+                }
+                if p.kind == 4 && count >= advert_max {
+                    allowed = false;
+                }
+                if configured_scopes {
+                    if role == 2 {
+                        allowed = allowed && ((p.route == 1 && wildcard) || scope_known);
+                    }
+                } else if region.len() == 16 {
+                    allowed = allowed && p.route == 0 && p.code1 == wire.region_code(region, p);
+                } else if p.route == 0 {
+                    allowed = false;
+                }
+                var matches: i64 = 0;
+                for hop in 0..count {
+                    if wire.equal(wire.cut(p.path, hop * w, (hop + 1) * w), wire.cut(selfkey, 0, w)) {
+                        matches = matches + 1;
+                    }
+                }
+                if role == 2 && loop_mode != 0 {
+                    var threshold: i64 = 1;
+                    if loop_mode == 1 {
+                        if w == 1 {
+                            threshold = 4;
+                        } else if w == 2 {
+                            threshold = 2;
+                        }
+                    } else if loop_mode == 2 && w == 1 {
+                        threshold = 2;
+                    }
+                    if matches >= threshold {
+                        allowed = false;
+                    }
+                }
+                if allowed {
+                    forward.path.append(wire.cut(selfkey, 0, w));
+                    forward.pathlen = p.pathlen + 1;
+                }
+            } else {
+                allowed = count > 0 && wire.equal(wire.cut(p.path, 0, w), wire.cut(selfkey, 0, w));
+                if allowed {
+                    forward.path = wire.cut(p.path, w, p.path.len());
+                    forward.pathlen = p.pathlen - 1;
+                }
+            }
+            if allowed {
+                var item = tx(forward, 0);
+                item.relayed = true;
+                let factor = if flood(p) {
+                    txdelay_value
+                } else {
+                    direct_delay_value
+                };
+                if factor > 0.0 {
+                    let offset = item.raw.len() * 4;
+                    let estimate = wire.uint(wire.cut(airtime_table, offset, offset + 4));
+                    let slots = ((estimate as f32) * (factor as f32)) as i64;
+                    item.delay = wire.uint(crypto.random_bytes(4).expect("forwarding jitter entropy")) % (5 * slots + 1);
+                }
+                out.push(item);
+            }
+        }
+        if duplicate && role != 1 {
+            duplicates = duplicates + 1;
+            if !local {
+                if flood(p) {
+                    metrics.flood_duplicates += 1;
+                } else {
+                    metrics.direct_duplicates += 1;
+                }
+            }
+            return out;
+        }
+        if local && role == 1 {
+            return out;
+        }
+        if p.kind == 4 {
+            if !wire.verify_advert(p) {
+                denied = denied + 1;
+                return out;
+            }
+            if role == 1 {
+                let key = wire.cut(p.payload, 0, 32);
+                var found = false;
+                for m in members {
+                    if wire.equal(m.key, key) {
+                        found = true;
+                    }
+                }
+                if !found && members.len() < 20 {
+                    members.push(member(key));
+                }
+            } else if !local && received_measured && (p.pathlen & 63) == 0 && !(p.route == 0 && p.code1 == 0 && p.code2 == 0) && p.payload.len() > 100 && (p.payload[100] & 15) == 2 {
+                put_neighbour(wire.cut(p.payload, 0, 32), wire.uint(wire.cut(p.payload, 32, 36)), now);
+            }
+            return out;
+        }
+        if p.kind == 11 && role != 1 {
+            let data = p.payload;
+            if local || data.len() < 6 {
+                return out;
+            }
+            if (data[0] & 240) == 128 {
+                if !repeat {
+                    return out;
+                }
+                if discovery_window < 0 || now - discovery_window >= 120000 {
+                    discovery_window = now;
+                    discovery_count = 0;
+                }
+                if discovery_count >= 4 {
+                    return out;
+                }
+                discovery_count += 1;
+                let since = if data.len() >= 10 {
+                    wire.uint(wire.cut(data, 6, 10))
+                } else {
+                    0
+                };
+                if (data[1] & 4) == 0 || since > named_regions.discovery || !received_measured {
+                    return out;
+                }
+                var reply = wire.cat(wire.byte(146), wire.byte(received_snr));
+                reply.append(wire.cut(data, 2, 6));
+                reply.append(wire.cut(selfkey, 0, if (data[0] & 1) != 0 {
+                    8
+                } else {
+                    32
+                }));
+                let packet = wire.packet(2, 11, reply);
+                var delay: i64 = 0;
+                if direct_delay_value > 0.0 {
+                    let offset = wire.encode(packet).len() * 4;
+                    let estimate = wire.uint(wire.cut(airtime_table, offset, offset + 4));
+                    let slots = ((estimate as f32) * (direct_delay_value as f32)) as i64;
+                    delay = 4 * (wire.uint(crypto.random_bytes(4).expect("discovery jitter")) % (5 * slots + 1));
+                }
+                out.push(tx(packet, delay));
+            } else if (data[0] & 240) == 144 && (data[0] & 15) == 2 && data.len() >= 38 && discovery_tag != 0 && now <= discovery_until && wire.uint(wire.cut(data, 2, 6)) == discovery_tag && received_measured {
+                let key = wire.cut(data, 6, 38);
+                if !wire.equal(key, selfkey) {
+                    put_neighbour(key, timestamp(now), now);
+                }
+            }
+            return out;
+        }
+        if (p.kind == 3 && p.payload.len() >= 4) || (p.kind == 10 && p.payload.len() >= 5 && p.payload[0] == 19) {
+            let at: i64 = if p.kind == 10 {
+                1
+            } else {
+                0
+            };
+            let proof = wire.uint(wire.cut(p.payload, at, at + 4));
+            if proof == 0 {
+                return out;
+            }
+            for i in 0..members.len() {
+                var m = members[i];
+                if m.pending == proof {
+                    m.pending = 0;
+                    m.since = m.pending_post;
+                    m.failures = 0;
+                    members.set(i, m);
+                    break;
+                }
+            }
+            return out;
+        }
+        var key = bytes.new();
+        var plain = bytes.new();
+        var index: i64 = -1;
+        var group = false;
+        if role == 1 && p.kind == 5 && channel.len() == 16 && p.payload.len() >= 19 {
+            let hash = crypto.sha256(channel);
+            if p.payload[0] != hash[0] {
+                return out;
+            }
+            plain = wire.open(channel, wire.cut(p.payload, 1, p.payload.len()));
+            group = true;
+        } else if p.kind == 7 && p.payload.len() >= 51 && p.payload[0] == selfkey[0] {
+            key = wire.cut(p.payload, 1, 33);
+            plain = wire.open(wire.shared(seed, key), wire.cut(p.payload, 33, p.payload.len()));
+            for i in 0..members.len() {
+                if wire.equal(members[i].key, key) {
+                    index = i;
+                }
+            }
+        } else if (p.kind == 0 || p.kind == 2 || p.kind == 8) && p.payload.len() >= 20 && p.payload[0] == selfkey[0] {
+            for i in 0..members.len() {
+                let peer = members[i].key;
+                if peer[0] == p.payload[1] {
+                    let body = wire.open(wire.shared(seed, peer), wire.cut(p.payload, 2, p.payload.len()));
+                    if !body.is_empty() {
+                        key = peer;
+                        plain = body;
+                        index = i;
+                        break;
+                    }
+                }
+            }
+        }
+        if plain.is_empty() {
+            return out;
+        }
+        if group || role == 1 {
+            if plain.len() < 5 || (p.kind != 2 && p.kind != 5) || (plain[4] >> 2) != 0 {
+                return out;
+            }
+            let message_bytes = text(plain, 5);
+            let message = match utf8.decode(message_bytes) {
+                .Ok(v) => v,
+                .Err(_) => {
+                    denied = denied + 1;
+                    return out;
+                }
+            };
+            var command = message;
+            if group {
+                let colon = message.find(": ");
+                match colon {
+                    .Some(at) => {
+                        command = message.slice(at + 2, message.len());
+                    }
+                    .None => {
+                        return out;
+                    }
+                }
+            }
+            if !command.starts_with("!") {
+                return out;
+            }
+            if command.len() > 155 {
+                denied = denied + 1;
+                return out;
+            }
+            for c in command.to_bytes() {
+                if c < 32 || c > 126 {
+                    denied = denied + 1;
+                    return out;
+                }
+            }
+            // Request dedup ignores the retry bits, like CommandBot's canonical request.
+            var canonical = wire.cat(wire.cut(plain, 0, 4), message_bytes);
+            if group {
+                canonical.append(channel);
+            } else {
+                canonical.append(key);
+            }
+            let request = hex.encode(crypto.sha256(canonical));
+            for i in 0..deferred.len() {
+                var job = deferred[i];
+                if job.request == request && now < job.deadline && flood(p) {
+                    let path = path_text(p);
+                    var known = false;
+                    for seen_path in job.paths {
+                        if seen_path == path {
+                            known = true;
+                        }
+                    }
+                    if !known && job.paths.len() < 8 {
+                        job.paths.push(path);
+                        deferred.set(i, job);
+                    }
+                }
+            }
+            var old: i64 = -1;
+            for i in 0..requests.len() {
+                if now - requests[i].at >= 120000 {
+                    old = i;
+                } else if requests[i].hash == request {
+                    duplicates = duplicates + 1;
+                    if !group && index >= 0 && now - requests[i].at >= 1000 {
+                        out.push(tx(ack_packet(members[index], wire.ack(wire.cut(plain, 0, 5 + message_bytes.len()), key), width), 200));
+                    }
+                    return out;
+                }
+            }
+            if requests.len() >= 64 && old < 0 {
+                denied = denied + 1;
+                return out;
+            }
+            let entry = Seen { hash: request, at: now };
+            if old >= 0 {
+                requests.set(old, entry);
+            } else {
+                requests.push(entry);
+            }
+            if command.starts_with("!@") {
+                match command.find(" ") {
+                    .Some(at) => {
+                        let target = command.slice(2, at);
+                        let pubhex = hex.encode(selfkey);
+                        if (target.len() != 8 && target.len() != 64) || !pubhex.starts_with(target) {
+                            return out;
+                        }
+                        command = "!" + command.slice(at + 1, command.len());
+                    }
+                    .None => {
+                        return out;
+                    }
+                }
+            }
+            var reply = "";
+            if command == "!ping" {
+                reply = "Pong";
+            } else if command == "!about" {
+                reply = hex.encode(selfkey);
+            } else if command == "!path" {
+                reply = if flood(p) {
+                    path_text(p)
+                } else {
+                    "Error: received direct packet has no complete heard path"
+                };
+            } else if command == "!mt" || command.starts_with("!mt ") {
+                var seconds: i64 = 5;
+                if command.len() > 4 {
+                    seconds = match string.to_int(command.slice(4, command.len())) {
+                        .Ok(value) => value,
+                        .Err(_) => 0,
+                    };
+                }
+                if seconds < 1 || seconds > 30 {
+                    reply = "Error: seconds must be 1-30";
+                } else if deferred.len() >= 8 {
+                    reply = "Error: invocation capacity exhausted";
+                } else {
+                    var target = member(key);
+                    if index >= 0 {
+                        target = members[index];
+                    }
+                    var paths: Vec<string> = Vec.new();
+                    if flood(p) {
+                        paths.push(path_text(p));
+                        target.known = true;
+                        target.path = p.path;
+                        target.pathlen = p.pathlen;
+                    }
+                    deferred.push(Deferred { request: request, member: target, group: group, deadline: now + seconds * 1000, window: seconds * 1000, paths: paths });
+                    commands = commands + 1;
+                    if !group {
+                        out.push(tx(ack_packet(target, wire.ack(wire.cut(plain, 0, 5 + message_bytes.len()), key), width), 200));
+                    }
+                    return out;
+                }
+            } else if command == "!uptime" {
+                reply = f"{now / 1000}s";
+            } else if command == "!help" {
+                reply = "ping about path mt uptime remember recall forget notes admin";
+            } else if command.starts_with("!admin") {
+                if group || index < 0 || (members[index].permission & 3) != 3 {
+                    denied = denied + 1;
+                    reply = "Error: trusted-owner DM required";
+                } else {
+                    reply = f"commands={commands}";
+                }
+            } else if (command == "!remember" || command.starts_with("!remember ")) && !group {
+                reply = "Error: !remember requires a 1-32 byte key and 1-120 byte text";
+                let rest = without_leading_spaces(command.slice(9, command.len()));
+                if let .Some(at) = rest.find(" ") {
+                    let note_key = rest.slice(0, at);
+                    let value = without_leading_spaces(rest.slice(at + 1, rest.len()));
+                    if valid_note(note_key, value) && !value.is_empty() {
+                        let owner = hex.encode(key);
+                        var found: i64 = -1;
+                        for i in 0..notes.len() {
+                            if notes[i].owner == owner && notes[i].key == note_key {
+                                found = i;
+                            }
+                        }
+                        let note = Note { owner: owner, key: note_key, value: value };
+                        if found >= 0 {
+                            notes.set(found, note);
+                            reply = "Note " + note_key + " replaced" + (if durable {
+                                "; committed"
+                            } else {
+                                "; volatile"
+                            });
+                        } else if notes.len() < 64 {
+                            notes.push(note);
+                            reply = "Note " + note_key + " created" + (if durable {
+                                "; committed"
+                            } else {
+                                "; volatile"
+                            });
+                        } else {
+                            reply = "Error: note capacity exhausted";
+                        }
+                    }
+                }
+            } else if command.starts_with("!recall ") && !group {
+                let note_key = without_leading_spaces(command.slice(8, command.len()));
+                reply = "No note: " + note_key;
+                for note in notes {
+                    if note.owner == hex.encode(key) && note.key == note_key {
+                        reply = note.value;
+                    }
+                }
+            } else if command.starts_with("!forget ") && !group {
+                var retained: Vec<Note> = Vec.new();
+                let note_key = without_leading_spaces(command.slice(8, command.len()));
+                for note in notes {
+                    if note.owner != hex.encode(key) || note.key != note_key {
+                        retained.push(note);
+                    }
+                }
+                reply = if retained.len() == notes.len() {
+                    "No note: " + note_key
+                } else {
+                    "Note " + note_key + " deleted" + (if durable {
+                        "; committed"
+                    } else {
+                        "; volatile"
+                    })
+                };
+                notes = retained;
+            } else if command == "!notes" && !group {
+                var count: i64 = 0;
+                for note in notes {
+                    if note.owner == hex.encode(key) {
+                        reply = reply + " [" + note.key + "]";
+                        count = count + 1;
+                    }
+                }
+                if count > 0 {
+                    reply = f"Notes ({count}):" + reply;
+                }
+                if reply == "" {
+                    reply = "No notes";
+                }
+            } else {
+                reply = "Error: unsupported prototype command";
+            }
+            if reply == "" {
+                reply = "Error: invalid arguments";
+            }
+            let limit = if group {
+                153 - name.len()
+            } else {
+                155
+            };
+            if reply.len() > limit {
+                reply = reply.slice(0, limit - 26) + "; truncated; narrow prefix";
+            }
+            commands = commands + 1;
+            if group {
+                let body = wire.cat(wire.cat(wire.le(timestamp(now), 4), wire.byte(0)), (name + ": " + reply).to_bytes());
+                let payload = wire.cat(wire.cut(crypto.sha256(channel), 0, 1), wire.seal(channel, body));
+                var response = wire.packet(1, 5, payload);
+                response.pathlen = (width - 1) << 6;
+                out.push(tx(response, 300));
+            } else if index >= 0 {
+                var m = members[index];
+                if flood(p) {
+                    m.known = true;
+                    m.path = p.path;
+                    m.pathlen = p.pathlen;
+                    members.set(index, m);
+                }
+                out.push(tx(ack_packet(m, wire.ack(wire.cut(plain, 0, 5 + message_bytes.len()), key), width), 200));
+                let body = wire.cat(wire.cat(wire.le(timestamp(now), 4), wire.byte(0)), reply.to_bytes());
+                out.push(tx(routed(seed, m, 2, body, width, request_scope), 300));
+            }
+            return out;
+        }
+        if p.kind == 7 {
+            if role == 2 && plain.len() >= 5 && plain[4] > 0 && plain[4] < 32 {
+                if flood(p) || plain.len() < 6 {
+                    return out;
+                }
+                let encoded = plain[5] as i64;
+                let size = ((encoded >> 6) + 1) * (encoded & 63);
+                if !wire.valid_path(encoded, size) || plain.len() < 6 + size {
+                    return out;
+                }
+                var peer = member(key);
+                peer.known = true;
+                peer.pathlen = encoded;
+                peer.path = wire.cut(plain, 6, 6 + size);
+                var reply = wire.cat(wire.cut(plain, 0, 4), wire.le(timestamp(now), 4));
+                if plain[4] == 1 {
+                    if !scope_keys.is_empty() {
+                        return out;
+                    }
+                    if wildcard {
+                        reply.append("*".to_bytes());
+                    }
+                } else if plain[4] == 2 {
+                    reply.append((name + "\n" + owner_info).to_bytes());
+                } else if plain[4] == 3 {
+                    reply.append(wire.byte(if repeat {
+                        0
+                    } else {
+                        128
+                    }));
+                } else {
+                    return out;
+                }
+                if anonymous_window < 0 || now - anonymous_window >= 180000 {
+                    anonymous_window = now;
+                    anonymous_count = 0;
+                }
+                if anonymous_count >= 4 {
+                    return out;
+                }
+                anonymous_count += 1;
+                if reply.len() > 167 {
+                    return out;
+                }
+                out.push(tx(routed(seed, peer, 1, reply, width, request_scope), 300));
+                return out;
+            }
+            let offset: i64 = if role == 3 {
+                8
+            } else {
+                4
+            };
+            if plain.len() <= offset {
+                return out;
+            }
+            let pass = text(plain, offset);
+            var m = member(key);
+            if index >= 0 {
+                m = members[index];
+            }
+            let acl_login = pass.is_empty() && index >= 0;
+            var perm: i64 = 0;
+            if acl_login {
+                perm = m.permission;
+            } else if admin != "" && wire.equal(pass, admin.to_bytes()) {
+                perm = 3;
+            } else if wire.equal(pass, password.to_bytes()) {
+                if role == 3 {
+                    if password.is_empty() && !public_access {
+                        return out;
+                    }
+                    perm = 2;
+                }
+            } else if role == 3 && read_only {
+                perm = 0;
+            } else {
+                denied = denied + 1;
+                return out;
+            }
+            let stamp = wire.uint(wire.cut(plain, 0, 4));
+            if !acl_login && (stamp == 0 || stamp <= m.stamp) {
+                return out;
+            }
+            if index < 0 && members.len() >= 20 {
+                if evict {
+                    for i in 0..members.len() {
+                        if (members[i].permission & 3) != 3 && (index < 0 || members[i].activity < members[index].activity) {
+                            index = i;
+                        }
+                    }
+                }
+                if index < 0 {
+                    denied = denied + 1;
+                    return out;
+                }
+            }
+            if !acl_login {
+                m.permission = (m.permission & 252) | perm;
+                m.stamp = stamp;
+                m.activity = timestamp(now);
+                m.pending = 0;
+                m.failures = 0;
+                if role == 3 {
+                    m.since = wire.uint(wire.cut(plain, 4, 8));
+                }
+            }
+            m.active = true;
+            if flood(p) {
+                m.known = false;
+                m.path = bytes.new();
+                m.pathlen = 0;
+            }
+            if index >= 0 {
+                members.set(index, m);
+            } else {
+                members.push(m);
+            }
+            clock = if timestamp(now) > clock {
+                timestamp(now)
+            } else {
+                clock + 1
+            };
+            var reply = wire.cat(wire.le(clock, 4), wire.le(0, 2));
+            reply.push((if (m.permission & 3) == 3 {
+                1
+            } else if role == 3 && (m.permission & 3) == 0 {
+                2
+            } else {
+                0
+            }) as u8);
+            reply.push(m.permission as u8);
+            reply.append(crypto.random_bytes(4).expect("login entropy"));
+            reply.push((if role == 3 {
+                1
+            } else {
+                2
+            }) as u8);
+            out.push(tx(response(seed, m, p, reply, width, request_scope), 300));
+            next_push = now + 2000;
+            return out;
+        }
+        if index < 0 {
+            return out;
+        }
+        var m = members[index];
+        if p.kind == 8 {
+            let encoded = plain[0] as i64;
+            let size = ((encoded >> 6) + 1) * (encoded & 63);
+            if !wire.valid_path(encoded, size) || plain.len() < 2 + size {
+                return out;
+            }
+            m.pathlen = encoded;
+            m.path = wire.cut(plain, 1, 1 + size);
+            m.known = true;
+            m.active = true;
+            m.activity = timestamp(now);
+            if plain[1 + size] == 3 && plain.len() >= size + 6 {
+                let proof = wire.uint(wire.cut(plain, size + 2, size + 6));
+                if proof != 0 && m.pending == proof {
+                    m.pending = 0;
+                    m.since = m.pending_post;
+                    m.failures = 0;
+                }
+            }
+            members.set(index, m);
+            return out;
+        }
+        if plain.len() < 5 {
+            return out;
+        }
+        let stamp = wire.uint(wire.cut(plain, 0, 4));
+        if stamp < m.stamp {
+            return out;
+        }
+        let retry = stamp == m.stamp;
+        if p.kind == 2 {
+            let kind = (plain[4] as i64) >> 2;
+            let body = text(plain, 5);
+            if (body.is_empty() && !(kind == 1 && region_load.is_some())) || kind > 1 {
+                return out;
+            }
+            if role != 3 || kind == 1 {
+                if (m.permission & 3) != 3 {
+                    denied = denied + 1;
+                    return out;
+                }
+            } else if (m.permission & 3) < 2 {
+                denied = denied + 1;
+                return out;
+            }
+            m.stamp = stamp;
+            m.active = true;
+            m.failures = 0;
+            m.activity = timestamp(now);
+            if role == 3 {
+                clock = if timestamp(now) > clock {
+                    timestamp(now)
+                } else {
+                    clock + 1
+                };
+                m.activity = clock;
+            }
+            members.set(index, m);
+            if kind == 0 {
+                let proof = wire.ack(wire.cut(plain, 0, 5 + body.len()), key);
+                if role == 3 && multi_acks == 1 && m.known {
+                    var multipart = ack_packet(m, wire.cat(wire.byte(19), proof), width);
+                    multipart.kind = 10;
+                    out.push(tx(multipart, 200));
+                    out.push(tx(ack_packet(m, proof, width), 500));
+                } else {
+                    out.push(tx(ack_packet(m, proof, width), 200));
+                }
+            }
+            if retry {
+                return out;
+            }
+            if role == 3 && kind == 0 {
+                clock = clock + 1;
+                let size = if body.len() > 150 {
+                    150
+                } else {
+                    body.len()
+                };
+                let post = Post { key: key, stamp: clock, text: wire.cut(body, 0, size) };
+                if history.len() >= 32 {
+                    var next: Vec<Post> = Vec.new();
+                    for i in 1..history.len() {
+                        next.push(history[i]);
+                    }
+                    history = next;
+                }
+                history.push(post);
+                posted = posted + 1;
+                metrics.posted += 1;
+                next_push = now + 2000;
+            } else {
+                let answer = match utf8.decode(body) {
+                    .Ok(value) => command(value, stamp, now, hex.encode(key)),
+                    .Err(_) => CommandReply { text: "Error, command is not valid UTF-8", frames: Vec.new() },
+                };
+                for frame in answer.frames {
+                    out.push(frame);
+                }
+                if restart_requested { return out; }
+                let reply = management.truncate(answer.text, 155);
+                if role != 3 {
+                    clock = if timestamp(now) > clock {
+                        timestamp(now)
+                    } else {
+                        clock + 1
+                    };
+                }
+                let reply_time = if clock == stamp {
+                    clock + 1
+                } else {
+                    clock
+                };
+                out.push(tx(routed(seed, m, 2, wire.cat(wire.cat(wire.le(reply_time, 4), wire.byte(4)), reply.to_bytes()), width, request_scope), if role == 3 {
+                    300
+                } else {
+                    1500
+                }));
+            }
+        } else if p.kind == 0 {
+            if role != 3 && retry {
+                return out;
+            }
+            m.stamp = stamp;
+            m.active = true;
+            m.failures = 0;
+            m.activity = timestamp(now);
+            if role == 3 && plain[4] == 2 && !flood(p) {
+                var data = wire.cut(plain, 0, 9);
+                while data.len() < 9 {
+                    data.push(0);
+                }
+                let since = wire.uint(wire.cut(data, 5, 9));
+                if since > 0 {
+                    m.since = since;
+                }
+                m.pending = 0;
+                if m.known {
+                    var count: i64 = 0;
+                    for post in history {
+                        if post.stamp > m.since && !wire.equal(post.key, m.key) {
+                            count = count + 1;
+                        }
+                    }
+                    out.push(tx(ack_packet(m, wire.cat(wire.ack(data, key), wire.byte(count)), width), 300));
+                }
+            } else {
+                var reply = wire.cut(plain, 0, 4);
+                if plain[4] == 1 {
+                    reply.append(management.status(role == 3, readings, metrics));
+                } else if plain[4] == 3 {
+                    match management.telemetry(readings) {
+                        .Some(data) => reply.append(data),
+                        .None => {
+                            return out;
+                        }
+                    }
+                } else if plain[4] == 5 {
+                    if (m.permission & 3) != 3 || plain.len() < 7 || plain[5] != 0 || plain[6] != 0 {
+                        return out;
+                    }
+                    for peer in members {
+                        if peer.permission != 0 && (role != 3 || (peer.permission & 3) == 3) && reply.len() + 7 <= 180 {
+                            reply.append(wire.cut(peer.key, 0, 6));
+                            reply.append(wire.byte(peer.permission));
+                        }
+                    }
+                } else if plain[4] == 6 && role == 2 {
+                    match management.neighbours(neighbours, wire.cut(plain, 5, plain.len()), timestamp(now)) {
+                        .Some(data) => reply.append(data),
+                        .None => {
+                            return out;
+                        }
+                    }
+                } else if plain[4] == 7 && role == 2 {
+                    let header = "host-v2-slp-willow\n" + name + "\n";
+                    let capacity = response_capacity(p) - reply.len();
+                    if header.to_bytes().len() > capacity {
+                        return out;
+                    }
+                    reply.append((header + management.truncate(owner_info, capacity - header.to_bytes().len())).to_bytes());
+                } else {
+                    return out;
+                }
+                if reply.len() > response_capacity(p) {
+                    return out;
+                }
+                out.push(tx(response(seed, m, p, reply, width, request_scope), 300));
+            }
+            members.set(index, m);
+        }
+        out
+    }
+    receive fn next_deadline(now: i64) -> i64 {
+        var due: i64 = 9223372036854775807;
+        if closed { return due; }
+        for packet in held { if packet.deadline < due { due = packet.deadline; } }
+        for job in deferred { if job.deadline < due { due = job.deadline; } }
+        if local_advert_seconds > 0 && next_local_advert < due { due = next_local_advert; }
+        if flood_advert_seconds > 0 && next_flood_advert < due { due = next_flood_advert; }
+        if role == 3 {
+            let stamp = timestamp(now);
+            for member in members {
+                if member.pending != 0 {
+                    let expiry = if member.deadline > next_push { member.deadline } else { next_push };
+                    if expiry < due { due = expiry; }
+                } else if member.active && member.failures < 3 {
+                    for post in history {
+                        if post.stamp > member.since && !wire.equal(post.key, member.key) {
+                            let eligible = if stamp >= post.stamp + 6 {
+                                now
+                            } else { now + (post.stamp + 6 - stamp) * 1000 - now % 1000 };
+                            let push = if next_push > eligible { next_push } else { eligible };
+                            if push < due { due = push; }
+                        }
+                    }
+                }
+            }
+        }
+        due
+    }
+    receive fn tick(now: i64) -> Vec<Tx> {
+        var out: Vec<Tx> = Vec.new();
+        if started >= 0 {
+            metrics.uptime = (now - started) / 1000;
+        }
+        if closed {
+            return out;
+        }
+        let snr = received_snr;
+        let rssi = received_rssi;
+        let measured = received_measured;
+        var pending: Vec<Held> = Vec.new();
+        for packet in held {
+            if packet.deadline > now {
+                pending.push(packet);
+            } else {
+                rx_processed = true;
+                received_snr = packet.snr;
+                received_rssi = packet.rssi;
+                received_measured = packet.measured;
+                for frame in process(packet.raw, now, false, true) { out.push(frame); }
+            }
+        }
+        held = pending;
+        received_snr = snr;
+        received_rssi = rssi;
+        received_measured = measured;
+        if closed { return out; }
+        if (local_advert_seconds > 0 && now >= next_local_advert) || (flood_advert_seconds > 0 && now >= next_flood_advert) {
+            var advert = advertisement(now);
+            advert.pathlen = (width - 1) << 6;
+            if flood_advert_seconds > 0 && now >= next_flood_advert {
+                next_flood_advert = now + flood_advert_seconds * 1000;
+                if region.len() == 16 {
+                    advert.route = 0;
+                    advert.code1 = wire.region_code(region, advert);
+                    advert.code2 = advert.code1;
+                }
+            } else {
+                advert.route = 2;
+            }
+            next_local_advert = now + local_advert_seconds * 1000;
+            out.push(tx(advert, 0));
+        }
+        if role == 1 {
+            var keep: Vec<Deferred> = Vec.new();
+            for job in deferred {
+                if now < job.deadline {
+                    keep.push(job);
+                } else {
+                    var reply = "Error: no complete flood path observed; direct/local path unknown";
+                    if !job.paths.is_empty() {
+                        reply = f"{job.paths.len()} unique paths in {job.window} ms";
+                        for i in 0..job.paths.len() {
+                            let suffix = if i == 0 {
+                                "; "
+                            } else {
+                                " | "
+                            };
+                            let item = suffix + job.paths[i];
+                            if reply.len() + item.len() > 130 {
+                                reply = reply + "; truncated";
+                                break;
+                            }
+                            reply = reply + item;
+                            if job.paths[i].len() == 2 {
+                                reply = reply + " (no-hop)";
+                            }
+                        }
+                    }
+                    let limit = if job.group {
+                        153 - name.len()
+                    } else {
+                        155
+                    };
+                    if reply.len() > limit {
+                        reply = reply.slice(0, limit - 11) + "; truncated";
+                    }
+                    var plain = wire.cat(wire.le(timestamp(now), 4), wire.byte(0));
+                    if job.group {
+                        plain.append((name + ": " + reply).to_bytes());
+                        let payload = wire.cat(wire.cut(crypto.sha256(channel), 0, 1), wire.seal(channel, plain));
+                        var packet = wire.packet(1, 5, payload);
+                        packet.pathlen = (width - 1) << 6;
+                        out.push(tx(packet, 0));
+                    } else {
+                        plain.append(reply.to_bytes());
+                        out.push(tx(routed(seed, job.member, 2, plain, width, region), 0));
+                    }
+                }
+            }
+            deferred = keep;
+            return out;
+        }
+        if role != 3 || now < next_push || members.is_empty() {
+            return out;
+        }
+        for i in 0..members.len() {
+            var m = members[i];
+            if m.pending != 0 && now >= m.deadline {
+                m.pending = 0;
+                m.failures = m.failures + 1;
+                members.set(i, m);
+            }
+        }
+        let index = next_user % members.len();
+        next_user = next_user + 1;
+        next_push = now + 150;
+        var m = members[index];
+        if !m.active || m.pending != 0 || m.failures >= 3 {
+            return out;
+        }
+        for post in history {
+            if post.stamp > m.since && !wire.equal(post.key, m.key) && timestamp(now) >= post.stamp + 6 {
+                let attempt = crypto.random_bytes(1).expect("post entropy");
+                let plain = wire.cat(wire.cat(wire.le(post.stamp, 4), wire.byte(8 | ((attempt[0] as i64) & 3))), wire.cat(wire.cut(post.key, 0, 4), post.text));
+                m.pending = wire.uint(wire.ack(plain, m.key));
+                m.pending_post = post.stamp;
+                m.deadline = now + (if m.known {
+                    (4 + 2 * ((m.pathlen & 63) + 1)) * 1000
+                } else {
+                    12000
+                });
+                members.set(index, m);
+                pushed = pushed + 1;
+                metrics.pushed += 1;
+                next_push = now + 1200;
+                out.push(tx(routed(seed, m, 2, plain, width, region), 0));
+                break;
+            }
+        }
+        out
+    }
+    receive fn take_rx_commit() -> bool {
+        let changed = rx_processed;
+        rx_processed = false;
+        changed
+    }
+    receive fn cursor(key: bytes) -> string {
+        for m in members {
+            if wire.equal(m.key, key) {
+                let active_text = flag_text(m.active);
+                let known_text = flag_text(m.known);
+                return f"permission={m.permission} stamp={m.stamp} since={m.since} active={active_text} pending={m.pending} failures={m.failures} known={known_text}";
+            }
+        }
+        "absent"
+    }
+}
+
+pub fn create(seed: bytes, role: i64, name: string, password: string, admin: string, width: i64, region: bytes, channel: bytes) -> Role {
+    var keys: Vec<bytes> = Vec.new();
+    if region.len() == 16 {
+        keys.push(region);
+    }
+    spawn Role(seed: seed, role: role, name: name, password: password, admin: admin, width: width, region: region, channel: channel, scope_keys: keys, configured_scopes: region.len() == 16, airtime_table: bytes.new(), repeat: role == 2, members: Vec.new(), history: Vec.new(), seen: Vec.new(), requests: Vec.new(), notes: Vec.new(), deferred: Vec.new())
+}

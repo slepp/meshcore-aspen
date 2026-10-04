@@ -1,0 +1,30 @@
+import roles;
+import wire;
+import std.encoding.hex;
+
+fn main() {
+    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101");
+    let relay = roles.create(seed, 2, "Timer relay", "", "", 3, bytes.new(), bytes.new());
+    assert(relay.configure("local_advert_seconds=3\nflood_advert_seconds=5\n").expect("advert configuration"));
+    relay.advert_timers(1000, 1000).expect("advert schedule");
+    assert(relay.next_deadline(1000000).expect("first advert timer") == 1003000);
+    assert(relay.tick(1002999).expect("before advert").is_empty());
+    let local = relay.tick(1003000).expect("local advert");
+    assert(local.len() == 1 && wire.decode(local[0].raw).expect("local packet").route == 2);
+    assert(relay.next_deadline(1003000).expect("flood advert timer") == 1005000);
+    let flood = relay.tick(1005000).expect("flood advert");
+    assert(flood.len() == 1 && roles.flood(wire.decode(flood[0].raw).expect("flood packet")));
+    assert(relay.next_deadline(1005000).expect("next local advert") == 1008000);
+    relay.shutdown().expect("stop relay");
+    assert(relay.next_deadline(1005000).expect("stopped timer") == 9223372036854775807);
+    stop(relay);
+    stopped(relay);
+    let room = roles.create(seed, 3, "Timer room", "", "", 3, bytes.new(), bytes.new());
+    assert(room.configure("public=1\nlocal_advert_seconds=0\nflood_advert_seconds=0\n").expect("disable room adverts"));
+    assert(room.acl(wire.public_key(hex.decode("0202020202020202020202020202020202020202020202020202020202020202")), 3).expect("room member"));
+    assert(room.next_deadline(1000000).expect("idle room timer") == 9223372036854775807,
+        "a room without pending deliveries must not schedule a 150 ms turn");
+    stop(room);
+    stopped(room);
+    println("ROLE_TIMERS_OK");
+}

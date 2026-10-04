@@ -1,0 +1,133 @@
+import session;
+
+import hostlib.supervised_io as duplex;
+
+import wire;
+
+fn main() {
+    assert(session.response_command(25) == 154);
+    assert(session.response_command(32) == 160);
+    assert(session.response_command(15) == 143);
+    let failed = session.result(7, 3, 8, wire.le(0, 12));
+    let uncertain = session.result(7, 4, 9, wire.le(0, 12));
+    assert(failed.len() == 24 && failed[23] == 1 && uncertain[23] == 0);
+    let decoder = spawn session.WorkerDecoder(buffer: bytes.new());
+    let framed = session.frame(131, "test".to_bytes());
+    assert(decoder.feed(wire.cut(framed, 0, 2)).expect("fragment").is_empty());
+    let decoded = decoder.feed(wire.cut(framed, 2, framed.len())).expect("completion");
+    assert(decoded.len() == 1 && decoded[0][0] == 131);
+    assert(decoder.feed(wire.le(4097, 4)).expect("oversize").is_empty());
+    assert(!decoder.healthy().expect("invalid framing retires worker"));
+    let receivers = session.receivers();
+    assert(receivers.feed(wire.cat(wire.byte(0), "packet".to_bytes()), 0).expect("DATA").is_empty());
+    var metadata = wire.byte(6);
+    metadata.append(wire.byte(249));
+    metadata.append(wire.byte(128));
+    metadata.append(wire.byte(127));
+    let reflected = receivers.feed(metadata, 1).expect("RX_META");
+    assert(reflected.len() == 1 && reflected[0].metadata[8] == 1);
+    assert(receivers.feed(metadata, 2).expect("orphan").is_empty());
+    assert(receivers.feed(wire.cat(wire.byte(16), "other".to_bytes()), 2).expect("second port").is_empty());
+    assert(receivers.flush(31).expect("not due").is_empty());
+    let expired = receivers.flush(32).expect("unmeasured deadline");
+    assert(expired.len() == 1 && expired[0].port == 1 && expired[0].metadata[8] == 2);
+    var statistics = wire.byte(1);
+    for i in 1..10 {
+        statistics.append(wire.le(i * 10, 4));
+    }
+    statistics.append(wire.byte(3));
+    statistics.append(wire.byte(1));
+    var expected = wire.le(7, 4);
+    expected.append(wire.le(10, 4));
+    expected.append(wire.le(20, 4));
+    expected.append(wire.le(60, 4));
+    expected.append(wire.le(30, 4));
+    expected.append(wire.le(70, 4));
+    expected.append(wire.le(40, 4));
+    expected.append(wire.le(50, 4));
+    expected.append(wire.le(80, 4));
+    expected.append(wire.le(90, 4));
+    expected.append(wire.byte(3));
+    expected.append(wire.byte(1));
+    assert(wire.equal(session.statistics(7, statistics), session.frame(5, expected)));
+    var generations: Vec<i64> = Vec.new();
+    for i in 1..4 {
+        generations.push(i);
+    }
+    let branch = spawn duplex.Branch;
+    let closed = branch.endpoint;
+    assert(session.same_factor(wire.le(0, 4), wire.le(2147483648, 4)));
+    let timely = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: Vec.new(),
+        policy_pending: [bytes.new(), wire.le(1073741824, 4), bytes.new()], policy_deadlines: [0, 100, 0]);
+    timely.policy_reply(1, wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(1073741824, 4)), 99).expect("frame received before deadline");
+    let confirmed_policy = timely.policy_results().expect("receipt-time acknowledgement");
+    assert(confirmed_policy.len() == 1 && confirmed_policy[0].ok);
+    let late = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: Vec.new(),
+        policy_pending: [bytes.new(), wire.le(1073741824, 4), bytes.new()], policy_deadlines: [0, 100, 0]);
+    late.policy_reply(1, wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(1073741824, 4)), 100).expect("frame received at deadline");
+    let late_policy = late.policy_results().expect("late response refused");
+    assert(late_policy.len() == 1 && !late_policy[0].ok);
+    let offline = session.create(closed, generations);
+    assert(offline.submit(0, "packet".to_bytes(), 1, 0, 0, 99).expect("failed write") == -1);
+    assert(!offline.healthy().expect("failed transport"));
+    let results = offline.disconnect().expect("unknown result");
+    assert(results.len() == 1 && results[0][9] == 4);
+    assert(offline.disconnect().expect("terminal exactly once").is_empty());
+    let physical = offline.outcomes().expect("disconnect log outcomes");
+    assert(physical.len() == 1 && physical[0].value.state == 4 && physical[0].raw == "packet".to_bytes());
+    assert(offline.outcomes().expect("outcome consumed once").is_empty());
+    var pending: Vec<session.Pending> = Vec.new();
+    pending.push(session.Pending { port: 0, id: 7, token: 8, deadline: 1, raw: "packet".to_bytes(), estimated_ms: 200 });
+    let queued = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: pending);
+    let admission = wire.cat(wire.cat(wire.byte(1), wire.le(1, 4)), wire.cat(wire.le(7, 4), wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(0, 12))));
+    assert(queued.event(0, admission).expect("modem queue admission").is_empty());
+    assert(queued.healthy().expect("accepted job has no guessed completion deadline"));
+    let retired = queued.disconnect().expect("accepted job remains uncertain on disconnect");
+    assert(retired.len() == 1 && retired[0][9] == 4);
+    var overdue_pending: Vec<session.Pending> = Vec.new();
+    overdue_pending.push(session.Pending { port: 0, id: 7, token: 8, deadline: 1, raw: "packet".to_bytes(), estimated_ms: 200 });
+    let overdue = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: overdue_pending);
+    assert(!overdue.healthy().expect("outcome deadline"));
+    assert(!overdue.healthy().expect("diagnostic only once"));
+    let unknown = overdue.disconnect().expect("expired outcome remains uncertain");
+    assert(unknown.len() == 1 && unknown[0][9] == 4);
+    let timeout_log = overdue.outcomes().expect("unknown log record");
+    assert(timeout_log.len() == 1 && timeout_log[0].value.estimated_ms == 200);
+    var jobs: Vec<session.Pending> = Vec.new();
+    jobs.push(session.Pending { port: 1, id: 42, token: 0, deadline: 1000000000, raw: "outcome".to_bytes(), estimated_ms: 200 });
+    let tracking = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: jobs);
+    var event = wire.cat(wire.byte(1), wire.cat(wire.le(2, 4), wire.le(42, 4)));
+    event.append(wire.byte(1)); event.append(wire.byte(0));
+    event.append(wire.le(17, 4)); event.append(wire.le(31, 4)); event.append(wire.le(200, 4));
+    assert(tracking.event(1, event).expect("accepted event").is_empty());
+    assert(tracking.outcomes().expect("admission is not terminal").is_empty());
+    event[9] = 3; event[10] = 8;
+    assert(tracking.event(1, event).expect("failed event").is_empty());
+    let terminal = tracking.outcomes().expect("failed outcome record");
+    assert(terminal.len() == 1 && terminal[0].raw == "outcome".to_bytes());
+    assert(terminal[0].value.generation == 2 && terminal[0].value.job == 42);
+    assert(terminal[0].value.state == 3 && terminal[0].value.reason == 8);
+    assert(terminal[0].value.queue_ms == 17 && terminal[0].value.rf_ms == 31 && terminal[0].value.estimated_ms == 200);
+    assert(tracking.event(1, event).expect("duplicate terminal").is_empty());
+    assert(tracking.outcomes().expect("no duplicate log").is_empty());
+    var old_jobs: Vec<session.Pending> = Vec.new();
+    old_jobs.push(session.Pending { port: 0, id: 7, token: 0, deadline: 0, raw: "old role".to_bytes(), estimated_ms: 123 });
+    old_jobs.push(session.Pending { port: 1, id: 8, token: 0, deadline: 0, raw: "healthy role".to_bytes(), estimated_ms: 456 });
+    let incarnations = spawn session.Session(fd: closed, generations: generations, ids: [7, 8, 0], pending: old_jobs);
+    incarnations.fence_role(0).expect("role-only transmission retirement");
+    let remaining_jobs = incarnations.queued().expect("other role stays queued");
+    assert(remaining_jobs[0] == 0 && remaining_jobs[1] == 1 && remaining_jobs[2] == 0);
+    let retired_role = incarnations.outcomes().expect("old role outcome unknown");
+    assert(retired_role.len() == 1 && retired_role[0].value.state == 4 && retired_role[0].value.estimated_ms == 123);
+    var stale = wire.cat(wire.byte(1), wire.cat(wire.le(1, 4), wire.le(7, 4)));
+    stale.append(wire.byte(2)); stale.append(wire.byte(0)); stale.append(wire.le(0, 12));
+    assert(incarnations.event(0, stale).expect("late old outcome").is_empty());
+    assert(incarnations.confirmed().expect("old outcome cannot count in new role").is_empty());
+    assert(incarnations.outcomes().expect("no repeated unknown").is_empty());
+    for index in 0..100 {
+        assert(offline.submit(0, "packet".to_bytes(), 1, 0, 0, 0).expect("offline rejection") == 0);
+    }
+    assert(offline.outcomes().expect("bounded terminal queue").len() == 96);
+    assert(offline.outcomes().expect("drained terminal queue").is_empty());
+    println("SESSION_CHECKS passed");
+}

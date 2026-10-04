@@ -1,0 +1,132 @@
+import hostlib.mqtt;
+import hostlib.binary;
+import std.encoding.hex;
+import std.os;
+
+fn data(size: i64) -> bytes {
+    var out = bytes.new();
+    for index in 0..size {
+        out.push((index % 251) as u8);
+    }
+    out
+}
+
+fn vectors() {
+    println(hex.encode(mqtt.connect("meshcore-observer-010203040506", "", bytes.new(),
+        "meshcore/test/status", "offline".to_bytes(), 10).expect("CONNECT")));
+    println(hex.encode(mqtt.connect("meshcore-observer-010203040506", "reader",
+        "test-password".to_bytes(), "meshcore/test/status", "offline".to_bytes(), 10).expect("CONNECT credentials")));
+    println(hex.encode(mqtt.connect("観測者", "üser", hex.decode("000102ff"),
+        "meshcore/日本/status", "offline".to_bytes(), 65535).expect("CONNECT UTF-8")));
+    let lengths: Vec<i64> = [0, 1, 125, 126, 127, 128, 16370, 16383, 16384, 65535];
+    for size in lengths {
+        for retained in [false, true] {
+            println(hex.encode(mqtt.publish("meshcore/test/packets", data(size), size + 1 - (if size == 65535 { 1 } else { 0 }),
+                retained).expect("PUBLISH")));
+        }
+    }
+    println(hex.encode(mqtt.frame(192, bytes.new()).expect("PINGREQ")));
+    println(hex.encode(mqtt.frame(224, bytes.new()).expect("DISCONNECT")));
+}
+
+fn checks() {
+    assert(mqtt.decoder(1).is_err());
+    assert(mqtt.decoder(1048577).is_err());
+    assert(mqtt.publish("bad/+", data(2), 1, false).is_err());
+    assert(mqtt.publish("bad/#", data(2), 1, false).is_err());
+    assert(mqtt.publish("", data(2), 1, false).is_err());
+    assert(mqtt.publish("topic", data(2), 0, false).is_err());
+    assert(mqtt.publish("topic", data(2), 65536, false).is_err());
+    assert(mqtt.connect("id", "", bytes.new(), "topic", bytes.new(), -1).is_err());
+    assert(mqtt.connect("id", "", bytes.new(), "topic", bytes.new(), 65536).is_err());
+    assert(mqtt.connect("id", "", "fixture".to_bytes(), "topic", bytes.new(), 10).is_err());
+    assert(mqtt.frame(0, bytes.new()).is_err());
+    assert(mqtt.frame(54, bytes.new()).is_err());
+    assert(mqtt.frame(56, bytes.new()).is_err());
+    assert(mqtt.frame(193, bytes.new()).is_err());
+    assert(mqtt.frame(96, bytes.new()).is_err());
+    assert(!mqtt.text_valid("a\0b"));
+    let encoded = mqtt.publish("meshcore/日本", data(20), 65535, true).expect("publication");
+    for split in 0..encoded.len() {
+        let first = mqtt.feed(mqtt.decoder(4096).expect("decoder"),
+            binary.slice(encoded, 0, split).expect("prefix"));
+        assert(first.packets.is_empty());
+        let second = mqtt.feed(first.decoder, binary.slice(encoded, split, encoded.len()).expect("suffix"));
+        assert(second.decoder.failure.is_none());
+        assert(second.decoder.buffer.is_empty());
+        assert(second.packets.len() == 1);
+        assert(second.packets[0].header == 51);
+        assert(mqtt.frame(second.packets[0].header, second.packets[0].body).expect("reencode") == encoded);
+    }
+    var stream = mqtt.decoder(1048576).expect("large decoder");
+    let large = mqtt.publish("topic", data(65535), 1, false).expect("large publication");
+    var offset: i64 = 0;
+    var count: i64 = 0;
+    while offset < large.len() {
+        let end = if offset + 4096 < large.len() { offset + 4096 } else { large.len() };
+        let batch = mqtt.feed(stream, binary.slice(large, offset, end).expect("large chunk"));
+        stream = batch.decoder;
+        assert(stream.failure.is_none());
+        for packet in batch.packets {
+            assert(mqtt.frame(packet.header, packet.body).expect("large reencode") == large);
+            count += 1;
+        }
+        offset = end;
+    }
+    assert(count == 1 && stream.buffer.is_empty());
+    let controls = mqtt.feed(mqtt.decoder(16).expect("control decoder"), hex.decode("200200004002ffffd000"));
+    assert(controls.packets.len() == 3);
+    match mqtt.reply(controls.packets[0]).expect("CONNACK") {
+        mqtt.Reply.Connected => {}
+        _ => panic("unexpected CONNACK"),
+    }
+    match mqtt.reply(controls.packets[1]).expect("PUBACK") {
+        mqtt.Reply.Acknowledged(identifier) => assert(identifier == 65535),
+        _ => panic("unexpected PUBACK"),
+    }
+    match mqtt.reply(controls.packets[2]).expect("PINGRESP") {
+        mqtt.Reply.Pong => {}
+        _ => panic("unexpected PINGRESP"),
+    }
+    for raw in ["20020100", "20020006", "40020000", "d00100", "3000"] {
+        let packets = mqtt.feed(mqtt.decoder(16).expect("decoder"), hex.decode(raw));
+        assert(packets.packets.len() == 1);
+        assert(mqtt.reply(packets.packets[0]).is_err());
+    }
+    let codes: i64 = 6;
+    for code in 1..codes {
+        var body = bytes.new();
+        body.push(0);
+        body.push(code as u8);
+        match mqtt.reply(mqtt.Packet { header: 32, body: body }).expect("rejection") {
+            mqtt.Reply.Rejected(actual) => assert(actual == code),
+            _ => panic("missing rejection"),
+        }
+    }
+    let failed = mqtt.feed(mqtt.decoder(16).expect("decoder"), hex.decode("40020007c0ffffffff"));
+    assert(failed.packets.len() == 1);
+    assert(failed.decoder.failure.is_some());
+    assert(failed.decoder.buffer.is_empty());
+    match mqtt.reply(failed.packets[0]).expect("ACK before malformed suffix") {
+        mqtt.Reply.Acknowledged(identifier) => assert(identifier == 7),
+        _ => panic("lost acknowledged prefix"),
+    }
+    let terminal = mqtt.feed(failed.decoder, hex.decode("d000"));
+    assert(terminal.packets.is_empty() && terminal.decoder.failure.is_some());
+    assert(mqtt.feed(mqtt.decoder(16).expect("decoder"), hex.decode("308001")).decoder.failure.is_some());
+    assert(mqtt.feed(mqtt.decoder(16).expect("decoder"), data(4097)).decoder.failure.is_some());
+    let fragmented = mqtt.feed(mqtt.decoder(16).expect("decoder"), hex.decode("2080"));
+    assert(fragmented.packets.is_empty() && fragmented.decoder.failure.is_none());
+    let zero = mqtt.feed(fragmented.decoder, hex.decode("00"));
+    assert(zero.packets.len() == 1 && zero.decoder.failure.is_none());
+    println("MQTT_CODEC_CHECKS_OK");
+}
+
+fn main() {
+    let args = os.args();
+    if args.len() == 2 && args[1] == "vectors" {
+        vectors();
+    } else {
+        checks();
+    }
+}

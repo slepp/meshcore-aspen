@@ -1,0 +1,118 @@
+import hostlib.outbound;
+import std.os;
+
+extern "C" {
+    fn mc_monotonic() -> i64;
+}
+
+fn now() -> i64 {
+    unsafe { mc_monotonic() }
+}
+
+actor Healthy {
+    var count: i64 = 0;
+    receive fn ping() -> i64 {
+        count += 1;
+        count
+    }
+}
+
+actor Endpoint {
+    let url: string;
+    let ca: string;
+    receive fn exercise(mode: string) -> bool {
+        let started = now();
+        let connection = match outbound.connect(url, ca) {
+            .Ok(value) => value,
+            .Err(error) => {
+                let elapsed = now() - started;
+                println(f"OUTBOUND_CONNECT_FAILED elapsed_ms={elapsed} reason={to_string(error)}");
+                return mode == "reject";
+            }
+        };
+        assert(mode != "reject");
+        assert(outbound.write(connection, "HEW_OUTBOUND".to_bytes(), 1000).expect("write") == 12);
+        let until = now() + 3000;
+        var received = bytes.new();
+        while now() < until {
+            match outbound.read(connection) {
+                outbound.Read.Data(data) => {
+                    received.append(data);
+                    if received.len() >= 12 {
+                        assert(received == "HEW_OUTBOUND".to_bytes());
+                        if mode == "reset" {
+                            sleep(300ms);
+                            match outbound.write(connection, "after reset".to_bytes(), 1000) {
+                                .Err(error) => {
+                                    println(f"OUTBOUND_WRITE_FAILED reason={to_string(error)}");
+                                    return true;
+                                }
+                                .Ok(_) => return false,
+                            }
+                        }
+                        if mode == "backpressure" {
+                            var payload = bytes.new();
+                            let size: i64 = 65536;
+                            for index in 0..size {
+                                payload.push(7);
+                            }
+                            for attempt in 0..64 {
+                                match outbound.write(connection, payload, 30) {
+                                    .Err(error) => {
+                                        assert(error.committed >= 0 && error.committed < size);
+                                        println(f"OUTBOUND_WRITE_FAILED reason={to_string(error)}");
+                                        return true;
+                                    }
+                                    .Ok(_) => {}
+                                }
+                            }
+                            return false;
+                        }
+                        if mode == "panic" {
+                            panic("injected outbound owner panic");
+                        }
+                        return true;
+                    }
+                }
+                outbound.Read.Idle => sleep(5ms),
+                _ => return false,
+            }
+        }
+        false
+    }
+}
+
+type ConnectionPlan {
+    url: string;
+    ca: string;
+}
+
+supervisor ConnectionBranch(plan: ConnectionPlan) {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child owner: Endpoint(url: plan.url, ca: plan.ca);
+}
+
+fn main() {
+    let args = os.args();
+    let branch = spawn ConnectionBranch(plan: ConnectionPlan { url: args[2], ca: args[3] });
+    let owner = branch.owner;
+    let healthy = spawn Healthy();
+    let began = now();
+    let work = fork owner.exercise(args[1]);
+    sleep(100ms);
+    assert(healthy.ping().expect("healthy during connection") == 1);
+    let health_delay = now() - began;
+    assert(health_delay < 1000);
+    println(f"OUTBOUND_HEALTHY_DURING_CONNECT elapsed_ms={health_delay}");
+    if args[1] == "panic" {
+        assert((await work).is_err());
+        sleep(100ms);
+        assert(owner.exercise("echo").expect("replacement owner"));
+        assert(healthy.ping().expect("healthy after replacement") == 2);
+        println("OUTBOUND_OWNER_REPLACED");
+    } else {
+        assert((await work).expect("outbound actor"));
+    }
+    println("OUTBOUND_CHECKS_OK");
+}

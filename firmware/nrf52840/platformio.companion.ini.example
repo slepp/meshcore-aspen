@@ -1,0 +1,13 @@
+; Native Xiao nRF52 + WIO-SX1262, using its own LoRa radio.
+; Select an appropriate local RF profile before deploying.
+[env:Xiao_nrf52_local_companion]
+extends = env:Xiao_nrf52_companion_radio_usb
+build_unflags =
+  -D LORA_TX_POWER=22
+build_flags =
+  ${env:Xiao_nrf52_companion_radio_usb.build_flags}
+  -D LORA_FREQ=912.525
+  -D LORA_BW=250.0
+  -D LORA_SF=7
+  -D LORA_CR=5
+  -D LORA_TX_POWER=2

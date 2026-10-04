@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "reports": [
+    {
+      "owner": "internal/policy",
+      "reported_status": "implementation-complete",
+      "recorded_status": "implemented-owner-reported-differential-pending",
+      "provenance": "Recorded policy unit-test baseline; not independently rerun by the native reference runner",
+      "implementation_revision": null,
+      "command": "make host-test HOST_TEST_PACKAGES=./internal/policy",
+      "reported_result": "pass with race detector",
+      "evidence_type": "unit-source-derived",
+      "native_differential_status": "pending",
+      "row_ids": ["path.encoding", "path.forward-overflow", "scheduler.originated-priorities", "scheduler.role-delay", "routing.scope-hop-reply", "routing.regions", "routing.repeater-admission-loop", "routing.room-admission", "advert.schedule"],
+      "tests": ["TestNativeDefaultsAndPresence", "TestInvalidPreferences", "TestPreferenceMergeDoesNotAliasCallerState", "TestOrdinaryPathBoundaries", "TestNativeDelayBoundaries", "TestNativeOriginAndRelayPriorities", "TestRoleAdmissionAndLoopThresholds", "TestNativeRegionAndReplyScope", "TestIndependentAdvertisementSchedules", "TestTraceEncodingIsIndependent"],
+      "historical_scope": "Initial source-derived unit report. Current executable subset and revisions are recorded separately in policy-differential.json and override matching matrix rows.",
+      "blockers": ["Rows outside the verified differential subset still require native/application evidence", "Private multi-key keystore cannot be populated through unmodified native public API"]
+    },
+    {
+      "owner": "internal/roles",
+      "reported_status": "role-race-and-vet-tests-pass",
+      "recorded_status": "implemented-owner-reported-native-app-pending",
+      "provenance": "Recorded role unit-test baseline; application expectations are source-derived except the explicitly listed native-origin consumer.",
+      "implementation_revision": null,
+      "command": "make host-test HOST_TEST_PACKAGES=./internal/roles; go vet ./internal/roles",
+      "reported_result": "race pass2.760s and vet pass",
+      "evidence_type": "Go-role-behaviour-and-source-layout-tests",
+      "native_application_status": "pending",
+      "row_ids": ["scheduler.originated-priorities", "scheduler.role-delay", "routing.repeater-admission-loop", "routing.room-admission", "routing.regions", "routing.dedup", "advert.schedule", "advert.location", "repeater.discovery-neighbours", "repeater.anonymous-rate-limit", "room.acl-storage", "room.permissions", "room.login-replay", "room.history-ring", "room.ack-retry", "room.response-extra-acks"],
+      "tests": [
+        "TestNativeOriginatedPriorityFixture",
+        "TestRepeaterRoutingDedupAndLocalDelivery",
+        "TestNativeRoomDoesNotRepeatAndRepeaterRejectsUnknownScope",
+        "TestPolicyManagementPersistsOriginWidthAndKeepsReplyWidth",
+        "TestRegionManagementLoadAndAtomicScopeSelection",
+        "TestNativeResponseAndACKDelayMetadata",
+        "TestObservedRadioPreservesScheduling",
+        "TestExplicitPolicyZeroAndNativeSchedulingPriorities",
+        "TestNativeReadOnlyAdmissionAndExtraDirectACK",
+        "TestNativeACLPermissionBitsAndBlankLogin",
+        "TestNativeACLAdmissionAndRoleFilters",
+        "TestNativeACLResponseCapacityAndLocalView",
+        "TestAnonymousRateLimitNativeWindow",
+        "TestAnonymousRateLimitOnWire",
+        "TestRepeaterDiscoveryAndOwnerWire",
+        "TestNativeNeighbourQueryUsesMeasuredZeroHopAdverts",
+        "TestRoomLoginPathPostACKAndPersistence",
+        "TestRoomRetryBoundAndKeepAliveProof",
+        "TestRoomSchedulerDeliversWithoutManualSync",
+        "TestNativePostByteTruncationSurvivesDurableReplay",
+        "TestNativeLPPSinglePrecisionQuantization",
+        "TestModemSnapshotStatusAndTelemetryWireFields",
+        "TestNativePasswordByteTruncationSurvivesRestart"
+      ],
+      "native_differential_cases": [
+        {
+          "test": "TestNativeOriginatedPriorityFixture",
+          "scenario": "originated-priorities",
+          "event": "enqueue",
+          "fields": ["bytes", "priority"],
+          "coverage": "All matching native rows through Service.transmit; minimum16 baseline cases with native completion required.",
+          "exclusions": ["eligibility-delay comparison", "native MyMesh application routing/dispatch decisions"]
+        }
+      ],
+      "extension_and_failure_tests": [
+        "TestNativeRetentionAndLegacyMigration",
+        "TestIndeterminateCommitFailsClosedWithoutPretendRollback",
+        "TestSourcePolicyCommitsBeforeDeviceApplicationAndFailsClosed",
+        "TestIdentityStatePreparationPreservesLegacyHistory",
+        "TestPacketLogLimitStopsCaptureWithoutOverwriting",
+        "TestPacketLogCommandsRetainMeasuredAndLocalDistinction"
+      ],
+      "deviations": ["All-admin admission protection and READ_ONLY post denial are adopted safety differences.", "Durable history, preservation of older151-byte posts and binary-safe host password persistence are not native RAM/storage equivalence."],
+      "blockers": ["Actual MyMesh/CommonCLI execution remains gated by portability.json and acceptance.json.", "Root lifecycle/identity/shared-PHY callback integration and isolated stock-radio acceptance remain separate."]
+    },
+    {
+      "owner": "internal/roles native-helper consumers",
+      "reported_status": "native-helper-differential-passed",
+      "recorded_status": "implemented-covered-vectors-verified",
+      "provenance": "Oracle flow independently reran three consumers, checked named pass records and unchanged local transitive source/native hashes before and after execution.",
+      "command": "MESHCORE_POLICY_ORACLE=$PWD/testdata/parity/native-events.jsonl go test -race -count=1 -json ./internal/roles -run '^(TestNativeApplicationHelperFixtures|TestNativeOriginatedPriorityFixture|TestNativeACLAdmissionFixtures)$'",
+      "reported_result": "pass",
+      "evidence_type": "actual-native-helper-differential",
+      "evidence_status": "native-differential-covered-vectors",
+      "revision_artifact": "testdata/parity/roles-helper-source-hashes.sha256",
+      "revision_artifact_sha256": "3b004661db1a9311b48ad2a72b47d79caac243c3c448bb109cfbf2e60079f459",
+      "result_artifact": "testdata/parity/roles-helper-test.jsonl",
+      "result_sha256": "de1bcad9622a7f9f444afa95b061a9985d0509d39ac2951659cbde96b42993ee",
+      "row_ids": ["room.post-copy-boundary", "room.response-capacity", "room.telemetry-scalar", "room.acl-storage"],
+      "tests": ["TestNativeApplicationHelperFixtures", "TestNativeOriginatedPriorityFixture", "TestNativeACLAdmissionFixtures"],
+      "scenario_ids": ["room-post-copy-boundary", "response-datagram-capacity", "cayenne-role-telemetry", "originated-priorities", "client-acl-vectors"],
+      "normalization": "Temperature helper channel2 is mapped to role channel1; native type/scalar bytes are compared. ASCII copy vectors compare retained lengths/bytes using a consistent ASCII fill.",
+      "acl_scope": "Native membership/slot order, raw permissions and reload order/permissions/transient activity. The all-admin exception checks host rejection without mutation, not equality to the native overwrite. Admin-filtered output and every storage-failure branch are not claimed compared.",
+      "blockers": ["Only listed helper vectors are compared; native MyMesh/CommonCLI handlers, sensor acquisition and RF remain unproven.", "The unchanged non-Arduino CayenneLPP library remains blocked on ELF32; its scalar vectors execute on host64."]
+    },
+    {
+      "owner": "internal/companion",
+      "reported_status": "source-layout-and-Go-behaviour-tests-added",
+      "recorded_status": "implementation-tests-owner-reported",
+      "provenance": "Recorded companion unit-test baseline and named tests under internal/companion; the native reference runner has not independently executed this package.",
+      "implementation_revision": null,
+      "evidence_type": "Go-source-layout-and-owner-reported-native-vector-differential",
+      "native_differential_status": "partial-owner-reported",
+      "row_ids": ["companion.contact-autoadd-eviction", "companion.message-queue-versions", "companion.session-isolation", "companion.telemetry-permissions", "companion.storage", "companion.base-chat-ack-timing", "companion.discovery-no-route-mutation", "companion.atomic-room-cursor", "companion.cmd_set_advert_latlon", "companion.cmd_export_contact", "companion.cmd_send_self_advert", "companion.cmd_send_trace_path", "companion.cmd_send_raw_data", "companion.cmd_set_tuning_params", "companion.cmd_get_tuning_params", "companion.cmd_get_batt_and_storage", "companion.cmd_send_login", "companion.cmd_send_txt_msg", "companion.push_code_log_rx_data", "crypto.wire"],
+      "tests": ["TestAdvertLocationNoneAppliesToTransmitAndExport", "TestDiscoveryReportsWithoutChangingKnownPathOrReplying", "TestFailedSignedMessageCommitDoesNotAdvanceRoomCursor", "TestOriginatedWidthsAndSessionScopeIsolation", "TestDatagramBoundaryIndependentInboxesAndReload", "TestNativeACKPrioritiesDelaysAndReplyScope", "TestTraceOwnerAndRawExplicitPriority", "TestTelemetryPermissionsAndNativeSelfFrame", "TestSourcePolicyCommittedBeforeApplyAndFailsClosed", "TestNativeRetentionProtectsDirectMessagesAndIndependentReaders", "TestAutoAddHopBoundaryAndUnknownAdvertPath", "TestTransientAnonymousContactAndStorageWire", "TestRawLogsIncludeDuplicatesAndControlIsLive", "TestNativeLoginTagPasswordLimitAndCLIAttempt"],
+      "case_mappings": {
+        "COMP-REG-LOCATION": ["companion.cmd_set_advert_latlon", "companion.cmd_export_contact", "companion.cmd_send_self_advert"],
+        "COMP-REG-DISCOVERY": ["companion.discovery-no-route-mutation"],
+        "COMP-REG-ROOM-COMMIT": ["companion.atomic-room-cursor"],
+        "COMP-PATH-SCOPE": ["companion.session-isolation"],
+        "COMP-DATAGRAM": ["companion.message-queue-versions", "companion.storage"],
+        "COMP-ACK-SCHEDULE": ["companion.base-chat-ack-timing"],
+        "COMP-TRACE-RAW": ["companion.cmd_send_trace_path", "companion.cmd_send_raw_data"],
+        "COMP-TELEM": ["companion.telemetry-permissions"],
+        "COMP-SOURCE-COMMIT": ["companion.cmd_set_tuning_params"],
+        "COMP-RETENTION": ["companion.message-queue-versions"],
+        "COMP-AUTOADD": ["companion.contact-autoadd-eviction"],
+        "COMP-ANON-STORAGE": ["companion.cmd_get_batt_and_storage", "companion.storage"],
+        "COMP-RXLOG": ["companion.push_code_log_rx_data"],
+        "COMP-LOGIN-CLI": ["companion.cmd_send_login", "companion.cmd_send_txt_msg"],
+        "COMP-NATIVE-ENCRYPTED": ["crypto.wire"],
+        "COMP-NATIVE-AF-REPRESENTATION": ["companion.cmd_set_tuning_params", "companion.cmd_get_tuning_params"],
+        "COMP-NATIVE-ACK-SUBSTRATE": ["companion.base-chat-ack-timing"]
+      },
+      "case_tests": {
+        "COMP-REG-LOCATION": "TestAdvertLocationNoneAppliesToTransmitAndExport",
+        "COMP-REG-DISCOVERY": "TestDiscoveryReportsWithoutChangingKnownPathOrReplying",
+        "COMP-REG-ROOM-COMMIT": "TestFailedSignedMessageCommitDoesNotAdvanceRoomCursor",
+        "COMP-PATH-SCOPE": "TestOriginatedWidthsAndSessionScopeIsolation",
+        "COMP-DATAGRAM": "TestDatagramBoundaryIndependentInboxesAndReload",
+        "COMP-ACK-SCHEDULE": "TestNativeACKPrioritiesDelaysAndReplyScope",
+        "COMP-TRACE-RAW": "TestTraceOwnerAndRawExplicitPriority",
+        "COMP-TELEM": "TestTelemetryPermissionsAndNativeSelfFrame",
+        "COMP-SOURCE-COMMIT": "TestSourcePolicyCommittedBeforeApplyAndFailsClosed",
+        "COMP-RETENTION": "TestNativeRetentionProtectsDirectMessagesAndIndependentReaders",
+        "COMP-AUTOADD": "TestAutoAddHopBoundaryAndUnknownAdvertPath",
+        "COMP-ANON-STORAGE": "TestTransientAnonymousContactAndStorageWire",
+        "COMP-RXLOG": "TestRawLogsIncludeDuplicatesAndControlIsLive",
+        "COMP-LOGIN-CLI": "TestNativeLoginTagPasswordLimitAndCLIAttempt",
+        "COMP-NATIVE-ENCRYPTED": "TestNativeEncryptedTextDifferential",
+        "COMP-NATIVE-AF-REPRESENTATION": "TestNativeRuntimeAirtimePersistsWithoutBootClamp",
+        "COMP-NATIVE-ACK-SUBSTRATE": "TestNativeBaseChatACKDifferential"
+      },
+      "native_differential_cases": [
+        {
+          "id": "COMP-NATIVE-ENCRYPTED",
+          "test": "internal/companion/native_test.go:TestNativeEncryptedTextDifferential",
+          "scenario": "encrypted-wire-vectors",
+          "events": ["datagram_inputs", "encrypted_packet"],
+          "coverage": "Production Server.sendText matches native ECDH secret and entire encrypted private-text frame, width3/two-hop direct path, priority0/delay0.",
+          "reported_command": "make --quiet -C test_support/parity test BUILD=$PWD/.tmp/companion-native-check && MESHCORE_COMPANION_ORACLE=$PWD/.tmp/companion-native-check/events.jsonl go test -race -count=1 ./internal/companion -run '^TestNativeEncryptedTextDifferential$'",
+          "reported_result": "pass against persistent and freshly executed native corpus",
+          "reported_capture": {
+            "passed_scenarios": 21,
+            "events_sha256": "04b2a3a379b43cf2845b1834c91054dff22ca2633119c569009943183446e1e8",
+            "source_closure_sha256": "cbfbd43d442aa9396621d87edbea76373787c04e3a44044acb2c39aca34660d7",
+            "scope": "Owner-reported historical capture, not the subsequently expanded current corpus."
+          },
+          "classification": "owner-reported actual-native differential for this vector only",
+          "exclusions": ["native MyMesh command execution", "other encrypted-wire vectors such as adverts", "complete protocol parity", "RF interoperability"]
+        },
+        {
+          "id": "COMP-NATIVE-AF-REPRESENTATION",
+          "test": "internal/companion/native_test.go:TestNativeRuntimeAirtimePersistsWithoutBootClamp",
+          "scenario": "native-runtime-airtime-factor",
+          "events": ["runtime_af"],
+          "coverage": "Native float32 values AF0/99/99.25 through host CMD21/43, PHY callback, JSON persistence and reload.",
+          "reported_result": "Owner reports snapshot and fresh-corpus race runs passing, plus full companion race/vet.",
+          "classification": "owner-reported native factor-representation comparison; durable host retention is an extension",
+          "exclusions": ["actual native MyMesh CMD dispatch/layout execution", "native boot-load clamp parity", "physical PHY budget execution"]
+        },
+        {
+          "id": "COMP-NATIVE-ACK-SUBSTRATE",
+          "test": "internal/companion/native_test.go:TestNativeBaseChatACKDifferential",
+          "scenario": "base-chat-wire-ack-timing",
+          "events": ["ack_input", "enqueue", "passed"],
+          "coverage": "All four native encrypted input modes through Go Node, companion worker and client inbox; complete direct/multipart/flood ACK frames and MAC-verified decrypted PATH bodies, priorities, response counts and200/500ms eligibility.",
+          "normalization": "Only recorded fresh nonce byte5 in the embedded ACK payload; no production RNG override.",
+          "reported_result": "Owner reports snapshot and fresh-corpus race runs passing.",
+          "classification": "owner-reported actual BaseChatMesh substrate differential",
+          "exclusions": ["native MyMesh scope/path-mode command execution", "complete application acceptance", "RF interoperability"]
+        }
+      ],
+      "latest_native_consumer_run": {
+        "reported_command": "MESHCORE_COMPANION_ORACLE=$PWD/.tmp/companion-native-check/events.jsonl go test -race -count=1 ./internal/companion -run '^TestNative(EncryptedTextDifferential|BaseChatACKDifferential|RuntimeAirtimePersistsWithoutBootClamp)$'",
+        "reported_result": "pass",
+        "native_runner_report_inspected": ".tmp/companion-native-check/results.json",
+        "native_passed_scenarios": 23,
+        "events_sha256": "4cfa4800c8e9ea9cc2f8178ea3f0b16d9a6ac2286ab7cd39faea1372678fcbd3",
+        "source_closure_sha256": "055409c78a6eeef54da9341d91106d2686b09efa0925f3854ae32cff8baa88bf",
+        "scope": "Native runner metadata inspected; Go consumer result is owner-reported, not independently rerun by this flow."
+      },
+      "implementation_updates": [
+        {
+          "row_id": "companion.management-bridge",
+          "status": "export callback enabled; import and lifecycle remain gated",
+          "tests": ["TestIdentityExportUsesParentNativeRepresentation", "TestIdentityExportPolicyAndFailures"],
+          "classification": "owner-reported Go/provider/source-layout evidence, not native command execution"
+        },
+        {
+          "row_id": "companion.session-isolation",
+          "status": "published preferences cloned to prevent staged-region aliasing; failure reproduced then fixed",
+          "tests": ["TestPublishedPolicyDoesNotAliasStagedRegionChanges"],
+          "classification": "owner-reported Go behavioural evidence"
+        }
+      ],
+      "reported_validation": "Owner reports make host-test HOST_TEST_PACKAGES=./internal/companion with race detector and go vet passing; not independently rerun by this flow.",
+      "scope": "Only named cases are reported. The encrypted-text differential is a narrow owner-reported native comparison, not every command/version variant or native MyMesh execution.",
+      "blockers": ["Complete implementation revision and native application/command coverage are not attached", "Core BaseChatMesh reference execution does not prove companion MyMesh overrides", "Stock application and RF evidence remain separate"]
+    },
+    {
+      "owner": "firmware and internal/radio",
+      "reported_status": "software-implementation-complete",
+      "recorded_status": "implemented-software-tests-verified",
+      "provenance": "Oracle flow independently executed software tests with identical source manifests before and after execution; Go race result rerun uncached.",
+      "command": "make -f test_support/phy_parity/Makefile test go-test BUILD=$PWD/.tmp/parity-coverage-phy; go test -race -count=1 ./internal/radio",
+      "reported_result": "pass",
+      "evidence_type": "actual-native-KissModem-plus-custom-PHY-and-Go-software-tests",
+      "evidence_status": "software-tests-executed-not-rf",
+      "revision_artifact": "testdata/parity/phy-source-hashes.sha256",
+      "revision_artifact_sha256": "b4905340e35339deb558d17f4eca250d903df8c0ffdd234e894ff791c1f9650a",
+      "result_artifact": "testdata/parity/phy-test.log",
+      "result_sha256": "b48fdec5e487d9beea351df47874747b5da21a277bc587cd3d04c1bf73728c2d",
+      "row_ids": ["phy.aggregate-budget", "phy.control-liveness-reflection"],
+      "tests": ["priority_and_controls", "future_fifo_and_expiry", "measured_budget_unknown_and_legacy", "full_queue_reserves_controls_and_fifo", "configuration_is_owned_and_pending_jobs_are_stable", "reconnect_preserves_aggregate_and_old_tx_ownership", "source_constraints_expiry_and_wrap", "native_carrier_retry_and_start_failure", "carrier_scan_is_not_rf_airtime", "blocking_carrier_reselects_and_preserves_retry", "mesh_carrier_retry_is_randomized", "changed_profile_requires_fresh_readback", "physical_service_does_not_require_host_owner", "native_source_float_is_not_quantized", "aggregate_runtime_factor_and_zero", "legacy-multiplexer", "remote", "TestQueuedRadioPreservesSchedulingAndControlLiveness", "TestParityJoinDoesNotRetuneAndMissingCapabilityFails", "TestQueuedDisconnectIsUnknownWithoutReplay", "TestSourceFactorPreservesNativeFloatPrecision", "TestPHYProfileDefaultsAndNativeRuntimeRange", "TestQueuedAdapterPreservesNativeOriginVectors"],
+      "wire_scope": "Current float32 aggregate and source factors only; undeployed thousandths draft forms are not supported.",
+      "duration_scope": "Controllable-radio start/completion observations, not measured over-air RF.",
+      "carrier_policy": "Physical scheduler uses Mesh-style randomized120/240/360ms, strict retry deadlines and >4000ms busy escape; Dispatcher default200ms is a separate reference, not the physical scheduler policy.",
+      "blockers": ["Software seams do not measure RF occupancy or prove stock interoperability", "Native RemoteKissRadio queued scheduling is separately software-blocked", "Owner-reported target firmware builds were not independently rerun by this flow"]
+    }
+  ]
+}

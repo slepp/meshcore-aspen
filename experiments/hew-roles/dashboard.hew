@@ -1,0 +1,880 @@
+//! Loopback HTTP dashboard, backed by live host actors and companion services.
+import host_admin;
+
+import owner_client;
+
+import hostlib.duplex;
+
+import hostlib.listener;
+
+import hostlib.outbound;
+
+import hostlib.binary;
+
+import hostlib.events;
+
+import std.stream;
+
+import transport;
+
+import wire;
+
+import std.encoding.json;
+
+import std.encoding.utf8;
+
+import std.fs;
+
+import std.os;
+
+type Configuration {
+    address: string;
+    port: i64;
+    state: string;
+    page: string;
+    password_env: string;
+    token_env: string;
+    base_port: i64;
+    bot_companion_port: i64;
+}
+
+fn number(text: string) -> i64 {
+    assert(!text.is_empty() && text.len() <= 5, "dashboard port must be an integer from 0 to 65535");
+    var value: i64 = 0;
+    for byte in text.to_bytes() {
+        assert(byte >= 48 && byte <= 57, "dashboard port must be decimal");
+        value = value * 10 + (byte as i64) - 48;
+    }
+    assert(value <= 65535, "dashboard port exceeds 65535");
+    value
+}
+
+fn configuration(path: string) -> Configuration {
+    let text = listener.config(path).expect("dashboard configuration must be a private owned file");
+    var result = Configuration { address: "127.0.0.1", port: 9080, state: "", page: "", password_env: "MESHCORE_LAB_ADMIN_PASSWORD", token_env: "", base_port: 9081, bot_companion_port: 9082 };
+    var seen: Vec<string> = Vec.new();
+    for line in text.split("\n") {
+        if line.is_empty() {
+            continue;
+        }
+        let parts = line.split("=");
+        assert(parts.len() == 2, "dashboard configuration requires key=value lines");
+        for old in seen {
+            assert(old != parts[0], "duplicate dashboard configuration setting");
+        }
+        seen.push(parts[0]);
+        match parts[0] {
+            "address" => {
+                result.address = parts[1];
+            }
+            "port" => {
+                result.port = number(parts[1]);
+            }
+            "state" => {
+                result.state = parts[1];
+            }
+            "page" => {
+                result.page = parts[1];
+            }
+            "password_env" => {
+                result.password_env = parts[1];
+            }
+            "token_env" => {
+                result.token_env = parts[1];
+            }
+            "base_port" => {
+                result.base_port = number(parts[1]);
+            }
+            "bot_companion_port" => {
+                result.bot_companion_port = number(parts[1]);
+            }
+            _ => panic("unknown dashboard configuration setting"),
+        }
+    }
+    assert(result.address == "127.0.0.1" || result.address == "::1", "dashboard listener must be loopback");
+    assert(result.state.starts_with("/") && result.page.starts_with("/"), "dashboard state and page paths must be absolute");
+    assert(result.base_port == 0 || result.base_port != result.port, "Base health port collides with dashboard");
+    assert(result.bot_companion_port == 0 || result.bot_companion_port != result.port, "bot companion health port collides with dashboard");
+    assert(result.base_port == 0 || result.bot_companion_port == 0 || result.base_port != result.bot_companion_port,
+        "Base and bot companion health ports must be distinct");
+    result
+}
+
+pub actor Rpc {
+    let root: string;
+    let group: events.Group;
+    var request: bytes = bytes.new();
+    var timeout: i64 = 0;
+    var connection: Option<duplex.Descriptor> = .None;
+    var started: bool = false;
+    var sent: bool = false;
+    var deadline: i64 = 0;
+    var result: Option<bytes> = .None;
+    var watch: Option<events.Watch> = .None;
+    fn complete(value: bytes) {
+        watch = .None;
+        connection = .None;
+        result = .Some(value);
+    }
+    receive fn begin(value: bytes, timeout_ms: i64) {
+        assert(!started || result.is_some(), "owner RPC is still in progress");
+        assert(value.len() >= 2 && value[0] == 1 && timeout_ms > 0, "invalid owner RPC request");
+        watch = .None;
+        connection = .None;
+        request = value;
+        timeout = timeout_ms;
+        started = false;
+        sent = false;
+        deadline = 0;
+        result = .None;
+    }
+    receive fn cancel() {
+        watch = .None;
+        connection = .None;
+        request = bytes.new();
+        started = false;
+        sent = false;
+        deadline = 0;
+        result = .None;
+    }
+    receive fn poll() -> Option<bytes> {
+        assert(!request.is_empty(), "owner RPC has no request");
+        if result.is_some() {
+            return result;
+        }
+        if !started {
+            started = true;
+            deadline = listener.now() + timeout;
+            connection = match owner_client.connect_request(root, request) {
+                .Ok(value) => .Some(value),
+                .Err(_) => {
+                    complete(b"\x01\x08");
+                    return result;
+                }
+            };
+        }
+        if listener.now() >= deadline {
+            complete(b"\x01\x08");
+            return result;
+        }
+        if !sent {
+            let written = match connection {
+                .Some(owner) => owner_client.send(owner, request),
+                .None => return result,
+            };
+            match written {
+                .Ok(value) => {
+                    sent = value;
+                }
+                .Err(_) => {
+                    complete(b"\x01\x08");
+                    return result;
+                }
+            }
+        }
+        if sent {
+            let maximum = if request[1] == 6 { 65536 } else { 4096 };
+            let received = match connection {
+                .Some(owner) => owner_client.read(owner, maximum),
+                .None => return result,
+            };
+            match received {
+                .Waiting => {}
+                .Reply(value) => {
+                    complete(value);
+                }
+                .Failed(_) => {
+                    complete(b"\x01\x08");
+                }
+            }
+        }
+        if result.is_none() {
+            let flags: i32 = if sent { 1 } else { 2 };
+            if watch.is_none() {
+                let watched = match connection {
+                    .Some(owner) => events.watch(group, owner.fd, flags).expect("watch owner RPC socket"),
+                    .None => panic("owner RPC connection unavailable while watching"),
+                };
+                watch = .Some(watched);
+            } else {
+                rearm_rpc(watch, flags);
+            }
+        }
+        result
+    }
+    receive fn next_deadline() -> i64 { deadline }
+}
+
+fn rearm_rpc(watch: Option<events.Watch>, flags: i32) {
+    if let .Some(current) = watch {
+        events.rearm(current, flags).expect("rearm owner RPC socket");
+    }
+}
+
+pub fn http_body(data: bytes, ready: bool) -> Result<json.Value, string> {
+    let text = match utf8.decode(data) {
+        .Ok(value) => value,
+        .Err(_) => return .Err("invalid health response encoding"),
+    };
+    let parts = text.split("\r\n\r\n");
+    if parts.len() < 2 {
+        return .Err("incomplete health response headers");
+    }
+    let lines = parts[0].split("\r\n");
+    let status = lines[0].split(" ");
+    if status.len() < 2 || (status[1] != "200" && !(ready && status[1] == "503")) {
+        return .Err("health endpoint returned an unexpected HTTP status");
+    }
+    let body = text.slice(parts[0].len() + 4, text.len());
+    match json.parse(body) {
+        .Ok(value) => if value.type_of() == json.Kind.Object {
+            .Ok(value)
+        } else {
+            .Err("health response must be an object")
+        }
+        .Err(_) => .Err("health response is not valid JSON"),
+    }
+}
+
+type Sample {
+    value: Option<json.Value>;
+    updated: i64;
+    failure: string;
+}
+
+actor Monitor {
+    let root: string;
+    let group: events.Group;
+    let port: i64;
+    let selector: i64;
+    let label: string;
+    var rpc: Option<Rpc> = .None;
+    var connection: Option<outbound.Connection> = .None;
+    var connected: bool = false;
+    var sent: i64 = 0;
+    var incoming: bytes = bytes.new();
+    var deadline: i64 = 0;
+    var next: i64 = 0;
+    var value: Option<json.Value> = .None;
+    var updated: i64 = 0;
+    var failure: string = "health connection has not returned a sample";
+    var transport_due: i64 = 0;
+    fn complete(result: Result<json.Value, string>) {
+        match result {
+            .Ok(sample) => {
+                value = .Some(sample);
+                updated = listener.now();
+                failure = "";
+            }
+            .Err(reason) => {
+                value = .None;
+                if failure != reason {
+                    println(f"DASHBOARD_HEALTH_OFFLINE connection={label} reason={reason}");
+                }
+                failure = reason;
+            }
+        }
+        if let .Some(request_actor) = rpc {
+            request_actor.cancel().expect("retire health RPC");
+        }
+        connection = .None;
+        connected = false;
+        sent = 0;
+        incoming = bytes.new();
+        deadline = 0;
+        transport_due = 0;
+        next = listener.now() + 500;
+    }
+    receive fn poll() -> Sample {
+        let now = listener.now();
+        var interest: i32 = 1;
+        var finished: Option<Result<json.Value, string>> = .None;
+        if deadline == 0 && now >= next {
+            deadline = now + 2000;
+            if port == 0 {
+                if root.is_empty() {
+                    complete(.Err("companion health endpoint is disabled"));
+                } else {
+                    if rpc.is_none() {
+                        rpc = .Some(spawn Rpc(root: root, group: events.share(group)));
+                    }
+                    if let .Some(request_actor) = rpc {
+                        request_actor.begin(wire.cat(b"\x01\x06", wire.le(selector, 1)), 1500).expect("begin health RPC");
+                    }
+                }
+            } else {
+                match outbound.start(f"http://127.0.0.1:{port}", "") {
+                    .Ok(owner) => {
+                        connection = .Some(owner);
+                    }
+                    .Err(_) => {
+                        complete(.Err("companion health connection could not be opened"));
+                    }
+                }
+            }
+        }
+        if deadline > 0 {
+            if now >= deadline {
+                complete(.Err("health response deadline expired"));
+            } else if let .Some(request_actor) = rpc {
+                match request_actor.poll() {
+                    .Ok(.Some(response)) => {
+                        if response.len() < 2 || response[0] != 1 || response[1] != 0 {
+                            finished = .Some(.Err("host actor health sample is unavailable"));
+                        } else {
+                            let text = utf8.decode(binary.slice(response, 2, response.len()).expect("health response body"));
+                            let parsed: Result<json.Value, string> = match text {
+                                .Ok(body) => match json.parse(body) {
+                                    .Ok(sample) => if sample.type_of() == json.Kind.Object {
+                                        .Ok(sample)
+                                    } else {
+                                        .Err("host health response must be an object")
+                                    }
+                                    .Err(_) => .Err("host health response is not valid JSON"),
+                                }
+                                .Err(_) => .Err("host health response encoding is invalid"),
+                            };
+                            finished = .Some(parsed);
+                        }
+                    }
+                    .Ok(.None) => {}
+                    .Err(_) => {
+                        finished = .Some(.Err("host health request actor stopped"));
+                    }
+                }
+            } else if connection.is_some() {
+                if !connected {
+                    let progress = match connection {
+                        .Some(owner) => outbound.progress(owner),
+                        .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                    };
+                    match progress {
+                        .Ok(done) => {
+                            connected = done;
+                        }
+                        .Err(_) => {
+                            finished = .Some(.Err("companion health connection failed"));
+                        }
+                    }
+                }
+                if connected && finished.is_none() {
+                    let path = if selector == 0 {
+                        "/status"
+                    } else {
+                        "/readyz"
+                    };
+                    let request = f"GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n".to_bytes();
+                    if sent < request.len() {
+                        let suffix = binary.slice(request, sent, request.len()).expect("health request suffix");
+                        let written = match connection {
+                            .Some(owner) => outbound.write_some(owner, suffix),
+                            .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                        };
+                        match written {
+                            .Ok(count) => {
+                                sent += count;
+                            }
+                            .Err(_) => {
+                                finished = .Some(.Err("companion health request write failed"));
+                            }
+                        }
+                        if sent < request.len() { interest = 2; }
+                    } else {
+                        for _ in 0..17 {
+                            let received = match connection {
+                                .Some(owner) => outbound.read(owner),
+                                .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                            };
+                            match received {
+                                .Idle => { break; }
+                                .Data(data) => {
+                                    if incoming.len() + data.len() > 65536 {
+                                        finished = .Some(.Err("companion health response exceeds 64 KiB"));
+                                        break;
+                                    }
+                                    incoming.append(data);
+                                }
+                                .End => {
+                                    finished = .Some(http_body(incoming, selector == 1));
+                                    break;
+                                }
+                                .Failed(_) => {
+                                    finished = .Some(.Err("companion health response read failed"));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let .Some(result) = finished { complete(result); }
+        if deadline > 0 && connection.is_some() {
+            let delay = match connection {
+                .Some(owner) => outbound.watch(owner, group, interest).expect("watch companion health socket"),
+                .None => panic("companion health connection unavailable while watching"),
+            };
+            transport_due = if delay == 9223372036854775807 { 0 } else { listener.now() + delay };
+        }
+        Sample { value: if now - updated <= 3000 {
+            value
+        } else {
+            .None
+        }, updated: updated, failure: failure }
+    }
+    receive fn close() {
+        if let .Some(request_actor) = rpc {
+            stop(request_actor);
+            stopped(request_actor);
+        }
+        rpc = .None;
+        connection = .None;
+    }
+    receive fn next_deadline() -> i64 {
+        if deadline == 0 { return next; }
+        var due = deadline;
+        if transport_due > 0 && transport_due < due { due = transport_due; }
+        if let .Some(request_actor) = rpc {
+            let rpc_due = request_actor.next_deadline().expect("health RPC deadline");
+            if rpc_due > 0 && rpc_due < due { due = rpc_due; }
+        }
+        due
+    }
+}
+
+fn member(value: json.Value, name: string) -> Option<json.Value> {
+    match value.get_field(name) {
+        .Ok(item) => item,
+        .Err(_) => .None,
+    }
+}
+
+fn boolean(value: json.Value, name: string) -> Option<bool> {
+    match member(value, name) {
+        .Some(item) => match item.get_bool() {
+            .Ok(flag) => .Some(flag),
+            .Err(_) => .None,
+        }
+        .None => .None,
+    }
+}
+
+fn flag(value: json.Value, name: string, expected: bool) -> bool {
+    match boolean(value, name) { .Some(actual) => actual == expected, .None => false }
+}
+
+fn status_snapshot(samples: Vec<Sample>) -> json.Value {
+    var status = json.object();
+    for i in 0..3 {
+        let names: Vec<string> = if i == 0 {
+            ["bot", "repeater", "room", "observer"]
+        } else if i == 1 {
+            ["companion"]
+        } else {
+            ["bot_companion"]
+        };
+        for name in names {
+            let item = match samples[i * 2].value {
+                .Some(value) => member(value, name),
+                .None => .None,
+            };
+            match item {
+                .Some(value) => {
+                    status.set(name, value).expect("status role field");
+                }
+                .None => {
+                    var failed = json.object();
+                    failed.set("state", json.from_string("faulted")).expect("status state");
+                    failed.set("radio_connected", json.from_bool(false)).expect("status connection");
+                    failed.set("health_error", json.from_string("Role health connection is unavailable, stale or missing its role")).expect("status error");
+                    status.set(name, failed).expect("status role field");
+                }
+            }
+        }
+    }
+    status
+}
+
+fn readiness(samples: Vec<Sample>) -> json.Value {
+    var not_ready = json.object();
+    var checked = false;
+    for i in 0..3 {
+        let names: Vec<string> = if i == 0 {
+            ["bot", "repeater", "room", "observer"]
+        } else if i == 1 {
+            ["companion"]
+        } else {
+            ["bot_companion"]
+        };
+        let status = samples[i * 2].value;
+        let snapshot = samples[i * 2 + 1].value;
+        var available = false;
+        if let .Some(value) = snapshot {
+            available = boolean(value, "ready").is_some();
+            if let .Some(flag) = boolean(value, "mqtt_connection_checked") {
+                checked = checked || flag;
+            }
+        }
+        for name in names {
+            var reason = if available {
+                ""
+            } else {
+                "health_connection_unavailable"
+            };
+            let role = match status {
+                .Some(value) => member(value, name),
+                .None => .None,
+            };
+            if role.is_none() {
+                reason = "health_connection_unavailable";
+            }
+            if let .Some(value) = snapshot {
+                if let .Some(failures) = member(value, "not_ready") {
+                    if let .Some(error) = member(failures, name) {
+                        reason = match error.get_string() {
+                            .Ok(text) => text,
+                            .Err(_) => "health_response_invalid",
+                        };
+                    }
+                } else {
+                    reason = "health_response_invalid";
+                }
+                if flag(value, "ready", false) && reason.is_empty() {
+                    reason = "upstream_not_ready";
+                }
+            }
+            if !reason.is_empty() {
+                not_ready.set(name, json.from_string(reason)).expect("readiness reason");
+            }
+        }
+    }
+    let keys = not_ready.keys().expect("readiness keys");
+    var value = json.object();
+    value.set("ready", json.from_bool(keys.array_len().expect("readiness count") == 0)).expect("readiness field");
+    value.set("not_ready", not_ready).expect("readiness field");
+    value.set("mqtt_connection_checked", json.from_bool(checked)).expect("readiness field");
+    value
+}
+
+fn admin_status(status: json.Value) -> json.Value {
+    var capabilities = json.object();
+    capabilities.set("native_owner", json.from_bool(true)).expect("capability field");
+    var roles = json.array();
+    roles.push(json.from_string("room")).expect("capability role");
+    roles.push(json.from_string("repeater")).expect("capability role");
+    capabilities.set("role_owner_commands", roles).expect("capability field");
+    capabilities.set("configuration", json.from_string("native bot settings/source/data persist through owner helpers; host role selection requires config and service restart")).expect("capability field");
+    var unsupported = json.array();
+    for item in ["ESP WiFi provisioning", "ESP firmware OTA", "physical ADC", "host config overwrite", "private key/password/token imports", "Wasm installation through this page"] {
+        unsupported.push(json.from_string(item)).expect("unsupported capability");
+    }
+    capabilities.set("unsupported", unsupported).expect("capability field");
+    var result = json.object();
+    result.set("roles", status).expect("admin status field");
+    result.set("capabilities", capabilities).expect("admin status field");
+    result
+}
+
+type Client {
+    token: i64;
+    incoming: bytes;
+    outgoing: bytes;
+    written: i64;
+    deadline: i64;
+    worker: Rpc;
+    rpc: Option<Rpc>;
+    role: bool;
+    watch: i64;
+}
+
+fn text(code: i64, body: string) -> bytes {
+    host_admin.response(code, "text/plain; charset=utf-8", body)
+}
+
+fn serialized(code: i64, value: json.Value) -> bytes {
+    host_admin.response(code, "application/json", value.stringify().expect("dashboard JSON response"))
+}
+
+fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Authentication, enabled: bool, page: string, samples: Vec<Sample>) -> Client {
+    if request.method == "GET" && request.path == "/status" {
+        client.outgoing = serialized(200, status_snapshot(samples));
+        return client;
+    }
+    if request.method == "GET" && request.path == "/readyz" {
+        let value = readiness(samples);
+        client.outgoing = serialized(if flag(value, "ready", true) {
+            200
+        } else {
+            503
+        }, value);
+        return client;
+    }
+    if !enabled || !request.path.starts_with("/admin") {
+        client.outgoing = text(404, "Host route not found");
+        return client;
+    }
+    if request.path == "/admin" && request.method == "GET" {
+        client.outgoing = host_admin.response(200, "text/html; charset=utf-8", page);
+        return client;
+    }
+    if request.method != "POST" {
+        client.outgoing = text(405, "Host admin route requires POST");
+        return client;
+    }
+    if request.path == "/admin/login" {
+        if !host_admin.intended(request) {
+            client.outgoing = text(403, "Explicit same-origin host admin intent required");
+            return client;
+        }
+        let result = auth.login(request.body, listener.now()).expect("dashboard login actor");
+        client.outgoing = text(result.code, result.text);
+        return client;
+    }
+    if !auth.authenticated(request.credential, listener.now()).expect("dashboard authentication actor") {
+        client.outgoing = text(401, "Host admin authentication required");
+        return client;
+    }
+    if !host_admin.intended(request) {
+        client.outgoing = text(403, "Explicit same-origin host admin intent required");
+        return client;
+    }
+    if request.path == "/admin/logout" {
+        auth.logout(request.credential).expect("dashboard logout actor");
+        client.outgoing = text(200, "Logged out");
+        return client;
+    }
+    if request.path == "/admin/status" {
+        client.outgoing = serialized(200, admin_status(status_snapshot(samples)));
+        return client;
+    }
+    let role = request.path == "/admin/role/room" || request.path == "/admin/role/repeater";
+    if request.path != "/admin/command" && !role {
+        client.outgoing = text(404, "Host role owner route is unavailable");
+        return client;
+    }
+    let command = match utf8.decode(request.body) {
+        .Ok(value) => value,
+        .Err(_) => "",
+    };
+    if !(if role {
+        host_admin.role_allowed(command)
+    } else {
+        host_admin.bot_allowed(command)
+    }) {
+        client.outgoing = text(400, "Unsupported owner command; credentials, identities, shared PHY and restart are unavailable here");
+        return client;
+    }
+    let mut_request = if role {
+        wire.cat(b"\x01\x05", wire.le(if request.path == "/admin/role/room" {
+            3
+        } else {
+            2
+        }, 1))
+    } else {
+        b"\x01\x04"
+    };
+    client.worker.begin(wire.cat(mut_request, request.body), 8000).expect("begin owner command RPC");
+    client.rpc = .Some(client.worker);
+    client.role = role;
+    client
+}
+
+pub fn run(path: string) {
+    let cfg = configuration(path);
+    let enabled = !cfg.token_env.is_empty() || match os.env("MESHCORE_HOST_ADMIN_HTTP") {
+        .Some(value) => value == "1", .None => false,
+    };
+    let secret = match os.env(if cfg.token_env.is_empty() {
+        cfg.password_env
+    } else {
+        cfg.token_env
+    }) {
+        .Some(value) => value,
+        .None => "",
+    };
+    let auth = host_admin.authentication(secret, !cfg.token_env.is_empty());
+    let page = if enabled {
+        fs.read(cfg.page).expect("dashboard page asset could not be read")
+    } else {
+        ""
+    };
+    assert(page.to_bytes().len() <= 65536, "dashboard page asset exceeds 64 KiB");
+    let owner = listener.open(cfg.address, cfg.port).expect("dashboard loopback listener could not bind");
+    let group = events.open().expect("dashboard readiness group");
+    let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(128).expect("dashboard event pipe");
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start dashboard readiness pump");
+    let shutdown = events.driver(group, input);
+    let accept_watch = listener.watch(owner, 0, group, 1).expect("watch dashboard listener");
+    let mut_monitors: Vec<Monitor> = [spawn Monitor(root: cfg.state, group: events.share(group), port: 0, selector: 0, label: "host-status"), spawn Monitor(root: cfg.state, group: events.share(group), port: 0, selector: 1, label: "host-readiness"), spawn Monitor(root: "", group: events.share(group), port: cfg.base_port, selector: 0, label: "Base-status"), spawn Monitor(root: "", group: events.share(group), port: cfg.base_port, selector: 1, label: "Base-readiness"), spawn Monitor(root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 0, label: "bot-companion-status"), spawn Monitor(root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 1, label: "bot-companion-readiness")];
+    var clients: Vec<Client> = Vec.new();
+    var rpc_workers: Vec<Rpc> = Vec.new();
+    var available: Vec<Rpc> = Vec.new();
+    for _ in 0..32 {
+        let worker = spawn Rpc(root: cfg.state, group: events.share(group));
+        rpc_workers.push(worker);
+        available.push(worker);
+    }
+    transport.signals();
+    println(f"DASHBOARD_LISTEN address={cfg.address} port={listener.port(owner)} admin={enabled}");
+    while transport.running() {
+        // The one-second guard notices process signals; socket work wakes the pipe.
+        var due = listener.now() + 1000;
+        var samples: Vec<Sample> = Vec.new();
+        for monitor in mut_monitors {
+            samples.push(match monitor.poll() {
+                .Ok(sample) => sample,
+                .Err(_) => Sample { value: .None, updated: 0, failure: "health monitor actor stopped" },
+            });
+            let deadline = monitor.next_deadline().expect("health monitor deadline");
+            if deadline < due { due = deadline; }
+        }
+        for _ in 0..32 {
+            let token = match listener.accept(owner) {
+                .Ok(value) => value,
+                .Err(code) => panic(f"dashboard accept failed: errno={code}"),
+            };
+            if token == 0 {
+                break;
+            }
+            if clients.len() >= 32 {
+                listener.drop(owner, token);
+            } else {
+                assert(!available.is_empty(), "no available HTTP owner RPC");
+                let worker = available.pop();
+                let watch = listener.watch(owner, token, group, 1).expect("watch dashboard client");
+                clients.push(Client { token: token, incoming: bytes.new(), outgoing: bytes.new(), written: 0, deadline: listener.now() + 5000, worker: worker, rpc: .None, role: false, watch: watch });
+            }
+            events.arm(group, accept_watch, 1).expect("rearm dashboard listener");
+        }
+        var retained: Vec<Client> = Vec.new();
+        for connection in clients {
+            var client = connection;
+            var close = false;
+            let now = listener.now();
+            if now >= client.deadline {
+                if client.outgoing.is_empty() && client.rpc.is_none() {
+                    client.outgoing = text(408, "Host HTTP request deadline expired; owner command was not submitted");
+                    client.deadline = now + 15000;
+                } else {
+                    close = true;
+                }
+            }
+            if !close && client.outgoing.is_empty() {
+                if let .Some(request_actor) = client.rpc {
+                    let result = match request_actor.poll() {
+                        .Ok(value) => value,
+                        .Err(_) => .Some(b"\x01\x08"),
+                    };
+                    if let .Some(reply) = result {
+                        request_actor.cancel().expect("retire owner command RPC");
+                        client.rpc = .None;
+                        client.outgoing = if reply.len() < 2 || reply[0] != 1 || reply[1] != 0 {
+                            text(504, "Host owner connection failed or timed out; outcome unknown. Inspect affected state; do not repeat a write.")
+                        } else {
+                            let body = utf8.decode_lossy(binary.slice(reply, 2, reply.len()).expect("owner reply body"));
+                            text(if (if client.role {
+                                host_admin.role_error(body)
+                            } else {
+                                body.starts_with("Error:")
+                            }) {
+                                409
+                            } else {
+                                200
+                            }, body)
+                        };
+                    }
+                } else {
+                    match listener.read(owner, client.token) {
+                        .Idle => {}
+                        .End => {
+                            close = true;
+                        }
+                        .Failed => {
+                            close = true;
+                        }
+                        .Data(data) => {
+                            if client.incoming.len() + data.len() > 8448 {
+                                client.outgoing = text(400, "Host HTTP request exceeds its size limit");
+                            } else {
+                                client.incoming.append(data);
+                                match host_admin.decode(client.incoming) {
+                                    .Waiting => {}
+                                    .Invalid => {
+                                        client.outgoing = text(400, "Host HTTP request is malformed; owner command was not submitted");
+                                    }
+                                    .Complete(request) => {
+                                        client = dispatch(client, request, auth, enabled, page, samples);
+                                        client.incoming = bytes.new();
+                                        client.deadline = now + 15000;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !close && !client.outgoing.is_empty() {
+                let end = if client.outgoing.len() - client.written > 65536 {
+                    client.written + 65536
+                } else {
+                    client.outgoing.len()
+                };
+                match listener.write(owner, client.token, binary.slice(client.outgoing, client.written, end).expect("HTTP response suffix")) {
+                    .Ok(count) => {
+                        client.written += count;
+                        close = client.written == client.outgoing.len();
+                    }
+                    .Err(_) => {
+                        close = true;
+                    }
+                }
+            }
+            if close {
+                if let .Some(request_actor) = client.rpc {
+                    request_actor.cancel().expect("cancel owner command RPC");
+                }
+                available.push(client.worker);
+                events.remove(group, client.watch).expect("retire dashboard client watch");
+                listener.drop(owner, client.token);
+            } else {
+                if client.rpc.is_none() {
+                    events.arm(group, client.watch, if client.outgoing.is_empty() { 1 } else { 2 }).expect("rearm dashboard client");
+                } else if let .Some(request_actor) = client.rpc {
+                    let deadline = request_actor.next_deadline().expect("owner command deadline");
+                    if deadline == 0 { due = now; }
+                    else if deadline < due { due = deadline; }
+                }
+                if client.deadline < due { due = client.deadline; }
+                retained.push(client);
+            }
+        }
+        clients = retained;
+        match events.wait(shutdown, due) {
+            events.Event.Failed(code) => panic(f"dashboard readiness failed: errno={code}"),
+            _ => {}
+        }
+    }
+    for client in clients {
+        if let .Some(request_actor) = client.rpc {
+            request_actor.cancel().expect("cancel owner command RPC on shutdown");
+        }
+        events.remove(group, client.watch).expect("retire dashboard client watch on shutdown");
+        listener.drop(owner, client.token);
+    }
+    for monitor in mut_monitors {
+        monitor.close().expect("close health monitor connections");
+        stop(monitor);
+        stopped(monitor);
+    }
+    for worker in rpc_workers {
+        stop(worker);
+        stopped(worker);
+    }
+    stop(auth);
+    stopped(auth);
+    events.remove(group, accept_watch).expect("retire dashboard accept watch");
+    shutdown.close();
+    stop(pump);
+    stopped(pump);
+}

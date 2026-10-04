@@ -1,0 +1,324 @@
+//! Go observer-compatible raw observations. No decryption or RF transmission.
+
+import hostlib.binary;
+import hostlib.mqtt;
+import std.crypto.crypto;
+import std.encoding.hex;
+import std.encoding.json;
+import std.time.datetime;
+
+pub enum Format {
+    Internal;
+    Observer;
+    Capture;
+}
+
+pub type Config {
+    identity: bytes;
+    format: Format;
+    prefix: string;
+    iata: string;
+    origin: string;
+    model: string;
+    firmware: string;
+    radio: string;
+    filter: Option<i64>;
+}
+
+pub type Reception {
+    raw: bytes;
+    timestamp_ms: i64;
+    sequence: i64;
+    has_signal: bool;
+    snr_quarter: i64;
+    rssi: i64;
+}
+
+pub type Packet {
+    header: i64;
+    kind: i64;
+    route: i64;
+    encoded: i64;
+    width: i64;
+    count: i64;
+    path: bytes;
+    payload: bytes;
+}
+
+pub fn public_format(format: Format) -> bool {
+    match format {
+        Format.Internal => false,
+        _ => true,
+    }
+}
+
+pub fn reflected(item: Reception) -> bool {
+    item.has_signal && item.snr_quarter == -128 && item.rssi == 127
+}
+
+pub fn admit(format: Format, item: Reception) -> bool {
+    !public_format(format) || (item.has_signal && !reflected(item))
+}
+
+/// Match the observation SDK's envelope contract, including packed TRACE
+/// paths. This is not the role engine's authenticated packet admission.
+pub fn packet(raw: bytes) -> Result<Packet, string> {
+    if raw.is_empty() {
+        return .Err("reading header: EOF");
+    }
+    let header = raw[0] as i64;
+    let version = header >> 6;
+    if version != 0 {
+        return .Err(f"unsupported payload version {version}");
+    }
+    let route = header & 3;
+    var at: i64 = 1;
+    if route == 0 || route == 3 {
+        if raw.len() < 3 {
+            return .Err(if raw.len() == 1 { "reading transport code 1: EOF" } else { "reading transport code 1: unexpected EOF" });
+        }
+        if raw.len() < 5 {
+            return .Err(if raw.len() == 3 { "reading transport code 2: EOF" } else { "reading transport code 2: unexpected EOF" });
+        }
+        at = 5;
+    }
+    if raw.len() == at {
+        return .Err("reading path length: EOF");
+    }
+    let encoded = raw[at] as i64;
+    let width = (encoded >> 6) + 1;
+    let count = encoded & 63;
+    let size = width * count;
+    if width == 4 || size > 64 {
+        let code = hex.encode(binary.slice(raw, at, at + 1).expect("path byte"));
+        return .Err("invalid path length byte: 0x" + code);
+    }
+    at += 1;
+    let available = raw.len() - at;
+    if available < size {
+        return .Err(f"not enough data for path: need {size} bytes, have {available}");
+    }
+    let payload_size = available - size;
+    if payload_size > 184 {
+        return .Err(f"payload too large: {payload_size} bytes, max 184");
+    }
+    .Ok(Packet { header: header, kind: (header >> 2) & 15, route: route,
+        encoded: encoded, width: width, count: count,
+        path: binary.slice(raw, at, at + size).expect("observed path"),
+        payload: binary.slice(raw, at + size, raw.len()).expect("observed payload") })
+}
+
+fn upper_hex(data: bytes) -> string {
+    hex.encode_upper(data)
+}
+
+fn put_text(value: json.Value, name: string, text: string) -> json.Value {
+    var out = value;
+    out.set(name, json.from_string(text)).expect("JSON object field");
+    out
+}
+
+fn put_int(value: json.Value, name: string, number: i64) -> json.Value {
+    var out = value;
+    out.set(name, json.from_int(number)).expect("JSON object field");
+    out
+}
+
+pub fn timestamp(stamp: i64) -> Result<string, string> {
+    let base = datetime.format(stamp, "%Y-%m-%dT%H:%M:%S")?;
+    let millis = ((stamp % 1000) + 1000) % 1000;
+    if millis == 0 {
+        return .Ok(base + "Z");
+    }
+    var fraction = to_string(millis + 1000).slice(1, 4);
+    while fraction.ends_with("0") {
+        fraction = fraction.slice(0, fraction.len() - 1);
+    }
+    .Ok(base + "." + fraction + "Z")
+}
+
+pub fn topic(cfg: Config) -> Result<string, string> {
+    if cfg.identity.len() != 32 {
+        return .Err("observer identity must be 32 bytes");
+    }
+    var prefix = cfg.prefix;
+    while prefix.starts_with("/") {
+        prefix = prefix.slice(1, prefix.len());
+    }
+    while prefix.ends_with("/") {
+        prefix = prefix.slice(0, prefix.len() - 1);
+    }
+    if prefix.is_empty() {
+        prefix = "meshcore";
+    }
+    if !mqtt.topic_valid(prefix) || prefix.to_bytes().len() > 65000 {
+        return .Err("observer topic prefix is invalid");
+    }
+    if let .Some(filter) = cfg.filter {
+        if filter < 0 || filter > 65535 {
+            return .Err("observer packet filter must be a uint16 mask");
+        }
+    }
+    if public_format(cfg.format) {
+        let iata = cfg.iata.to_bytes();
+        if iata.len() != 3 {
+            return .Err("observer IATA must contain three uppercase ASCII letters");
+        }
+        for letter in iata {
+            if letter < 65 || letter > 90 {
+                return .Err("observer IATA must contain three uppercase ASCII letters");
+            }
+        }
+        return .Ok(prefix + "/" + cfg.iata + "/" + upper_hex(cfg.identity));
+    }
+    .Ok(prefix + "/" + hex.encode(cfg.identity))
+}
+
+fn type_name(kind: i64) -> string {
+    let names = ["REQ", "RESPONSE", "TXT_MSG", "ACK", "ADVERT", "GRP_TXT",
+        "GRP_DATA", "ANON_REQ", "PATH", "TRACE", "MULTI_PART", "CONTROL",
+        "", "", "", "RAW_CUSTOM"];
+    names[kind]
+}
+
+fn route_name(route: i64) -> string {
+    let names = ["TRANSPORT_FLOOD", "FLOOD", "DIRECT", "TRANSPORT_DIRECT"];
+    names[route]
+}
+
+fn signal(quarter: i64, capture: bool) -> string {
+    let sign = if quarter < 0 { "-" } else { "" };
+    let magnitude = if quarter < 0 { -quarter } else { quarter };
+    if capture {
+        let fractions = ["0", "25", "5", "75"];
+        return sign + to_string(magnitude / 4) + "." + fractions[magnitude % 4];
+    }
+    let hundredths = magnitude * 25;
+    var tenths = hundredths / 10;
+    if hundredths % 10 > 5 || (hundredths % 10 == 5 && tenths % 2 != 0) {
+        tenths += 1;
+    }
+    sign + to_string(tenths / 10) + "." + to_string(tenths % 10)
+}
+
+fn packet_hash(p: Packet) -> string {
+    var content = bytes.new();
+    content.push(p.kind as u8);
+    if p.kind == 9 {
+        content.append(binary.little(p.encoded, 2).expect("TRACE packed path length"));
+    }
+    content.append(p.payload);
+    upper_hex(binary.slice(crypto.sha256(content), 0, 8).expect("packet hash"))
+}
+
+fn fallback(value: string, default_value: string) -> string {
+    if value.is_empty() { default_value } else { value }
+}
+
+pub fn status(cfg: Config, state: string, at: i64) -> Result<string, string> {
+    let _ = topic(cfg)?;
+    if !public_format(cfg.format) {
+        return .Ok(state);
+    }
+    var out = json.object();
+    out = put_text(out, "status", state);
+    out = put_text(out, "timestamp", timestamp(at)?);
+    out = put_text(out, "origin", fallback(cfg.origin, "MeshCore observer"));
+    out = put_text(out, "origin_id", upper_hex(cfg.identity));
+    out = put_text(out, "model", fallback(cfg.model, "MeshCore host"));
+    out = put_text(out, "firmware_version", fallback(cfg.firmware, "unknown"));
+    out = put_text(out, "radio", fallback(cfg.radio, "unknown"));
+    out = put_text(out, "client_version", "meshcore-kiss/observer-v1");
+    match out.stringify() {
+        .Ok(text) => .Ok(text),
+        .Err(_) => .Err("observer status cannot be encoded"),
+    }
+}
+
+pub fn event(cfg: Config, session: string, item: Reception) -> Result<string, string> {
+    let _ = topic(cfg)?;
+    if item.raw.len() > 4096 || (item.has_signal &&
+        (item.snr_quarter < -128 || item.snr_quarter > 127 || item.rssi < -128 || item.rssi > 127)) {
+        return .Err("observer reception exceeds the frame or wire signal bounds");
+    }
+    let at = timestamp(item.timestamp_ms)?;
+    let decoded = packet(item.raw);
+    var out = json.object();
+    if !public_format(cfg.format) {
+        out = put_text(out, "event_id", session + "-" + to_string(item.sequence));
+        out = put_text(out, "timestamp", at);
+        out = put_text(out, "observer_identity", hex.encode(cfg.identity));
+        out = put_text(out, "raw_packet_hex", hex.encode(item.raw));
+        out.set("local_loopback", json.from_bool(reflected(item))).expect("loopback field");
+        out.set("snr", json.null()).expect("SNR field");
+        out.set("rssi", json.null()).expect("RSSI field");
+        if item.has_signal && !reflected(item) {
+            out.set("snr", json.from_float((item.snr_quarter as f64) / 4.0).expect("finite wire SNR")).expect("SNR field");
+            out = put_int(out, "rssi", item.rssi);
+        }
+        match decoded {
+            .Err(error) => { out = put_text(out, "decode_error", error); }
+            .Ok(p) => {
+                var detail = json.object();
+                detail = put_int(detail, "header", p.header);
+                detail = put_int(detail, "type", p.kind);
+                detail = put_text(detail, "type_name", type_name(p.kind));
+                detail = put_int(detail, "route", p.route);
+                detail = put_text(detail, "route_name", route_name(p.route));
+                detail = put_int(detail, "version", 0);
+                detail = put_text(detail, "path_hex", hex.encode(p.path));
+                detail = put_int(detail, "path_length", p.encoded);
+                detail = put_int(detail, "path_hash_size", p.width);
+                detail = put_int(detail, "path_hop_count", p.count);
+                out.set("packet", detail).expect("packet field");
+            }
+        }
+    } else {
+        let p = decoded?;
+        if !admit(cfg.format, item) || item.timestamp_ms < 1735689600000 {
+            return .Err("packet has no synchronized RF reception or is filtered");
+        }
+        if let .Some(filter) = cfg.filter {
+            if (filter & (1 << p.kind)) == 0 {
+                return .Err("packet has no synchronized RF reception or is filtered");
+            }
+        }
+        let capture = match cfg.format { Format.Capture => true, _ => false };
+        let route = if p.route == 2 { "D" } else if p.route == 3 {
+            if capture { "T" } else { "D" }
+        } else { "F" };
+        out = put_text(out, "origin", fallback(cfg.origin, "MeshCore observer"));
+        out = put_text(out, "origin_id", upper_hex(cfg.identity));
+        out = put_text(out, "timestamp", at);
+        out = put_text(out, "type", "PACKET");
+        out = put_text(out, "direction", "rx");
+        out = put_text(out, "time", datetime.format(item.timestamp_ms, "%H:%M:%S")?);
+        out = put_text(out, "date", datetime.format(item.timestamp_ms, "%d/%m/%Y")?);
+        out = put_text(out, "len", to_string(item.raw.len()));
+        out = put_text(out, "packet_type", to_string(p.kind));
+        out = put_text(out, "route", route);
+        out = put_text(out, "payload_len", to_string(p.payload.len()));
+        out = put_text(out, "raw", upper_hex(item.raw));
+        out = put_text(out, "SNR", signal(item.snr_quarter, capture));
+        out = put_text(out, "RSSI", to_string(item.rssi));
+        out = put_text(out, "hash", packet_hash(p));
+        if (!capture && p.count > 0) || (capture && route == "D") {
+            var path = json.array();
+            var joined = "";
+            for hop in 0..p.count {
+                let part = hex.encode(binary.slice(p.path, hop * p.width, (hop + 1) * p.width).expect("observed path hash"));
+                path.push(json.from_string(part)).expect("path array");
+                joined = joined + (if hop == 0 { "" } else { "," }) + part;
+            }
+            if capture {
+                out = put_text(out, "path", joined);
+            } else {
+                out.set("path", path).expect("path field");
+            }
+        }
+    }
+    match out.stringify() {
+        .Ok(text) => .Ok(text),
+        .Err(_) => .Err("observer event cannot be encoded"),
+    }
+}

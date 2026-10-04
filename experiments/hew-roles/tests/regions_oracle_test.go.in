@@ -1,0 +1,66 @@
+package roles
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+
+	"meshcore.local/meshcore/internal/policy"
+)
+
+func TestWillowRegionOracle(t *testing.T) {
+	input, output := os.Getenv("MESHCORE_REGION_INPUT"), os.Getenv("MESHCORE_REGION_OUTPUT")
+	if input == "" || output == "" {
+		t.Skip("isolated region differential paths required")
+	}
+	var cases []struct {
+		State    diskState
+		Commands []string
+	}
+	raw, err := os.ReadFile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	type step struct {
+		Reply   string
+		State   diskState
+		Loading bool
+	}
+	var results [][]step
+	for _, fixture := range cases {
+		service := &Service{profile: policy.Repeater, state: fixture.State, commandOwner: "host-owner-console"}
+		var steps []step
+		for _, command := range fixture.Commands {
+			var reply string
+			if service.regionLoad != nil {
+				reply = service.regionLoadLine(command)
+			} else {
+				reply = service.regionCommand(command)
+			}
+			// Compare the save marker independently of the wall clock used by Go.
+			if command == "region save" {
+				service.state.DiscoveryModified = 1234
+			}
+			frozen, err := json.Marshal(service.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state diskState
+			if err := json.Unmarshal(frozen, &state); err != nil {
+				t.Fatal(err)
+			}
+			steps = append(steps, step{reply, state, service.regionLoad != nil})
+		}
+		results = append(results, steps)
+	}
+	raw, err = json.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}

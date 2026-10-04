@@ -1,0 +1,293 @@
+import std.crypto.crypto;
+
+import std.crypto.sign;
+
+import std.encoding.hex;
+
+import hostlib.framing;
+
+pub fn cut(data: bytes, start: i64, end: i64) -> bytes {
+    var out = bytes.new();
+    for i in start..end {
+        out.push(data[i]);
+    }
+    out
+}
+
+extern "C" {
+    fn mc_public(seed: bytes) -> bytes;
+    fn mc_sign(seed: bytes, message: bytes) -> bytes;
+    fn mc_shared(seed: bytes, peer: bytes) -> bytes;
+    fn mc_aes(key: bytes, input: bytes, encrypt: i32) -> bytes;
+}
+
+pub fn public_key(seed: bytes) -> bytes {
+    unsafe {
+        mc_public(seed)
+    }
+}
+
+pub fn signature(seed: bytes, message: bytes) -> bytes {
+    unsafe {
+        mc_sign(seed, message)
+    }
+}
+
+pub fn shared(seed: bytes, peer: bytes) -> bytes {
+    unsafe {
+        mc_shared(seed, peer)
+    }
+}
+
+pub fn cat(a: bytes, b: bytes) -> bytes {
+    var out = a;
+    out.append(b);
+    out
+}
+
+pub fn byte(n: i64) -> bytes {
+    var out = bytes.new();
+    out.push(n as u8);
+    out
+}
+
+pub fn le(n: i64, size: i64) -> bytes {
+    var out = bytes.new();
+    for i in 0..size {
+        out.push((if i < 8 {
+            (n >> (i * 8)) & 255
+        } else {
+            0
+        }) as u8);
+    }
+    out
+}
+
+pub fn uint(data: bytes) -> i64 {
+    var out: i64 = 0;
+    for i in 0..data.len() {
+        out = out | ((data[i] as i64) << (8 * i));
+    }
+    out
+}
+
+pub fn equal(a: bytes, b: bytes) -> bool {
+    crypto.constant_time_eq(a, b)
+}
+
+pub fn ack(plain: bytes, key: bytes) -> bytes {
+    cut(crypto.sha256(cat(plain, key)), 0, 4)
+}
+
+pub fn seal(key: bytes, plain: bytes) -> bytes {
+    if key.len() < 16 || plain.is_empty() || plain.len() > 176 {
+        return bytes.new();
+    }
+    var padded = plain;
+    while padded.len() % 16 != 0 {
+        padded.push(0);
+    }
+    let encrypted = unsafe {
+        mc_aes(key, padded, 1)
+    };
+    if encrypted.is_empty() {
+        return encrypted;
+    }
+    cat(cut(crypto.hmac_sha256(key, encrypted), 0, 2), encrypted)
+}
+
+pub fn open(key: bytes, body: bytes) -> bytes {
+    if key.len() < 16 || body.len() < 18 || (body.len() - 2) % 16 != 0 {
+        return bytes.new();
+    }
+    let encrypted = cut(body, 2, body.len());
+    if !equal(cut(body, 0, 2), cut(crypto.hmac_sha256(key, encrypted), 0, 2)) {
+        return bytes.new();
+    }
+    unsafe {
+        mc_aes(key, encrypted, 0)
+    }
+}
+
+pub type Packet {
+    route: i64;
+    kind: i64;
+    code1: i64;
+    code2: i64;
+    pathlen: i64;
+    path: bytes;
+    payload: bytes;
+}
+
+pub fn packet(route: i64, kind: i64, payload: bytes) -> Packet {
+    Packet { route: route, kind: kind, code1: 0, code2: 0, pathlen: 0, path: bytes.new(), payload: payload }
+}
+
+pub fn valid_path(encoded: i64, size: i64) -> bool {
+    let width = (encoded >> 6) + 1;
+    width <= 3 && encoded >= 0 && encoded <= 255 && (encoded & 63) * width == size && size <= 64
+}
+
+pub fn decode(raw: bytes) -> Option<Packet> {
+    if raw.len() < 2 || raw.len() > 255 || raw[0] >= 64 {
+        return .None;
+    }
+    let route = (raw[0] as i64) & 3;
+    let kind = ((raw[0] as i64) >> 2) & 15;
+    var at: i64 = 1;
+    var c1: i64 = 0;
+    var c2: i64 = 0;
+    if route == 0 || route == 3 {
+        if raw.len() < 6 {
+            return .None;
+        }
+        c1 = uint(cut(raw, 1, 3));
+        c2 = uint(cut(raw, 3, 5));
+        at = 5;
+    }
+    let plen = raw[at] as i64;
+    let size = if kind == 9 {
+        plen
+    } else {
+        ((plen >> 6) + 1) * (plen & 63)
+    };
+    at = at + 1;
+    if (if kind == 9 {
+        plen > 64
+    } else {
+        !valid_path(plen, size)
+    }) || raw.len() < at + size || raw.len() - at - size > 184 {
+        return .None;
+    }
+    .Some(Packet { route: route, kind: ((raw[0] as i64) >> 2) & 15, code1: c1, code2: c2, pathlen: plen, path: cut(raw, at, at + size), payload: cut(raw, at + size, raw.len()) })
+}
+
+pub fn encode(p: Packet) -> bytes {
+    if (if p.kind == 9 {
+        p.pathlen < 0 || p.pathlen > 64 || p.path.len() != p.pathlen
+    } else {
+        !valid_path(p.pathlen, p.path.len())
+    }) || p.payload.len() > 184 {
+        return bytes.new();
+    }
+    var raw = byte((p.kind << 2) | p.route);
+    if p.route == 0 || p.route == 3 {
+        raw.append(le(p.code1, 2));
+        raw.append(le(p.code2, 2));
+    }
+    raw.push(p.pathlen as u8);
+    raw.append(p.path);
+    raw.append(p.payload);
+    raw
+}
+
+pub fn hash(p: Packet) -> string {
+    var data = byte(p.kind);
+    if p.kind == 9 {
+        data.append(le(p.pathlen, 2));
+    }
+    hex.encode(cut(crypto.sha256(cat(data, p.payload)), 0, 8))
+}
+
+pub fn region_code(key: bytes, p: Packet) -> i64 {
+    var n = uint(cut(crypto.hmac_sha256(key, cat(byte(p.kind), p.payload)), 0, 2));
+    if n == 0 {
+        n = 1;
+    }
+    if n == 65535 {
+        n = 65534;
+    }
+    n
+}
+
+pub fn advert(seed: bytes, stamp: i64, role: i64, name: string) -> Packet {
+    advert_location(seed, stamp, role, name, false, 0.0, 0.0)
+}
+
+pub fn advert_location(seed: bytes, stamp: i64, role: i64, name: string, location: bool, latitude: f64, longitude: f64) -> Packet {
+    let pubkey = public_key(seed);
+    var app = byte(128 | role | (if location { 16 } else { 0 }));
+    if location {
+        app.append(le((latitude * 1000000.0) as i64, 4));
+        app.append(le((longitude * 1000000.0) as i64, 4));
+    }
+    app.append(name.to_bytes());
+    let prefix = cat(pubkey, le(stamp, 4));
+    packet(1, 4, cat(cat(prefix, signature(seed, cat(prefix, app))), app))
+}
+
+pub fn verify_advert(p: Packet) -> bool {
+    let b = p.payload;
+    if p.kind != 4 || b.len() < 100 || b.len() > 140 {
+        return false;
+    }
+    sign.verify(cat(cut(b, 0, 36), cut(b, 100, b.len())), cut(b, 36, 100), cut(b, 0, 32))
+}
+
+pub fn datagram(seed: bytes, peer: bytes, kind: i64, plain: bytes) -> Packet {
+    let body = seal(shared(seed, peer), plain);
+    packet(2, kind, cat(cat(cut(peer, 0, 1), cut(public_key(seed), 0, 1)), body))
+}
+
+pub fn kiss(port: i64, command: i64, payload: bytes) -> bytes {
+    let data = cat(byte((port << 4) | command), payload);
+    framing.slip_encode(data, 514).expect("bounded KISS frame")
+}
+
+pub actor Decoder {
+    var buffer: bytes;
+    var native_buffering: bool = false;
+    var native_frames: Vec<bytes> = Vec.new();
+    var escaped: bool = false;
+    var discard: bool = true;
+    mailbox 64;
+    receive fn buffer_native() {
+        native_buffering = true;
+    }
+    receive fn deferring() -> bool {
+        native_buffering
+    }
+    receive fn defer_native(frame: bytes) -> bool {
+        if !native_buffering {
+            return true;
+        }
+        if frame.len() < 2 || ((frame[0] & 15) != 0 && !((frame[0] & 15) == 6 && (frame[1] == 249 || frame[1] == 250))) {
+            return true;
+        }
+        if native_frames.len() >= 512 {
+            return false;
+        }
+        native_frames.push(frame);
+        true
+    }
+    receive fn take_native() -> Vec<bytes> {
+        let frames = native_frames;
+        native_frames = Vec.new();
+        frames
+    }
+    receive fn parser_state() -> framing.SlipState {
+        framing.SlipState { pending: buffer, escaped: escaped, discard: discard }
+    }
+    receive fn restore_parser(previous: framing.SlipState) {
+        buffer = previous.pending;
+        escaped = previous.escaped;
+        discard = previous.discard;
+    }
+    receive fn feed(chunk: bytes) -> Vec<bytes> {
+        let previous = framing.SlipState { pending: buffer, escaped: escaped, discard: discard };
+        match framing.slip_feed(previous, chunk, 514) {
+            .Ok(batch) => {
+                buffer = batch.state.pending;
+                escaped = batch.state.escaped;
+                discard = batch.state.discard;
+                batch.frames
+            }
+            .Err(_) => {
+                buffer = bytes.new();
+                escaped = false;
+                discard = true;
+                Vec.new()
+            }
+        }
+    }
+}

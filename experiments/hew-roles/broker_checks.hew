@@ -1,0 +1,130 @@
+import hostlib.mqtt_server as server;
+
+import hostlib.listener;
+
+import hostlib.mqtt;
+
+import std.encoding.hex;
+
+import broker;
+
+import std.os;
+
+import hostlib.binary;
+
+import hostlib.mqtt_properties as properties;
+
+fn dual_stack() {
+    let owner = listener.open("::", 0).expect("dual-stack listener");
+    println(f"LISTENER_READY port={listener.port(owner)}");
+    for index in 0..2 {
+        let deadline = listener.now() + 3000;
+        var token: i64 = 0;
+        while listener.now() < deadline && token == 0 {
+            token = listener.accept(owner).expect("dual-stack accept");
+            if token == 0 {
+                sleep(1ms);
+            }
+        }
+        assert(token != 0);
+        var received = bytes.new();
+        while listener.now() < deadline && received.is_empty() {
+            match listener.read(owner, token) {
+                listener.Read.Idle => {
+                    sleep(1ms);
+                }
+                listener.Read.Data(data) => {
+                    received = data;
+                }
+                _ => {
+                    panic("dual-stack read failed");
+                }
+            }
+        }
+        assert(!received.is_empty());
+        var at: i64 = 0;
+        while at < received.len() && listener.now() < deadline {
+            let count = listener.write(owner, token, binary.slice(received, at, received.len()).expect("write suffix")).expect("dual-stack write");
+            at += count;
+            if count == 0 {
+                sleep(1ms);
+            }
+        }
+        assert(at == received.len());
+        listener.drop(owner, token);
+    }
+    println("LISTENER_DUAL_STACK_OK");
+}
+
+fn main() {
+    if os.args().len() == 2 {
+        dual_stack();
+        return;
+    }
+    assert(listener.loopback("127.0.0.1"));
+    assert(listener.loopback("127.99.1.1"));
+    assert(listener.loopback("::1"));
+    assert(!listener.loopback("localhost"));
+    assert(!listener.loopback("0.0.0.0"));
+    assert(!listener.loopback("127.0.0.1\0invalid"));
+    assert(listener.equal("fixture".to_bytes(), "fixture".to_bytes()));
+    assert(!listener.equal("fixture".to_bytes(), "different".to_bytes()));
+    let owner = listener.open("127.0.0.1", 0).expect("listener");
+    assert(listener.port(owner) > 0);
+    assert(listener.accept(owner).expect("accept") == 0);
+    assert(server.matches("a/#", "a"));
+    assert(server.matches("a/+", "a/"));
+    assert(server.matches("a/+/c", "a/b/c"));
+    assert(!server.matches("#", "$SYS/broker"));
+    assert(!server.matches("+/broker", "$SYS/broker"));
+    assert(server.matches("$SYS/#", "$SYS/broker"));
+    assert(!server.matches("a/+", "a/b/c"));
+    for filter in ["#/a", "", "$share/group", "$share/+/a"] {
+        assert(!server.filter_valid(filter));
+    }
+    for raw in ["0000", "eda080"] {
+        assert(server.text(hex.decode(raw)).is_err());
+    }
+    assert(server.text("a/観測者".to_bytes()).is_ok());
+    for raw in ["00", "000300", "0000"] {
+        assert(server.subscribe(hex.decode(raw)).is_err());
+    }
+    assert(server.acknowledge(hex.decode("0000")).expect("zero acknowledgment") == 0);
+    assert(server.acknowledge(hex.decode("000100")).is_err());
+    assert(server.acknowledge(hex.decode("ffff")).expect("identifier") == 65535);
+    let connect = mqtt.connect("checker", "", bytes.new(), "status", "offline".to_bytes(), 10).expect("connect");
+    let batch = mqtt.feed(mqtt.decoder(65536).expect("decoder"), connect);
+    let cfg = server.connect(batch.packets[0].body).expect("CONNECT");
+    assert(cfg.client == "checker" && cfg.clean && cfg.keepalive == 10 && cfg.will.is_some());
+    let publication = server.Publication { topic: "expires", payload: "expiry".to_bytes(), qos: 1, retained: true, identifier: 1, properties: properties.empty(), origin: "" };
+    let expiring = broker.Retained { publication: publication, expires: 100, purge: 100 };
+    let permanent = broker.Retained { publication: publication, expires: 0, purge: 0 };
+    var state = broker.empty_state();
+    state.retained = [expiring, permanent];
+    state.retained_bytes = 12;
+    let before = broker.expire(state, 99);
+    assert(before.retained.len() == 2 && before.retained_bytes == 12);
+    let after = broker.expire(state, 101);
+    assert(after.retained.len() == 1 && after.retained_bytes == 6);
+    assert(server.retained_matches("#", "$fixture/value"));
+    assert(!server.retained_matches("#", "$SYS/broker/time"));
+    assert(!server.matches("#", ""));
+    let decoded = properties.decode(hex.decode("0b0101020000000123000001"), 0, 3);
+    assert(decoded.is_err());
+    let valid = properties.decode(hex.decode("0701000200000001"), 0, 3).expect("publication properties");
+    assert(valid.properties.payload_format == 0 && valid.properties.message_expiry == 1);
+    assert(properties.decode(hex.decode("03210000"), 0, 1).expect("zero receive maximum").properties.receive_maximum == 0);
+    for raw in ["0121", "020b00", "012a", "ffffff7f"] {
+        assert(properties.decode(hex.decode(raw), 0, 1).is_err());
+    }
+    assert(properties.variable(hex.decode("ffffffff"), 0).is_err());
+    var payload = "x";
+    for index in 0..21 {
+        payload = payload + payload;
+    }
+    var large = publication;
+    large.payload = payload.to_bytes();
+    let encoded = server.encode_version(large, false, 5, 86400).expect("large outgoing publication");
+    assert(encoded.len() > 2097152);
+    println("BROKER_PARSER_OK");
+}

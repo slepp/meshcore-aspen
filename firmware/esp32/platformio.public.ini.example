@@ -1,0 +1,51 @@
+; Generic Aspen application: no environment-sourced credentials or authorities.
+[platformio]
+data_dir = onchip-data
+
+[env:public_aspen]
+extends = Xiao_S3_WIO
+board_build.filesystem = spiffs
+build_unflags = -std=gnu++11
+lib_deps =
+  ${Xiao_S3_WIO.lib_deps}
+  densaugeo/base64 @ ~1.4.0
+build_src_filter = ${Xiao_S3_WIO.build_src_filter}
+  +<../examples/kiss_modem/*.cpp>
+  +<../examples/kiss_modem/onchip/*.cpp>
+build_flags =
+  ${Xiao_S3_WIO.build_flags}
+  -I examples/kiss_modem
+  -I examples/kiss_modem/onchip
+  -std=gnu++17
+  -D MESHCORE_ONCHIP=1
+  -D MESHCORE_ONCHIP_BOT=1
+  -D MESHCORE_MAST_ADMIN=1
+  -D MESHCORE_PUBLIC_PROVISIONING=1
+  -D ONCHIP_BOT_WASM=1
+  -D ONCHIP_COMMAND_BOT_DEFAULT_ENABLED=1
+  -D ONCHIP_UPDATE_TARGET='"xiao-esp32s3"'
+  -D KISS_HOSTNAME='"aspen"'
+  -D WIFI_SSID='""'
+  -D WIFI_PWD='""'
+  -D ONCHIP_RADIO_FREQ_MHZ=912.525
+  -D ONCHIP_RADIO_BW_KHZ=250.0
+  -D ONCHIP_RADIO_SF=7
+  -D ONCHIP_RADIO_CR=5
+  -D ONCHIP_RADIO_TX_POWER=2
+  -D LORA_FREQ=ONCHIP_RADIO_FREQ_MHZ
+  -D LORA_BW=ONCHIP_RADIO_BW_KHZ
+  -D LORA_SF=ONCHIP_RADIO_SF
+  -D LORA_CR=ONCHIP_RADIO_CR
+  -D LORA_TX_POWER=ONCHIP_RADIO_TX_POWER
+  -D KISS_LOCAL_SOURCES=5
+  -D KISS_MAX_TCP_CLIENTS=4
+  -D ONCHIP_COMPANION_MAX_CLIENTS=2
+  -D KISS_STREAM_ENDPOINT=0
+  -D KISS_REQUEST_QUEUE_DEPTH=12
+  -D KISS_TCP_PORT=8001
+  -D KISS_WIFI_TX_POWER=WIFI_POWER_8_5dBm
+  -D MAX_CONTACTS=256
+  -D MAX_CLIENTS=20
+  -D MAX_NEIGHBOURS=16
+  -D MAX_UNSYNCED_POSTS=32
+  -D MAX_GROUP_CHANNELS=8

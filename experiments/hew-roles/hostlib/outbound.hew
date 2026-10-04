@@ -1,0 +1,168 @@
+//! Restricted TCP/TLS/WebSocket transport; MQTT framing and policy live in Hew.
+//! The native boundary uses libcurl connect-only, never its MQTT implementation.
+
+import hostlib.binary;
+
+import hostlib.events;
+
+extern "C" {
+    fn mc_outbound_new(url: bytes, ca: bytes) -> i64;
+    fn mc_outbound_step(handle: i64) -> i32;
+    fn mc_outbound_write(handle: i64, data: bytes) -> i32;
+    fn mc_outbound_read(handle: i64) -> bytes;
+    fn mc_outbound_close(handle: i64);
+    fn mc_outbound_watch(handle: i64, group: i64, flags: i32) -> i64;
+    fn mc_monotonic() -> i64;
+}
+
+pub enum TransportError {
+    InvalidConfiguration;
+    Deadline;
+    Native(i64);
+    Readiness(i64);
+}
+
+impl Display for TransportError {
+    fn fmt(self) -> string {
+        match self {
+            TransportError.InvalidConfiguration => "observer transport requires an allowed endpoint and asynchronous DNS",
+            TransportError.Deadline => "observer transport deadline expired",
+            TransportError.Native(code) => f"observer transport failed: curl_status={code}",
+            TransportError.Readiness(code) => f"outbound socket readiness failed: errno={code}",
+        }
+    }
+}
+
+#[resource]
+pub type Connection {
+    handle: i64;
+}
+
+impl Connection {
+    fn close(consume self) {
+        unsafe { mc_outbound_close(self.handle); };
+    }
+}
+
+fn now() -> i64 {
+    unsafe { mc_monotonic() }
+}
+
+/// Internal http/https URLs choose plaintext/TLS without an HTTP request.
+/// ws/wss performs an HTTP upgrade requiring the mqtt subprotocol and exposes
+/// binary payload bytes, with masking and control frames handled by libcurl.
+/// Proxying is disabled. The native boundary independently enforces the host
+/// allowlist and certificate/hostname verification.
+pub fn start(url: string, ca_file: string) -> Result<Connection, TransportError> {
+    let handle = unsafe { mc_outbound_new(url.to_bytes(), ca_file.to_bytes()) };
+    if handle == 0 {
+        return .Err(TransportError.InvalidConfiguration);
+    }
+    .Ok(Connection { handle: handle })
+}
+
+pub fn progress(connection: Connection) -> Result<bool, TransportError> {
+    let result = unsafe { mc_outbound_step(connection.handle) };
+    if result < 0 {
+        .Err(TransportError.Native(-(result as i64)))
+    } else {
+        .Ok(result == 1)
+    }
+}
+
+/// Register libcurl's current interests; return milliseconds to its next timer.
+/// 9223372036854775807 means there is no transport timer.
+pub fn watch(connection: Connection, group: events.Group, flags: i32) -> Result<i64, TransportError> {
+    let result = unsafe { mc_outbound_watch(connection.handle, group.handle, flags) };
+    if result < 0 { .Err(TransportError.Readiness(-result)) } else { .Ok(result) }
+}
+
+pub fn connect(url: string, ca_file: string) -> Result<Connection, TransportError> {
+    let connection = start(url, ca_file)?;
+    let deadline = now() + 3100;
+    while now() < deadline {
+        if progress(connection)? {
+            return .Ok(connection);
+        }
+        sleep(5ms);
+    }
+    .Err(TransportError.Deadline)
+}
+
+pub enum Read {
+    Data(bytes);
+    Idle;
+    End;
+    Failed(TransportError);
+}
+
+pub fn read(connection: Connection) -> Read {
+    let result = unsafe { mc_outbound_read(connection.handle) };
+    if result.is_empty() {
+        return Read.Failed(TransportError.Native(0));
+    }
+    match result[0] {
+        0 => Read.Idle,
+        1 => Read.Data(binary.slice(result, 1, result.len()).expect("bounded transport data")),
+        2 => Read.End,
+        _ => {
+            if result.len() == 5 {
+                Read.Failed(TransportError.Native(binary.integer(
+                    binary.slice(result, 1, 5).expect("transport error")).expect("transport error scalar")))
+            } else {
+                Read.Failed(TransportError.Native(0))
+            }
+        }
+    }
+}
+
+pub type WriteFailure {
+    error: TransportError;
+    committed: i64;
+}
+
+pub fn write_some(connection: Connection, data: bytes) -> Result<i64, TransportError> {
+    if data.len() > 65536 {
+        return .Err(TransportError.InvalidConfiguration);
+    }
+    if data.is_empty() {
+        return .Ok(0);
+    }
+    let result = unsafe { mc_outbound_write(connection.handle, data) };
+    if result < 0 {
+        .Err(TransportError.Native(-(result as i64)))
+    } else {
+        .Ok(result as i64)
+    }
+}
+
+impl Display for WriteFailure {
+    fn fmt(self) -> string {
+        f"{to_string(self.error)}; committed_prefix={self.committed}"
+    }
+}
+
+pub fn write(connection: Connection, data: bytes, timeout_ms: i64) -> Result<i64, WriteFailure> {
+    if data.len() > 1048581 || timeout_ms < 1 || timeout_ms > 3000 {
+        return .Err(WriteFailure { error: TransportError.InvalidConfiguration, committed: 0 });
+    }
+    let deadline = now() + timeout_ms;
+    var committed: i64 = 0;
+    while committed < data.len() {
+        if now() >= deadline {
+            return .Err(WriteFailure { error: TransportError.Deadline, committed: committed });
+        }
+        let end = if data.len() - committed > 65536 { committed + 65536 } else { data.len() };
+        let chunk = binary.slice(data, committed, end).expect("bounded write suffix");
+        let result = match write_some(connection, chunk) {
+            .Ok(written) => written,
+            .Err(error) => return .Err(WriteFailure { error: error, committed: committed }),
+        };
+        if result > 0 {
+            committed += result as i64;
+        } else {
+            sleep(5ms);
+        }
+    }
+    .Ok(committed)
+}

@@ -1,0 +1,118 @@
+//! A stable supervised endpoint with explicitly negotiated connection epochs.
+//! Restart drops the old socket; it never redials behind a protocol session.
+//! The caller must retire old jobs, open and renegotiate after ActorStopped.
+
+import hostlib.duplex;
+
+import hostlib.events;
+
+#[resource]
+type OwnedConnection {
+    connection: duplex.Connection;
+}
+
+impl OwnedConnection {
+    fn close(consume self) {
+        stop(self.connection);
+    }
+}
+
+pub actor Endpoint {
+    var owned: Option<OwnedConnection> = .None;
+    mailbox 32;
+    receive fn open(host: string, port: i64, timeout_ms: i64) -> Result<bool, duplex.IoError> {
+        if owned.is_some() {
+            return .Err(duplex.IoError.InvalidArgument);
+        }
+        let connection = duplex.connect(host, port, timeout_ms)?;
+        owned = .Some(OwnedConnection { connection: connection });
+        .Ok(true)
+    }
+    receive fn read(timeout_ms: i64) -> duplex.Read {
+        let connection = match owned {
+            .Some(owner) => owner.connection,
+            .None => {
+                return duplex.Read.End;
+            }
+        };
+        let result = duplex.read(connection, timeout_ms);
+        if let duplex.Read.Failed(duplex.IoError.ActorStopped) = result {
+            panic("owned modem socket actor failed");
+        }
+        result
+    }
+    receive fn write(data: bytes) -> Result<i64, duplex.WriteFailure> {
+        let connection = match owned {
+            .Some(owner) => owner.connection,
+            .None => {
+                return .Err(duplex.WriteFailure { error: duplex.IoError.Closed, committed: 0 });
+            }
+        };
+        let result = duplex.write(connection, data);
+        if let .Err(error) = result {
+            if let duplex.IoError.ActorStopped = error.error {
+                panic("owned modem socket actor failed");
+            }
+        }
+        result
+    }
+    receive fn retire() {
+        if let .Some(owner) = owned {
+            duplex.close(owner.connection);
+        }
+        owned = .None;
+    }
+    receive fn watch(consume group: events.Group) -> Result<i64, duplex.IoError> {
+        let connection = match owned {
+            .Some(owner) => owner.connection,
+            .None => return .Err(duplex.IoError.Closed),
+        };
+        match connection.watch(events.share(group)) {
+            .Ok(.Ok(key)) => .Ok(key),
+            .Ok(.Err(code)) => .Err(duplex.IoError.System(code)),
+            .Err(_) => .Err(duplex.IoError.ActorStopped),
+        }
+    }
+    receive fn fault_for_test() {
+        panic("injected production modem incarnation failure");
+    }
+}
+
+pub supervisor Branch {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child endpoint: Endpoint();
+}
+
+pub fn open(endpoint: ChildRef<Endpoint>, host: string, port: i64, timeout_ms: i64) -> Result<bool, duplex.IoError> {
+    match endpoint.open(host, port, timeout_ms) {
+        .Ok(result) => result,
+        .Err(_) => .Err(duplex.IoError.ActorStopped),
+    }
+}
+
+pub fn read(endpoint: ChildRef<Endpoint>, timeout_ms: i64) -> duplex.Read {
+    match endpoint.read(timeout_ms) {
+        .Ok(result) => result,
+        .Err(_) => duplex.Read.Failed(duplex.IoError.ActorStopped),
+    }
+}
+
+pub fn watch(endpoint: ChildRef<Endpoint>, group: events.Group) -> Result<i64, duplex.IoError> {
+    match endpoint.watch(events.share(group)) {
+        .Ok(result) => result,
+        .Err(_) => .Err(duplex.IoError.ActorStopped),
+    }
+}
+
+pub fn write(endpoint: ChildRef<Endpoint>, data: bytes) -> Result<i64, duplex.WriteFailure> {
+    match endpoint.write(data) {
+        .Ok(result) => result,
+        .Err(_) => .Err(duplex.WriteFailure { error: duplex.IoError.ActorStopped, committed: -1 }),
+    }
+}
+
+/// Retires this epoch without replacing the supervisor or resetting its budget.
+pub fn close(endpoint: ChildRef<Endpoint>) {
+    let _ = endpoint.retire();
+}

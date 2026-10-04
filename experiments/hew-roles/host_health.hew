@@ -1,0 +1,100 @@
+//! Public operational snapshots, built from the running actors and modem sample.
+import std.encoding.json;
+import meshproto.management;
+import meshproto.radio;
+import meshproto.observation;
+import observer_client;
+import observer_queue;
+
+pub type Role {
+    name: string;
+    key: string;
+    started_ms: i64;
+    running: bool;
+    native: bool;
+    phy_generation: i64;
+}
+pub type Snapshot { roles: string; readiness: string; }
+
+fn telemetry(sample: management.Telemetry) -> json.Value {
+    var value = json.object();
+    value.set("battery_mv", json.from_int(sample.battery_mv)).expect("telemetry field");
+    value.set("has_battery", json.from_bool((sample.flags & 1) != 0)).expect("telemetry field");
+    value.set("noise_floor_dbm", json.from_int(sample.noise_dbm)).expect("telemetry field");
+    value.set("has_noise_floor", json.from_bool((sample.flags & 2) != 0)).expect("telemetry field");
+    value.set("current_rssi_dbm", json.from_int(sample.current_rssi)).expect("telemetry field");
+    value.set("has_current_rssi", json.from_bool((sample.flags & 4) != 0)).expect("telemetry field");
+    value.set("mcu_temperature_c", json.from_float(sample.temperature_c).expect("finite modem temperature")).expect("telemetry field");
+    value.set("has_mcu_temperature", json.from_bool((sample.flags & 8) != 0)).expect("telemetry field");
+    value.set("has_counters", json.from_bool((sample.flags & 16) != 0)).expect("telemetry field");
+    var counters = json.object();
+    counters.set("PacketsRecv", json.from_int(sample.received)).expect("counter field");
+    counters.set("PacketsSent", json.from_int(sample.sent)).expect("counter field");
+    counters.set("PacketsErrors", json.from_int(sample.errors)).expect("counter field");
+    value.set("counters", counters).expect("telemetry field");
+    value
+}
+
+pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: radio.Sampler,
+    airtime: Vec<i64>, publisher: Option<observer_client.Snapshot>, outbox: Option<observer_queue.Statistics>) -> Snapshot {
+    var status = json.object();
+    var not_ready = json.object();
+    let measured = connected && (sample.current.flags & 256) != 0;
+    let physical = telemetry(sample.current);
+    var durations = json.array();
+    for duration in airtime { durations.push(json.from_int(duration)).expect("airtime item"); }
+    var mqtt_checked = false;
+    for role in roles {
+        var item = json.object();
+        item.set("public_key", json.from_string(role.key)).expect("role field");
+        item.set("state", json.from_string(if role.running { "running" } else { "faulted" })).expect("role field");
+        item.set("application_kind", json.from_string(if role.native { "native_lua" } else { "hew" })).expect("role field");
+        item.set("application_started_at", if role.started_ms > 0 {
+            json.from_string(observation.timestamp(role.started_ms).expect("application timestamp"))
+        } else { json.null() }).expect("role field");
+        item.set("radio_connected", json.from_bool(connected)).expect("role field");
+        item.set("endpoint", json.from_string(endpoint)).expect("role field");
+        item.set("phy_configuration_generation", json.from_int(if connected { role.phy_generation } else { 0 })).expect("role field");
+        item.set("telemetry_counter_scope", json.from_string("physical_modem")).expect("role field");
+        item.set("airtime_ms", durations).expect("role field");
+        item.set("telemetry", if measured { physical } else { json.null() }).expect("role field");
+        let telemetry_error = if measured { "" } else {
+            match sample.failure {
+                .Some(error) => radio.error_text(error),
+                .None => if connected { "Physical modem telemetry has not been sampled" } else { "Radio connection is offline" }
+            }
+        };
+        item.set("telemetry_error", json.from_string(telemetry_error)).expect("role field");
+        var reason = if !role.running || role.started_ms <= 0 { "application_not_running" }
+            else if !connected || role.phy_generation == 0 { "radio_disconnected" }
+            else if !role.native && !measured { "telemetry_unavailable" } else { "" };
+        if role.name == "observer" {
+            match publisher {
+                .Some(value) => {
+                    mqtt_checked = true;
+                    item.set("mqtt_connected", json.from_bool(value.connected)).expect("observer field");
+                    item.set("mqtt_phase", json.from_string(to_string(value.phase))).expect("observer field");
+                    item.set("mqtt_error", json.from_string(value.reason)).expect("observer field");
+                    if reason.is_empty() && !value.connected { reason = "mqtt_disconnected"; }
+                }
+                .None => { if reason.is_empty() { reason = "mqtt_connection_unavailable"; } }
+            }
+            if let .Some(value) = outbox {
+                var stats = json.object();
+                stats.set("observed", json.from_int(value.observed)).expect("observer stats");
+                stats.set("published", json.from_int(value.published)).expect("observer stats");
+                stats.set("dropped", json.from_int(value.dropped)).expect("observer stats");
+                stats.set("queued", json.from_int(value.queued)).expect("observer stats");
+                item.set("observer_stats", stats).expect("observer field");
+            }
+        }
+        if !reason.is_empty() { not_ready.set(role.name, json.from_string(reason)).expect("readiness role"); }
+        status.set(role.name, item).expect("status role");
+    }
+    let ready = not_ready.keys().expect("readiness keys").array_len().expect("readiness key count") == 0;
+    var readiness = json.object();
+    readiness.set("ready", json.from_bool(ready)).expect("readiness field");
+    readiness.set("not_ready", not_ready).expect("readiness field");
+    readiness.set("mqtt_connection_checked", json.from_bool(mqtt_checked)).expect("readiness field");
+    Snapshot { roles: status.stringify().expect("status JSON"), readiness: readiness.stringify().expect("readiness JSON") }
+}

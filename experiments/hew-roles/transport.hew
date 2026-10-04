@@ -1,0 +1,194 @@
+import hostlib.duplex;
+
+import hostlib.process;
+
+import hostlib.supervised_io;
+
+extern "C" {
+    fn mc_supervision_testing() -> i32;
+    fn mc_now() -> i64;
+    fn mc_monotonic() -> i64;
+    fn mc_signals();
+    fn mc_running() -> i32;
+    fn mc_directory(path: bytes) -> i32;
+    fn mc_signal(snr: i32, rssi: i32) -> bytes;
+    fn mc_snr_quarter(metadata: bytes) -> i32;
+    #[offload]
+    fn mc_verify_worker(path: bytes, expected: bytes) -> i32;
+}
+
+pub fn supervision_testing() -> bool {
+    (unsafe {
+        mc_supervision_testing()
+    }) == 1
+}
+
+pub fn native_read(slot: Option<ChildRef<process.WorkerOwner>>, timeout: i64) -> bytes {
+    match slot {
+        .Some(owner) => match owner.read(timeout) {
+            .Ok(result) => compatibility_read(result),
+            .Err(_) => compatibility_read(duplex.Read.Failed(duplex.IoError.ActorStopped)),
+        }
+        .None => compatibility_read(duplex.Read.End),
+    }
+}
+
+pub fn native_send(slot: Option<ChildRef<process.WorkerOwner>>, data: bytes) -> bool {
+    match slot {
+        .Some(owner) => match owner.write(data) {
+            .Ok(result) => result.is_ok(),
+            .Err(_) => false,
+        }
+        .None => false,
+    }
+}
+
+pub fn native_pid(slot: Option<ChildRef<process.WorkerOwner>>) -> i64 {
+    match slot {
+        .Some(owner) => match owner.id() {
+            .Ok(pid) => pid,
+            .Err(_) => 0,
+        }
+        .None => 0,
+    }
+}
+
+pub fn native_close(slot: Option<ChildRef<process.WorkerOwner>>) {
+    if let .Some(owner) = slot {
+        match owner.retire() {
+            .Ok(result) => {
+                if let .Err(error) = result {
+                    println(f"BOT_RETIRE_FAILED reason={to_string(error)}");
+                }
+            }
+            .Err(_) => {
+                println("BOT_RETIRE_FAILED reason=supervised-owner-unavailable");
+            }
+        }
+    }
+}
+
+fn compatibility_read(result: duplex.Read) -> bytes {
+    var output = bytes.new();
+    match result {
+        duplex.Read.Data(data) => {
+            output.push(1);
+            output.append(data);
+        }
+        duplex.Read.Idle => {
+            output.push(0);
+        }
+        _ => {
+            output.push(2);
+        }
+    }
+    output
+}
+
+pub fn modem_read(connection: ChildRef<supervised_io.Endpoint>, timeout: i64) -> bytes {
+    let result = supervised_io.read(connection, timeout);
+    match result {
+        duplex.Read.End => {
+            let at = now();
+            println(f"MODEM_READ_END at_ms={at} reason=eof");
+        }
+        duplex.Read.Failed(error) => {
+            let at = now();
+            println(f"MODEM_READ_FAILED at_ms={at} reason={to_string(error)}");
+        }
+        _ => {}
+    }
+    compatibility_read(result)
+}
+
+pub fn read(slot: Option<process.Child>, timeout: i64) -> bytes {
+    compatibility_read(match slot {
+        .Some(child) => process.read(child, timeout),
+        .None => duplex.Read.End,
+    })
+}
+
+pub fn send(slot: Option<process.Child>, data: bytes) -> bool {
+    match slot {
+        .Some(child) => process.write(child, data).is_ok(),
+        .None => false,
+    }
+}
+
+pub fn close(slot: Option<process.Child>) {
+    if let .Some(child) = slot {
+        if let .Err(error) = process.close(child) {
+            println(f"BOT_RETIRE_FAILED reason={to_string(error)}");
+        }
+    }
+}
+
+pub fn now() -> i64 {
+    unsafe {
+        mc_now()
+    }
+}
+
+pub fn monotonic() -> i64 {
+    unsafe {
+        mc_monotonic()
+    }
+}
+
+pub fn signals() {
+    unsafe {
+        mc_signals()
+    };
+}
+
+pub fn running() -> bool {
+    unsafe {
+        mc_running() == 1
+    }
+}
+
+pub fn directory(path: string) -> bool {
+    unsafe {
+        mc_directory(path.to_bytes()) == 1
+    }
+}
+
+pub fn signal(snr: i64, rssi: i64) -> bytes {
+    unsafe {
+        mc_signal(snr as i32, rssi as i32)
+    }
+}
+
+pub fn snr_quarter(metadata: bytes) -> i64 {
+    unsafe {
+        mc_snr_quarter(metadata) as i64
+    }
+}
+
+pub fn worker(executable: string, root: string) -> Option<process.Child> {
+    var arguments: Vec<string> = Vec.new();
+    arguments.push(root);
+    match process.start(executable, arguments) {
+        .Ok(child) => .Some(child),
+        .Err(error) => {
+            println(f"BOT_LAUNCH_FAILED reason={to_string(error)}");
+            .None
+        }
+    }
+}
+
+pub fn pid(slot: Option<process.Child>) -> i64 {
+    match slot {
+        .Some(child) => match child.id() {
+            .Ok(pid) => pid,
+            .Err(_) => -1,
+        }
+        .None => -1,
+    }
+}
+
+pub fn verify_worker(path: string, expected: string) -> bool {
+    unsafe {
+        mc_verify_worker(path.to_bytes(), expected.to_bytes()) == 1
+    }
+}

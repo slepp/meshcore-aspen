@@ -1,0 +1,7 @@
+// Expected check failure on rc7: process.Child has no stdin/stdout pipe API.
+import std.process;
+
+fn main() {
+    let child = process.start_argv("cat", Vec.new()).expect("child");
+    child.stdin().send("bytes".to_bytes()).expect("pipe");
+}

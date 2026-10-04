@@ -1,0 +1,38 @@
+{
+  "format": "meshcore-operator-inventory-v1",
+  "mast_port": "/dev/serial/by-id/<selected-esp32-mast>",
+  "mast_mac": "02:00:00:00:00:11",
+  "companion_port": "/dev/serial/by-id/<selected-esp32-companion>",
+  "companion_mac": "02:00:00:00:00:12",
+  "mast_host": "192.0.2.11",
+  "gateway_host": "192.0.2.12",
+  "receiver_host": "192.0.2.13",
+  "active_profile": [912525000, 250000, 7, 5, 2],
+  "commissioning_profile": [910525000, 62500, 7, 5, 2],
+  "channel_tag": "#operator-test",
+  "dm_target": "0101010101010101010101010101010101010101010101010101010101010101",
+  "nrf_serial": "EXAMPLE-NRF-001",
+  "nrf_port": "/dev/serial/by-id/<selected-nrf52840>",
+  "service_address": "192.0.2.14",
+  "service_hostname": "meshcore-service.example.invalid",
+  "wifi_interface": "wlan-test",
+  "backup_sha256": "0202020202020202020202020202020202020202020202020202020202020202",
+  "telemetry_policy": {
+    "host": "192.0.2.11",
+    "device": "esp32-example-device",
+    "endpoint": "https://metrics.example.invalid/write",
+    "interval_seconds": 60,
+    "enabled": true
+  },
+  "peer_roles": {
+    "cedar-base": ["Example-Base", "companion"],
+    "pine-bot": ["Example-Bot", "bot"]
+  },
+  "mast_roles": {
+    "aspen-relay": ["Example-Relay", "repeater"],
+    "aspen-room": ["Example-Room", "room"],
+    "aspen-bot": ["Example-Bot", "command-bot"],
+    "aspen-admin": ["Example-Admin", "management"],
+    "aspen-base": ["Example-Base", "companion"]
+  }
+}

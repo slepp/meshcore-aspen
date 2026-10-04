@@ -1,0 +1,91 @@
+import std.os;
+
+extern "C" {
+    fn abort();
+}
+
+actor Counter {
+    var count: i64 = 0;
+    mailbox 4;
+    receive fn next() -> i64 {
+        count = count + 1;
+        count
+    }
+    receive fn fail() {
+        panic("injected Hew actor failure");
+    }
+    receive fn native_abort() {
+        unsafe {
+            abort();
+        };
+    }
+}
+
+supervisor Isolated {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child worker: Counter();
+    child healthy: Counter();
+}
+
+supervisor RoleBranch {
+    strategy: one_for_one;
+    intensity: 1 within 60s;
+    child role: Counter();
+}
+
+fn main() {
+    let args = os.args();
+    let mode = args[1];
+    if mode == "budgets" {
+        let modem_branch = spawn RoleBranch;
+        let relay_branch = spawn RoleBranch;
+        let room_branch = spawn RoleBranch;
+        let bot_branch = spawn RoleBranch;
+        let modem = modem_branch.role;
+        let relay = relay_branch.role;
+        let room = room_branch.role;
+        let bot = bot_branch.role;
+        assert(modem.next().expect("modem ready") == 1);
+        assert(relay.next().expect("relay ready") == 1);
+        assert(room.next().expect("room ready") == 1);
+        assert(bot.next().expect("bot ready") == 1);
+        assert(bot.fail().is_err());
+        sleep(300ms);
+        assert(modem.next().expect("modem after bot restart") == 2);
+        assert(relay.next().expect("relay after bot restart") == 2);
+        assert(room.next().expect("room after bot restart") == 2);
+        assert(bot.next().expect("stable bot reference") == 1);
+        assert(bot.fail().is_err());
+        sleep(300ms);
+        assert(bot.next().is_err());
+        assert(modem.next().expect("modem after bot budget exhaustion") == 3);
+        assert(relay.next().expect("relay after bot budget exhaustion") == 3);
+        assert(room.next().expect("room after bot budget exhaustion") == 3);
+        println("INDEPENDENT_RESTART_BUDGETS");
+    } else if mode == "unsupervised" {
+        let bad = spawn Counter();
+        let good = spawn Counter();
+        assert(good.next().expect("healthy before") == 1);
+        assert(bad.fail().is_err());
+        assert(good.next().expect("healthy after") == 2);
+        assert(bad.next().is_err());
+        println("UNSUPERVISED_ISOLATED");
+    } else {
+        let tree = spawn Isolated;
+        let bad = tree.worker;
+        let good = tree.healthy;
+        assert(good.next().expect("healthy before") == 1);
+        assert(bad.next().expect("worker before") == 1);
+        if mode == "abort" {
+            let _ = bad.native_abort();
+            println("NATIVE_ABORT_RETURNED");
+        } else {
+            assert(bad.fail().is_err());
+            sleep(300ms);
+            assert(good.next().expect("healthy after") == 2);
+            assert(bad.next().expect("stable reference after restart") == 1);
+            println("ONE_FOR_ONE_RESTARTED");
+        }
+    }
+}

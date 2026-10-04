@@ -1,0 +1,33 @@
+import std.net;
+import std.os;
+import std.stream;
+
+actor Reader {
+    let input: stream.Stream<bytes>;
+    let output: stream.Sink<bytes>;
+    receive fn cycle() {
+        let idle = select {
+            packet from input.recv() => false,
+            after 20ms => true,
+        };
+        assert(idle);
+        output.send("echo".to_bytes()).expect("write after cancelled receive");
+        let empty: Option<bytes> = .None;
+        let data: Option<bytes> = select {
+            packet from input.recv() => packet,
+            after 1s => empty,
+        };
+        assert(data.expect("receive after timeout") == "echo".to_bytes());
+        println("STD_STREAM_SELECT_REUSABLE");
+    }
+}
+
+fn main() {
+    let args = os.args();
+    let connection = net.connect_timeout("127.0.0.1:" + args[1], 1, 0).expect("connect");
+    let (input, output) = connection.split();
+    let reader = spawn Reader(input: input, output: output);
+    reader.cycle().expect("reader cycle");
+    stop(reader);
+    stopped(reader);
+}

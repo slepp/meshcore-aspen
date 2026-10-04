@@ -1,0 +1,1355 @@
+//! In-memory local MQTT server. All protocol, sessions and routing are owned here.
+import hostlib.listener;
+
+import hostlib.mqtt;
+
+import hostlib.mqtt_server as protocol;
+
+import hostlib.binary;
+
+import hostlib.events;
+
+import std.stream;
+
+import std.string;
+
+import hostlib.mqtt_properties as properties;
+
+pub type Config {
+    host: string;
+    port: i64;
+    username: bytes;
+    password: bytes;
+}
+
+pub fn configuration(path: string) -> Result<Config, string> {
+    let text = listener.config(path)?;
+    var host = "127.0.0.1";
+    var port: i64 = 1883;
+    var username = bytes.new();
+    var password = bytes.new();
+    var keys: Vec<string> = Vec.new();
+    for line in text.split("\n") {
+        if line.is_empty() {
+            continue;
+        }
+        let at = line.find("=").ok_or("MQTT config requires key=value lines")?;
+        let key = line.slice(0, at);
+        let value = line.slice(at + 1, line.len());
+        for previous in keys {
+            if previous == key {
+                return .Err("duplicate MQTT configuration key");
+            }
+        }
+        keys.push(key);
+        match key {
+            "host" => {
+                host = value;
+            }
+            "port" => {
+                port = match string.to_int(value) {
+                    .Ok(number) => number,
+                    .Err(_) => {
+                        return .Err("MQTT port must be an integer");
+                    }
+                };
+                if port < 0 || port > 65535 {
+                    return .Err("MQTT port must be 0..65535");
+                }
+            }
+            "username" => {
+                username = value.to_bytes();
+            }
+            "password" => {
+                password = value.to_bytes();
+            }
+            _ => {
+                return .Err("unknown MQTT configuration key");
+            }
+        }
+    }
+    if username.is_empty() != password.is_empty() {
+        return .Err("MQTT username and password must both be set");
+    }
+    if username.is_empty() && !listener.loopback(host) {
+        return .Err("anonymous MQTT broker requires a literal loopback bind address");
+    }
+    .Ok(Config { host: host, port: port, username: username, password: password })
+}
+
+pub type Flight {
+    publication: protocol.Publication;
+    phase: i64;
+    expires: i64;
+    deferred: bool;
+    created: i64;
+}
+
+pub type Received {
+    identifier: i64;
+    expires: i64;
+    properties: properties.Properties;
+}
+
+pub type Retained {
+    publication: protocol.Publication;
+    expires: i64;
+    purge: i64;
+}
+
+pub type Session {
+    token: i64;
+    name: string;
+    connected: bool;
+    clean: bool;
+    version: i64;
+    decoder: mqtt.Decoder;
+    writes: Vec<bytes>;
+    written: i64;
+    stalled: i64;
+    last_packet: i64;
+    keepalive: i64;
+    closing: bool;
+    failed: bool;
+    subscriptions: Vec<protocol.Subscription>;
+    outgoing: Vec<Flight>;
+    incoming: Vec<Received>;
+    next_identifier: i64;
+    will: Option<protocol.Publication>;
+    properties: properties.Properties;
+    aliases: Vec<Alias>;
+    outbound_aliases: Vec<Alias>;
+    expires: i64;
+    send_quota: i64;
+    close_graceful: bool;
+}
+
+pub type Alias {
+    identifier: i64;
+    topic: string;
+}
+
+pub type DelayedWill {
+    client: string;
+    publication: protocol.Publication;
+    due: i64;
+}
+
+pub type SharedChoice {
+    filter: string;
+    client: i64;
+}
+
+pub type State {
+    sessions: Vec<Session>;
+    retained: Vec<Retained>;
+    retained_bytes: i64;
+    delayed_wills: Vec<DelayedWill>;
+    shared_cursor: i64;
+    started: i64;
+    peak: i64;
+    bytes_received: i64;
+    bytes_sent: i64;
+    packets_received: i64;
+    packets_sent: i64;
+    messages_received: i64;
+    messages_sent: i64;
+    dropped: i64;
+}
+
+fn session(token: i64, now: i64) -> Session {
+    Session { token: token, name: "", connected: false, clean: true, version: 4, decoder: mqtt.decoder(65535).expect("server decoder"), writes: Vec.new(), written: 0, stalled: now, last_packet: now, keepalive: 0, closing: false, failed: false, subscriptions: Vec.new(), outgoing: Vec.new(), incoming: Vec.new(), next_identifier: 1, will: .None, properties: properties.empty(), aliases: Vec.new(), outbound_aliases: Vec.new(), expires: 0, send_quota: 65535, close_graceful: true }
+}
+
+fn queue(value: Session, packet: bytes) -> Session {
+    var next = value;
+    if next.token == 0 {
+        return next;
+    }
+    if next.writes.len() >= 256 || packet.len() > 1048576 {
+        next.failed = true;
+        return next;
+    }
+    if next.writes.is_empty() {
+        next.stalled = listener.now();
+    }
+    next.writes.push(packet);
+    next
+}
+
+fn ack(value: Session, header: i64, identifier: i64) -> Session {
+    acknowledgment(value, header, identifier, 0, properties.empty())
+}
+
+fn acknowledgment(value: Session, header: i64, identifier: i64, reason: i64, props: properties.Properties) -> Session {
+    var body = protocol.big16(identifier);
+    if value.version == 5 {
+        let user = if value.properties.problem_info {
+            props.user
+        } else {
+            bytes.new()
+        };
+        if reason >= 128 || !user.is_empty() {
+            body.push(reason as u8);
+        }
+        if !user.is_empty() {
+            body.append(properties.variable_bytes(user.len()));
+            body.append(user);
+        }
+    }
+    queue(value, protocol.control(header, body))
+}
+
+fn expiry_seconds(expires: i64) -> i64 {
+    if expires <= 0 {
+        return 0;
+    }
+    let remaining = (expires - listener.now() + 999) / 1000;
+    if remaining < 1 {
+        1
+    } else {
+        remaining
+    }
+}
+
+fn publication_packet(value: Session, item: protocol.Publication, duplicate: bool, expires: i64) -> Result<bytes, string> {
+    var publication = item;
+    if value.version == 5 {
+        if !value.properties.problem_info {
+            publication.properties.user = bytes.new();
+        }
+        if value.properties.maximum_packet > 0 {
+            let base = protocol.string_field(publication.topic).len() + publication.payload.len() + (if publication.qos > 0 {
+                2
+            } else {
+                0
+            });
+            if base + publication.properties.user.len() + 1 >= value.properties.maximum_packet {
+                publication.properties.user = bytes.new();
+            }
+        }
+    }
+    let packet = protocol.encode_version(publication, duplicate, value.version, if expires < 0 {
+        publication.properties.message_expiry
+    } else {
+        expiry_seconds(expires)
+    })?;
+    if value.version == 5 && value.properties.maximum_packet > 0 && packet.len() > value.properties.maximum_packet {
+        return .Err("MQTT client maximum packet size exceeded");
+    }
+    .Ok(packet)
+}
+
+fn deliver(value: Session, item: protocol.Publication, retained: bool, qos: i64, expires: i64) -> Session {
+    var next = value;
+    if next.token == 0 && (next.clean || qos == 0) {
+        return next;
+    }
+    if qos > 0 && next.outgoing.len() + next.incoming.len() >= 128 {
+        // Match the broker's inflight quota: omit this delivery, preserving previous inflight.
+        println(f"MQTT subscriber delivery dropped: connection={next.token} inflight_limit=128");
+        return next;
+    }
+    var publication = item;
+    publication.qos = qos;
+    publication.retained = retained;
+    if qos > 0 {
+        var available = false;
+        for attempt in 0..65535 {
+            available = true;
+            for flight in next.outgoing {
+                if flight.publication.identifier == next.next_identifier {
+                    available = false;
+                }
+            }
+            if available {
+                break;
+            }
+            next.next_identifier = next.next_identifier % 65535 + 1;
+        }
+        if !available {
+            next.failed = true;
+            return next;
+        }
+        publication.identifier = next.next_identifier;
+        next.next_identifier = next.next_identifier % 65535 + 1;
+        next.outgoing.push(Flight { publication: publication, phase: 0, expires: if expires == 0 {
+            listener.now() + 86400000
+        } else {
+            expires
+        }, deferred: next.properties.receive_maximum > 0 && next.send_quota == 0, created: listener.now() });
+        if next.token != 0 && next.properties.receive_maximum > 0 && next.send_quota == 0 {
+            return next;
+        }
+        if next.send_quota > 0 {
+            next.send_quota -= 1;
+        }
+    } else {
+        publication.identifier = 0;
+    }
+    if next.token == 0 {
+        return next;
+    }
+    if next.writes.len() >= 256 {
+        if qos > 0 {
+            let _ = next.outgoing.pop();
+            if next.send_quota < next.properties.receive_maximum {
+                next.send_quota += 1;
+            }
+        }
+        return next;
+    }
+    match prepare_publication(next, publication, false, expires) {
+        .Ok(prepared) => queue(prepared.client, prepared.packet),
+        .Err(error) => {
+            println(f"MQTT subscriber delivery omitted: connection={next.token} {error}");
+            next
+        }
+    }
+}
+
+pub type Prepared {
+    client: Session;
+    packet: bytes;
+}
+
+fn prepare_publication(value: Session, item: protocol.Publication, duplicate: bool, expires: i64) -> Result<Prepared, string> {
+    var next = value;
+    var publication = item;
+    publication.properties.alias = 0;
+    publication.properties.alias_set = false;
+    if next.version == 5 && next.properties.alias_maximum > 0 {
+        var existing: i64 = 0;
+        for alias in next.outbound_aliases {
+            if alias.topic == publication.topic {
+                existing = alias.identifier;
+            }
+        }
+        if existing != 0 {
+            publication.topic = "";
+            publication.properties.alias = existing;
+        } else if next.outbound_aliases.len() < next.properties.alias_maximum {
+            let identifier = next.outbound_aliases.len() + 1;
+            next.outbound_aliases.push(Alias { topic: publication.topic, identifier: identifier });
+            publication.properties.alias = identifier;
+        }
+    }
+    let packet = publication_packet(next, publication, duplicate, expires)?;
+    .Ok(Prepared { client: next, packet: packet })
+}
+
+fn route(value: State, item: protocol.Publication, expires: i64) -> State {
+    var next = value;
+    if item.retained {
+        var index: i64 = 0;
+        while index < next.retained.len() {
+            if next.retained[index].publication.topic == item.topic {
+                next.retained_bytes -= next.retained[index].publication.payload.len();
+                let _ = next.retained.remove(index);
+                break;
+            }
+            index += 1;
+        }
+        if !item.payload.is_empty() {
+            next.retained.push(Retained { publication: item, expires: expires, purge: if expires == 0 || item.properties.will_delay > 0 {
+                listener.now() + 86400000
+            } else {
+                expires
+            } });
+            next.retained_bytes += item.payload.len();
+        }
+    }
+    var selections: Vec<SharedChoice> = Vec.new();
+    for index in 0..next.sessions.len() {
+        for subscription in next.sessions[index].subscriptions {
+            if protocol.shared(subscription.filter) && protocol.matches(protocol.shared_filter(subscription.filter), item.topic) {
+                var exists = false;
+                for selection in selections {
+                    if selection.filter == subscription.filter {
+                        exists = true;
+                    }
+                }
+                if !exists {
+                    var candidates: Vec<i64> = Vec.new();
+                    for candidate in 0..next.sessions.len() {
+                        let peer = next.sessions[candidate];
+                        if peer.connected || (!peer.clean && !peer.name.is_empty()) {
+                            for wanted in peer.subscriptions {
+                                if wanted.filter == subscription.filter {
+                                    candidates.push(candidate);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !candidates.is_empty() {
+                        selections.push(SharedChoice { filter: subscription.filter, client: candidates[next.shared_cursor % candidates.len()] });
+                    }
+                }
+            }
+        }
+    }
+    next.shared_cursor = (next.shared_cursor + 1) % 2147483647;
+    for index in 0..next.sessions.len() {
+        var client = next.sessions[index];
+        if client.connected || (client.token == 0 && !client.clean && !client.name.is_empty()) {
+            var qos: i64 = -1;
+            var retain_as_published = false;
+            var no_local = false;
+            var identifiers: Vec<i64> = Vec.new();
+            for subscription in client.subscriptions {
+                var selected = !protocol.shared(subscription.filter);
+                if !selected {
+                    for choice in selections {
+                        if choice.filter == subscription.filter && choice.client == index {
+                            selected = true;
+                        }
+                    }
+                }
+                if selected && protocol.matches(protocol.shared_filter(subscription.filter), item.topic) {
+                    no_local = no_local || (subscription.options & 4) != 0;
+                    if subscription.qos > qos {
+                        qos = subscription.qos;
+                    }
+                    retain_as_published = retain_as_published || (subscription.options & 8) != 0;
+                    if subscription.identifier > 0 {
+                        identifiers.push(subscription.identifier);
+                    }
+                }
+            }
+            if qos >= 0 && (!no_local || item.origin != client.name) {
+                var publication = item;
+                publication.properties.identifiers = identifiers;
+                for sorted in 1..publication.properties.identifiers.len() {
+                    var at = sorted;
+                    while at > 0 && publication.properties.identifiers[at] < publication.properties.identifiers[at - 1] {
+                        let previous = publication.properties.identifiers[at - 1];
+                        publication.properties.identifiers[at - 1] = publication.properties.identifiers[at];
+                        publication.properties.identifiers[at] = previous;
+                        at -= 1;
+                    }
+                }
+                let before = client.outgoing.len();
+                let queued = client.writes.len();
+                client = deliver(client, publication, retain_as_published && item.retained, if qos < item.qos {
+                    qos
+                } else {
+                    item.qos
+                }, if expires == 0 {
+                    listener.now() + 86400000
+                } else {
+                    expires
+                });
+                if queued >= 256 && client.outgoing.len() == before && client.writes.len() == queued && client.token != 0 {
+                    next.dropped += 1;
+                }
+                next.sessions[index] = client;
+            }
+        }
+    }
+    next
+}
+
+fn retire(value: State, index: i64, owner: listener.Listener, graceful: bool) -> State {
+    var next = value;
+    var client = next.sessions[index];
+    listener.drop(owner, client.token);
+    client.token = 0;
+    client.connected = false;
+    client.decoder = mqtt.decoder(65535).expect("server decoder");
+    client.writes = Vec.new();
+    client.written = 0;
+    client.closing = false;
+    client.failed = false;
+    let will = client.will;
+    client.will = .None;
+    let interval = if client.version == 5 {
+        client.properties.session_expiry
+    } else {
+        4294967295
+    };
+    client.expires = listener.now() + interval * 1000;
+    next.sessions[index] = client;
+    if !graceful {
+        if let .Some(original) = will {
+            var item = original;
+            let delay = item.properties.will_delay;
+            // Mochi's will path forwards User Properties, not the PUBLISH-only metadata.
+            let user = item.properties.user;
+            item.properties = properties.empty();
+            item.properties.user = user;
+            item.properties.will_delay = delay;
+            if delay > 0 {
+                next.delayed_wills.push(DelayedWill { client: client.name, publication: item, due: listener.now() + delay * 1000 });
+            } else {
+                next = route(next, item, 0);
+            }
+        }
+    }
+    next
+}
+
+fn refuse(value: State, index: i64, version: i64, code: i64) -> State {
+    var next = value;
+    var client = next.sessions[index];
+    var body = bytes.new();
+    body.push(0);
+    body.push(code as u8);
+    if version == 5 {
+        var props = bytes.new();
+        props.push(33);
+        props.append(protocol.big16(1024));
+        body.append(properties.variable_bytes(props.len()));
+        body.append(props);
+    }
+    client = queue(client, mqtt.frame(32, body).expect("CONNACK"));
+    client.closing = true;
+    next.sessions[index] = client;
+    next
+}
+
+fn establish(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: listener.Listener) -> Result<State, string> {
+    var next = value;
+    let client_config = match protocol.connect(packet.body) {
+        .Ok(accepted) => accepted,
+        .Err(error) => {
+            if error == "unsupported MQTT protocol version" {
+                let name = protocol.field(packet.body, 0)?;
+                let version = packet.body[name.end] as i64;
+                return .Ok(refuse(next, index, version, if version < 3 {
+                    1
+                } else {
+                    130
+                }));
+            }
+            if error == "empty persistent MQTT client identifier" {
+                return .Ok(refuse(next, index, 4, 2));
+            }
+            if error == "empty MQTT will payload" || error == "empty MQTT password" || error == "invalid MQTT CONNECT flags" {
+                let protocol_name = protocol.field(packet.body, 0)?;
+                let version = packet.body[protocol_name.end] as i64;
+                return .Ok(refuse(next, index, version, 130));
+            }
+            return .Err(error);
+        }
+    };
+    next.sessions[index].properties = client_config.properties;
+    next.sessions[index].version = client_config.version;
+    var connected: i64 = 0;
+    for existing in next.sessions {
+        if existing.connected {
+            connected += 1;
+        }
+    }
+    if connected >= 128 {
+        return .Ok(refuse(next, index, client_config.version, if client_config.version == 5 {
+            137
+        } else {
+            3
+        }));
+    }
+    if !cfg.username.is_empty() {
+        // Evaluate both constant-time digest comparisons, even if the username is wrong.
+        let username_ok = listener.equal(cfg.username, client_config.username);
+        let password_ok = listener.equal(cfg.password, client_config.password);
+        if !username_ok || !password_ok {
+            return .Ok(refuse(next, index, client_config.version, if client_config.version == 5 {
+                134
+            } else {
+                5
+            }));
+        }
+    }
+    let name = if client_config.client.is_empty() {
+        f"hew-local-{next.sessions[index].token}"
+    } else {
+        client_config.client
+    };
+    var present = false;
+    var client = next.sessions[index];
+    for old_index in 0..next.sessions.len() {
+        if old_index != index && next.sessions[old_index].name == name {
+            let previous = next.sessions[old_index];
+            if !client_config.clean && (previous.token != 0 || !previous.clean) && (previous.version == 5 || !previous.clean) {
+                client.subscriptions = previous.subscriptions;
+                client.outgoing = previous.outgoing;
+                client.incoming = previous.incoming;
+                client.next_identifier = previous.next_identifier;
+                present = true;
+            }
+            if previous.token != 0 {
+                var departing = session(previous.token, listener.now());
+                departing.version = previous.version;
+                departing.closing = true;
+                departing = queue(departing, protocol.control(224, if previous.version == 5 {
+                    properties.big(142, 1)
+                } else {
+                    bytes.new()
+                }));
+                next.sessions[old_index] = departing;
+                if let .Some(item) = previous.will {
+                    if item.properties.will_delay == 0 {
+                        next = route(next, item, 0);
+                    }
+                }
+            } else {
+                next.sessions[old_index] = session(0, listener.now());
+            }
+            break;
+        }
+    }
+    client.name = name;
+    client.connected = true;
+    client.clean = if client_config.version == 5 {
+        client_config.properties.session_expiry == 0
+    } else {
+        client_config.clean
+    };
+    client.keepalive = client_config.keepalive;
+    client.version = client_config.version;
+    client.will = client_config.will;
+    if let .Some(original_will) = client.will {
+        var will = original_will;
+        will.origin = name;
+        if client_config.properties.session_expiry_set && client_config.properties.session_expiry < will.properties.will_delay {
+            will.properties.will_delay = client_config.properties.session_expiry;
+        }
+        client.will = .Some(will);
+    }
+    client.properties = client_config.properties;
+    client.send_quota = client.properties.receive_maximum;
+    client.aliases = Vec.new();
+    client.outbound_aliases = Vec.new();
+    client.expires = 0;
+    client.last_packet = listener.now();
+    var body = bytes.new();
+    body.push((if present {
+        1
+    } else {
+        0
+    }) as u8);
+    body.push(0);
+    if client.version == 5 {
+        var props = bytes.new();
+        if client_config.client.is_empty() {
+            props.push(18);
+            props.append(protocol.string_field(name));
+        }
+        props.push(33);
+        props.append(protocol.big16(1024));
+        body.append(properties.variable_bytes(props.len()));
+        body.append(props);
+    }
+    client = queue(client, mqtt.frame(32, body).expect("CONNACK"));
+    for received in client.incoming {
+        client = acknowledgment(client, 80, received.identifier, 0, received.properties);
+    }
+    for flight in client.outgoing {
+        if flight.phase == 0 {
+            let prepared = prepare_publication(client, flight.publication, true, if flight.deferred {
+                -1
+            } else {
+                flight.expires
+            })?;
+            client = queue(prepared.client, prepared.packet);
+        } else {
+            client = acknowledgment(client, 98, flight.publication.identifier, 0, flight.publication.properties);
+        }
+    }
+    var pending: i64 = 0;
+    while pending < next.delayed_wills.len() {
+        if next.delayed_wills[pending].client == name {
+            let _ = next.delayed_wills.remove(pending);
+        } else {
+            pending += 1;
+        }
+    }
+    if connected + 1 > next.peak {
+        next.peak = connected + 1;
+    }
+    next.sessions[index] = client;
+    .Ok(next)
+}
+
+fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: listener.Listener) -> Result<State, string> {
+    var next = value;
+    var client = next.sessions[index];
+    if !client.connected {
+        if packet.header != 16 {
+            return .Err("first MQTT packet must be CONNECT");
+        }
+        return establish(next, index, packet, cfg, owner);
+    }
+    client.last_packet = listener.now();
+    let kind = packet.header >> 4;
+    match kind {
+        3 => {
+            var item = protocol.publish_version(packet, client.version)?;
+            if protocol.ascii_prefix(item.topic, "$sys") {
+                next.sessions[index] = client;
+                return .Ok(next);
+            }
+            if item.properties.alias > 0 {
+                var found = false;
+                for at in 0..client.aliases.len() {
+                    if client.aliases[at].identifier == item.properties.alias {
+                        found = true;
+                        if item.topic.is_empty() {
+                            item.topic = client.aliases[at].topic;
+                        } else {
+                            client.aliases[at] = Alias { identifier: item.properties.alias, topic: item.topic };
+                        }
+                    }
+                }
+                if !found {
+                    client.aliases.push(Alias { identifier: item.properties.alias, topic: item.topic });
+                }
+            }
+            item.properties.alias = 0;
+            item.properties.alias_set = false;
+            item.origin = client.name;
+            let lifetime = if item.properties.message_expiry > 0 && item.properties.message_expiry < 86400 {
+                item.properties.message_expiry
+            } else {
+                86400
+            };
+            var duplicate = false;
+            if item.qos == 2 {
+                for received in client.incoming {
+                    if received.identifier == item.identifier {
+                        duplicate = true;
+                    }
+                }
+                if !duplicate {
+                    if client.incoming.len() >= 1024 {
+                        return .Err("MQTT receive quota exceeded");
+                    }
+                    client.incoming.push(Received { identifier: item.identifier, expires: listener.now() + 86400000, properties: item.properties });
+                }
+            }
+            if item.qos > 0 {
+                client = acknowledgment(client, if item.qos == 1 {
+                    64
+                } else {
+                    80
+                }, item.identifier, if duplicate && client.version == 5 {
+                    145
+                } else {
+                    0
+                }, item.properties);
+            }
+            next.sessions[index] = client;
+            if !duplicate {
+                next = route(next, item, listener.now() + lifetime * 1000);
+            }
+            return .Ok(next);
+        }
+        4 => {
+            let received = protocol.acknowledgment(packet, client.version)?;
+            let identifier = received.identifier;
+            var at: i64 = 0;
+            while at < client.outgoing.len() {
+                let flight = client.outgoing[at];
+                if flight.publication.identifier == identifier && flight.publication.qos == 1 {
+                    let _ = client.outgoing.remove(at);
+                    if client.send_quota < client.properties.receive_maximum {
+                        client.send_quota += 1;
+                    }
+                    break;
+                }
+                at += 1;
+            }
+        }
+        5 => {
+            let received = protocol.acknowledgment(packet, client.version)?;
+            let identifier = received.identifier;
+            var found = false;
+            var failed: i64 = -1;
+            for at in 0..client.outgoing.len() {
+                var flight = client.outgoing[at];
+                if flight.publication.identifier == identifier && flight.publication.qos == 2 {
+                    found = true;
+                    if received.reason >= 128 {
+                        failed = at;
+                    }
+                    flight.phase = 1;
+                    flight.publication.properties = received.properties;
+                    client.outgoing[at] = flight;
+                }
+            }
+            if failed >= 0 {
+                let _ = client.outgoing.remove(failed);
+            } else {
+                client = acknowledgment(client, 98, identifier, if !found && client.version == 5 {
+                    146
+                } else {
+                    0
+                }, received.properties);
+            }
+        }
+        6 => {
+            let received = protocol.acknowledgment(packet, client.version)?;
+            let identifier = received.identifier;
+            var found = false;
+            for at in 0..client.incoming.len() {
+                if client.incoming[at].identifier == identifier {
+                    let _ = client.incoming.remove(at);
+                    found = true;
+                    break;
+                }
+            }
+            if received.reason < 128 {
+                client = acknowledgment(client, 112, identifier, if !found && client.version == 5 {
+                    146
+                } else {
+                    0
+                }, received.properties);
+            }
+        }
+        7 => {
+            let received = protocol.acknowledgment(packet, client.version)?;
+            let identifier = received.identifier;
+            for at in 0..client.outgoing.len() {
+                let flight = client.outgoing[at];
+                if flight.publication.identifier == identifier && flight.phase == 1 {
+                    let _ = client.outgoing.remove(at);
+                    if client.send_quota < client.properties.receive_maximum {
+                        client.send_quota += 1;
+                    }
+                    break;
+                }
+            }
+        }
+        8 => {
+            let request = protocol.subscribe_version(packet.body, client.version)?;
+            var body = protocol.big16(request.identifier);
+            if client.version == 5 {
+                body.push(0);
+            }
+            var retained_requests: Vec<protocol.Subscription> = Vec.new();
+            for subscription in request.subscriptions {
+                if !protocol.filter_valid(subscription.filter) || (protocol.shared(subscription.filter) && (subscription.options & 4) != 0) {
+                    body.push((if client.version < 5 {
+                        128
+                    } else if !protocol.filter_valid(subscription.filter) {
+                        143
+                    } else {
+                        158
+                    }) as u8);
+                    continue;
+                }
+                var found = false;
+                for at in 0..client.subscriptions.len() {
+                    if client.subscriptions[at].filter == subscription.filter {
+                        client.subscriptions[at] = subscription;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    client.subscriptions.push(subscription);
+                }
+                let handling = (subscription.options >> 4) & 3;
+                if handling == 0 || (handling == 1 && !found) {
+                    retained_requests.push(subscription);
+                }
+                body.push(subscription.qos as u8);
+            }
+            client = queue(client, mqtt.frame(144, body).expect("SUBACK"));
+            for subscription in retained_requests {
+                for retained in next.retained {
+                    let publication = retained.publication;
+                    if protocol.retained_matches(subscription.filter, publication.topic) {
+                        var item = publication;
+                        if (subscription.options & 4) != 0 && item.origin == client.name {
+                            continue;
+                        }
+                        item.properties.identifiers = Vec.new();
+                        if subscription.identifier > 0 {
+                            item.properties.identifiers.push(subscription.identifier);
+                        }
+                        client = deliver(client, item, true, if subscription.qos < publication.qos {
+                            subscription.qos
+                        } else {
+                            publication.qos
+                        }, retained.expires);
+                    }
+                }
+            }
+        }
+        10 => {
+            let request = protocol.unsubscribe_version(packet.body, client.version)?;
+            var body = protocol.big16(request.identifier);
+            if client.version == 5 {
+                body.push(0);
+            }
+            for filter in request.filters {
+                var found = false;
+                for at in 0..client.subscriptions.len() {
+                    if client.subscriptions[at].filter == filter {
+                        let _ = client.subscriptions.remove(at);
+                        found = true;
+                        break;
+                    }
+                }
+                if client.version == 5 {
+                    body.push((if found {
+                        0
+                    } else {
+                        17
+                    }) as u8);
+                }
+            }
+            client = queue(client, protocol.control(176, body));
+        }
+        12 => {
+            client = queue(client, mqtt.frame(208, bytes.new()).expect("PINGRESP"));
+        }
+        14 => {
+            var reason: i64 = 0;
+            if client.version == 5 && packet.body.len() > 1 {
+                reason = packet.body[0] as i64;
+                if packet.body.len() > 2 {
+                    let block = properties.decode(packet.body, 1, 14)?;
+                    if block.properties.session_expiry_set {
+                        if block.properties.session_expiry > 0 && client.properties.session_expiry == 0 {
+                            return .Err("MQTT session expiry cannot increase from zero");
+                        }
+                        client.properties.session_expiry = block.properties.session_expiry;
+                        client.clean = block.properties.session_expiry == 0;
+                    }
+                }
+            }
+            next.sessions[index] = client;
+            return .Ok(retire(next, index, owner, reason != 4));
+        }
+        15 => {
+            if packet.body.len() < 2 {
+                return .Err("missing MQTT AUTH reason or properties");
+            }
+            let reason = if packet.body.is_empty() {
+                0
+            } else {
+                packet.body[0] as i64
+            };
+            if reason != 0 && reason != 24 && reason != 25 {
+                return .Err("invalid MQTT AUTH reason");
+            }
+            if packet.body.len() > 1 {
+                let _ = properties.decode(packet.body, 1, 15)?;
+            }
+        }
+        _ => {
+            return .Err("MQTT client sent an unexpected packet type");
+        }
+    }
+    if client.send_quota > 0 {
+        for at in 0..client.outgoing.len() {
+            let flight = client.outgoing[at];
+            if flight.deferred {
+                match prepare_publication(client, flight.publication, false, -1) {
+                    .Ok(prepared) => {
+                        client = queue(prepared.client, prepared.packet);
+                    }
+                    .Err(error) => {
+                        println(f"MQTT deferred delivery omitted: connection={client.token} {error}");
+                    }
+                }
+                let _ = client.outgoing.remove(at);
+                client.send_quota -= 1;
+                break;
+            }
+        }
+    }
+    next.sessions[index] = client;
+    .Ok(next)
+}
+
+fn service(value: State, index: i64, cfg: Config, owner: listener.Listener) -> State {
+    var next = value;
+    var client = next.sessions[index];
+    if client.token == 0 {
+        return next;
+    }
+    if !client.closing && client.writes.len() < 256 {
+        var batch = protocol.feed(client.decoder, bytes.new());
+        if batch.packets.is_empty() && batch.decoder.failure.is_none() {
+            match listener.read(owner, client.token) {
+                listener.Read.Data(data) => {
+                    next.bytes_received += data.len();
+                    batch = protocol.feed(batch.decoder, data);
+                }
+                listener.Read.End => {
+                    return retire(next, index, owner, false);
+                }
+                listener.Read.Failed => {
+                    println(f"MQTT TCP read failed: connection={client.token}");
+                    return retire(next, index, owner, false);
+                }
+                listener.Read.Idle => {}
+            }
+        }
+        client.decoder = batch.decoder;
+        next.sessions[index] = client;
+        for packet_index in 0..batch.packets.len() {
+            let packet = batch.packets[packet_index];
+            if next.sessions[index].writes.len() >= 256 {
+                var pending = bytes.new();
+                for deferred in packet_index..batch.packets.len() {
+                    pending.append(protocol.control(batch.packets[deferred].header, batch.packets[deferred].body));
+                }
+                var waiting = next.sessions[index];
+                pending.append(waiting.decoder.buffer);
+                waiting.decoder.buffer = pending;
+                next.sessions[index] = waiting;
+                break;
+            }
+            if next.sessions[index].connected {
+                next.packets_received += 1;
+                if (packet.header >> 4) == 3 {
+                    next.messages_received += 1;
+                }
+            }
+            match process(next, index, packet, cfg, owner) {
+                .Ok(updated) => {
+                    next = updated;
+                }
+                .Err(error) => {
+                    println(f"MQTT connection closed: connection={next.sessions[index].token} {error}");
+                    let reason = validation_reason(error);
+                    if next.sessions[index].version == 5 && reason != 0 {
+                        var closing = next.sessions[index];
+                        var body = bytes.new();
+                        body.push(reason as u8);
+                        closing = queue(closing, protocol.control(224, body));
+                        closing.closing = true;
+                        closing.close_graceful = false;
+                        next.sessions[index] = closing;
+                        break;
+                    }
+                    return retire(next, index, owner, false);
+                }
+            }
+            if next.sessions[index].token == 0 {
+                return next;
+            }
+            if next.sessions[index].closing {
+                break;
+            }
+        }
+        client = next.sessions[index];
+        if client.decoder.failure.is_some() {
+            return retire(next, index, owner, false);
+        }
+    }
+    let now = listener.now();
+    let timeout = (client.keepalive + client.keepalive / 2) * 1000;
+    if client.failed || (!client.connected && now - client.last_packet >= 15000) || (client.connected && timeout > 0 && now - client.last_packet >= timeout) {
+        if client.failed {
+            println(f"MQTT connection closed: connection={client.token} write_queue_limit=256");
+        } else if !client.connected {
+            println(f"MQTT connection closed: connection={client.token} CONNECT deadline expired");
+        } else if timeout > 0 && now - client.last_packet >= timeout {
+            println(f"MQTT connection closed: connection={client.token} keepalive deadline expired");
+        } else {
+            println(f"MQTT connection closed: connection={client.token} TCP write deadline expired");
+        }
+        return retire(next, index, owner, false);
+    }
+    var sent: i64 = 0;
+    while !client.writes.is_empty() && sent < 16 {
+        let packet = client.writes[0];
+        let end = if packet.len() - client.written > 65536 {
+            client.written + 65536
+        } else {
+            packet.len()
+        };
+        let remainder = binary.slice(packet, client.written, end).expect("write suffix");
+        match listener.write(owner, client.token, remainder) {
+            .Ok(count) => {
+                if count == 0 {
+                    break;
+                }
+                client.written += count;
+                next.bytes_sent += count;
+                client.stalled = now;
+                if client.written == packet.len() {
+                    next.packets_sent += 1;
+                    if (packet[0] >> 4) == 3 {
+                        next.messages_sent += 1;
+                    }
+                    let _ = client.writes.remove(0);
+                    client.written = 0;
+                }
+            }
+            .Err(_) => {
+                return retire(next, index, owner, false);
+            }
+        }
+        sent += 1;
+    }
+    next.sessions[index] = client;
+    if client.closing && client.writes.is_empty() {
+        return retire(next, index, owner, client.close_graceful);
+    }
+    next
+}
+
+fn validation_reason(error: string) -> i64 {
+    if error == "invalid MQTT topic alias" {
+        return 148;
+    }
+    if error == "MQTT receive quota exceeded" {
+        return 147;
+    }
+    if error == "surplus MQTT publication subscription identifier" || error == "missing MQTT publication topic" || error == "zero MQTT packet identifier" || error == "MQTT session expiry cannot increase from zero" || error == "invalid MQTT AUTH reason" || error == "invalid MQTT publication topic" || error == "MQTT client sent an unexpected packet type" {
+        return 130;
+    }
+    0
+}
+
+pub fn expire(value: State, now: i64) -> State {
+    var next = value;
+    var at: i64 = 0;
+    while at < next.retained.len() {
+        let retained = next.retained[at];
+        if retained.purge != 0 && retained.purge < now {
+            next.retained_bytes -= retained.publication.payload.len();
+            let _ = next.retained.remove(at);
+        } else {
+            at += 1;
+        }
+    }
+    for index in 0..next.sessions.len() {
+        var client = next.sessions[index];
+        if client.token == 0 && client.expires > 0 && client.expires < now {
+            client = session(0, now);
+        }
+        var flight: i64 = 0;
+        while flight < client.outgoing.len() {
+            if (!client.outgoing[flight].deferred && client.outgoing[flight].expires < now) || client.outgoing[flight].created + 86400000 < now {
+                let _ = client.outgoing.remove(flight);
+            } else {
+                flight += 1;
+            }
+        }
+        var received: i64 = 0;
+        while received < client.incoming.len() {
+            if client.incoming[received].expires < now {
+                let _ = client.incoming.remove(received);
+            } else {
+                received += 1;
+            }
+        }
+        next.sessions[index] = client;
+    }
+    var pending: i64 = 0;
+    while pending < next.delayed_wills.len() {
+        let will = next.delayed_wills[pending];
+        if will.due <= now {
+            let _ = next.delayed_wills.remove(pending);
+            var publication = will.publication;
+            var exists = false;
+            for client in next.sessions {
+                if client.name == will.client {
+                    exists = true;
+                }
+            }
+            publication.retained = publication.retained && exists;
+            next = route(next, publication, will.due);
+        } else {
+            pending += 1;
+        }
+    }
+    next
+}
+
+pub fn empty_state() -> State {
+    State { sessions: Vec.new(), retained: Vec.new(), retained_bytes: 0, delayed_wills: Vec.new(), shared_cursor: 0, started: listener.wall(), peak: 0, bytes_received: 0, bytes_sent: 0, packets_received: 0, packets_sent: 0, messages_received: 0, messages_sent: 0, dropped: 0 }
+}
+
+fn sys_publish(value: State, name: string, payload: string) -> State {
+    let publication = protocol.Publication { topic: "$SYS/broker/" + name, payload: payload.to_bytes(), qos: 0, retained: true, identifier: 0, properties: properties.empty(), origin: "" };
+    route(value, publication, 0)
+}
+
+fn system_topics(value: State) -> Result<State, string> {
+    var connected: i64 = 0;
+    var total: i64 = 0;
+    var inflight: i64 = 0;
+    var subscriptions: i64 = 0;
+    for client in value.sessions {
+        if !client.name.is_empty() {
+            total += 1;
+            if client.connected {
+                connected += 1;
+            }
+            inflight += client.outgoing.len() + client.incoming.len();
+            subscriptions += client.subscriptions.len();
+        }
+    }
+    var retained: i64 = 0;
+    for item in value.retained {
+        if !item.publication.topic.starts_with("$SYS/") {
+            retained += 1;
+        }
+    }
+    let wall = listener.wall();
+    let heap = listener.heap();
+    let threads = listener.threads();
+    if wall < 0 || heap < 0 || threads < 0 {
+        return .Err("MQTT system resource metrics unavailable");
+    }
+    var next = value;
+    next = sys_publish(next, "version", "hew-mqtt/1");
+    let names: Vec<string> = ["time", "uptime", "started", "load/bytes/received", "load/bytes/sent", "clients/connected", "clients/disconnected", "clients/maximum", "clients/total", "packets/received", "packets/sent", "messages/received", "messages/sent", "messages/dropped", "messages/inflight", "retained", "subscriptions", "system/memory", "system/threads"];
+    let values: Vec<i64> = [wall, wall - value.started, value.started, value.bytes_received, value.bytes_sent, connected, total - connected, value.peak, total, value.packets_received, value.packets_sent, value.messages_received, value.messages_sent, value.dropped, inflight, retained, subscriptions, heap, threads];
+    for index in 0..names.len() {
+        next = sys_publish(next, names[index], to_string(values[index]));
+    }
+    .Ok(next)
+}
+
+type Watch {
+    token: i64;
+    key: i64;
+}
+
+fn session_deadline(client: Session, due: i64) -> i64 {
+    if client.token == 0 { return due; }
+    let timeout = if !client.connected { 15000 }
+        else { (client.keepalive + client.keepalive / 2) * 1000 };
+    if timeout > 0 && client.last_packet + timeout < due { client.last_packet + timeout }
+    else { due }
+}
+
+pub fn run(path: string) -> Result<bool, string> {
+    let cfg = configuration(path)?;
+    let host = if cfg.host == "0.0.0.0" || cfg.host.is_empty() {
+        "::"
+    } else {
+        cfg.host
+    };
+    let owner = match listener.open(host, cfg.port) {
+        .Ok(value) => value,
+        .Err(code) => {
+            return .Err(f"TCP bind failed: errno={code}");
+        }
+    };
+    let port = listener.port(owner);
+    if port <= 0 {
+        return .Err("TCP listener address unavailable");
+    }
+    var state = system_topics(empty_state())?;
+    let group = events.open().expect("MQTT readiness group");
+    let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(256).expect("MQTT event pipe");
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start MQTT readiness pump");
+    let shutdown = events.driver(group, input);
+    let accept_watch = listener.watch(owner, 0, group, 1).expect("watch MQTT listener");
+    var watches: Vec<Watch> = Vec.new();
+    println(f"MQTT_BROKER_READY host={cfg.host} port={port} protocols=3,4,5 memory_only=true");
+    var next_expiry = listener.now() + 1000;
+    var prune_at = next_expiry;
+    while listener.running() {
+        let now = listener.now();
+        if now < 0 {
+            return .Err("TCP listener monotonic clock failed");
+        }
+        if now >= prune_at { state = expire(state, now); }
+        if now >= next_expiry {
+            state = system_topics(state)?;
+            next_expiry = now + 1000;
+        }
+        for attempt in 0..16 {
+            var active: i64 = 0;
+            for client in state.sessions {
+                if client.token != 0 {
+                    active += 1;
+                }
+            }
+            if active >= 256 {
+                break;
+            }
+            let token = match listener.accept(owner) {
+                .Ok(value) => value,
+                .Err(code) => {
+                    return .Err(f"TCP accept failed: errno={code}");
+                }
+            };
+            if token == 0 {
+                break;
+            }
+            state.sessions.push(session(token, listener.now()));
+        }
+        for index in 0..state.sessions.len() {
+            state = service(state, index, cfg, owner);
+        }
+        var at: i64 = 0;
+        while at < state.sessions.len() {
+            let client = state.sessions[at];
+            if client.token == 0 && (client.clean || client.name.is_empty()) {
+                let _ = state.sessions.remove(at);
+            } else {
+                at += 1;
+            }
+        }
+        var retained: Vec<Watch> = Vec.new();
+        for watch in watches {
+            var active = false;
+            for client in state.sessions { active = active || client.token == watch.token; }
+            if active { retained.push(watch); }
+            else { events.remove(group, watch.key).expect("retire MQTT client watch"); }
+        }
+        watches = retained;
+        var due = next_expiry;
+        var cleanup = next_expiry;
+        var active: i64 = 0;
+        for client in state.sessions {
+            due = session_deadline(client, due);
+            if client.token == 0 {
+                if client.expires > 0 && client.expires + 1 < cleanup { cleanup = client.expires + 1; }
+            } else {
+                active += 1;
+                var key: i64 = 0;
+                for watch in watches { if watch.token == client.token { key = watch.key; } }
+                let interest: i32 = if client.closing || client.writes.len() >= 256 { 2 }
+                    else if client.writes.is_empty() { 1 } else { 3 };
+                if key == 0 {
+                    key = listener.watch(owner, client.token, group, interest).expect("watch MQTT client");
+                    watches.push(Watch { token: client.token, key: key });
+                } else {
+                    events.arm(group, key, interest).expect("rearm MQTT client");
+                }
+                if !client.closing && client.writes.len() < 256 && client.decoder.buffer.len() >= 2 {
+                    if !protocol.feed(client.decoder, bytes.new()).packets.is_empty() { due = now; }
+                }
+            }
+            for flight in client.outgoing {
+                if !flight.deferred && flight.expires + 1 < cleanup { cleanup = flight.expires + 1; }
+                if flight.created + 86400001 < cleanup { cleanup = flight.created + 86400001; }
+            }
+            for received in client.incoming {
+                if received.expires + 1 < cleanup { cleanup = received.expires + 1; }
+            }
+        }
+        for retained in state.retained {
+            if retained.purge > 0 && retained.purge + 1 < cleanup { cleanup = retained.purge + 1; }
+        }
+        for will in state.delayed_wills { if will.due < cleanup { cleanup = will.due; } }
+        prune_at = cleanup;
+        if cleanup < due { due = cleanup; }
+        if active < 256 { events.arm(group, accept_watch, 1).expect("rearm MQTT listener"); }
+        match events.wait(shutdown, due) {
+            events.Event.Failed(code) => return .Err(f"MQTT socket readiness failed: errno={code}"),
+            _ => {}
+        }
+    }
+    for watch in watches { events.remove(group, watch.key).expect("retire MQTT client watch on shutdown"); }
+    events.remove(group, accept_watch).expect("retire MQTT listener watch");
+    shutdown.close();
+    stop(pump);
+    stopped(pump);
+    println("MQTT_BROKER_STOPPED memory_only=true");
+    .Ok(true)
+}

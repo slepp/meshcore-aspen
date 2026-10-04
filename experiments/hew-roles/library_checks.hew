@@ -1,0 +1,303 @@
+import hostlib.binary;
+
+import hostlib.duplex;
+
+import hostlib.framing;
+
+import hostlib.process;
+
+import std.os;
+
+import std.string;
+
+extern "C" {
+    fn mc_test_pair() -> bytes;
+}
+
+actor Probe {
+    var count: i64 = 0;
+    receive fn next() -> i64 {
+        count = count + 1;
+        count
+    }
+}
+
+actor ResourceOwner {
+    let socket: duplex.Descriptor;
+    receive fn fail() {
+        panic("injected descriptor owner failure");
+    }
+}
+
+fn framing_checks() {
+    for bits in [0, 2147483648, 1, 8388607, 8388608, 1065353216, 1045220557, 3251634176, 2139095039] {
+        let encoded = binary.little(bits, 4).expect("float32 fixture");
+        let value = binary.finite_float32(encoded).expect("finite float32");
+        assert(binary.float32(value).expect("float32 roundtrip") == encoded);
+    }
+    assert(binary.finite_float32(binary.little(2139095040, 4).expect("infinity")).is_none());
+    assert(binary.finite_float32(binary.little(2143289344, 4).expect("NaN")).is_none());
+    assert(binary.finite_float32(bytes.new()).is_none());
+    var huge: f64 = 1.0;
+    for index in 0..200 {
+        huge *= 2.0;
+    }
+    assert(binary.float32(huge).is_none());
+    var payload = bytes.new();
+    let alphabet_size: i64 = 256;
+    for value in 0..alphabet_size {
+        payload.push(value as u8);
+    }
+    let encoded = framing.length_encode(payload, 4096).expect("length encode");
+    var pending = bytes.new();
+    var count: i64 = 0;
+    for index in 0..encoded.len() {
+        let batch = framing.length_feed(pending, binary.slice(encoded, index, index + 1).expect("fragment"), 4096).expect("length feed");
+        pending = batch.pending;
+        for frame in batch.frames {
+            assert(frame == payload);
+            count = count + 1;
+        }
+    }
+    assert(count == 1 && pending.is_empty());
+    assert(framing.length_feed(bytes.new(), binary.little(4097, 4).expect("length"), 4096).is_err());
+    assert(framing.length_feed(bytes.new(), binary.little(0, 4).expect("length"), 4096).is_err());
+    let slip = framing.slip_encode(payload, 514).expect("SLIP encode");
+    var state = framing.slip_state();
+    count = 0;
+    for index in 0..slip.len() {
+        let batch = framing.slip_feed(state, binary.slice(slip, index, index + 1).expect("SLIP fragment"), 514).expect("SLIP feed");
+        state = batch.state;
+        assert(batch.discarded == 0);
+        for frame in batch.frames {
+            assert(frame == payload);
+            count = count + 1;
+        }
+    }
+    assert(count == 1 && state.pending.is_empty());
+    var malformed = bytes.new();
+    malformed.push(192);
+    malformed.push(219);
+    malformed.push(0);
+    malformed.push(192);
+    malformed.append(slip);
+    let recovered = framing.slip_feed(framing.slip_state(), malformed, 514).expect("SLIP resynchronization");
+    assert(recovered.discarded == 1 && recovered.frames.len() == 1 && recovered.frames[0] == payload);
+    var oversized = bytes.new();
+    for index in 0..4097 {
+        oversized.push(1);
+    }
+    assert(framing.length_feed(bytes.new(), oversized, 4096).is_err());
+    assert(framing.slip_feed(framing.slip_state(), oversized, 514).is_err());
+}
+
+fn main() {
+    let args = os.args();
+    if args.len() > 1 && args[1] == "network" {
+        let connection = duplex.connect("127.0.0.1", string.to_int(args[2]).expect("port"), 1500).expect("connect");
+        let probe = spawn Probe();
+        let waiting = fork connection.read(100);
+        assert(probe.next().expect("unaffected actor") == 1);
+        let result = (await waiting).expect("reader actor");
+        assert(match result {
+            duplex.Read.Idle => true,
+            _ => false,
+        });
+        var waits: Vec<i64> = Vec.new();
+        waits.push(0);
+        waits.push(20);
+        waits.push(50);
+        for wait in waits {
+            assert(match duplex.read(connection, wait) {
+                duplex.Read.Idle => true,
+                _ => false,
+            });
+        }
+        assert(duplex.write(connection, "echo".to_bytes()).expect("write") == 4);
+        match duplex.read(connection, 1500) {
+            duplex.Read.Data(data) => assert(data == "echo".to_bytes()),
+            _ => panic("echo missing"),
+        }
+        assert(duplex.write(connection, "bulk".to_bytes()).is_ok());
+        var received: i64 = 0;
+        while received < 12000 {
+            match duplex.read(connection, 1500) {
+                duplex.Read.Data(data) => {
+                    assert(data.len() > 0 && data.len() <= 4096);
+                    for value in data {
+                        assert(value == 120);
+                    }
+                    received = received + data.len();
+                }
+                _ => panic("bulk receive missing"),
+            }
+        }
+        assert(received == 12000);
+        duplex.close(connection);
+        duplex.close(connection);
+        assert(duplex.write(connection, "late".to_bytes()).is_err());
+        println("NETWORK_OWNER_OK");
+        return;
+    }
+    if args.len() > 1 && args[1] == "tcp-backpressure" {
+        let connection = duplex.connect_with_deadlines("127.0.0.1", string.to_int(args[2]).expect("port"), 1500, 30).expect("connect");
+        var payload = bytes.new();
+        for index in 0..65536 {
+            payload.push(7);
+        }
+        var failed = false;
+        for attempt in 0..256 {
+            let before = duplex.monotonic();
+            match duplex.write(connection, payload) {
+                .Err(error) => {
+                    assert(error.committed >= 0 && error.committed < payload.len());
+                    assert(match error.error {
+                        duplex.IoError.TimedOut => true,
+                        _ => false,
+                    });
+                    assert(duplex.monotonic() - before < 500);
+                    failed = true;
+                    break;
+                }
+                .Ok(_) => {}
+            }
+        }
+        assert(failed);
+        duplex.close(connection);
+        println("TCP_WRITE_DEADLINE_OK");
+        return;
+    }
+    if args.len() > 1 && (args[1] == "partial" || args[1] == "resource-panic") {
+        let pair = unsafe {
+            mc_test_pair()
+        };
+        assert(pair.len() == 8);
+        let first = binary.integer(binary.slice(pair, 0, 4).expect("pair")).expect("pair") as i32;
+        let second = binary.integer(binary.slice(pair, 4, 8).expect("pair")).expect("pair") as i32;
+        let reader = duplex.Descriptor { fd: second };
+        if args[1] == "resource-panic" {
+            let owner = spawn ResourceOwner(socket: duplex.Descriptor { fd: first });
+            let unaffected = spawn Probe();
+            assert(owner.fail().is_err());
+            assert(unaffected.next().expect("healthy sibling") == 1);
+            assert(match duplex.read_fd(second, 500) {
+                duplex.Read.End => true,
+                _ => false,
+            });
+            println("RESOURCE_CRASH_CLOSED_ONCE");
+        } else {
+            let writer = duplex.Descriptor { fd: first };
+            var data = bytes.new();
+            for index in 0..65536 {
+                data.push(7);
+            }
+            let before = duplex.monotonic();
+            match duplex.write_fd(first, data, 30) {
+                .Err(error) => {
+                    assert(error.committed > 0 && error.committed < data.len());
+                    assert(match error.error {
+                        duplex.IoError.TimedOut => true,
+                        _ => false,
+                    });
+                }
+                .Ok(_) => panic("fixture buffer did not fill"),
+            }
+            assert(duplex.monotonic() - before < 500);
+            writer.close();
+            println("PARTIAL_WRITE_DEADLINE_OK");
+        }
+        reader.close();
+        return;
+    }
+    if args.len() > 1 && args[1] == "child" {
+        var arguments: Vec<string> = Vec.new();
+        arguments.push(args[3]);
+        let child = process.start(args[2], arguments).expect("child spawn");
+        assert(child.id().expect("owned PID") > 0);
+        if args[3].ends_with("/echo") {
+            assert(process.write(child, "child echo".to_bytes()).expect("child write") == 10);
+            assert(match process.read(child, 1500) {
+                duplex.Read.Data(data) => data == "child echo".to_bytes(),
+                _ => false,
+            });
+        }
+        let before = duplex.monotonic();
+        let status = process.close(child).expect("child retirement");
+        assert(duplex.monotonic() - before < 3500);
+        if args[3].ends_with("/ignore-term") {
+            assert(match status {
+                process.ExitStatus.Signalled(9) => true,
+                _ => false,
+            });
+        } else if args[3].ends_with("/exit7") {
+            assert(match status {
+                process.ExitStatus.Exited(7) => true,
+                _ => false,
+            });
+        }
+        println("OWNED_CHILD_REAPED");
+        return;
+    }
+    if args.len() > 1 && args[1] == "argv" {
+        var arguments: Vec<string> = Vec.new();
+        arguments.push("argv");
+        arguments.push("");
+        arguments.push("two words");
+        arguments.push("Willow-λ");
+        let child = process.start(args[2], arguments).expect("argv spawn");
+        assert(match process.read(child, 1500) {
+            duplex.Read.Data(data) => data == "ARGV_OK".to_bytes(),
+            _ => false,
+        });
+        assert(match child.finish().expect("child owner").expect("argv retirement") {
+            process.ExitStatus.Exited(0) => true,
+            _ => false,
+        });
+        assert(child.id().expect("disarmed PID") == 0);
+        assert(match process.close(child).expect("repeated retirement") {
+            process.ExitStatus.AlreadyReaped => true,
+            _ => false,
+        });
+        var invalid: Vec<string> = Vec.new();
+        invalid.push("bad\0argument");
+        assert(process.start(args[2], invalid).is_err());
+        var too_many: Vec<string> = Vec.new();
+        for index in 0..33 {
+            too_many.push("");
+        }
+        assert(process.start(args[2], too_many).is_err());
+        var huge = "";
+        for index in 0..16384 {
+            huge = huge + "x";
+        }
+        var oversized: Vec<string> = Vec.new();
+        oversized.push(huge);
+        assert(process.start(args[2], oversized).is_err());
+        println("ARGV_FIDELITY_BOUNDS_OK");
+        return;
+    }
+    assert(binary.slice("abc".to_bytes(), -1, 2).is_none());
+    assert(binary.slice("abc".to_bytes(), 0, 4).is_none());
+    assert(binary.integer(binary.little(4294967295, 4).expect("integer")).expect("integer") == 4294967295);
+    let widths: i64 = 9;
+    for width in 0..widths {
+        let encoded = binary.little(-1, width).expect("low signed bits");
+        assert(encoded.len() == width);
+        for byte in encoded {
+            assert(byte == 255);
+        }
+        let expected: i64 = if width == 8 {
+            -1
+        } else {
+            (1 << (8 * width)) - 1
+        };
+        assert(binary.integer(encoded).expect("checked std binary decode") == expected);
+    }
+    assert(binary.little(0, 9).is_none());
+    assert(binary.little(0, -1).is_none());
+    assert(binary.integer("123456789".to_bytes()).is_none());
+    assert(duplex.connect("127.0.0.1", 4294967297, 10).is_err());
+    assert(duplex.connect("127.0.0.1", 1, 4294967297).is_err());
+    framing_checks();
+    println("LIBRARY_CHECKS_OK");
+}

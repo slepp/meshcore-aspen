@@ -1,0 +1,118 @@
+import hostlib.events;
+
+import hostlib.duplex;
+
+import hostlib.listener;
+
+import std.stream;
+
+extern "C" {
+    fn mc_dial_start(host: bytes, port: i32) -> i32;
+}
+
+fn missing() -> Option<events.Event> { .None }
+
+fn next(input: stream.Stream<events.Event>) -> events.Event {
+    let value: Option<events.Event> = select {
+        event from input.recv() => event,
+        after 2s => missing(),
+    };
+    value.expect("readiness event deadline")
+}
+
+fn multiplexed() {
+    let parent = events.open().expect("parent event group");
+    let shutdown = events.guard(parent);
+    let first = events.open().expect("first driver group");
+    let second = events.open().expect("second driver group");
+    let first_channel = events.channel(parent, first).expect("first driver channel");
+    let second_channel = events.channel(parent, second).expect("second driver channel");
+    let (output, input) = stream.pipe<events.Event>(8).expect("parent event pipe");
+    let (first_output, first_input) = stream.pipe<events.Event>(8).expect("first driver pipe");
+    let (second_output, second_input) = stream.pipe<events.Event>(8).expect("second driver pipe");
+    let pump = spawn events.Pump(group: events.share(parent), output: output,
+        routes: [events.Route { key: first_channel.key, output: first_output },
+                 events.Route { key: second_channel.key, output: second_output }]);
+    mailbox(pump, on_full: .Wait).run().expect("start multiplexed pump");
+    events.wake(first).expect("wake first driver");
+    assert(match events.channel_until(first_channel, first_input, duplex.monotonic() + 2000) {
+        events.Event.Changed => true, _ => false,
+    });
+    assert(match events.channel_until(second_channel, second_input, duplex.monotonic() + 100) {
+        events.Event.Deadline => true, _ => false,
+    }, "first driver wake leaked into the second stream");
+    events.wake(second).expect("wake second driver");
+    assert(match events.channel_until(second_channel, second_input, duplex.monotonic() + 2000) {
+        events.Event.Changed => true, _ => false,
+    });
+    assert(match events.channel_until(first_channel, first_input, duplex.monotonic() + 100) {
+        events.Event.Deadline => true, _ => false,
+    }, "driver registration generated idle readiness");
+    events.wake(parent).expect("wake root driver");
+    assert(match next(input) { events.Event.Changed => true, _ => false });
+    events.shutdown(parent).expect("stop multiplexed wait");
+    assert(input.recv().is_none());
+    assert(first_input.recv().is_none());
+    assert(second_input.recv().is_none());
+    stop(pump);
+    stopped(pump);
+}
+
+fn backpressure() {
+    let group = events.open().expect("backpressure event group");
+    let (output, input) = stream.pipe<events.Event>(1).expect("bounded event pipe");
+    let shutdown = events.driver(group, input);
+    let server = listener.open("127.0.0.1", 0).expect("backpressure listener");
+    var keys: Vec<i64> = Vec.new();
+    var sockets: Vec<duplex.Descriptor> = Vec.new();
+    for i in 0..4 {
+        let raw = unsafe { mc_dial_start(b"127.0.0.1", listener.port(server) as i32) };
+        assert(raw >= 0, "backpressure client dial failed");
+        let fd = duplex.Descriptor { fd: raw };
+        keys.push(events.add(group, fd.fd, 2).expect("backpressure registration"));
+        sockets.push(fd);
+    }
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start backpressure pump");
+    sleep(50ms);
+    shutdown.close();
+    stop(pump);
+    stopped(pump);
+    for key in keys { events.remove(group, key).expect("remove backpressure registration"); }
+}
+
+fn main() {
+    let group = events.open().expect("event group");
+    let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(8).expect("event pipe");
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start event pump");
+    let server = listener.open("127.0.0.1", 0).expect("probe listener");
+    events.wake(group).expect("explicit wake");
+    assert(match next(input) { events.Event.Changed => true, _ => false });
+    let delay: i64 = 100;
+    let idle: Option<events.Event> = select {
+        event from input.recv() => event,
+        after delay * 1ms => missing(),
+    };
+    assert(idle.is_none(), "idle wait generated an event");
+    let raw = unsafe { mc_dial_start(b"127.0.0.1", listener.port(server) as i32) };
+    assert(raw >= 0, "probe client dial failed");
+    let fd = duplex.Descriptor { fd: raw };
+    let key = events.add(group, fd.fd, 2).expect("write registration");
+    assert(match next(input) { events.Event.Ready(ready) => ready.key == key && (ready.flags & 2) != 0, _ => false });
+    let quiet: Option<events.Event> = select {
+        event from input.recv() => event,
+        after 100ms => missing(),
+    };
+    assert(quiet.is_none(), "one-shot writable interest was not disarmed");
+    events.arm(group, key, 2).expect("rearm writable");
+    assert(match next(input) { events.Event.Ready(ready) => ready.key == key, _ => false });
+    events.remove(group, key).expect("retire registration");
+    events.shutdown(group).expect("wake blocked wait");
+    assert(input.recv().is_none(), "pump did not finish");
+    stop(pump);
+    stopped(pump);
+    multiplexed();
+    backpressure();
+    println("EVENT_BOUNDARY_OK");
+}

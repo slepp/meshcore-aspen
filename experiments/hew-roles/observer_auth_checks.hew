@@ -1,0 +1,24 @@
+import meshproto.observer_auth;
+import std.encoding.hex;
+import std.encoding.json;
+import wire;
+
+fn main() {
+    let seed = hex.decode("0303030303030303030303030303030303030303030303030303030303030303");
+    let public_key = wire.public_key(seed);
+    let audience = "willow-fixture";
+    let now: i64 = 1735689600;
+    let input = observer_auth.signing_input(public_key, audience, now).expect("JWT input");
+    let signature = wire.signature(seed, input.to_bytes());
+    let token = observer_auth.finish(public_key, audience, now, signature).expect("JWT signature");
+    assert(observer_auth.signing_input(public_key, "", now).is_err());
+    assert(observer_auth.signing_input(public_key, audience, now - 1).is_err());
+    assert(observer_auth.signing_input(bytes.new(), audience, now).is_err());
+    assert(observer_auth.finish(public_key, audience, now, bytes.new()).is_err());
+    let other_seed = hex.decode("0404040404040404040404040404040404040404040404040404040404040404");
+    assert(observer_auth.finish(public_key, audience, now, wire.signature(other_seed, input.to_bytes())).is_err());
+    var out = json.object();
+    out.set("username", json.from_string(observer_auth.username(public_key).expect("username"))).expect("field");
+    out.set("token", json.from_string(token)).expect("field");
+    println(out.stringify().expect("JWT fixture"));
+}

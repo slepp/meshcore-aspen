@@ -1,0 +1,1320 @@
+//! Companion RF operations and transient requester/ACK ownership.
+import companion;
+
+import meshproto.companion_state as state;
+
+import meshproto.companion_packets as packets;
+
+import meshproto.companion_policy as policy;
+
+import std.encoding.json;
+
+import std.crypto.crypto;
+
+import wire;
+
+pub type Request {
+    client: i64;
+    key: bytes;
+    kind: i64;
+    tag: i64;
+    expires: i64;
+}
+
+pub type Fence {
+    key: bytes;
+    tag: i64;
+    expires: i64;
+}
+
+pub type Ack {
+    hash: bytes;
+    at: i64;
+}
+
+pub type Connection {
+    key: bytes;
+    owners: Vec<i64>;
+    interval: i64;
+    activity: i64;
+    ping: i64;
+    ack: bytes;
+}
+
+pub type Trace {
+    client: i64;
+    tag: bytes;
+    expires: i64;
+}
+
+type Held {
+    raw: bytes;
+    snr: i64;
+    rssi: i64;
+    due: i64;
+}
+
+pub type SendPlan {
+    client: i64;
+    raw: bytes;
+    priority: i64;
+    delay: i64;
+    response: bytes;
+    peer: bytes;
+    request: i64;
+    tag: i64;
+    ack: bytes;
+    trace: bytes;
+    relay: bool;
+}
+
+pub type Batch {
+    events: Vec<companion.Event>;
+    transmissions: Vec<SendPlan>;
+    next_rx: i64;
+}
+
+fn empty() -> Batch {
+    Batch { events: Vec.new(), transmissions: Vec.new(), next_rx: 0 }
+}
+
+fn failed(client: i64, code: i64) -> SendPlan {
+    SendPlan { client: client, raw: bytes.new(), priority: 0, delay: 0, response: companion.error(code), peer: bytes.new(), request: 0, tag: 0, ack: bytes.new(), trace: bytes.new(), relay: false }
+}
+
+pub fn plan(client: i64, packet: wire.Packet, delay: i64) -> SendPlan {
+    var result = failed(client, 4);
+    result.raw = wire.encode(packet);
+    result.priority = packets.priority(packet);
+    result.delay = delay;
+    result.response = wire.byte(0);
+    result
+}
+
+fn find(contacts: json.Value, prefix: bytes) -> Option<json.Value> {
+    var found: Option<json.Value> = .None;
+    for i in 0..state.count(contacts) {
+        let c = state.item(contacts, i);
+        let key = state.blob(state.field(c, "PublicKey"));
+        if prefix.len() > 0 && prefix.len() <= 32 && wire.equal(prefix, wire.cut(key, 0, prefix.len())) {
+            if found.is_some() {
+                return .None;
+            }
+            found = .Some(c);
+        }
+    }
+    found
+}
+
+pub fn is_radio_command(command: i64) -> bool {
+    command == 2 || command == 3 || command == 7 || command == 16 || command == 25 || command == 26 || command == 27 || command == 28 || command == 29 || command == 36 || command == 39 || command == 50 || command == 52 || command == 55 || command == 57 || command == 62 || command == 65
+}
+
+pub actor RF {
+    let base: companion.Base;
+    var key: bytes;
+    var pending: Vec<Request> = Vec.new();
+    var fences: Vec<Fence> = Vec.new();
+    var acks: Vec<Ack> = Vec.new();
+    var connections: Vec<Connection> = Vec.new();
+    var traces: Vec<Trace> = Vec.new();
+    var seen_hashes: Vec<string> = Vec.new();
+    var seen_next: i64 = 0;
+    var held: Vec<Held> = Vec.new();
+    var spreading: i64 = 7;
+    var next_tag: i64 = 0;
+    var airtime: bytes = bytes.new();
+    var next_local: i64 = 0;
+    var next_flood: i64 = 0;
+    mailbox 64;
+
+    fn doc() -> json.Value {
+        json.parse(base.snapshot().expect("companion state")).expect("document")
+    }
+    fn tag(now: i64) -> i64 {
+        if now > next_tag {
+            next_tag = now;
+        } else {
+            next_tag += 1;
+        }
+        next_tag = next_tag & 4294967295;
+        next_tag
+    }
+    fn air(p: wire.Packet) -> i64 {
+        let size = wire.encode(p).len();
+        if airtime.len() >= (size + 1) * 4 {
+            wire.uint(wire.cut(airtime, size * 4, (size + 1) * 4))
+        } else {
+            1000
+        }
+    }
+    fn record(p: wire.Packet) {
+        let digest = wire.hash(p);
+        if seen_hashes.len() < 160 {
+            seen_hashes.push(digest);
+        } else {
+            seen_hashes[seen_next] = digest;
+            seen_next = (seen_next + 1) % 160;
+        }
+    }
+    fn seen(p: wire.Packet) -> bool {
+        let digest = wire.hash(p);
+        for old in seen_hashes {
+            if old == digest {
+                return true;
+            }
+        }
+        record(p);
+        false
+    }
+    fn next_rx() -> i64 {
+        var due: i64 = 0;
+        for packet in held {
+            if due == 0 || packet.due < due {
+                due = packet.due;
+            }
+        }
+        due
+    }
+    receive fn set_airtime(table: bytes) {
+        assert(table.len() == 1024);
+        airtime = table;
+    }
+    receive fn set_spreading(sf: i64) {
+        assert(sf >= 7 && sf <= 12);
+        spreading = sf;
+    }
+    receive fn transmitted(raw: bytes) {
+        if let .Some(packet) = wire.decode(raw) {
+            record(packet);
+        }
+    }
+    receive fn ingress(raw: bytes, snr: i64, rssi: i64, signal: bool, score_snr: f64, wall: i64, now: i64) -> Batch {
+        let packet = match wire.decode(raw) {
+            .Some(p) => p,
+            .None => return empty(),
+        };
+        let delay = if signal {
+            policy.receive_delay(state.field(doc(), "Preferences"), score_snr, spreading, raw.len(), air(packet))
+        } else {
+            0
+        };
+        if delay == 0 {
+            var batch = dispatch_packet(raw, snr, rssi, wall, now);
+            batch.next_rx = next_rx();
+            return batch;
+        }
+        if held.len() < 256 {
+            held.push(Held { raw: raw, snr: snr, rssi: rssi, due: now + delay });
+        }
+        var batch = empty();
+        batch.next_rx = next_rx();
+        batch
+    }
+    receive fn drain(wall: i64, now: i64) -> Batch {
+        var batch = empty();
+        var keep: Vec<Held> = Vec.new();
+        for packet in held {
+            if packet.due <= now {
+                let received = dispatch_packet(packet.raw, packet.snr, packet.rssi, wall, now);
+                for event in received.events {
+                    batch.events.push(event);
+                }
+                for tx in received.transmissions {
+                    batch.transmissions.push(tx);
+                }
+            } else {
+                keep.push(packet);
+            }
+        }
+        held = keep;
+        batch.next_rx = next_rx();
+        batch
+    }
+    fn advert(wall: i64, flood: bool) -> SendPlan {
+        var p = wire.decode(base.export_advert(wall).expect("self advert")).expect("advert packet");
+        if flood {
+            p = packets.flood(p, doc(), .None);
+        } else {
+            p.route = 2;
+            p.pathlen = 0;
+            p.path = bytes.new();
+        }
+        plan(0, p, 0)
+    }
+    receive fn begin(wall: i64, now: i64) -> Vec<SendPlan> {
+        let prefs = state.field(doc(), "Preferences");
+        let local = state.integer(prefs, "local_advert_seconds");
+        let flood = state.integer(prefs, "flood_advert_seconds");
+        next_local = if local > 0 {
+            now + local * 1000
+        } else {
+            0
+        };
+        next_flood = if flood > 0 {
+            now + flood * 1000
+        } else {
+            0
+        };
+        var output: Vec<SendPlan> = Vec.new();
+        if local > 0 || flood > 0 {
+            output.push(advert(wall, flood > 0));
+        }
+        output
+    }
+    receive fn disconnect(client: i64) {
+        var requests: Vec<Request> = Vec.new();
+        for request in pending {
+            if request.client != client {
+                requests.push(request);
+            }
+        }
+        pending = requests;
+        var active: Vec<Connection> = Vec.new();
+        for connection in connections {
+            var c = connection;
+            var owners: Vec<i64> = Vec.new();
+            for owner in c.owners {
+                if owner != client {
+                    owners.push(owner);
+                }
+            }
+            c.owners = owners;
+            if !owners.is_empty() {
+                active.push(c);
+            }
+        }
+        connections = active;
+        var keep: Vec<Trace> = Vec.new();
+        for trace in traces {
+            if trace.client != client {
+                keep.push(trace);
+            }
+        }
+        traces = keep;
+    }
+    receive fn reset_identity(new_key: bytes) {
+        key = new_key;
+        pending = Vec.new();
+        fences = Vec.new();
+        acks = Vec.new();
+        connections = Vec.new();
+        traces = Vec.new();
+        seen_hashes = Vec.new();
+        seen_next = 0;
+        held = Vec.new();
+    }
+    receive fn prepare(client: i64, b: bytes, wall: i64, now: i64) -> SendPlan {
+        if b.is_empty() || b.len() > 176 {
+            return failed(client, 6);
+        }
+        let document = doc();
+        let session = base.session_info(client).expect("client");
+        if session.is_none() {
+            return failed(client, 4);
+        }
+        let cmd = b[0] as i64;
+        var p = wire.packet(2, 0, bytes.new());
+        var result = failed(client, 4);
+        let contacts = json.parse(base.contacts().expect("contacts")).expect("contacts JSON");
+        if cmd == 7 {
+            if b.len() != 1 && !(b.len() == 2 && b[1] <= 1) {
+                return failed(client, 6);
+            }
+            let exported = base.command(client, wire.byte(17), wall).expect("self advert");
+            if exported.is_empty() || exported[0].frame[0] != 11 {
+                return failed(client, 4);
+            }
+            p = wire.decode(wire.cut(exported[0].frame, 1, exported[0].frame.len())).expect("self advert packet");
+            if b.len() == 2 && b[1] == 1 {
+                p = packets.flood(p, document, .None);
+            } else {
+                p.route = 2;
+                p.pathlen = 0;
+                p.path = bytes.new();
+            }
+        } else if cmd == 2 {
+            if b.len() < 14 || b[1] > 1 || state.cstring(wire.cut(b, 13, b.len())).to_bytes().len() != b.len() - 13 {
+                return failed(client, 6);
+            }
+            let contact = match find(contacts, wire.cut(b, 7, 13)) {
+                .Some(c) => c,
+                .None => {
+                    return failed(client, 2);
+                }
+            };
+            let text = wire.cut(b, 13, b.len());
+            if text.len() > 160 || (b[1] == 0 && b[2] > 3 && text.len() > 158) || (b[1] == 0 && acks.len() >= 128) {
+                return failed(client, 4);
+            }
+            let stamp = if b[1] == 1 {
+                tag((wall + state.integer(document, "ClockOffset")) & 4294967295)
+            } else {
+                wire.uint(wire.cut(b, 3, 7))
+            };
+            let attempt = if b[1] == 1 {
+                (b[2] & 3) as i64
+            } else {
+                b[2] as i64
+            };
+            var plain = wire.cat(wire.le(stamp, 4), wire.byte(((b[1] as i64) << 2) | (attempt & 3)));
+            plain.append(text);
+            result.ack = if b[1] == 0 {
+                wire.ack(plain, wire.public_key(key))
+            } else {
+                bytes.new()
+            };
+            if attempt > 3 {
+                plain.push(0);
+                plain.push(attempt as u8);
+            }
+            let peer = state.blob(state.field(contact, "PublicKey"));
+            p = packets.routed(packets.encrypted(key, peer, 2, plain, false), contact, document, session, false);
+            result.response = packets.sent(p, if result.ack.is_empty() {
+                0
+            } else {
+                wire.uint(result.ack)
+            }, air(p));
+        } else if cmd == 3 {
+            if b.len() < 8 || b[1] != 0 || b[2] >= 40 || state.cstring(wire.cut(b, 7, b.len())).to_bytes().len() != b.len() - 7 {
+                return failed(client, 6);
+            }
+            let ch = match packets.channel(document, b[2] as i64) {
+                .Some(c) => c,
+                .None => {
+                    return failed(client, 2);
+                }
+            };
+            let prefix = state.text(document, "Name") + ": ";
+            var text = wire.cut(b, 7, b.len());
+            let size = 160 - prefix.to_bytes().len();
+            if text.len() > size {
+                text = wire.cut(text, 0, size);
+            }
+            var plain = wire.cat(wire.cut(b, 3, 7), wire.byte(0));
+            plain.append(prefix.to_bytes());
+            plain.append(text);
+            p = packets.flood(wire.packet(1, 5, wire.cat(wire.byte(packets.hash(ch)), wire.seal(state.blob(state.field(ch, "PSK")), plain))), document, session);
+        } else if cmd == 16 {
+            if b.len() != 33 {
+                return failed(client, 6);
+            }
+            let contact = match find(contacts, wire.cut(b, 1, 33)) {
+                .Some(c) => c,
+                .None => {
+                    return failed(client, 2);
+                }
+            };
+            let raw = state.blob(state.field(contact, "Advert"));
+            if raw.is_empty() {
+                return failed(client, 2);
+            }
+            p = match wire.decode(raw) {
+                .Some(decoded) => decoded,
+                .None => {
+                    return failed(client, 4);
+                }
+            };
+            p.route = 2;
+            p.pathlen = 0;
+            p.path = bytes.new();
+        } else if cmd == 25 {
+            if b.len() < 6 {
+                return failed(client, 6);
+            }
+            if b[1] == 255 {
+                return failed(client, 1);
+            }
+            let size = state.path_size(b[1] as i64);
+            if size < 0 || b.len() < 6 + size {
+                return failed(client, 6);
+            }
+            p = wire.packet(2, 15, wire.cut(b, 2 + size, b.len()));
+            p.pathlen = b[1] as i64;
+            p.path = wire.cut(b, 2, 2 + size);
+        } else if cmd == 55 {
+            if b.len() < 2 || b[1] & 128 == 0 {
+                return failed(client, 6);
+            }
+            p = wire.packet(2, 11, wire.cut(b, 1, b.len()));
+        } else if cmd == 65 {
+            if b.len() < 4 {
+                return failed(client, 6);
+            }
+            p = match wire.decode(wire.cut(b, 2, b.len())) {
+                .Some(decoded) => decoded,
+                .None => {
+                    return failed(client, 6);
+                }
+            };
+            result.priority = b[1] as i64;
+        } else if cmd == 62 {
+            if b.len() < 5 || b[1] >= 40 {
+                return failed(client, 6);
+            }
+            let size = state.path_size(b[2] as i64);
+            if size < 0 || b.len() < 5 + size {
+                return failed(client, 6);
+            }
+            let plain = wire.cut(b, 3 + size, b.len());
+            if wire.uint(wire.cut(plain, 0, 2)) == 0 || plain.len() - 2 > 167 {
+                return failed(client, 6);
+            }
+            let ch = match packets.channel(document, b[1] as i64) {
+                .Some(c) => c,
+                .None => {
+                    return failed(client, 2);
+                }
+            };
+            let body = wire.cat(wire.cat(wire.cut(plain, 0, 2), wire.byte(plain.len() - 2)), wire.cut(plain, 2, plain.len()));
+            p = wire.packet(2, 6, wire.cat(wire.byte(packets.hash(ch)), wire.seal(state.blob(state.field(ch, "PSK")), body)));
+            if b[2] == 255 {
+                p = packets.flood(p, document, session);
+            } else {
+                p.pathlen = b[2] as i64;
+                p.path = wire.cut(b, 3, 3 + size);
+            }
+        } else if cmd == 36 {
+            if b.len() <= 10 {
+                return failed(client, 6);
+            }
+            let width: i64 = 1 << ((b[9] & 3) as i64);
+            if (b.len() - 10) % width != 0 {
+                return failed(client, 6);
+            }
+            let trace_tag = wire.cut(b, 1, 9);
+            for trace in traces {
+                if wire.equal(trace.tag, trace_tag) {
+                    return failed(client, 4);
+                }
+            }
+            if traces.len() >= 128 {
+                return failed(client, 3);
+            }
+            p = wire.packet(2, 9, wire.cut(b, 1, b.len()));
+            result.trace = trace_tag;
+            result.response = packets.sent(p, wire.uint(wire.cut(b, 1, 5)), air(p));
+            let hops = (b.len() - 10) / width;
+            result.response = wire.cat(wire.cut(result.response, 0, 6), wire.le(500 + (6 * air(p) + 250) * (hops + 1), 4));
+        } else if cmd == 28 || cmd == 29 {
+            if b.len() != 33 {
+                return failed(client, 6);
+            }
+            var found = false;
+            var keep: Vec<Connection> = Vec.new();
+            for connection in connections {
+                var c = connection;
+                if wire.equal(c.key, wire.cut(b, 1, 33)) {
+                    found = true;
+                    if cmd == 29 {
+                        var owners: Vec<i64> = Vec.new();
+                        for owner in c.owners {
+                            if owner != client {
+                                owners.push(owner);
+                            }
+                        }
+                        c.owners = owners;
+                    }
+                }
+                if !c.owners.is_empty() {
+                    keep.push(c);
+                }
+            }
+            connections = keep;
+            result.response = if cmd == 29 || found {
+                wire.byte(0)
+            } else {
+                companion.error(2)
+            };
+            return result;
+        } else if cmd == 26 || cmd == 27 || cmd == 39 || cmd == 50 || cmd == 52 || cmd == 57 {
+            if cmd == 39 && b.len() == 4 {
+                let measured = base.telemetry_data(255).expect("cached self telemetry");
+                if measured.is_empty() {
+                    return failed(client, 4);
+                }
+                result.response = wire.cat(wire.cat(wire.cat(wire.byte(139), wire.byte(0)), wire.cut(wire.public_key(key), 0, 6)), measured);
+                return result;
+            }
+            let offset = if cmd == 39 {
+                4
+            } else if cmd == 52 {
+                2
+            } else {
+                1
+            };
+            if b.len() < offset + 32 || (cmd == 52 && b[1] != 0) {
+                return failed(client, 6);
+            }
+            let peer = wire.cut(b, offset, offset + 32);
+            let contact = match find(contacts, peer) {
+                .Some(c) => c,
+                .None => {
+                    if cmd != 57 {
+                        return failed(client, 2);
+                    }
+                    var c = json.object();
+                    c.set("PublicKey", state.array(peer)).expect("anonymous peer");
+                    c.set("OutPathLen", json.from_int(0)).expect("anonymous path");
+                    c.set("OutPath", state.array(state.padded(bytes.new(), 64))).expect("anonymous path");
+                    c
+                }
+            };
+            var replacing = false;
+            for req in pending {
+                if cmd == 26 && req.kind == 26 && wire.equal(req.key, peer) {
+                    replacing = true;
+                }
+            }
+            if pending.len() >= 128 && !replacing {
+                return failed(client, 3);
+            }
+            if replacing && fences.len() >= 128 {
+                return failed(client, 4);
+            }
+            let request_tag = tag((wall + state.integer(document, "ClockOffset")) & 4294967295);
+            var plain = wire.le(request_tag, 4);
+            var kind: i64 = 0;
+            var anonymous = false;
+            var force_flood = false;
+            if cmd == 26 {
+                let password = state.cstring(wire.cut(b, offset + 32, b.len())).to_bytes();
+                if state.integer(contact, "Type") == 3 {
+                    plain.append(wire.le(state.integer(contact, "SyncSince"), 4));
+                }
+                plain.append(wire.cut(password, 0, if password.len() > 15 {
+                    15
+                } else {
+                    password.len()
+                }));
+                kind = 7;
+                anonymous = true;
+            } else if cmd == 27 {
+                plain.append(wire.cat(wire.byte(1), wire.le(0, 4)));
+            } else if cmd == 39 {
+                plain.append(wire.cat(wire.byte(3), wire.le(0, 4)));
+            } else if cmd == 52 {
+                plain.append(wire.cat(wire.cat(wire.byte(3), wire.byte(254)), wire.le(0, 3)));
+                plain.append(crypto.random_bytes(4).expect("path discovery nonce"));
+                force_flood = true;
+            } else {
+                let data = wire.cut(b, offset + 32, b.len());
+                if data.is_empty() || data.len() > 143 {
+                    return failed(client, 4);
+                }
+                plain.append(data);
+                if cmd == 57 {
+                    kind = 7;
+                    anonymous = true;
+                }
+            }
+            p = packets.routed(packets.encrypted(key, peer, kind, plain, anonymous), contact, document, session, force_flood);
+            result.peer = peer;
+            result.request = cmd;
+            result.tag = request_tag;
+            result.response = packets.sent(p, if cmd == 26 {
+                wire.uint(wire.cut(peer, 0, 4))
+            } else {
+                request_tag
+            }, air(p));
+        } else {
+            return failed(client, 1);
+        }
+        result.client = client;
+        result.raw = wire.encode(p);
+        if result.raw.is_empty() {
+            return failed(client, 4);
+        }
+        if cmd != 65 {
+            result.priority = packets.priority(p);
+        }
+        if result.response[0] == 1 {
+            result.response = wire.byte(0);
+        }
+        result
+    }
+    receive fn admitted(result: SendPlan, accepted: bool, now: i64) -> Vec<companion.Event> {
+        var output: Vec<companion.Event> = Vec.new();
+        if result.raw.is_empty() || !accepted {
+            output.push(companion.event(result.client, if result.raw.is_empty() {
+                result.response
+            } else {
+                companion.error(4)
+            }));
+            return output;
+        }
+        if !result.ack.is_empty() {
+            var keep: Vec<Ack> = Vec.new();
+            for old in acks {
+                if !wire.equal(old.hash, result.ack) {
+                    keep.push(old);
+                }
+            }
+            acks = keep;
+            acks.push(Ack { hash: result.ack, at: now });
+        }
+        if !result.trace.is_empty() {
+            traces.push(Trace { client: result.client, tag: result.trace, expires: now + 120000 });
+        }
+        if result.request > 0 {
+            if result.request == 57 {
+                let contacts = json.parse(base.contacts().expect("contacts")).expect("contacts JSON");
+                if find(contacts, result.peer).is_none() {
+                    var unknown = json.object();
+                    unknown.set("PublicKey", state.array(result.peer)).expect("unknown key");
+                    unknown.set("Type", json.from_int(0)).expect("unknown type");
+                    unknown.set("OutPathLen", json.from_int(0)).expect("unknown path");
+                    unknown.set("OutPath", state.array(state.padded(bytes.new(), 64))).expect("unknown path");
+                    unknown.set("LastModified", json.from_int(result.tag)).expect("unknown time");
+                    base.remember_unknown(unknown.stringify().expect("unknown contact")).expect("remember contact");
+                }
+            }
+            if result.request == 26 {
+                var keep: Vec<Request> = Vec.new();
+                for req in pending {
+                    if req.kind == 26 && wire.equal(req.key, result.peer) {
+                        fences.push(Fence { key: req.key, tag: req.tag, expires: now + 120000 });
+                    } else {
+                        keep.push(req);
+                    }
+                }
+                pending = keep;
+                for i in 0..fences.len() {
+                    if wire.equal(fences[i].key, result.peer) {
+                        var fence = fences[i];
+                        fence.expires = now + 120000;
+                        fences[i] = fence;
+                    }
+                }
+            }
+            pending.push(Request { client: result.client, key: result.peer, kind: result.request, tag: result.tag, expires: now + 120000 });
+        }
+        if result.client > 0 {
+            output.push(companion.event(result.client, result.response));
+        }
+        output
+    }
+    fn ack(hash: bytes, now: i64) -> Vec<companion.Event> {
+        var keep: Vec<Ack> = Vec.new();
+        var output: Vec<companion.Event> = Vec.new();
+        for a in acks {
+            if wire.equal(a.hash, hash) {
+                output.push(companion.event(0, wire.cat(wire.cat(wire.byte(130), hash), wire.le(now - a.at, 4))));
+            } else {
+                keep.push(a);
+            }
+        }
+        acks = keep;
+        for i in 0..connections.len() {
+            if wire.equal(connections[i].ack, hash) {
+                var c = connections[i];
+                c.ack = bytes.new();
+                c.activity = now;
+                c.ping = now + c.interval;
+                connections[i] = c;
+            }
+        }
+        output
+    }
+    fn response(peer: bytes, data: bytes, now: i64) -> Vec<companion.Event> {
+        var output: Vec<companion.Event> = Vec.new();
+        if data.len() < 5 {
+            return output;
+        }
+        let response_tag = wire.uint(wire.cut(data, 0, 4));
+        var found: i64 = -1;
+        for i in 0..pending.len() {
+            if pending[i].tag == response_tag {
+                found = i;
+            }
+        }
+        if found >= 0 && pending[found].expires <= now {
+            return output;
+        }
+        if found < 0 {
+            for i in 0..pending.len() {
+                if wire.equal(pending[i].key, peer) && pending[i].expires > now {
+                    if found >= 0 {
+                        return output;
+                    }
+                    found = i;
+                }
+            }
+            if found < 0 || (pending[found].kind != 26 && pending[found].kind != 27) {
+                return output;
+            }
+            for fence in fences {
+                if fence.tag == response_tag && wire.equal(fence.key, peer) && fence.expires > now && (pending[found].kind != 26 || data.len() < 13 || data[4] != 0) {
+                    return output;
+                }
+            }
+        }
+        let request = pending[found];
+        if !wire.equal(request.key, peer) {
+            return output;
+        }
+        var keep: Vec<Request> = Vec.new();
+        for i in 0..pending.len() {
+            if i != found {
+                keep.push(pending[i]);
+            }
+        }
+        pending = keep;
+        var out = wire.cat(wire.cat(wire.byte(0), wire.byte(0)), wire.cut(peer, 0, 6));
+        var target = request.client;
+        match request.kind {
+            26 => {
+                out[0] = 134;
+                if data.len() >= 6 && data[4] == 79 && data[5] == 75 {
+                    out[0] = 133;
+                    target = 0;
+                } else if data.len() >= 13 && data[4] == 0 {
+                    out[0] = 133;
+                    out[1] = data[6];
+                    target = 0;
+                    out.append(wire.cut(data, 0, 4));
+                    out.push(data[7]);
+                    out.push(data[12]);
+                    if data[5] != 0 {
+                        var index: i64 = -1;
+                        for i in 0..connections.len() {
+                            if wire.equal(connections[i].key, peer) {
+                                index = i;
+                            }
+                        }
+                        var owners: Vec<i64> = Vec.new();
+                        if index >= 0 {
+                            owners = connections[index].owners;
+                        }
+                        var already = false;
+                        for owner in owners {
+                            if owner == request.client {
+                                already = true;
+                            }
+                        }
+                        if !already {
+                            owners.push(request.client);
+                        }
+                        let interval = (data[5] as i64) * 16000;
+                        let c = Connection { key: peer, owners: owners, interval: interval, activity: now, ping: now + interval, ack: bytes.new() };
+                        if index >= 0 {
+                            connections[index] = c;
+                        } else {
+                            connections.push(c);
+                        }
+                    }
+                }
+            }
+            27 => {
+                out[0] = 135;
+                out.append(wire.cut(data, 4, data.len()));
+            }
+            39 => {
+                out[0] = 139;
+                out.append(wire.cut(data, 4, data.len()));
+            }
+            50 | 57 => {
+                out = wire.cat(wire.cat(wire.byte(140), wire.byte(0)), wire.le(request.tag, 4));
+                out.append(wire.cut(data, 4, data.len()));
+            }
+            _ => {
+                return output;
+            }
+        }
+        if out.len() <= 176 {
+            output.push(companion.event(target, out));
+        } else {
+            output.push(companion.event(target, bytes.new()));
+        }
+        output
+    }
+    receive fn receive_packet(raw: bytes, snr: i64, rssi: i64, wall: i64, now: i64) -> Batch {
+        dispatch_packet(raw, snr, rssi, wall, now)
+    }
+    fn dispatch_packet(raw: bytes, snr: i64, rssi: i64, wall: i64, now: i64) -> Batch {
+        var batch = empty();
+        let packet = match wire.decode(raw) {
+            .Some(p) => p,
+            .None => {
+                return batch;
+            }
+        };
+        let local = snr == -128 && rssi == 127;
+        if raw.len() + 3 <= 176 {
+            batch.events.push(companion.event(0, wire.cat(wire.cat(wire.byte(136), wire.cat(wire.byte(snr), wire.byte(rssi))), raw)));
+        }
+        let document = doc();
+        let stamp = (wall + state.integer(document, "ClockOffset")) & 4294967295;
+        let flood = packet.route == 0 || packet.route == 1;
+        let repeat = state.boolean(state.field(document, "Preferences"), "repeat") && !local && base.healthy().expect("state health");
+        if !flood && packet.kind == 9 {
+            if packet.payload.len() < 9 || packet.pathlen >= 64 {
+                return batch;
+            }
+            let width: i64 = 1 << ((packet.payload[8] & 3) as i64);
+            let offset = packet.pathlen * width;
+            let hashes = packet.payload.len() - 9;
+            if hashes % width != 0 {
+                return batch;
+            }
+            if offset < hashes {
+                if !repeat || offset + width > hashes || !wire.equal(wire.cut(packet.payload, 9 + offset, 9 + offset + width), wire.cut(wire.public_key(key), 0, width)) || seen(packet) {
+                    return batch;
+                }
+                var forwarded = packet;
+                forwarded.path.push(snr as u8);
+                forwarded.pathlen += 1;
+                var tx = plan(0, forwarded, policy.retransmit_delay(state.field(document, "Preferences"), true, air(forwarded)));
+                tx.priority = 5;
+                tx.relay = true;
+                batch.transmissions.push(tx);
+                return batch;
+            }
+        } else if !flood && !packet.path.is_empty() {
+            if packet.kind == 11 && !packet.payload.is_empty() && packet.payload[0] & 128 != 0 {
+                return batch;
+            }
+            let width = (packet.pathlen >> 6) + 1;
+            if repeat && wire.equal(wire.cut(packet.path, 0, width), wire.cut(wire.public_key(key), 0, width)) {
+                var forwarded = packet;
+                if packet.kind == 10 {
+                    if packet.payload.len() < 5 || packet.payload[0] & 15 != 3 {
+                        return batch;
+                    }
+                    forwarded.payload = wire.cut(packet.payload, 1, packet.payload.len());
+                }
+                if seen(forwarded) {
+                    return batch;
+                }
+                forwarded.path = wire.cut(packet.path, width, packet.path.len());
+                forwarded.pathlen -= 1;
+                if packet.kind == 3 || packet.kind == 10 {
+                    var delay: i64 = if packet.kind == 10 {
+                        (((packet.payload[0] >> 4) as i64) + 1) * 300
+                    } else {
+                        0
+                    };
+                    forwarded.kind = 3;
+                    let extras = state.integer(document, "MultiACKs");
+                    for index in 0..extras {
+                        delay += policy.retransmit_delay(state.field(document, "Preferences"), true, air(forwarded)) + 300;
+                        var multipart = forwarded;
+                        multipart.kind = 10;
+                        multipart.payload = wire.cat(wire.byte(((extras - index) << 4) | 3), forwarded.payload);
+                        var tx = plan(0, multipart, delay);
+                        tx.priority = 0;
+                        tx.relay = true;
+                        batch.transmissions.push(tx);
+                    }
+                    var tx = plan(0, forwarded, delay);
+                    tx.priority = 0;
+                    tx.relay = true;
+                    batch.transmissions.push(tx);
+                } else {
+                    var tx = plan(0, forwarded, policy.retransmit_delay(state.field(document, "Preferences"), true, air(forwarded)));
+                    tx.priority = 0;
+                    tx.relay = true;
+                    batch.transmissions.push(tx);
+                }
+                return batch;
+            }
+            if !local {
+                return batch;
+            }
+        }
+        if seen(packet) {
+            return batch;
+        }
+        if flood && repeat && packet.kind != 9 && (packet.pathlen & 63) < 63 {
+            let width = (packet.pathlen >> 6) + 1;
+            if packet.path.len() + width <= 64 {
+                let forwardable = packet.kind <= 8;
+                let valid_advert = packet.kind != 4 || wire.verify_advert(packet) && !wire.equal(wire.cut(packet.payload, 0, 32), wire.public_key(key));
+                if forwardable && valid_advert {
+                    var forwarded = packet;
+                    forwarded.path.append(wire.cut(wire.public_key(key), 0, width));
+                    forwarded.pathlen += 1;
+                    var tx = plan(0, forwarded, policy.retransmit_delay(state.field(document, "Preferences"), false, air(forwarded)));
+                    tx.priority = (forwarded.pathlen & 63);
+                    tx.relay = true;
+                    batch.transmissions.push(tx);
+                }
+            }
+        }
+        let message_path = if flood {
+            packet.pathlen
+        } else {
+            255
+        };
+        if packet.kind == 4 {
+            for e in base.advert(raw, wall).expect("received advert") {
+                if e.client != -1 {
+                    batch.events.push(e);
+                }
+            }
+        } else if packet.kind == 3 && packet.payload.len() >= 4 {
+            for e in ack(wire.cut(packet.payload, 0, 4), now) {
+                batch.events.push(e);
+            }
+        } else if packet.kind == 10 && packet.payload.len() >= 5 && (packet.payload[0] & 15) == 3 {
+            for e in ack(wire.cut(packet.payload, 1, 5), now) {
+                batch.events.push(e);
+            }
+        } else if packet.kind == 5 || packet.kind == 6 {
+            if packet.payload.len() < 3 {
+                return batch;
+            }
+            for i in 0..40 {
+                let ch = match packets.channel(document, i) {
+                    .Some(c) => c,
+                    .None => {
+                        continue;
+                    }
+                };
+                if packets.hash(ch) != packet.payload[0] as i64 {
+                    continue;
+                }
+                let plain = wire.open(state.blob(state.field(ch, "PSK")), wire.cut(packet.payload, 1, packet.payload.len()));
+                var frame = bytes.new();
+                if packet.kind == 5 {
+                    if plain.len() < 5 || plain[4] >> 2 != 0 {
+                        continue;
+                    }
+                    frame = wire.cat(wire.cat(wire.byte(17), wire.cat(wire.byte(snr), wire.le(0, 2))), wire.cat(wire.byte(i), wire.cat(wire.byte(message_path), wire.byte(0))));
+                    frame.append(wire.cut(plain, 0, 4));
+                    frame.append(state.cstring(wire.cut(plain, 5, plain.len())).to_bytes());
+                } else {
+                    if plain.len() < 3 || plain[2] > 167 || plain.len() < 3 + (plain[2] as i64) || wire.uint(wire.cut(plain, 0, 2)) == 0 {
+                        continue;
+                    }
+                    frame = wire.cat(wire.cat(wire.byte(27), wire.cat(wire.byte(snr), wire.le(0, 2))), wire.cat(wire.byte(i), wire.byte(message_path)));
+                    frame.append(wire.cut(plain, 0, 3 + (plain[2] as i64)));
+                }
+                for e in base.journal(frame, bytes.new(), 0).expect("channel journal") {
+                    if e.client != -1 {
+                        batch.events.push(e);
+                    }
+                }
+                break;
+            }
+        } else if packet.kind == 9 {
+            let b = packet.payload;
+            if b.len() < 9 {
+                return batch;
+            }
+            let flags = b[8];
+            let width: i64 = 1 << ((flags & 3) as i64);
+            let size = b.len() - 9;
+            if size % width != 0 || packet.path.len() != size / width {
+                return batch;
+            }
+            var out = wire.cat(wire.cat(wire.byte(137), wire.byte(0)), wire.cat(wire.byte(size), wire.byte(flags as i64)));
+            out.append(wire.cut(b, 0, 8));
+            out.append(wire.cut(b, 9, b.len()));
+            out.append(packet.path);
+            out.push(snr as u8);
+            if out.len() > 176 {
+                return batch;
+            }
+            var target: i64 = 0;
+            var keep: Vec<Trace> = Vec.new();
+            for trace in traces {
+                if trace.expires > now && wire.equal(trace.tag, wire.cut(b, 0, 8)) {
+                    target = trace.client;
+                } else {
+                    keep.push(trace);
+                }
+            }
+            traces = keep;
+            batch.events.push(companion.event(target, out));
+        } else if packet.kind == 15 || packet.kind == 11 {
+            let code = if packet.kind == 15 {
+                132
+            } else {
+                142
+            };
+            let frame = wire.cat(wire.cat(wire.byte(code), wire.cat(wire.byte(snr), wire.byte(rssi))), wire.cat(wire.byte(if packet.kind == 15 {
+                255
+            } else {
+                packet.pathlen
+            }), packet.payload));
+            if frame.len() <= 176 {
+                batch.events.push(companion.event(0, frame));
+            }
+        } else if packet.kind == 2 || packet.kind == 8 || packet.kind == 1 || packet.kind == 0 {
+            let payload = packet.payload;
+            if payload.len() < 4 || payload[0] != wire.public_key(key)[0] {
+                return batch;
+            }
+            let contacts = json.parse(base.contacts().expect("contacts")).expect("contacts JSON");
+            for i in 0..state.count(contacts) {
+                let contact = state.item(contacts, i);
+                let peer = state.blob(state.field(contact, "PublicKey"));
+                if peer[0] != payload[1] {
+                    continue;
+                }
+                let plain = wire.open(wire.shared(key, peer), wire.cut(payload, 2, payload.len()));
+                if plain.is_empty() {
+                    continue;
+                }
+                for j in 0..connections.len() {
+                    if wire.equal(connections[j].key, peer) {
+                        var c = connections[j];
+                        c.activity = now;
+                        c.ping = now + c.interval;
+                        connections[j] = c;
+                    }
+                }
+                if packet.kind == 0 {
+                    if plain.len() < 6 || plain[4] != 3 {
+                        return batch;
+                    }
+                    var permissions: i64 = 0;
+                    let modes = state.integer(document, "TelemetryModes");
+                    for setting in 0..3 {
+                        let mode = (modes >> (setting * 2)) & 3;
+                        if mode == 2 || (mode == 1 && ((state.integer(contact, "Flags") >> 1) & (1 << setting)) != 0) {
+                            permissions |= 1 << setting;
+                        }
+                    }
+                    permissions &= 255 ^ (plain[5] as i64);
+                    let measured = base.telemetry_data(permissions).expect("permission-filtered telemetry");
+                    if measured.is_empty() {
+                        return batch;
+                    }
+                    let response = wire.cat(wire.cut(plain, 0, 4), measured);
+                    var p = packets.routed(packets.encrypted(key, peer, 1, response, false), contact, document, .None, false);
+                    if flood {
+                        let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(1), response));
+                        p = packets.reply_flood(packets.encrypted(key, peer, 8, body, false), packet, document);
+                    }
+                    batch.transmissions.push(plan(0, p, 300));
+                } else if packet.kind == 1 {
+                    for e in response(peer, plain, now) {
+                        batch.events.push(e);
+                    }
+                } else if packet.kind == 8 {
+                    let size = state.path_size(plain[0] as i64);
+                    if size < 0 || plain.len() < size + 2 {
+                        return batch;
+                    }
+                    let extra_type = plain[size + 1] as i64;
+                    let extra = wire.cut(plain, size + 2, plain.len());
+                    if extra_type == 1 && extra.len() > 4 {
+                        let response_tag = wire.uint(wire.cut(extra, 0, 4));
+                        var discovered = false;
+                        var keep: Vec<Request> = Vec.new();
+                        for req in pending {
+                            if req.kind == 52 && req.tag == response_tag && wire.equal(req.key, peer) && req.expires > now {
+                                var out = wire.cat(wire.cat(wire.byte(141), wire.byte(0)), wire.cut(peer, 0, 6));
+                                out.append(wire.cut(plain, 0, size + 1));
+                                out.push(packet.pathlen as u8);
+                                out.append(packet.path);
+                                batch.events.push(companion.event(req.client, out));
+                                discovered = true;
+                            } else {
+                                keep.push(req);
+                            }
+                        }
+                        pending = keep;
+                        if discovered {
+                            return batch;
+                        }
+                    }
+                    for e in base.learned_path(peer, plain[0] as i64, wire.cut(plain, 1, size + 1), stamp).expect("learned path") {
+                        batch.events.push(e);
+                    }
+                    if extra_type == 3 && extra.len() >= 4 {
+                        for e in ack(wire.cut(extra, 0, 4), now) {
+                            batch.events.push(e);
+                        }
+                    }
+                    if extra_type == 1 {
+                        for e in response(peer, extra, now) {
+                            batch.events.push(e);
+                        }
+                        if flood {
+                            let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(255), crypto.random_bytes(4).expect("reciprocal path nonce")));
+                            let updated = match find(json.parse(base.contacts().expect("contacts")).expect("contacts JSON"), peer) {
+                                .Some(c) => c,
+                                .None => contact,
+                            };
+                            batch.transmissions.push(plan(0, packets.routed(packets.encrypted(key, peer, 8, body, false), updated, doc(), .None, false), 0));
+                        }
+                    }
+                } else if packet.kind == 2 {
+                    if plain.len() < 5 {
+                        return batch;
+                    }
+                    let text_type = (plain[4] >> 2) as i64;
+                    let offset = if text_type == 2 {
+                        9
+                    } else {
+                        5
+                    };
+                    if text_type > 2 || plain.len() < offset {
+                        return batch;
+                    }
+                    let text = state.cstring(wire.cut(plain, offset, plain.len())).to_bytes();
+                    var frame = wire.cat(wire.cat(wire.byte(16), wire.cat(wire.byte(snr), wire.le(0, 2))), wire.cut(peer, 0, 6));
+                    frame.push(message_path as u8);
+                    frame.push(text_type as u8);
+                    frame.append(wire.cut(plain, 0, 4));
+                    if text_type == 2 {
+                        frame.append(wire.cut(plain, 5, 9));
+                    }
+                    frame.append(wire.cut(text, 0, if text.len() < 176 - frame.len() {
+                        text.len()
+                    } else {
+                        176 - frame.len()
+                    }));
+                    let journal = base.incoming_message(frame, if text_type == 1 {
+                        bytes.new()
+                    } else {
+                        peer
+                    }, if text_type == 2 {
+                        wire.uint(wire.cut(plain, 0, 4))
+                    } else {
+                        0
+                    }, if text_type == 1 {
+                        0
+                    } else {
+                        stamp
+                    }).expect("direct message commit");
+                    var committed = false;
+                    for e in journal {
+                        if e.client == -1 {
+                            committed = true;
+                        } else {
+                            batch.events.push(e);
+                        }
+                    }
+                    if !committed {
+                        return batch;
+                    }
+                    var extra = bytes.new();
+                    var extra_type: i64 = 255;
+                    if text_type != 1 {
+                        extra = wire.ack(wire.cut(plain, 0, offset + text.len()), if text_type == 2 {
+                            wire.public_key(key)
+                        } else {
+                            peer
+                        });
+                        extra_type = 3;
+                        if text_type == 0 {
+                            extra.push(if plain.len() > offset + text.len() + 1 {
+                                plain[offset + text.len() + 1]
+                            } else {
+                                0
+                            });
+                            extra.append(crypto.random_bytes(1).expect("ACK nonce"));
+                        }
+                    }
+                    if flood {
+                        if extra.is_empty() {
+                            extra = crypto.random_bytes(4).expect("path nonce");
+                        }
+                        let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(extra_type), extra));
+                        var p = packets.routed(packets.encrypted(key, peer, 8, body, false), contact, document, .None, true);
+                        p = packets.reply_flood(p, packet, document);
+                        batch.transmissions.push(plan(0, p, if extra_type == 3 {
+                            200
+                        } else {
+                            0
+                        }));
+                    } else if !extra.is_empty() {
+                        var delay: i64 = 200;
+                        if state.integer(contact, "OutPathLen") != 255 && state.integer(document, "MultiACKs") > 0 {
+                            batch.transmissions.push(plan(0, packets.routed(wire.packet(2, 10, wire.cat(wire.byte(19), extra)), contact, document, .None, false), delay));
+                            delay = 500;
+                        }
+                        batch.transmissions.push(plan(0, packets.routed(wire.packet(2, 3, extra), contact, document, .None, false), delay));
+                    }
+                }
+                break;
+            }
+        }
+        batch
+    }
+    receive fn tick(wall: i64, now: i64) -> Vec<SendPlan> {
+        var requests: Vec<Request> = Vec.new();
+        for r in pending {
+            if r.expires >= now {
+                requests.push(r);
+            }
+        }
+        pending = requests;
+        var live_fences: Vec<Fence> = Vec.new();
+        for fence in fences {
+            if fence.expires >= now {
+                live_fences.push(fence);
+            }
+        }
+        fences = live_fences;
+        var live_acks: Vec<Ack> = Vec.new();
+        for a in acks {
+            if now - a.at <= 120000 {
+                live_acks.push(a);
+            }
+        }
+        acks = live_acks;
+        var live_traces: Vec<Trace> = Vec.new();
+        for trace in traces {
+            if trace.expires >= now {
+                live_traces.push(trace);
+            }
+        }
+        traces = live_traces;
+        var live: Vec<Connection> = Vec.new();
+        var output: Vec<SendPlan> = Vec.new();
+        let advert_due = (next_flood > 0 && now > next_flood) || (next_local > 0 && now > next_local);
+        if !advert_due && connections.is_empty() { return output; }
+        let document = doc();
+        let prefs = state.field(document, "Preferences");
+        let local_seconds = state.integer(prefs, "local_advert_seconds");
+        let flood_seconds = state.integer(prefs, "flood_advert_seconds");
+        if next_flood > 0 && now > next_flood && flood_seconds > 0 {
+            output.push(advert(wall, true));
+            next_flood = now + flood_seconds * 1000;
+            next_local = if local_seconds > 0 {
+                now + local_seconds * 1000
+            } else {
+                0
+            };
+        } else if next_local > 0 && now > next_local && local_seconds > 0 {
+            output.push(advert(wall, false));
+            next_local = now + local_seconds * 1000;
+        }
+        if connections.is_empty() { return output; }
+        let contacts = json.parse(base.contacts().expect("contacts")).expect("contacts JSON");
+        for connection in connections {
+            var c = connection;
+            if now - c.activity >= c.interval * 5 / 2 {
+                continue;
+            }
+            let contact = match find(contacts, c.key) {
+                .Some(p) => p,
+                .None => {
+                    continue;
+                }
+            };
+            if now >= c.ping {
+                c.ping = now + c.interval;
+                if state.integer(contact, "OutPathLen") != 255 {
+                    let stamp = tag((wall + state.integer(document, "ClockOffset")) & 4294967295);
+                    let plain = wire.cat(wire.cat(wire.le(stamp, 4), wire.byte(2)), wire.le(state.integer(contact, "SyncSince"), 4));
+                    let p = packets.routed(packets.encrypted(key, c.key, 0, plain, false), contact, document, .None, false);
+                    c.ack = wire.ack(plain, wire.public_key(key));
+                    output.push(plan(0, p, 0));
+                }
+            }
+            live.push(c);
+        }
+        connections = live;
+        output
+    }
+}
+
+pub fn create(base: companion.Base) -> RF {
+    spawn RF(base: base, key: base.active_key().expect("active companion identity"))
+}

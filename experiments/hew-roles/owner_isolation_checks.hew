@@ -1,0 +1,38 @@
+import owner_control;
+import host_health;
+import hostlib.process;
+import storage;
+import transport;
+import std.os;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 2);
+    let lock = storage.lock(args[1] + "/service.lock");
+    assert(lock >= 0);
+    let worker = spawn process.WorkerBranch;
+    let branch = spawn owner_control.Branch(plan: owner_control.Plan {
+        root: args[1], lock: lock, worker: worker.worker });
+    let lifetime = spawn owner_control.Lifetime();
+    let task = fork owner_control.drive(branch.control, branch.admin, lifetime, 0);
+    let deadline = transport.monotonic() + 15000;
+    var requests: i64 = 0;
+    while transport.running() && transport.monotonic() < deadline {
+        branch.control.record_health(host_health.Snapshot {
+            roles: "{\"fixture\":\"live\"}", readiness: "{\"ready\":true}" }).expect("record fixture health");
+        if let .Ok(.Some(request)) = branch.admin.take_role() {
+            assert(request.role == 3 && request.command == "get name");
+            requests += 1;
+            println(f"WITHHELD request={requests}");
+            if requests == 2 { branch.admin.fence().expect("fence outstanding admin request"); }
+        }
+        sleep(20ms);
+    }
+    lifetime.close().expect("close fixture lifetime");
+    let _ = await task;
+    stop(branch); stopped(branch);
+    stop(worker); stopped(worker);
+    stop(lifetime); stopped(lifetime);
+    storage.unlock(lock);
+    assert(requests == 2);
+}

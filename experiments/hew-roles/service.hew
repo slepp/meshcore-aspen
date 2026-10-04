@@ -1,0 +1,1929 @@
+import wire;
+
+import roles;
+
+import meshproto.management;
+
+import meshproto.radio;
+
+import session;
+
+import transport;
+
+import hostlib.supervised_io as duplex;
+
+import hostlib.process;
+import hostlib.events;
+import std.stream;
+
+import storage;
+
+import worker_identity;
+
+import observer_runtime;
+import owner_control;
+import host_health;
+import meshproto.packet_log;
+import observer_queue;
+import observer_client;
+
+import std.crypto.crypto;
+
+import std.encoding.hex;
+
+import std.encoding.utf8;
+
+import std.string;
+
+fn control_write(fd: ChildRef<duplex.Endpoint>, packet: bytes, stage: string, epoch: i64) -> bool {
+    match duplex.write(fd, packet) {
+        .Ok(_) => true,
+        .Err(error) => {
+            let at = transport.now();
+            println(f"MODEM_CONTROL_FAILED epoch={epoch} stage={stage} at_ms={at} committed={error.committed} reason={to_string(error.error)}");
+            false
+        }
+    }
+}
+
+pub type Config {
+    address: string;
+    port: i64;
+    profile: bytes;
+    worker: string;
+    password: string;
+    admin: string;
+    width: i64;
+    region: bytes;
+    channel: bytes;
+    run_ms: i64;
+    native_airtime: i64;
+    bot_home: bytes;
+    bot_default: bytes;
+    relay_options: string;
+    room_options: string;
+    bot_name: string;
+    channel_name: string;
+    native_preserve: bool;
+    imported: bool;
+    observer_options: string;
+}
+
+fn config(root: string) -> Config {
+    let data = storage.read(root + "/config");
+    assert(!data.is_empty());
+    var address = "";
+    var port: i64 = 0;
+    var profile = bytes.new();
+    var worker = "-";
+    var password = "";
+    var admin = "";
+    var width: i64 = 3;
+    var region = bytes.new();
+    var channel = bytes.new();
+    var run_ms: i64 = 0;
+    var native_airtime: i64 = 360;
+    var bot_home = bytes.new();
+    var bot_default = bytes.new();
+    var relay_options = "name=Willow-Relay\ntxdelay_milli=500\ndirect_txdelay_milli=200\nevict=1\n";
+    var room_options = "name=Willow-Room\ntxdelay_milli=500\ndirect_txdelay_milli=200\nevict=1\n";
+    var bot_name = "Willow-Bot";
+    var channel_name = "Willow";
+    var native_preserve = false;
+    var imported = false;
+    var observer_options = "";
+    for line in utf8.decode(data).expect("UTF8 configuration").split("\n") {
+        if line.is_empty() {
+            continue;
+        }
+        let at = line.find("=").expect("configuration requires key=value");
+        let key = line.slice(0, at);
+        let value = line.slice(at + 1, line.len());
+        if key.starts_with("observer.") {
+            observer_options = observer_options + key.slice(9, key.len()) + "=" + value + "\n";
+            continue;
+        }
+        if key.starts_with("relay.") {
+            relay_options = relay_options + key.slice(6, key.len()) + "=" + value + "\n";
+            continue;
+        }
+        if key.starts_with("room.") {
+            room_options = room_options + key.slice(5, key.len()) + "=" + value + "\n";
+            continue;
+        }
+        match key {
+            "address" => {
+                address = value;
+            }
+            "port" => {
+                port = string.to_int(value).expect("port");
+            }
+            "profile" => {
+                profile = hex.decode(value);
+            }
+            "worker" => {
+                worker = value;
+            }
+            "password" => {
+                password = value;
+            }
+            "room_public" => {
+                assert(value == "0" || value == "1");
+                room_options = room_options + "public=" + value + "\n";
+            }
+            "admin" => {
+                admin = value;
+            }
+            "width" => {
+                width = string.to_int(value).expect("width");
+            }
+            "region" => {
+                region = hex.decode(value);
+            }
+            "channel" => {
+                channel = hex.decode(value);
+            }
+            "run_ms" => {
+                run_ms = string.to_int(value).expect("run_ms");
+            }
+            "native_airtime" => {
+                native_airtime = string.to_int(value).expect("native_airtime");
+            }
+            "bot_home" => {
+                bot_home = hex.decode(value);
+            }
+            "bot_default" => {
+                bot_default = hex.decode(value);
+            }
+            "bot_name" => {
+                bot_name = value;
+            }
+            "channel_name" => {
+                channel_name = value;
+            }
+            "native_setup" => {
+                assert(value == "configure" || value == "preserve");
+                native_preserve = value == "preserve";
+            }
+            "imported" => {
+                assert(value == "0" || value == "1");
+                imported = value == "1";
+            }
+            _ => {
+                panic("unknown configuration field");
+            }
+        }
+    }
+    assert(!address.is_empty() && port > 0 && port <= 65535 && profile.len() == 18);
+    assert(width >= 1 && width <= 3 && password.len() <= 63 && admin.len() <= 63);
+    assert((region.is_empty() || region.len() == 16) && (channel.is_empty() || channel.len() == 16));
+    assert(native_airtime >= 360 && native_airtime <= 3600);
+    assert(run_ms >= 0);
+    assert(!bot_name.is_empty() && bot_name.len() <= 31 && !channel_name.is_empty() && channel_name.len() <= 32);
+    for c in (bot_name + channel_name).to_bytes() {
+        assert(c >= 32 && c <= 126);
+    }
+    assert((bot_home.is_empty() || bot_home.len() == 16) && (bot_default.is_empty() || bot_default.len() == 16));
+    if worker == "-" && (!bot_home.is_empty() || !bot_default.is_empty()) {
+        panic("bot_home and bot_default require the verified native worker");
+    }
+    let frequency = wire.uint(wire.cut(profile, 0, 4));
+    let bandwidth = wire.uint(wire.cut(profile, 4, 8));
+    let factor = wire.uint(wire.cut(profile, 11, 15));
+    let valid_bandwidth = bandwidth == 7800 || bandwidth == 7810 || bandwidth == 10400 || bandwidth == 10420 || bandwidth == 15600 || bandwidth == 15630 || bandwidth == 20800 || bandwidth == 20830 || bandwidth == 31250 || bandwidth == 41700 || bandwidth == 62500 || bandwidth == 125000 || bandwidth == 250000 || bandwidth == 500000;
+    if frequency < 150000000 || frequency > 960000000 || !valid_bandwidth || profile[8] < 5 || profile[8] > 12 || profile[9] < 5 || profile[9] > 8 || profile[10] > 30 || profile[15] > 1 || !(factor < 2139095040 || factor == 2147483648) {
+        panic("invalid shared modem profile; check frequency, bandwidth, SF, CR, power, airtime factor and CAD");
+    }
+    Config { address: address, port: port, profile: profile, worker: worker, password: password, admin: admin, width: width, region: region, channel: channel, run_ms: run_ms, native_airtime: native_airtime, bot_home: bot_home, bot_default: bot_default, relay_options: relay_options, room_options: room_options, bot_name: bot_name, channel_name: channel_name, native_preserve: native_preserve, imported: imported, observer_options: observer_options }
+}
+
+fn verify_native(executable: string) {
+    if executable != worker_identity.path() {
+        panic("unverified external native worker; use build/native-worker from make native-worker");
+    }
+    if !transport.verify_worker(worker_identity.inputs(), worker_identity.digest()) {
+        panic("native worker source/binary verification failed; run make native-worker and rebuild hew-host");
+    }
+}
+
+fn launch_worker(executable: string, root: string) -> Option<process.Child> {
+    verify_native(executable);
+    transport.worker(executable, root)
+}
+
+fn launch_native(owner: ChildRef<process.WorkerOwner>, executable: string, root: string) -> Option<ChildRef<process.WorkerOwner>> {
+    verify_native(executable);
+    var arguments: Vec<string> = Vec.new();
+    arguments.push(root);
+    match owner.launch(executable, arguments) {
+        .Ok(result) => {
+            if result.is_ok() {
+                .Some(owner)
+            } else {
+                .None
+            }
+        }
+        .Err(_) => .None,
+    }
+}
+
+fn identity(path: string) -> bytes {
+    if storage.absent(path) {
+        let seed = crypto.random_bytes(32).expect("role identity entropy");
+        assert(storage.commit(path, seed) == 0);
+    }
+    let seed = storage.read(path);
+    assert(seed.len() == 32);
+    seed
+}
+
+fn expanded(seed: bytes) -> bytes {
+    let hash = crypto.sha512(seed);
+    var out = bytes.new();
+    for i in 0..64 {
+        var c = hash[i];
+        if i == 0 {
+            c = c & 248;
+        }
+        if i == 31 {
+            c = (c & 63) | 64;
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn hello(seed: bytes, profile: bytes, airtime: bytes) -> bytes {
+    session.frame(1, wire.cat(wire.cat(wire.cat(wire.le(1, 2), expanded(seed)), wire.cut(profile, 0, 11)), wire.cat(wire.le(0, 2), airtime)))
+}
+
+fn configure_worker(seed: bytes, cfg: Config, airtime: bytes, root: string) -> bool {
+    let fd = launch_worker(cfg.worker, root);
+    if fd.is_none() {
+        return false;
+    }
+    var ok = transport.send(fd, hello(seed, cfg.profile, airtime));
+    let decoder = spawn session.WorkerDecoder(buffer: bytes.new());
+    var pending: Vec<i64> = Vec.new();
+    var sent = false;
+    let deadline = transport.monotonic() + 10000;
+    while ok && transport.running() && transport.monotonic() < deadline && (!sent || !pending.is_empty()) {
+        let chunk = transport.read(fd, 20);
+        if chunk[0] == 2 {
+            ok = false;
+        }
+        if chunk[0] == 1 {
+            for message in decoder.feed(wire.cut(chunk, 1, chunk.len())).expect("native setup decoder") {
+                if message[0] == 134 && message.len() == 34 && !sent {
+                    var commands: Vec<string> = Vec.new();
+                    if !cfg.native_preserve {
+                        commands.push(f"path {cfg.width - 1}");
+                        commands.push(f"airtime {cfg.native_airtime}");
+                        commands.push(if cfg.channel.is_empty() {
+                            "channel off"
+                        } else {
+                            "channel " + hex.encode(cfg.channel_name.to_bytes()) + " " + hex.encode(cfg.channel)
+                        });
+                    }
+                    var id: i64 = 1;
+                    for command in commands {
+                        pending.push(id);
+                        ok = ok && transport.send(fd, session.frame(4, wire.cat(wire.le(id, 4), command.to_bytes())));
+                        id = id + 1;
+                    }
+                    sent = true;
+                } else if message[0] == 133 && message.len() >= 5 {
+                    let id = wire.uint(wire.cut(message, 1, 5));
+                    let reply = utf8.decode(wire.cut(message, 5, message.len())).expect("native setup reply");
+                    var keep: Vec<i64> = Vec.new();
+                    var found = false;
+                    for old in pending {
+                        if old == id {
+                            found = true;
+                        } else {
+                            keep.push(old);
+                        }
+                    }
+                    ok = ok && found && reply.starts_with("Saved");
+                    pending = keep;
+                } else if message[0] == 129 && message.len() >= 15 {
+                    // Setup is offline: decline startup TX rather than invent an RF success.
+                    ok = ok && transport.send(fd, session.result(wire.uint(wire.cut(message, 1, 5)), 0, 2, wire.le(0, 12)));
+                } else if message[0] == 132 {
+                    ok = false;
+                }
+            }
+        }
+        ok = ok && decoder.healthy().expect("native setup framing");
+    }
+    transport.close(fd);
+    ok && sent && pending.is_empty()
+}
+
+pub enum RoleFailure {
+    Stopped;
+    ActorFailed;
+    CommitFailed;
+    RestoreFailed;
+    SourcePolicyFailed;
+}
+
+impl Display for RoleFailure {
+    fn fmt(self) -> string {
+        match self {
+            RoleFailure.Stopped => "role remains stopped pending restart",
+            RoleFailure.ActorFailed => "role actor failed; replies suppressed",
+            RoleFailure.CommitFailed => "role snapshot commit failed; replies suppressed",
+            RoleFailure.RestoreFailed => "committed role snapshot unavailable or invalid; role quarantined",
+            RoleFailure.SourcePolicyFailed => "source airtime policy unconfirmed; committed setting retained, role quarantined",
+        }
+    }
+}
+
+fn role_frames(result: Result<Vec<roles.Tx>, RoleFailure>, port: i64) -> Vec<roles.Tx> {
+    match result {
+        .Ok(frames) => frames,
+        .Err(RoleFailure.Stopped) => Vec.new(),
+        .Err(error) => {
+            println(f"ROLE_OFFLINE port={port} reason={to_string(error)}");
+            Vec.new()
+        }
+    }
+}
+
+pub actor RoleEnvironment {
+    var table: bytes = bytes.new();
+    var source_factor: bytes = hex.decode("0000803f");
+    var quarantined: bool = false;
+    var generation: i64 = 0;
+    var fault_nonce: i64 = -1;
+    var last_flood: i64 = 0;
+    var event_group: Option<events.Group> = .None;
+    mailbox 8;
+    fn changed() {
+        if let .Some(group) = event_group { events.wake(group).expect("wake host role environment"); }
+    }
+    receive fn bind(consume group: events.Group) {
+        event_group = .Some(events.share(group));
+    }
+    receive fn retirement() -> Option<events.Notify> {
+        match event_group {
+            .Some(group) => .Some(events.notify_on_drop(group)),
+            .None => .None,
+        }
+    }
+    receive fn airtime(value: bytes) {
+        table = value;
+    }
+    receive fn current_airtime() -> bytes {
+        table
+    }
+    receive fn factor(value: bytes) {
+        let different = !wire.equal(source_factor, value);
+        source_factor = value;
+        if different { changed(); }
+    }
+    receive fn current_factor() -> bytes {
+        source_factor
+    }
+    receive fn flood_stamp(value: i64) {
+        last_flood = value;
+    }
+    receive fn current_flood() -> i64 {
+        last_flood
+    }
+    receive fn healthy() -> bool {
+        !quarantined
+    }
+    receive fn quarantine() {
+        quarantined = true;
+        changed();
+    }
+    receive fn incarnation() -> i64 {
+        generation += 1;
+        changed();
+        generation
+    }
+    receive fn inject_once(nonce: i64) -> bool {
+        if nonce == fault_nonce {
+            return false;
+        }
+        fault_nonce = nonce;
+        true
+    }
+}
+
+pub type RolePlan {
+    seed: bytes;
+    kind: i64;
+    name: string;
+    cfg: Config;
+    state: string;
+    environment: RoleEnvironment;
+}
+
+#[resource]
+type OwnedRole {
+    role: roles.Role;
+}
+
+impl OwnedRole {
+    fn close(consume self) {
+        stop(self.role);
+    }
+}
+
+pub actor RoleWorker {
+    let plan: RolePlan;
+    var owned: Option<OwnedRole> = .None;
+    var failed: bool = false;
+    var started_ms: i64 = 0;
+    var verified_factor: bytes = hex.decode("0000803f");
+    var policy_waiting: bool = false;
+    var policy_frames: Vec<roles.Tx> = Vec.new();
+    var policy_rx: Vec<session.Reception> = Vec.new();
+    var restarted: bool = false;
+    var retirement: Option<events.Notify> = .None;
+    mailbox 8;
+    fn quarantine(reason: RoleFailure) {
+        failed = true;
+        plan.environment.quarantine().expect("role quarantine");
+        let port = if plan.kind == 1 {
+            2
+        } else {
+            plan.kind - 2
+        };
+        println(f"ROLE_OFFLINE port={port} reason={to_string(reason)} state={plan.state}");
+    }
+    fn ensure() -> Option<roles.Role> {
+        if failed {
+            return .None;
+        }
+        if owned.is_none() {
+            retirement = plan.environment.retirement().expect("role retirement notification");
+            if !plan.environment.healthy().expect("role quarantine status") {
+                failed = true;
+                return .None;
+            }
+            if storage.absent(plan.state) {
+                quarantine(RoleFailure.RestoreFailed);
+                return .None;
+            }
+            let role = roles.create(plan.seed, plan.kind, plan.name, plan.cfg.password, plan.cfg.admin, plan.cfg.width, plan.cfg.region, plan.cfg.channel);
+            let owner = OwnedRole { role: role };
+            let options = if plan.kind == 2 {
+                plan.cfg.relay_options
+            } else if plan.kind == 3 {
+                plan.cfg.room_options
+            } else {
+                ""
+            };
+            let configured = if options.is_empty() {
+                true
+            } else {
+                match role.configure(options) {
+                    .Ok(ok) => ok,
+                    .Err(_) => false,
+                }
+            };
+            assert(role.logfile(plan.state + ".packet.log", 4194304).expect("role packet-log binding"));
+            let restored = match role.load(plan.state) {
+                .Ok(ok) => ok,
+                .Err(_) => false,
+            };
+            if !configured || !restored {
+                quarantine(RoleFailure.RestoreFailed);
+                return .None;
+            }
+            role.begin(transport.now()).expect("restored role uptime start");
+            role.profile(plan.cfg.profile).expect("restored shared profile");
+            role.bind_source_policy().expect("role source-policy binding");
+            role.bind_restart().expect("role restart binding");
+            role.persistent().expect("persistent restored role");
+            let last_flood = plan.environment.current_flood().expect("role flood schedule");
+            role.advert_timers(transport.now() / 1000, last_flood).expect("restored advert timers");
+            if !role.save(plan.state).expect("restored role preferences commit") {
+                quarantine(RoleFailure.CommitFailed);
+                return .None;
+            }
+            plan.environment.factor(role.source_factor().expect("restored committed source factor")).expect("retain source factor");
+            owned = .Some(owner);
+            started_ms = transport.now();
+            let generation = plan.environment.incarnation().expect("role incarnation");
+            println(f"ROLE_RESTORED state={plan.state} generation={generation}");
+        }
+        let role = match owned {
+            .Some(owner) => owner.role,
+            .None => {
+                return .None;
+            }
+        };
+        let table = plan.environment.current_airtime().expect("role airtime");
+        if !table.is_empty() {
+            assert(role.airtime(table).expect("restored role airtime"));
+        }
+        .Some(role)
+    }
+    fn stage(role: roles.Role, frames: Vec<roles.Tx>) -> Vec<roles.Tx> {
+        let factor = role.source_factor().expect("committed role source factor");
+        plan.environment.factor(factor).expect("retain committed source factor");
+        if !session.same_factor(factor, verified_factor) { policy_waiting = true; }
+        if !policy_waiting { return frames; }
+        if policy_frames.len() + frames.len() > 64 {
+            println(f"ROLE_SOURCE_POLICY_QUEUE_FULL state={plan.state} limit=64; role replies suppressed");
+            quarantine(RoleFailure.SourcePolicyFailed);
+            return Vec.new();
+        }
+        for frame in frames { policy_frames.push(frame); }
+        Vec.new()
+    }
+    fn restart(role: roles.Role) {
+        if !role.restart_pending().expect("committed role restart status") { return; }
+        policy_frames = Vec.new();
+        if !policy_rx.is_empty() {
+            println(f"ROLE_RESTART_RX_DROPPED state={plan.state} count={policy_rx.len()}; queued packets belonged to the previous incarnation");
+        }
+        policy_rx = Vec.new();
+        policy_waiting = true;
+        owned = .None;
+        stopped(role);
+        restarted = true;
+        println(f"ROLE_RESTARTED state={plan.state}; committed identity and replay state retained");
+    }
+    receive fn take_restart() -> bool {
+        let value = restarted;
+        restarted = false;
+        value
+    }
+    receive fn expected_factor() -> bytes {
+        match ensure() {
+            .Some(role) => role.source_factor().expect("committed role source factor"),
+            .None => verified_factor,
+        }
+    }
+    receive fn source_reset(factor: bytes) {
+        verified_factor = factor;
+    }
+    receive fn source_disconnected() {
+        if !failed && policy_waiting {
+            policy_frames = Vec.new();
+            policy_rx = Vec.new();
+            quarantine(RoleFailure.SourcePolicyFailed);
+        }
+    }
+    receive fn policy_request() -> Option<bytes> {
+        let role = match ensure() { .Some(role) => role, .None => return .None };
+        let factor = role.source_factor().expect("committed role source factor");
+        plan.environment.factor(factor).expect("retain committed source factor");
+        if session.same_factor(factor, verified_factor) && !policy_waiting { return .None; }
+        policy_waiting = true;
+        .Some(factor)
+    }
+    receive fn policy_complete(factor: bytes, ok: bool) -> Vec<roles.Tx> {
+        if !policy_waiting || failed { return Vec.new(); }
+        let role = match ensure() { .Some(role) => role, .None => return Vec.new() };
+        if !ok || !wire.equal(factor, role.source_factor().expect("committed role source factor")) {
+            policy_frames = Vec.new();
+            policy_rx = Vec.new();
+            quarantine(RoleFailure.SourcePolicyFailed);
+            return Vec.new();
+        }
+        verified_factor = factor;
+        policy_waiting = false;
+        let frames = policy_frames;
+        policy_frames = Vec.new();
+        frames
+    }
+    receive fn gate(frames: Vec<roles.Tx>) -> Vec<roles.Tx> {
+        let role = match ensure() { .Some(role) => role, .None => return Vec.new() };
+        stage(role, frames)
+    }
+    fn inject(point: i64) {
+        if transport.supervision_testing() {
+            let fault = storage.read(plan.state + ".inject");
+            if fault.len() == 2 && fault[0] as i64 == point && plan.environment.inject_once(fault[1] as i64).expect("fault nonce") {
+                panic("injected production role incarnation failure");
+            }
+        }
+    }
+    receive fn available() -> bool {
+        ensure().is_some()
+    }
+    receive fn command_state() -> i64 {
+        if ensure().is_none() { -1 } else if policy_waiting { 0 } else { 1 }
+    }
+    receive fn health(phy_generation: i64) -> host_health.Role {
+        let running = ensure().is_some();
+        host_health.Role { name: if plan.kind == 2 { "repeater" } else if plan.kind == 3 { "room" } else { "bot" },
+            key: hex.encode(wire.public_key(plan.seed)), started_ms: started_ms,
+            running: running, native: false, phy_generation: phy_generation }
+    }
+    receive fn owner_command(command: string, now: i64) -> Result<string, RoleFailure> {
+        let role = match ensure() {
+            .Some(role) => role,
+            .None => return .Err(RoleFailure.Stopped),
+        };
+        if policy_waiting { return .Err(RoleFailure.Stopped); }
+        let reply = role.owner_command(command, now).expect("role owner command actor");
+        match role.save(plan.state) {
+            .Ok(true) => .Ok(reply),
+            _ => {
+                quarantine(RoleFailure.CommitFailed);
+                .Err(RoleFailure.CommitFailed)
+            }
+        }
+    }
+    receive fn advert(now: i64) -> bytes {
+        let role = match ensure() {
+            .Some(role) => role,
+            .None => {
+                return bytes.new();
+            }
+        };
+        let packet = role.advert(now).expect("role advert");
+        match role.save(plan.state) {
+            .Ok(true) => packet,
+            _ => {
+                quarantine(RoleFailure.CommitFailed);
+                bytes.new()
+            }
+        }
+    }
+    receive fn startup_advert(now: i64, last_flood: i64, reconnect: bool) -> bytes {
+        let role = match ensure() {
+            .Some(role) => role,
+            .None => {
+                return bytes.new();
+            }
+        };
+        match role.startup_advert(now, last_flood, reconnect) {
+            .Ok(packet) => {
+                match role.save(plan.state) {
+                    .Ok(true) => packet,
+                    _ => {
+                        quarantine(RoleFailure.CommitFailed);
+                        bytes.new()
+                    }
+                }
+            }
+            .Err(_) => {
+                panic("role state actor failed during advert")
+            }
+        }
+    }
+    fn receive_batch(packets: Vec<session.Reception>, now: i64, queued: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
+        let role = match ensure() {
+            .Some(role) => role,
+            .None => {
+                return .Err(RoleFailure.Stopped);
+            }
+        };
+        for received in packets {
+            if policy_rx.len() >= 64 {
+                println(f"ROLE_SOURCE_POLICY_RX_FULL state={plan.state} limit=64; received packet dropped");
+            } else { policy_rx.push(received); }
+        }
+        if policy_waiting { return .Ok(Vec.new()); }
+        let input = policy_rx;
+        policy_rx = Vec.new();
+        var frames: Vec<roles.Tx> = Vec.new();
+        if !input.is_empty() && role.queue(queued).is_err() {
+            panic("role state actor failed during queue accounting");
+        }
+        var processed: i64 = 0;
+        for received in input {
+            if policy_waiting || processed >= 8 || role.restart_pending().expect("role restart request") {
+                policy_rx.push(received);
+                continue;
+            }
+            processed += 1;
+            if !received.raw.is_empty() {
+                let kind = ((received.raw[0] as i64) >> 2) & 15;
+                if kind == 7 || kind == 8 {
+                    if let .Some(packet) = wire.decode(received.raw) {
+                        let port = received.port;
+                        let route = packet.route;
+                        let width = (packet.pathlen >> 6) + 1;
+                        let hops = packet.pathlen & 63;
+                        let origin = received.metadata[8] as i64;
+                        println(f"ROLE_RX port={port} kind={kind} route={route} path_width={width} path_hops={hops} origin={origin} at_ms={now}");
+                    }
+                }
+            }
+            if role.measurement(received.metadata).is_err() {
+                panic("role state actor failed during signal update");
+            }
+            let result = match role.ingest(received.raw, now, received.metadata[8] == 1) {
+                .Ok(result) => result,
+                .Err(_) => {
+                    panic("role state actor failed during packet processing");
+                }
+            };
+            for tx in result {
+                frames.push(tx);
+            }
+            if !session.same_factor(role.source_factor().expect("updated role source factor"), verified_factor) {
+                policy_waiting = true;
+            }
+        }
+        if processed != 0 {
+            inject(1);
+            match role.save(plan.state) {
+                .Ok(true) => {}
+                _ => {
+                    quarantine(RoleFailure.CommitFailed);
+                    return .Err(RoleFailure.CommitFailed);
+                }
+            }
+            inject(2);
+        }
+        let out = stage(role, frames);
+        restart(role);
+        .Ok(out)
+    }
+    receive fn batch(packets: Vec<session.Reception>, now: i64, queued: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
+        receive_batch(packets, now, queued)
+    }
+    receive fn telemetry(value: management.Telemetry) {
+        if let .Some(role) = ensure() {
+            if role.telemetry(value).is_err() {
+                panic("role state actor failed during telemetry update");
+            }
+        }
+    }
+    receive fn confirmed(raw: bytes) {
+        if let .Some(role) = ensure() {
+            if role.confirmed(raw).is_err() {
+                panic("role state actor failed during TX accounting");
+            }
+        }
+    }
+    receive fn outcome(raw: bytes, value: packet_log.Outcome, now: i64) {
+        if let .Some(role) = ensure() {
+            if role.outcome(raw, value, now).is_err() {
+                panic("role state actor failed during TX outcome logging");
+            }
+        }
+    }
+    receive fn next_deadline(now: i64) -> i64 {
+        let role = match ensure() { .Some(value) => value, .None => return 9223372036854775807 };
+        if policy_waiting { return 9223372036854775807; }
+        if !policy_rx.is_empty() { return now; }
+        role.next_deadline(now).expect("role timer deadline")
+    }
+    receive fn tick(now: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
+        var ready: Vec<roles.Tx> = Vec.new();
+        if !policy_rx.is_empty() && !policy_waiting {
+            ready = receive_batch(Vec.new(), now, 0)?;
+            if restarted { return .Ok(ready); }
+        }
+        let role = match ensure() {
+            .Some(role) => role,
+            .None => {
+                return .Err(RoleFailure.Stopped);
+            }
+        };
+        if policy_waiting || role.next_deadline(now).expect("role timer deadline") > now { return .Ok(ready); }
+        let out = match role.tick(now) {
+            .Ok(frames) => frames,
+            .Err(_) => {
+                panic("role state actor failed during tick");
+            }
+        };
+        let rx_changed = role.take_rx_commit().expect("held receive commit status");
+        if !out.is_empty() || rx_changed {
+            match role.save(plan.state) {
+                .Ok(true) => {}
+                _ => {
+                    quarantine(RoleFailure.CommitFailed);
+                    return .Err(RoleFailure.CommitFailed);
+                }
+            }
+        }
+        for frame in out { ready.push(frame); }
+        let frames = stage(role, ready);
+        restart(role);
+        .Ok(frames)
+    }
+}
+
+pub supervisor RoleBranch(plan: RolePlan) {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child role: RoleWorker(plan: plan);
+}
+
+fn log_outcomes(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>) {
+    for event in link.outcomes().expect("terminal TX logging outcomes") {
+        let delivered = if event.port == 0 {
+            relay.outcome(event.raw, event.value, transport.now()).is_ok()
+        } else if event.port == 1 {
+            room.outcome(event.raw, event.value, transport.now()).is_ok()
+        } else { true };
+        if !delivered {
+            let port = event.port;
+            println(f"PACKET_LOG_ROUTING_FAILED port={port} condition=role-actor-unavailable; terminal TX record was not delivered");
+        }
+    }
+}
+
+type HealthPlan {
+    control: ChildRef<owner_control.Control>;
+    relay: ChildRef<RoleWorker>;
+    room: ChildRef<RoleWorker>;
+    bot: ChildRef<RoleWorker>;
+    publisher: ChildRef<observer_client.Publisher>;
+    outbox: ChildRef<observer_queue.Outbox>;
+    relay_key: string;
+    room_key: string;
+    bot_key: string;
+    observer_key: string;
+    native: bool;
+    observer: bool;
+    endpoint: string;
+    started_ms: i64;
+}
+
+fn role_health(worker: ChildRef<RoleWorker>, name: string, key: string, generation: i64) -> host_health.Role {
+    match worker.health(generation) {
+        .Ok(value) => value,
+        .Err(_) => host_health.Role { name: name, key: key, started_ms: 0, running: false, native: false, phy_generation: generation },
+    }
+}
+
+fn publish_health(plan: HealthPlan, connected: bool, native_ready: bool, native_started: i64,
+    generations: Vec<i64>, sensors: radio.Sampler, table: bytes) {
+    var roles: Vec<host_health.Role> = Vec.new();
+    let relay_generation = if generations.len() >= 3 { generations[0] } else { 0 };
+    let room_generation = if generations.len() >= 3 { generations[1] } else { 0 };
+    let bot_generation = if generations.len() >= 3 { generations[2] } else { 0 };
+    roles.push(role_health(plan.relay, "repeater", plan.relay_key, relay_generation));
+    roles.push(role_health(plan.room, "room", plan.room_key, room_generation));
+    roles.push(if plan.native {
+        host_health.Role { name: "bot", key: plan.bot_key, started_ms: native_started,
+            running: native_ready, native: true, phy_generation: bot_generation }
+    } else { role_health(plan.bot, "bot", plan.bot_key, bot_generation) });
+    var publisher: Option<observer_client.Snapshot> = .None;
+    var outbox: Option<observer_queue.Statistics> = .None;
+    if plan.observer {
+        publisher = match plan.publisher.snapshot() { .Ok(value) => .Some(value), .Err(_) => .None };
+        outbox = match plan.outbox.statistics() { .Ok(value) => .Some(value), .Err(_) => .None };
+        let generation = if generations.len() == 4 { generations[3] } else { 0 };
+        let running = match publisher { .Some(value) => value.phase != observer_client.Phase.Quarantined && value.phase != observer_client.Phase.Stopped, .None => false };
+        roles.push(host_health.Role { name: "observer", key: plan.observer_key, started_ms: plan.started_ms,
+            running: running, native: false, phy_generation: generation });
+    }
+    var airtime: Vec<i64> = Vec.new();
+    if table.len() == 1024 {
+        for i in 0..256 { airtime.push(wire.uint(wire.cut(table, i * 4, i * 4 + 4))); }
+    }
+    let snapshot = host_health.snapshot(roles, connected, plan.endpoint, sensors, airtime, publisher, outbox);
+    if plan.control.record_health(snapshot).is_err() {
+        println("HOST_MONITORING_OFFLINE reason=owner-control-actor-unavailable");
+    }
+}
+
+fn source(seed: bytes, kind: i64, name: string, cfg: Config, state: string) -> roles.Role {
+    let role = roles.create(seed, kind, name, cfg.password, cfg.admin, cfg.width, cfg.region, cfg.channel);
+    role.begin(transport.now()).expect("role uptime start");
+    role.profile(cfg.profile).expect("negotiated profile contract");
+    assert(role.logfile(state + ".packet.log", 4194304).expect("role packet-log binding"));
+    if kind == 2 {
+        assert(role.configure(cfg.relay_options).expect("relay configuration"));
+    }
+    if kind == 3 {
+        assert(role.configure(cfg.room_options).expect("room configuration"));
+    }
+    if !storage.absent(state) {
+        assert(role.load(state).expect("restore role state"));
+    }
+    role.persistent().expect("persistent role");
+    if storage.absent(state) {
+        assert(role.save(state).expect("initial committed role snapshot"));
+    }
+    role
+}
+
+fn initialize_role(seed: bytes, kind: i64, name: string, cfg: Config, state: string, allow_new: bool) {
+    if !allow_new || !storage.absent(state) {
+        return;
+    }
+    let role = source(seed, kind, name, cfg, state);
+    stop(role);
+    stopped(role);
+}
+
+fn tick_roles(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>,
+    native: bool, root: string, relay_environment: RoleEnvironment, room_environment: RoleEnvironment,
+    var last_relay_flood: i64, var last_room_flood: i64) -> (i64, i64) {
+    // A turn owns its forked tasks; the service's lifetime must not retain them.
+    let relay_tick = fork relay.tick(transport.now());
+    let room_tick = fork room.tick(transport.now());
+    let bot_tick = fork tick_bot(bot, native, transport.now());
+    let room_frames = match await room_tick {
+        .Ok(result) => role_frames(result, 1),
+        .Err(_) => Vec.new(),
+    };
+    let relay_frames = match await relay_tick {
+        .Ok(result) => role_frames(result, 0),
+        .Err(_) => Vec.new(),
+    };
+    var changed = false;
+    fence_restarted_role(link, relay, 0);
+    fence_restarted_role(link, room, 1);
+    for item in room_frames {
+        let packet = wire.decode(item.raw).expect("room timer packet");
+        if packet.kind == 4 && roles.flood(packet) {
+            last_room_flood = transport.now() / 1000;
+            changed = true;
+        }
+    }
+    for item in relay_frames {
+        let packet = wire.decode(item.raw).expect("relay timer packet");
+        if packet.kind == 4 && roles.flood(packet) {
+            last_relay_flood = transport.now() / 1000;
+            changed = true;
+        }
+    }
+    if changed {
+        advert_times(root, last_relay_flood, last_room_flood);
+        relay_environment.flood_stamp(last_relay_flood).expect("relay flood reservation");
+        room_environment.flood_stamp(last_room_flood).expect("room flood reservation");
+    }
+    emit(link, 1, room_frames);
+    emit(link, 0, relay_frames);
+    if !native {
+        match await bot_tick {
+            .Ok(frames) => emit(link, 2, frames),
+            .Err(_) => {}
+        }
+    } else {
+        let _ = await bot_tick;
+    }
+    (last_relay_flood, last_room_flood)
+}
+
+fn tick_bot(bot: ChildRef<RoleWorker>, native: bool, now: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
+    if native { return .Ok(Vec.new()); }
+    match bot.tick(now) { .Ok(result) => result, .Err(_) => .Err(RoleFailure.Stopped) }
+}
+
+fn role_deadline(worker: ChildRef<RoleWorker>, now: i64) -> i64 {
+    match worker.next_deadline(now) {
+        .Ok(value) => value,
+        .Err(_) => 9223372036854775807,
+    }
+}
+
+fn role_timer(relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool) -> i64 {
+    let utc = transport.now();
+    var due = role_deadline(relay, utc);
+    let room_due = role_deadline(room, utc);
+    if room_due < due { due = room_due; }
+    if !native {
+        let bot_due = role_deadline(bot, utc);
+        if bot_due < due { due = bot_due; }
+    }
+    if due == 9223372036854775807 { return due; }
+    transport.monotonic() + (if due > utc { due - utc } else { 0 })
+}
+
+fn native_watch(slot: Option<ChildRef<process.WorkerOwner>>, group: events.Group) -> i64 {
+    let result = match slot {
+        .Some(owner) => owner.watch(events.share(group)),
+        .None => return 0,
+    };
+    match result {
+        .Ok(.Ok(key)) => key,
+        .Ok(.Err(error)) => {
+            println(f"BOT_READINESS_FAILED reason={to_string(error)}");
+            0
+        }
+        .Err(_) => {
+            println("BOT_READINESS_FAILED reason=native-owner-unavailable");
+            0
+        }
+    }
+}
+
+fn earlier(deadline: i64, candidate: i64) -> i64 {
+    if candidate > 0 && candidate < deadline { candidate } else { deadline }
+}
+
+fn emit(link: session.Session, port: i64, frames: Vec<roles.Tx>) {
+    for item in frames {
+        let p = wire.decode(item.raw).expect("role produced valid packet");
+        let priority: i64 = if roles.flood(p) {
+            if item.relayed {
+                p.pathlen & 63
+            } else if p.kind == 4 {
+                3
+            } else if p.kind == 8 {
+                2
+            } else {
+                1
+            }
+        } else {
+            if p.kind == 9 {
+                5
+            } else if p.kind == 8 && !item.relayed {
+                1
+            } else {
+                0
+            }
+        };
+        let admitted = link.submit(port, item.raw, priority, item.delay, 0, 0).expect("submit role packet");
+        if admitted <= 0 {
+            println(f"REJECTED port={port} reason=queue-or-connection");
+        }
+    }
+}
+
+fn sync_role_policy(link: session.Session, worker: ChildRef<RoleWorker>, port: i64, other_control: bool) {
+    if port == 0 && other_control { return; }
+    if let .Ok(.Some(factor)) = worker.policy_request() {
+        let result = link.apply_policy(port, factor).expect("role source policy request");
+        if result != 0 {
+            if let .Ok(frames) = worker.policy_complete(factor, result == 1) { emit(link, port, frames); }
+        }
+    }
+}
+
+fn fence_restarted_role(link: session.Session, worker: ChildRef<RoleWorker>, port: i64) {
+    if let .Ok(true) = worker.take_restart() {
+        link.fence_role(port).expect("retire previous role transmissions");
+    }
+}
+
+fn reconnect_factor(worker: ChildRef<RoleWorker>, environment: RoleEnvironment, port: i64) -> bytes {
+    match worker.expected_factor() {
+        .Ok(value) => value,
+        .Err(_) => {
+            let value = environment.current_factor().expect("retained source factor");
+            println(f"ROLE_OFFLINE port={port} reason=role-actor-unavailable; reconnect retains source_factor_bits={hex.encode(value)} without enabling role replies");
+            value
+        }
+    }
+}
+
+fn policy_results(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>) {
+    for result in link.policy_results().expect("role source policy outcomes") {
+        let frames = if result.port == 0 {
+            relay.policy_complete(result.factor, result.ok)
+        } else {
+            room.policy_complete(result.factor, result.ok)
+        };
+        if let .Ok(ready) = frames { emit(link, result.port, ready); }
+    }
+}
+
+fn until(end: i64) -> bool {
+    transport.running() && (end == 0 || transport.monotonic() < end)
+}
+
+fn reconnect_wait(attempt: i64) {
+    let steps = if attempt <= 1 {
+        1
+    } else if attempt == 2 {
+        2
+    } else if attempt == 3 {
+        4
+    } else if attempt == 4 {
+        8
+    } else if attempt == 5 {
+        16
+    } else if attempt == 6 {
+        32
+    } else {
+        60
+    };
+    for i in 0..steps {
+        if !transport.running() {
+            return;
+        }
+        sleep(500ms);
+    }
+}
+
+fn advert_times(root: string, relay: i64, room: i64) {
+    if storage.commit(root + "/advert-times", wire.cat("ADT1".to_bytes(), wire.cat(wire.le(relay, 4), wire.le(room, 4)))) != 0 {
+        panic("advert schedule commit failed; flood adverts suppressed");
+    }
+}
+
+fn cancel_native(fd: Option<ChildRef<process.WorkerOwner>>, decoder: session.WorkerDecoder, control: ChildRef<owner_control.Control>, admin: ChildRef<owner_control.Admin>) -> bool {
+    let request_id: i64 = 4294967294;
+    if !transport.native_send(fd, session.frame(4, wire.cat(wire.le(request_id, 4), "cancel".to_bytes()))) {
+        return false;
+    }
+    let deadline = transport.monotonic() + 2000;
+    var confirmed = false;
+    while transport.running() && transport.monotonic() < deadline && !confirmed {
+        let data = transport.native_read(fd, 20);
+        if data[0] == 2 {
+            return false;
+        }
+        if data[0] == 1 {
+            for message in decoder.feed(wire.cut(data, 1, data.len())).expect("offline worker framing") {
+                if message[0] == 129 && message.len() >= 15 && message.len() <= 269 {
+                    let token = wire.uint(wire.cut(message, 1, 5));
+                    if !transport.native_send(fd, session.result(token, 0, 9, wire.le(0, 12))) {
+                        return false;
+                    }
+                } else if message[0] == 133 && message.len() >= 5 && wire.uint(wire.cut(message, 1, 5)) == request_id {
+                    let reply = utf8.decode_lossy(wire.cut(message, 5, message.len()));
+                    if !reply.starts_with("Cancelled running bot commands/events;") {
+                        return false;
+                    }
+                    confirmed = true;
+                } else if message[0] == 133 || message[0] == 136 || message[0] == 137 {
+                    let result = if message[0] == 133 { admin.event(message) } else { control.event(message) };
+                    match result {
+                        .Ok(valid) => { if !valid { return false; } }
+                        .Err(_) => {}
+                    }
+                } else if !((message[0] == 131 && message.len() == 31) || ((message[0] == 130 || message[0] == 134) && message.len() == 34)) {
+                    return false;
+                }
+            }
+        }
+        if !decoder.healthy().expect("offline worker health") {
+            return false;
+        }
+    }
+    confirmed
+}
+
+fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool, ready: bool, worker_fd: Option<ChildRef<process.WorkerOwner>>, observer: ChildRef<observer_queue.Outbox>, observing: bool) -> bool {
+    if packets.is_empty() { return true; }
+    var relay_rx: Vec<session.Reception> = Vec.new();
+    var room_rx: Vec<session.Reception> = Vec.new();
+    var bot_rx: Vec<session.Reception> = Vec.new();
+    var dropped: i64 = 0;
+    var ok = true;
+    for received in packets {
+        if received.port == 3 {
+            if observing {
+                observer_runtime.observe(observer, received);
+            }
+            continue;
+        }
+        if received.port == 0 {
+            if relay_rx.len() < 8 {
+                relay_rx.push(received);
+            } else {
+                dropped = dropped + 1;
+            }
+        } else if received.port == 1 {
+            if room_rx.len() < 8 {
+                room_rx.push(received);
+            } else {
+                dropped = dropped + 1;
+            }
+        } else {
+            if bot_rx.len() < 8 {
+                bot_rx.push(received);
+            } else {
+                dropped = dropped + 1;
+            }
+        }
+    }
+    let queued = if packets.is_empty() {
+        [0, 0, 0]
+    } else {
+        link.queued().expect("per-role queue depth")
+    };
+    let relay_task = fork relay.batch(relay_rx, transport.now(), queued[0]);
+    let room_task = fork room.batch(room_rx, transport.now(), queued[1]);
+    var hew_bot_rx: Vec<session.Reception> = Vec.new();
+    if native {
+        for received in bot_rx {
+            if ready {
+                ok = ok && transport.native_send(worker_fd, session.frame(2, wire.cat(received.metadata, received.raw)));
+            }
+        }
+    } else {
+        hew_bot_rx = bot_rx;
+    }
+    let bot_task = fork bot.batch(hew_bot_rx, transport.now(), queued[2]);
+    let relay_result = await relay_task;
+    let room_result = await room_task;
+    fence_restarted_role(link, relay, 0);
+    fence_restarted_role(link, room, 1);
+    match relay_result {
+        .Ok(result) => emit(link, 0, role_frames(result, 0)),
+        .Err(_) => {}
+    }
+    match room_result {
+        .Ok(result) => emit(link, 1, role_frames(result, 1)),
+        .Err(_) => {}
+    }
+    match await bot_task {
+        .Ok(result) => emit(link, 2, role_frames(result, 2)),
+        .Err(_) => {}
+    }
+    if dropped > 0 {
+        println(f"RX_DROPPED count={dropped} reason=role-batch-capacity");
+    }
+    ok
+}
+
+pub fn run(root: string) {
+    assert(root.starts_with("/") && transport.directory(root));
+    let lock = storage.lock(root + "/service");
+    assert(lock >= 0);
+    transport.signals();
+    let cfg = config(root);
+    let observer_settings = observer_runtime.configure(root, cfg.observer_options, lock);
+    assert(storage.recover(root + "/roles.initialized", lock));
+    let initialized = !storage.absent(root + "/roles.initialized");
+    let existing_role_state = !storage.absent(root + "/relay.state") || !storage.absent(root + "/room.state") || !storage.absent(root + "/bot.state");
+    if initialized || existing_role_state {
+        for name in ["relay.seed", "room.seed", "bot.seed"] {
+            if storage.absent(root + "/" + name) {
+                panic("initialized role identity missing; restore the committed seed: " + name);
+            }
+        }
+    }
+    assert(storage.recover(root + "/advert-times", lock));
+    var last_relay_flood: i64 = 0;
+    var last_room_flood: i64 = 0;
+    if !storage.absent(root + "/advert-times") {
+        let times = storage.read(root + "/advert-times");
+        assert(times.len() == 12 && wire.equal(wire.cut(times, 0, 4), "ADT1".to_bytes()));
+        last_relay_flood = wire.uint(wire.cut(times, 4, 8));
+        last_room_flood = wire.uint(wire.cut(times, 8, 12));
+    }
+    if cfg.imported {
+        if storage.read(root + "/migration.json").is_empty() {
+            panic("imported Willow state is missing its completed migration record");
+        }
+        for file in ["relay.seed", "room.seed", "bot.seed", "relay.state", "room.state"] {
+            if storage.absent(root + "/" + file) {
+                if initialized && file.ends_with(".state") {
+                    continue;
+                }
+                panic("imported Willow state is incomplete; restore the migration before starting: " + file);
+            }
+        }
+    }
+    if cfg.worker != "-" {
+        verify_native(cfg.worker);
+    }
+    for name in ["relay", "room", "bot"] {
+        for suffix in [".seed", ".state"] {
+            let path = root + "/" + name + suffix;
+            if !storage.recover(path, lock) {
+                panic("role staging recovery failed; check private pending-file ownership and service lock: " + path + ".pending");
+            }
+        }
+    }
+    let relay_seed = identity(root + "/relay.seed");
+    let room_seed = identity(root + "/room.seed");
+    let bot_seed = identity(root + "/bot.seed");
+    if observer_settings.enabled {
+        let key = observer_settings.config.identity;
+        if wire.equal(key, wire.public_key(relay_seed)) || wire.equal(key, wire.public_key(room_seed)) || wire.equal(key, wire.public_key(bot_seed)) {
+            panic("observer identity overlaps relay, room or bot; restore each role's original seed");
+        }
+    }
+    let identities = wire.cat("RLS1".to_bytes(), wire.cat(wire.public_key(relay_seed), wire.cat(wire.public_key(room_seed), wire.public_key(bot_seed))));
+    if initialized {
+        assert(wire.equal(storage.read(root + "/roles.initialized"), identities));
+    }
+    let allow_new = !initialized && !cfg.imported && !existing_role_state;
+    initialize_role(relay_seed, 2, "Willow-Relay", cfg, root + "/relay.state", allow_new);
+    initialize_role(room_seed, 3, "Willow-Room", cfg, root + "/room.state", allow_new);
+    initialize_role(bot_seed, 1, cfg.bot_name, cfg, root + "/bot.state", !initialized && (allow_new || cfg.worker != "-"));
+    if !initialized {
+        assert(storage.commit(root + "/roles.initialized", identities) == 0);
+    }
+    let relay_environment = spawn RoleEnvironment();
+    let room_environment = spawn RoleEnvironment();
+    let bot_environment = spawn RoleEnvironment();
+    relay_environment.flood_stamp(last_relay_flood).expect("relay flood schedule");
+    room_environment.flood_stamp(last_room_flood).expect("room flood schedule");
+    let relay_branch = spawn RoleBranch(plan: RolePlan { seed: relay_seed, kind: 2, name: "Willow-Relay", cfg: cfg, state: root + "/relay.state", environment: relay_environment });
+    let room_branch = spawn RoleBranch(plan: RolePlan { seed: room_seed, kind: 3, name: "Willow-Room", cfg: cfg, state: root + "/room.state", environment: room_environment });
+    let bot_branch = spawn RoleBranch(plan: RolePlan { seed: bot_seed, kind: 1, name: cfg.bot_name, cfg: cfg, state: root + "/bot.state", environment: bot_environment });
+    let relay_worker = relay_branch.role;
+    let room_worker = room_branch.role;
+    let bot_worker = bot_branch.role;
+    let use_native = cfg.worker != "-";
+    if use_native {
+        assert(transport.directory(root + "/native"));
+        assert(transport.directory(root + "/native/nvs"));
+        assert(transport.directory(root + "/native/spiffs"));
+        if cfg.native_preserve && storage.absent(root + "/native/nvs/nvs.snapshot") {
+            panic("native_setup=preserve requires the imported native NVS snapshot");
+        }
+        if !storage.recover(root + "/native/host-name", lock) {
+            panic("native name staging recovery failed");
+        }
+        if storage.absent(root + "/native/host-name") {
+            assert(storage.commit(root + "/native/host-name", wire.cat("HNM1".to_bytes(), cfg.bot_name.to_bytes())) == 0);
+        }
+        if !storage.recover(root + "/native/scopes", lock) {
+            panic("native scope staging recovery failed; check private pending-file ownership");
+        }
+        let home = if cfg.bot_home.is_empty() {
+            wire.le(0, 16)
+        } else {
+            cfg.bot_home
+        };
+        let fallback = if cfg.bot_default.is_empty() {
+            wire.le(0, 16)
+        } else {
+            cfg.bot_default
+        };
+        assert(storage.commit(root + "/native/scopes", wire.cat("SCP1".to_bytes(), wire.cat(home, fallback))) == 0);
+    }
+    let end = if cfg.run_ms > 0 {
+        transport.monotonic() + cfg.run_ms
+    } else {
+        0
+    };
+    let event_group = events.open().expect("open host readiness");
+    let (event_output, event_input) = stream.pipe<events.Event>(64).expect("host readiness stream");
+    let event_shutdown = events.driver(event_group, event_input);
+    let owner_events = events.open().expect("open owner readiness");
+    let (owner_output, owner_input) = stream.pipe<events.Event>(64).expect("owner readiness stream");
+    let owner_channel = events.channel(event_group, owner_events).expect("route owner readiness");
+    let observer_events = events.open().expect("open observer readiness");
+    let (observer_output, observer_input) = stream.pipe<events.Event>(64).expect("observer readiness stream");
+    let observer_channel = events.channel(event_group, observer_events).expect("route observer readiness");
+    let event_pump = spawn events.Pump(group: events.share(event_group), output: event_output,
+        routes: [events.Route { key: owner_channel.key, output: owner_output },
+                 events.Route { key: observer_channel.key, output: observer_output }]);
+    mailbox(event_pump, on_full: .Wait).run().expect("start host readiness pump");
+    relay_environment.bind(events.share(event_group)).expect("bind relay events");
+    room_environment.bind(events.share(event_group)).expect("bind room events");
+    bot_environment.bind(events.share(event_group)).expect("bind bot events");
+    let observer_queue_branch = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
+        config: observer_settings.config, capacity: observer_settings.capacity, active: observer_settings.enabled });
+    let observer_branch = spawn observer_client.PublisherBranch(plan: observer_client.Plan {
+        outbox: observer_queue_branch.outbox, config: observer_settings.config,
+        url: observer_settings.url, ca_file: observer_settings.ca_file,
+        client_id: observer_settings.client_id, username: observer_settings.username,
+        password: observer_settings.password, audience: observer_settings.audience, seed: observer_settings.seed });
+    let observer_lifetime = spawn observer_runtime.Lifetime();
+    let observer_task = fork observer_runtime.drive(observer_branch.publisher, observer_queue_branch.outbox, observer_lifetime,
+        end, observer_settings.enabled, events.share(observer_events), observer_input, observer_channel);
+    var epoch: i64 = 0;
+    var failures: i64 = 0;
+    var worker_fd: Option<ChildRef<process.WorkerOwner>> = .None;
+    var worker_key: i64 = 0;
+    let native_branch = spawn process.WorkerBranch;
+    let native_owner = native_branch.worker;
+    let owner_branch = spawn owner_control.Branch(plan: owner_control.Plan { root: root, lock: lock, worker: native_owner });
+    owner_branch.admin.bind_host(events.share(event_group)).expect("bind host owner commands");
+    let owner_lifetime = spawn owner_control.Lifetime();
+    let owner_task = fork owner_control.drive_events(owner_branch.control, owner_branch.admin, owner_lifetime,
+        end, events.share(owner_events), owner_input, .Some(owner_channel));
+    let health_plan = HealthPlan { control: owner_branch.control, relay: relay_worker, room: room_worker, bot: bot_worker,
+        publisher: observer_branch.publisher, outbox: observer_queue_branch.outbox,
+        relay_key: hex.encode(wire.public_key(relay_seed)), room_key: hex.encode(wire.public_key(room_seed)),
+        bot_key: hex.encode(wire.public_key(bot_seed)), observer_key: hex.encode(observer_settings.config.identity),
+        native: use_native, observer: observer_settings.enabled, endpoint: cfg.address + ":" + to_string(cfg.port), started_ms: transport.now() };
+    var native_ready = false;
+    var native_management = false;
+    var native_started: i64 = 0;
+    var native_ok = true;
+    var worker_decoder = spawn session.WorkerDecoder(buffer: bytes.new());
+    var native_airtime = bytes.new();
+    var native_configured = cfg.native_preserve;
+    let modem_branch = spawn duplex.Branch;
+    let fd = modem_branch.endpoint;
+    var modem_fault_nonce: i64 = -1;
+    var native_fault_nonce: i64 = -1;
+    var admin_fault_nonce: i64 = -1;
+    while until(end) {
+        publish_health(health_plan, false, native_ready, native_started, Vec.new(), radio.create(), bytes.new());
+        match duplex.open(fd, cfg.address, cfg.port, 1500) {
+            .Ok(_) => {}
+            .Err(error) => {
+                println(f"OFFLINE modem open failed reason={to_string(error)}");
+                failures = failures + 1;
+                reconnect_wait(failures);
+                continue;
+            }
+        }
+        let decoder = spawn wire.Decoder(buffer: bytes.new());
+        let relay_factor = reconnect_factor(relay_worker, relay_environment, 0);
+        let room_factor = reconnect_factor(room_worker, room_environment, 1);
+        var source_factors = [relay_factor, room_factor, hex.decode("0000803f")];
+        if observer_settings.enabled { source_factors.push(hex.decode("0000803f")); }
+        let negotiation = session.negotiate_factors(fd, decoder, cfg.profile, true, if observer_settings.enabled { 4 } else { 3 }, source_factors);
+        if negotiation.is_none() {
+            duplex.close(fd);
+            stop(decoder);
+            stopped(decoder);
+            println("OFFLINE negotiation/profile rejected; no retune");
+            failures = failures + 1;
+            reconnect_wait(failures);
+            continue;
+        }
+        let negotiated = negotiation.expect("negotiated modem");
+        relay_environment.airtime(negotiated.airtime).expect("relay airtime table");
+        room_environment.airtime(negotiated.airtime).expect("room airtime table");
+        session.announce(fd, decoder, 0, negotiated.generations[0], wire.public_key(relay_seed));
+        session.announce(fd, decoder, 1, negotiated.generations[1], wire.public_key(room_seed));
+        session.announce(fd, decoder, 2, negotiated.generations[2], wire.public_key(bot_seed));
+        if observer_settings.enabled {
+            session.announce(fd, decoder, 3, negotiated.generations[3], observer_settings.config.identity);
+            println(f"OBSERVER_READY epoch={epoch + 1} port=3 identity={hex.encode(observer_settings.config.identity)}");
+        }
+        if use_native && !native_configured {
+            if !configure_worker(bot_seed, cfg, negotiated.airtime, root + "/native") {
+                duplex.close(fd);
+                stop(decoder);
+                stopped(decoder);
+                println("OFFLINE native extension configuration failed");
+                failures = failures + 1;
+                reconnect_wait(failures);
+                continue;
+            }
+            native_configured = true;
+        }
+        if use_native && worker_fd.is_some() {
+            native_ok = native_ok && wire.equal(native_airtime, negotiated.airtime) && cancel_native(worker_fd, worker_decoder, owner_branch.control, owner_branch.admin);
+            if !native_ok {
+                if worker_key != 0 { events.remove(event_group, worker_key).expect("remove retired native socket"); worker_key = 0; }
+                transport.native_close(worker_fd);
+                worker_fd = .None;
+                native_ready = false;
+            }
+        }
+        let link = session.create(fd, negotiated.generations);
+        assert(link.estimator(negotiated.airtime).expect("session airtime estimates"));
+        link.negotiated_factors(source_factors).expect("confirmed source factors");
+        let _ = relay_worker.source_reset(relay_factor);
+        let _ = room_worker.source_reset(room_factor);
+        let receivers = session.receivers();
+        epoch = epoch + 1;
+        if use_native && worker_fd.is_none() {
+            native_management = false;
+            stop(worker_decoder);
+            stopped(worker_decoder);
+            worker_decoder = spawn session.WorkerDecoder(buffer: bytes.new());
+            let child = launch_native(native_owner, cfg.worker, root + "/native");
+            if child.is_none() {
+                native_ok = false;
+                println("BOT_OFFLINE native worker launch failed; relay and room remain online");
+            } else {
+                worker_fd = child;
+                native_started = transport.now();
+                let worker_pid = transport.native_pid(worker_fd);
+                println(f"BOT_PROCESS pid={worker_pid}");
+                native_ok = transport.native_send(worker_fd, hello(bot_seed, cfg.profile, negotiated.airtime));
+                native_airtime = negotiated.airtime;
+            }
+        } else if use_native && native_ready {
+            println("BOT_READY native-extension retained");
+            let _ = owner_branch.control.ready(true);
+            let _ = owner_branch.admin.management(native_management);
+        }
+        let relay_advert = match relay_worker.startup_advert(transport.now() / 1000, last_relay_flood, epoch > 1) {
+            .Ok(packet) => packet,
+            .Err(_) => bytes.new(),
+        };
+        let room_advert = match room_worker.startup_advert(transport.now() / 1000, last_room_flood, epoch > 1) {
+            .Ok(packet) => packet,
+            .Err(_) => bytes.new(),
+        };
+        if !relay_advert.is_empty() && roles.flood(wire.decode(relay_advert).expect("relay advert packet")) {
+            last_relay_flood = transport.now() / 1000;
+        }
+        if !room_advert.is_empty() && roles.flood(wire.decode(room_advert).expect("room advert packet")) {
+            last_room_flood = transport.now() / 1000;
+        }
+        advert_times(root, last_relay_flood, last_room_flood);
+        relay_environment.flood_stamp(last_relay_flood).expect("relay flood reservation");
+        room_environment.flood_stamp(last_room_flood).expect("room flood reservation");
+        println(f"ONLINE epoch={epoch} relay={hex.encode(wire.public_key(relay_seed))} room={hex.encode(wire.public_key(room_seed))} bot={hex.encode(wire.public_key(bot_seed))}");
+        if !relay_advert.is_empty() {
+            if let .Ok(frames) = relay_worker.gate([roles.Tx { raw: relay_advert, delay: 0, relayed: false }]) {
+                if !frames.is_empty() { let _ = link.submit(0, relay_advert, 3, 0, 0, 0); }
+            }
+        }
+        if !room_advert.is_empty() {
+            if let .Ok(frames) = room_worker.gate([roles.Tx { raw: room_advert, delay: 0, relayed: false }]) {
+                if !frames.is_empty() { let _ = link.submit(1, room_advert, 3, 0, 0, 0); }
+            }
+        }
+        sync_role_policy(link, relay_worker, 0, false);
+        sync_role_policy(link, room_worker, 1, false);
+        if !use_native {
+            if let .Ok(advert) = bot_worker.advert(transport.now() / 1000) {
+                if !advert.is_empty() {
+                    let _ = link.submit(2, advert, 1, 0, 0, 0);
+                }
+            }
+        }
+        let modem_key = duplex.watch(fd, event_group).expect("watch host modem socket");
+        if worker_fd.is_some() && worker_key == 0 {
+            worker_key = native_watch(worker_fd, event_group);
+            native_ok = native_ok && worker_key != 0;
+        }
+        var next_config = transport.monotonic() + 2000;
+        var next_stats = transport.monotonic();
+        var next_health = transport.monotonic();
+        var sensors = radio.create();
+        var sensor_revision: i64 = -1;
+        var sensor_reported = false;
+        var config_deadline: i64 = 0;
+        var connection_ok = true;
+        var native_deadline = transport.monotonic() + 30000;
+        var native_last = transport.monotonic();
+        var native_retry: i64 = 0;
+        var native_backoff: i64 = 500;
+        var pending_role: Option<owner_control.RoleRequest> = .None;
+        let online_at = transport.monotonic();
+        while until(end) && connection_ok && link.healthy().expect("session health") {
+            if pending_role.is_none() {
+                if let .Ok(request) = owner_branch.admin.take_role() { pending_role = request; }
+            }
+            if let .Some(request) = pending_role {
+                let availability = if request.role == 2 {
+                    relay_worker.command_state()
+                } else {
+                    room_worker.command_state()
+                };
+                let state = match availability {
+                    .Ok(value) => value,
+                    .Err(_) => {
+                        println(f"OWNER_ROLE_OFFLINE role={request.role} reason=role-actor-unavailable; command was not submitted");
+                        -1
+                    }
+                };
+                if state != 0 {
+                    let result = if request.role == 2 {
+                        relay_worker.owner_command(request.command, transport.now())
+                    } else {
+                        room_worker.owner_command(request.command, transport.now())
+                    };
+                    match result {
+                        .Ok(.Ok(reply)) => { let _ = owner_branch.admin.role_reply(request.id, reply, false); }
+                        _ => { let _ = owner_branch.admin.role_reply(request.id, "", true); }
+                    }
+                    pending_role = .None;
+                }
+            }
+            if transport.supervision_testing() {
+                let fault = storage.read(root + "/modem.inject");
+                if fault.len() == 1 && fault[0] as i64 != modem_fault_nonce {
+                    modem_fault_nonce = fault[0] as i64;
+                    let _ = fd.fault_for_test();
+                }
+                let native_fault = storage.read(root + "/native-owner.inject");
+                if use_native && native_fault.len() == 1 && native_fault[0] as i64 != native_fault_nonce {
+                    native_fault_nonce = native_fault[0] as i64;
+                    let _ = native_owner.fault_for_test();
+                }
+                let admin_fault = storage.read(root + "/admin.inject");
+                if admin_fault.len() == 1 && admin_fault[0] as i64 != admin_fault_nonce {
+                    admin_fault_nonce = admin_fault[0] as i64;
+                    if owner_branch.admin.fault_for_test().is_err() {
+                        println("OWNER_ADMIN_OFFLINE reason=injected-admin-actor-failure");
+                    }
+                }
+            }
+            var receptions: Vec<session.Reception> = Vec.new();
+            let incoming = transport.modem_read(fd, 0);
+            let received_at = transport.monotonic();
+            if incoming[0] == 2 {
+                connection_ok = false;
+            }
+            if incoming[0] == 1 {
+                for frame in decoder.feed(wire.cut(incoming, 1, incoming.len())).expect("modem decoder") {
+                    if frame.is_empty() {
+                        continue;
+                    }
+                    let port = (frame[0] as i64) >> 4;
+                    let command = (frame[0] as i64) & 15;
+                    if port >= (if observer_settings.enabled { 4 } else { 3 }) {
+                        continue;
+                    }
+                    if command == 6 && frame.len() >= 2 {
+                        sensors = radio.accept(sensors, frame, transport.monotonic());
+                        if frame[1] == 163 || frame[1] == 241 {
+                            let _ = link.policy_reply(port, wire.cut(frame, 2, frame.len()), received_at);
+                        }
+                        if frame[1] == 250 {
+                            let result = link.event(port, wire.cut(frame, 2, frame.len())).expect("TX outcome");
+                            for event in link.confirmed().expect("confirmed TX accounting") {
+                                if event.port == 0 {
+                                    let _ = relay_worker.confirmed(event.raw);
+                                } else if event.port == 1 {
+                                    let _ = room_worker.confirmed(event.raw);
+                                } else if !use_native {
+                                    let _ = bot_worker.confirmed(event.raw);
+                                }
+                            }
+                            if use_native && native_ok && !result.is_empty() {
+                                native_ok = native_ok && transport.native_send(worker_fd, result);
+                            }
+                        } else if port == 0 && frame[1] == 162 && config_deadline != 0 {
+                            let valid = frame.len() == 26 && frame[2] == 1 && frame[3] == 0 && wire.equal(wire.cut(frame, 8, 26), cfg.profile);
+                            if connection_ok && !valid {
+                                let at = transport.now();
+                                println(f"MODEM_CONTROL_FAILED epoch={epoch} stage=CONFIG_GET at_ms={at} reason=invalid-readback expected=26-bytes,version=1,reason=0,profile={hex.encode(cfg.profile)} actual={hex.encode(frame)}");
+                            }
+                            connection_ok = connection_ok && valid;
+                            config_deadline = 0;
+                        } else if use_native && native_ok && port == 2 && frame[1] == 164 {
+                            let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
+                            if !stats.is_empty() {
+                                native_ok = native_ok && transport.native_send(worker_fd, stats);
+                            }
+                        }
+                    }
+                    for reception in receivers.feed(frame, transport.monotonic()).expect("RX metadata") {
+                        receptions.push(reception);
+                    }
+                }
+            }
+            policy_results(link, relay_worker, room_worker);
+            if use_native && native_ok && connection_ok {
+                let worker_input = transport.native_read(worker_fd, 0);
+                if worker_input[0] == 2 {
+                    native_ok = false;
+                }
+                if worker_input[0] == 1 {
+                    for message in worker_decoder.feed(wire.cut(worker_input, 1, worker_input.len())).expect("native extension decoder") {
+                        native_last = transport.monotonic();
+                        let tag = message[0] as i64;
+                        if tag == 130 || tag == 134 {
+                            if message.len() != 34 || message[33] != 1 || !wire.equal(wire.cut(message, 1, 33), wire.public_key(bot_seed)) {
+                                native_ok = false;
+                            } else if tag == 130 {
+                                native_ready = true;
+                                println("BOT_READY native-extension");
+                                let _ = owner_branch.control.ready(true);
+                            } else {
+                                native_management = true;
+                                let _ = owner_branch.admin.management(true);
+                            }
+                        } else if tag == 129 && message.len() >= 15 && message.len() <= 269 {
+                            let token = wire.uint(wire.cut(message, 1, 5));
+                            let priority = message[5] as i64;
+                            let delay = wire.uint(wire.cut(message, 6, 10));
+                            let expiry = wire.uint(wire.cut(message, 10, 14));
+                            let raw = wire.cut(message, 14, message.len());
+                            let status = link.submit(2, raw, priority, delay, expiry, token).expect("native bot submit");
+                            if status >= 0 {
+                                let state: i64 = if status == 1 {
+                                    1
+                                } else {
+                                    0
+                                };
+                                native_ok = native_ok && transport.native_send(worker_fd, session.result(token, state, if status == 1 {
+                                    0
+                                } else {
+                                    2
+                                }, wire.le(0, 12)));
+                            }
+                        } else if tag == 131 {
+                            if message.len() != 31 {
+                                native_ok = false;
+                            } else {
+                                native_ready = message[1] == 1;
+                                let _ = owner_branch.control.ready(native_ready);
+                                if message[2] != 0 {
+                                    println("BOT_STATUS fault=1; native command or admission failure");
+                                }
+                            }
+                        } else if tag == 133 || tag == 136 || tag == 137 {
+                            let result = if tag == 133 { owner_branch.admin.event(message) } else { owner_branch.control.event(message) };
+                            match result {
+                                .Ok(valid) => { native_ok = native_ok && valid; }
+                                .Err(_) => {}
+                            }
+                        } else if tag == 132 {
+                            native_ok = false;
+                        } else {
+                            native_ok = false;
+                        }
+                    }
+                }
+                native_ok = native_ok && worker_decoder.healthy().expect("native extension framing");
+                if native_ready && transport.monotonic() - native_last > 5000 {
+                    native_ok = false;
+                }
+                if !native_ready && transport.monotonic() > native_deadline {
+                    native_ok = false;
+                }
+            }
+            let now = transport.monotonic();
+            if now >= next_health {
+                next_health = now + 1000;
+                let _ = owner_branch.admin.management(native_management && native_ok);
+                let _ = owner_branch.admin.bind_host(events.share(event_group));
+                publish_health(health_plan, connection_ok, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime);
+            }
+            let sampling = radio.poll(sensors, now, config_deadline != 0 || now >= next_config || link.policy_busy().expect("source policy control state"));
+            sensors = sampling.sampler;
+            if sampling.command != 0 {
+                connection_ok = connection_ok && control_write(fd, wire.kiss(0, 6, wire.byte(sampling.command)), "TELEMETRY", epoch);
+            }
+            if sensors.revision != sensor_revision {
+                sensor_revision = sensors.revision;
+                let _ = relay_worker.telemetry(sensors.current);
+                let _ = room_worker.telemetry(sensors.current);
+                if !use_native {
+                    let _ = bot_worker.telemetry(sensors.current);
+                }
+            }
+            if !sensor_reported {
+                if let .Some(error) = sensors.failure {
+                    sensor_reported = true;
+                    println("TELEMETRY " + radio.error_text(error));
+                }
+            }
+            for reception in receivers.flush(now).expect("RX metadata deadline") {
+                receptions.push(reception);
+            }
+            if connection_ok {
+                let received_ok = receive_packets(receptions, link, relay_worker, room_worker, bot_worker, use_native, native_ready && native_ok, worker_fd, observer_queue_branch.outbox, observer_settings.enabled);
+                native_ok = native_ok && received_ok;
+            }
+            var next_tick = role_timer(relay_worker, room_worker, bot_worker, use_native);
+            if connection_ok && transport.monotonic() >= next_tick {
+                let (relay_flood, room_flood) = tick_roles(link, relay_worker, room_worker, bot_worker,
+                    use_native, root, relay_environment, room_environment, last_relay_flood, last_room_flood);
+                last_relay_flood = relay_flood;
+                last_room_flood = room_flood;
+                next_tick = role_timer(relay_worker, room_worker, bot_worker, use_native);
+            }
+            sync_role_policy(link, relay_worker, 0, config_deadline != 0 || sensors.expected != 0);
+            sync_role_policy(link, room_worker, 1, false);
+            if config_deadline != 0 && now >= config_deadline {
+                if connection_ok {
+                    let at = transport.now();
+                    let overdue = now - config_deadline;
+                    println(f"MODEM_CONTROL_FAILED epoch={epoch} stage=CONFIG_GET at_ms={at} reason=deadline expected_opcode=a2 timeout_ms=2000 overdue_ms={overdue}");
+                }
+                connection_ok = false;
+            }
+            if now >= next_stats {
+                connection_ok = connection_ok && control_write(fd, wire.kiss(2, 6, hex.decode("2401")), "STATS", epoch);
+                next_stats = now + 1000;
+            }
+            if config_deadline == 0 && now >= next_config && sensors.expected == 0 && !link.policy_busy().expect("source policy control state") {
+                connection_ok = connection_ok && control_write(fd, wire.kiss(0, 6, hex.decode("220100")), "CONFIG_GET", epoch);
+                config_deadline = now + 2000;
+                next_config = now + 2000;
+            }
+            if use_native && !native_ok {
+                if worker_fd.is_some() {
+                    let _ = owner_branch.control.fence();
+                    let _ = owner_branch.admin.fence();
+                    if worker_key != 0 { events.remove(event_group, worker_key).expect("remove failed native socket"); worker_key = 0; }
+                    transport.native_close(worker_fd);
+                    worker_fd = .None;
+                    link.fence_worker().expect("retire old worker jobs");
+                    native_ready = false;
+                    native_management = false;
+                    native_retry = now + native_backoff;
+                    println("BOT_OFFLINE worker failed; relay and room remain online");
+                }
+                if now >= native_retry {
+                    stop(worker_decoder);
+                    stopped(worker_decoder);
+                    worker_decoder = spawn session.WorkerDecoder(buffer: bytes.new());
+                    let child = launch_native(native_owner, cfg.worker, root + "/native");
+                    if child.is_some() {
+                        worker_fd = child;
+                        native_started = transport.now();
+                        let worker_pid = transport.native_pid(worker_fd);
+                        println(f"BOT_PROCESS pid={worker_pid}");
+                        native_ok = transport.native_send(worker_fd, hello(bot_seed, cfg.profile, negotiated.airtime));
+                        native_airtime = negotiated.airtime;
+                        worker_key = native_watch(worker_fd, event_group);
+                        native_ok = native_ok && worker_key != 0;
+                        native_deadline = now + 30000;
+                        native_last = now;
+                    } else {
+                        println(f"BOT_OFFLINE native worker launch failed retry_ms={native_backoff}");
+                    }
+                    native_retry = now + native_backoff;
+                    native_backoff = if native_backoff < 15000 {
+                        native_backoff * 2
+                    } else {
+                        30000
+                    };
+                }
+            }
+            log_outcomes(link, relay_worker, room_worker);
+            if connection_ok && until(end) {
+                let wait_at = transport.monotonic();
+                var deadline = earlier(wait_at + 1000, end);
+                deadline = earlier(deadline, next_tick);
+                deadline = earlier(deadline, next_health);
+                deadline = earlier(deadline, next_stats);
+                deadline = earlier(deadline, config_deadline);
+                let policy_busy = link.policy_busy().expect("source policy deadline state");
+                if config_deadline == 0 && sensors.expected == 0 && !policy_busy {
+                    deadline = earlier(deadline, next_config);
+                }
+                deadline = earlier(deadline, radio.next_deadline(sensors, wait_at,
+                    config_deadline != 0 || wait_at >= next_config || policy_busy));
+                deadline = earlier(deadline, link.next_deadline().expect("session pending deadline"));
+                deadline = earlier(deadline, receivers.next_deadline().expect("receive metadata deadline"));
+                if use_native {
+                    if native_ok {
+                        deadline = earlier(deadline, if native_ready { native_last + 5001 } else { native_deadline + 1 });
+                    } else { deadline = earlier(deadline, native_retry); }
+                }
+                events.arm(event_group, modem_key, 1).expect("arm host modem socket");
+                if worker_key != 0 { events.arm(event_group, worker_key, 1).expect("arm native worker socket"); }
+                if let events.Event.Failed(code) = events.wait(event_shutdown, deadline) {
+                    panic(f"host socket readiness failed: errno={code}");
+                }
+            }
+        }
+        let owner_pending = match owner_branch.control.fence() {
+            .Ok(value) => value,
+            .Err(_) => true,
+        };
+        let _ = owner_branch.admin.fence();
+        publish_health(health_plan, false, native_ready && native_ok, native_started, Vec.new(), radio.create(), negotiated.airtime);
+        for result in link.disconnect().expect("disconnect outcomes") {
+            if use_native {
+                let _ = transport.native_send(worker_fd, result);
+            }
+        }
+        policy_results(link, relay_worker, room_worker);
+        let _ = relay_worker.source_disconnected();
+        let _ = room_worker.source_disconnected();
+        log_outcomes(link, relay_worker, room_worker);
+        events.remove(event_group, modem_key).expect("remove host modem socket");
+        duplex.close(fd);
+        if use_native && worker_fd.is_some() {
+            native_ok = native_ok && !owner_pending && cancel_native(worker_fd, worker_decoder, owner_branch.control, owner_branch.admin);
+            if !native_ok || !until(end) {
+                if worker_key != 0 { events.remove(event_group, worker_key).expect("remove disconnected native socket"); worker_key = 0; }
+                transport.native_close(worker_fd);
+                worker_fd = .None;
+                native_ready = false;
+                native_management = false;
+            }
+        }
+        stop(link);
+        stopped(link);
+        stop(receivers);
+        stopped(receivers);
+        stop(decoder);
+        stopped(decoder);
+        let disconnected_at = transport.now();
+        println(f"OFFLINE epoch={epoch} pending outcomes unknown; not replaying at_ms={disconnected_at}");
+        if until(end) {
+            failures = if transport.monotonic() - online_at >= 60000 {
+                1
+            } else {
+                failures + 1
+            };
+            reconnect_wait(failures);
+        }
+    }
+    if worker_fd.is_some() {
+        if worker_key != 0 { events.remove(event_group, worker_key).expect("remove final native socket"); worker_key = 0; }
+        transport.native_close(worker_fd);
+    }
+    let _ = owner_lifetime.close();
+    let _ = await owner_task;
+    stop(owner_branch);
+    stopped(owner_branch);
+    stop(owner_lifetime);
+    stopped(owner_lifetime);
+    let _ = observer_lifetime.close();
+    let _ = await observer_task;
+    stop(observer_branch);
+    stopped(observer_branch);
+    stop(observer_queue_branch);
+    stopped(observer_queue_branch);
+    stop(observer_lifetime);
+    stopped(observer_lifetime);
+    stop(relay_branch);
+    stopped(relay_branch);
+    stop(room_branch);
+    stopped(room_branch);
+    stop(bot_branch);
+    stopped(bot_branch);
+    stop(modem_branch);
+    stopped(modem_branch);
+    stop(native_branch);
+    stopped(native_branch);
+    stop(worker_decoder);
+    stopped(worker_decoder);
+    stop(relay_environment);
+    stopped(relay_environment);
+    stop(room_environment);
+    stopped(room_environment);
+    stop(bot_environment);
+    stopped(bot_environment);
+    event_shutdown.close();
+    stop(event_pump);
+    stopped(event_pump);
+    storage.unlock(lock);
+}

@@ -1,0 +1,68 @@
+import host_admin;
+import std.os;
+
+fn main() {
+    let args = os.args();
+    if args.len() > 1 {
+        for i in 1..args.len() {
+            let arg = args[i];
+            assert(arg.len() >= 2);
+            let command = arg.slice(2, arg.len());
+            let allowed = if arg.starts_with("b:") { host_admin.bot_allowed(command) } else { host_admin.role_allowed(command) };
+            println(if allowed { "1" } else { "0" });
+        }
+        return;
+    }
+    for command in ["status", "bot status", "source read 0", "role name bot", "bot name Willow Bot", "bot cancel", "data clear"] {
+        assert(host_admin.bot_allowed(command));
+    }
+    for command in ["role name room", "role config companion", "bot password secret", "reboot", "key export", "set radio 912.525", "bot name ", "status\n", "bot cancel\nreboot"] {
+        assert(!host_admin.bot_allowed(command));
+    }
+    for command in ["help region", "get name", "set name Willow Room", "set repeat off", "region def #home,#north|* -", "region default <null>", "stats signal"] {
+        assert(host_admin.role_allowed(command));
+    }
+    for command in ["set tx 2", "password secret", "reboot", "set name ", "set path.hash.mode 3", "region save\n"] {
+        assert(!host_admin.role_allowed(command));
+    }
+    assert(host_admin.role_error("Error, cannot save"));
+    assert(host_admin.role_error("Err - blocked"));
+    assert(!host_admin.role_error("Errorless"));
+    assert(host_admin.native_command("bot status") == "status");
+    assert(host_admin.native_command("source status") == "source status");
+    assert(host_admin.native_command("role name bot") == "name");
+    let head = "POST /admin/login HTTP/1.1\r\nHost: 127.0.0.1:9080\r\nX-Host-Intent: admin-v1\r\nOrigin: http://127.0.0.1:9080\r\nContent-Length: 12\r\n\r\n";
+    assert(match host_admin.decode(head.to_bytes()) { .Waiting => true, _ => false });
+    let request = match host_admin.decode((head + "secret-value").to_bytes()) { .Complete(value) => value, _ => panic("complete request") };
+    assert(host_admin.intended(request));
+    assert(request.body.len() == 12 && request.path == "/admin/login");
+    for text in [
+        "GET /admin HTTP/1.1\r\n\r\n",
+        "GET /admin HTTP/1.1\r\nHost: localhost\r\nhost: localhost\r\n\r\n",
+        "POST /admin/login HTTP/1.1\r\nHost: localhost\r\nContent-Length: 257\r\n\r\n",
+        "POST /admin/login HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "GET /admin HTTP/1.1\r\nHost: localhost\r\n Bad: folded\r\n\r\n",
+        "GET /admin HTTP/1.1\r\nHost: localhost\r\n\r\nGET /status HTTP/1.1\r\n\r\n",
+    ] { assert(match host_admin.decode(text.to_bytes()) { .Invalid => true, _ => false }); }
+    let auth = host_admin.authentication("secret-value", false);
+    assert(!auth.authenticated("secret-value", 0).expect("direct password disabled"));
+    let login = auth.login("secret-value".to_bytes(), 0).expect("login");
+    assert(login.code == 200 && login.text.len() == 64);
+    assert(auth.authenticated(login.text, 599999).expect("session"));
+    assert(!auth.authenticated(login.text, 600000).expect("expiry"));
+    let second = auth.login("secret-value".to_bytes(), 600000).expect("login");
+    auth.logout(second.text).expect("logout");
+    assert(!auth.authenticated(second.text, 600000).expect("removed session"));
+    stop(auth); stopped(auth);
+    let limited = host_admin.authentication("secret-value", false);
+    for i in 0..5 { assert(limited.login("bad".to_bytes(), i).expect("bad login").code == 401); }
+    assert(limited.login("secret-value".to_bytes(), 5).expect("rate limit").code == 429);
+    assert(limited.login("secret-value".to_bytes(), 60000).expect("window reset").code == 200);
+    for i in 0..3 { assert(limited.login("secret-value".to_bytes(), 60000).expect("session capacity").code == 200); }
+    assert(limited.login("secret-value".to_bytes(), 60000).expect("full sessions").code == 429);
+    stop(limited); stopped(limited);
+    let direct = host_admin.authentication("01234567890123456789012345678901", true);
+    assert(direct.authenticated("01234567890123456789012345678901", 0).expect("direct token"));
+    stop(direct); stopped(direct);
+    println("ADMIN_CHECKS_OK");
+}

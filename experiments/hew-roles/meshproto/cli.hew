@@ -1,0 +1,108 @@
+//! Text formatting for authenticated MeshCore RF management. The role owns
+//! authentication, replay stamps, preference commits and outgoing packets.
+
+import meshproto.management;
+
+import hostlib.binary;
+
+pub fn help(topic: string) -> string {
+    match topic {
+        "" => "help get|set|wifi|radio|region|owner|stats; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot",
+        "get" => "get name|owner.info|radio|freq|tx|lat|lon|rxdelay|txdelay|direct.txdelay|repeat|path.hash.mode|advert.interval|flood.advert.interval",
+        "set" => "set SETTING VALUE; name,owner.info,passwords,delays,repeat,path/adverts,multi.acks,allow.read.only; shared RF requires the modem administrator",
+        "wifi" => "Error: WiFi is managed by the external modem, not this host role; use the modem's Management console",
+        "radio" => "get radio|freq|tx; shared PHY setters require the modem administrator",
+        "owner" => "get owner.info; set owner.info TEXT (| separates lines); this role's owner text only",
+        "region" => "region list allowed|denied; named-region editing remains local configuration",
+        "stats" => "stats [role|sensors|radio|signal|airtime]; key=value schema=1; units in keys; role counters reset on role restart",
+        _ => "Error: unknown help topic; use help",
+    }
+}
+
+fn present(available: bool, value: i64) -> string {
+    if available {
+        to_string(value)
+    } else {
+        "unavailable"
+    }
+}
+
+pub fn stats(topic: string, t: management.Telemetry, c: management.Counters) -> string {
+    if topic == "help" {
+        return help("stats");
+    }
+    if topic == "" || topic == "role" {
+        return f"schema=1 scope=role uptime_s={c.uptime} rx_packets={c.received} tx_packets={c.sent}";
+    }
+    if topic != "sensors" && topic != "radio" && topic != "signal" && topic != "airtime" {
+        return "Error: unknown stats topic; use stats help";
+    }
+    if t.flags == 0 {
+        return "Error: modem statistics snapshot unavailable";
+    }
+    var fields = "";
+    match topic {
+        "sensors" => {
+            let battery = present((t.flags & 1) != 0, t.battery_mv);
+            var temperature = "unavailable";
+            if (t.flags & 8) != 0 {
+                if !t.temperature_c.is_finite() {
+                    return "Error: modem MCU temperature is not finite";
+                }
+                temperature = match management.fixed_two((t.temperature_c as f32) as f64) {
+                    .Some(value) => value,
+                    .None => {
+                        return "Error: stats response exceeds encrypted CLI capacity";
+                    }
+                };
+            }
+            fields = f"battery_mv={battery} mcu_temp_c={temperature}";
+        }
+        "radio" => {
+            let received = present((t.flags & 16) != 0, t.received);
+            let sent = present((t.flags & 16) != 0, t.sent);
+            let errors = present((t.flags & 16) != 0, t.errors);
+            fields = f"rx_packets={received} tx_packets={sent} rx_errors={errors}";
+        }
+        "signal" => {
+            let rssi = present((t.flags & 4) != 0, t.current_rssi);
+            let noise = present((t.flags & 2) != 0 && t.noise_dbm != 0, t.noise_dbm);
+            fields = f"current_rssi_dbm={rssi} noise_floor_dbm={noise}";
+        }
+        _ => {
+            let tx = present((t.flags & 32) != 0, t.tx_ms);
+            let rx = present((t.flags & 64) != 0, t.rx_ms);
+            fields = f"tx_rf_ms={tx} rx_rf_ms={rx}";
+        }
+    }
+    let reply = "schema=1 scope=modem " + fields;
+    if reply.to_bytes().len() > 130 {
+        "Error: stats response exceeds encrypted CLI capacity"
+    } else {
+        reply
+    }
+}
+
+pub fn physical(key: string, profile: bytes) -> string {
+    if profile.len() != 18 {
+        return "Error: shared radio readback unavailable";
+    }
+    if key == "tx" {
+        return "> " + to_string(profile[10] as i8 as i64);
+    }
+    let hz = binary.integer(binary.slice(profile, 0, 4).expect("profile frequency")).expect("frequency");
+    let frequency = management.native_float((hz as f64) / 1000000.0);
+    if key == "freq" {
+        return "> " + frequency;
+    }
+    let bw = binary.integer(binary.slice(profile, 4, 8).expect("profile bandwidth")).expect("bandwidth");
+    var bandwidth = to_string(bw / 1000);
+    if bw % 1000 != 0 {
+        var tail = to_string(1000 + bw % 1000).slice(1, 4);
+        while tail.ends_with("0") {
+            tail = tail.slice(0, tail.len() - 1);
+        }
+        bandwidth = bandwidth + "." + tail;
+    }
+    f"> {frequency},{bandwidth},{profile[8]},{profile[9]}"
+}

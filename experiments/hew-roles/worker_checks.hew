@@ -1,0 +1,9 @@
+import transport;
+
+import std.os;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 3);
+    println(transport.verify_worker(args[1], args[2]));
+}

@@ -1,0 +1,86 @@
+import observer_queue;
+import meshproto.observation;
+import std.encoding.hex;
+
+fn config(format: observation.Format) -> observation.Config {
+    observation.Config {
+        identity: hex.decode("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"),
+        format: format, prefix: "meshcore", iata: "YYC", origin: "",
+        model: "", firmware: "", radio: "", filter: .None,
+    }
+}
+
+fn item() -> observation.Reception {
+    observation.Reception { raw: hex.decode("150001"), timestamp_ms: 1735689600000,
+        sequence: 999, has_signal: true, snr_quarter: 42, rssi: -90 }
+}
+
+actor Producer {
+    let outbox: ChildRef<observer_queue.Outbox>;
+    receive fn fill(count: i64) {
+        for index in 0..count {
+            let _ = outbox.observe(item()).expect("admission actor");
+        }
+    }
+}
+
+fn main() {
+    let branch = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
+        config: config(observation.Format.Internal), capacity: 2, active: false });
+    let outbox = branch.outbox;
+    assert(!outbox.observe(item()).expect("before start"));
+    assert(outbox.start().expect("start"));
+    assert(!outbox.start().expect("duplicate start"));
+    assert(outbox.observe(item()).expect("first"));
+    assert(outbox.observe(item()).expect("second"));
+    let first = outbox.next().expect("next call").expect("pending");
+    assert(first.token.ends_with("-2"));
+    assert(outbox.observe(item()).expect("queue plus pending"));
+    assert(!outbox.observe(item()).expect("queue overflow"));
+    let again = outbox.next().expect("retry call").expect("retry pending");
+    assert(first.token == again.token && first.payload == again.payload);
+    assert(!outbox.acknowledge("stale").expect("stale acknowledgement"));
+    assert(outbox.acknowledge(first.token).expect("publication acknowledgement"));
+    assert(!outbox.acknowledge(first.token).expect("duplicate acknowledgement"));
+    assert(outbox.next().expect("second call").expect("second pending").token.ends_with("-3"));
+    outbox.connection(true).expect("connected");
+    let current = outbox.statistics().expect("statistics");
+    assert(current.observed == 5 && current.published == 1 && current.dropped == 2);
+    assert(current.queued == 1 && current.pending && current.connected);
+    outbox.close().expect("close");
+    assert(!outbox.observe(item()).expect("after close"));
+    let closed = outbox.statistics().expect("closed statistics");
+    assert(closed.observed == 6 && closed.published == 1 && closed.dropped == 5);
+    assert(closed.queued == 0 && !closed.pending && !closed.connected && closed.closed);
+
+    let public_branch = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
+        config: config(observation.Format.Observer), capacity: 2, active: true });
+    let public_box = public_branch.outbox;
+    var reflection = item();
+    reflection.snr_quarter = -128;
+    reflection.rssi = 127;
+    assert(!public_box.observe(reflection).expect("reflection"));
+    reflection.has_signal = false;
+    assert(!public_box.observe(reflection).expect("missing signal"));
+    assert(public_box.statistics().expect("filtered statistics").observed == 0);
+    var early = item();
+    early.timestamp_ms = 0;
+    assert(public_box.observe(early).expect("early RF"));
+    assert(public_box.next().expect("early result").is_none());
+    assert(public_box.statistics().expect("early statistics").dropped == 1);
+
+    let concurrent = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
+        config: config(observation.Format.Internal), capacity: 64, active: true });
+    let first_producer = spawn Producer(outbox: concurrent.outbox);
+    let second_producer = spawn Producer(outbox: concurrent.outbox);
+    let one = fork first_producer.fill(100);
+    let two = fork second_producer.fill(100);
+    (await one).expect("first producer");
+    (await two).expect("second producer");
+    let full = concurrent.outbox.statistics().expect("concurrent statistics");
+    assert(full.observed == 200 && full.queued == 64 && full.dropped == 136);
+    assert(!full.pending && full.published == 0);
+    concurrent.outbox.close().expect("concurrent close");
+    assert(concurrent.outbox.statistics().expect("final statistics").dropped == 200);
+    println("OBSERVER_QUEUE_CHECKS_OK");
+}

@@ -1,0 +1,131 @@
+//! Companion application lifetime and actual queued-source TX accounting.
+import std.encoding.json;
+
+import wire;
+
+fn two(n: i64) -> string {
+    if n < 10 {
+        f"0{n}"
+    } else {
+        f"{n}"
+    }
+}
+
+pub fn utc(milliseconds: i64) -> string {
+    let seconds = milliseconds / 1000;
+    var days = seconds / 86400;
+    var year: i64 = 1970;
+    loop {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let length: i64 = if leap {
+            366
+        } else {
+            365
+        };
+        if days < length {
+            break;
+        }
+        days -= length;
+        year += 1;
+    }
+    let february: i64 = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+        29
+    } else {
+        28
+    };
+    let months = [31, february, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    var month: i64 = 0;
+    while days >= months[month] {
+        days -= months[month];
+        month += 1;
+    }
+    let time = seconds % 86400;
+    let ms = milliseconds % 1000;
+    var fraction = if ms < 10 {
+        f"00{ms}"
+    } else if ms < 100 {
+        f"0{ms}"
+    } else {
+        f"{ms}"
+    };
+    while fraction.ends_with("0") && !fraction.is_empty() {
+        fraction = fraction.slice(0, fraction.len() - 1);
+    }
+    let tail = if ms == 0 {
+        "Z"
+    } else {
+        f".{fraction}Z"
+    };
+    f"{year}-{two(month + 1)}-{two(days + 1)}T{two(time / 3600)}:{two((time / 60) % 60)}:{two(time % 60)}{tail}"
+}
+
+pub type TX {
+    since: string;
+    accepted: i64;
+    rejected: i64;
+    succeeded: i64;
+    failed: i64;
+    unknown: i64;
+    airtime_ns: i64;
+    complete: bool;
+    problem: string;
+}
+
+pub fn create(started: i64) -> TX {
+    TX { since: utc(started), accepted: 0, rejected: 0, succeeded: 0, failed: 0, unknown: 0, airtime_ns: 0, complete: true, problem: "" }
+}
+
+pub fn event(snapshot: TX, data: bytes) -> TX {
+    var next = snapshot;
+    let state = data[9];
+    if state == 0 {
+        next.rejected += 1;
+    } else if state == 1 {
+        next.accepted += 1;
+    } else if state == 2 {
+        next.succeeded += 1;
+    } else if state == 3 {
+        next.failed += 1;
+    } else {
+        next.unknown += 1;
+        next.complete = false;
+    }
+    if state == 2 || state == 3 {
+        next.airtime_ns += wire.uint(wire.cut(data, 15, 19)) * 1000000;
+    }
+    if state == 0 || state == 3 || state == 4 {
+        var problem = json.object();
+        problem.set("state", json.from_string(if state == 0 {
+            "rejected"
+        } else if state == 3 {
+            "failed"
+        } else {
+            "unknown"
+        })).expect("TX problem");
+        problem.set("generation", json.from_int(wire.uint(wire.cut(data, 1, 5)))).expect("TX problem");
+        problem.set("job_id", json.from_int(wire.uint(wire.cut(data, 5, 9)))).expect("TX problem");
+        problem.set("reason", json.from_int(data[10] as i64)).expect("TX problem");
+        problem.set("queue_wait_ns", json.from_int(wire.uint(wire.cut(data, 11, 15)) * 1000000)).expect("TX problem");
+        problem.set("reported_rf_airtime_ns", json.from_int(wire.uint(wire.cut(data, 15, 19)) * 1000000)).expect("TX problem");
+        next.problem = problem.stringify().expect("TX problem JSON");
+    }
+    next
+}
+
+pub fn snapshot(accounting: TX) -> json.Value {
+    var out = json.object();
+    out.set("since", json.from_string(accounting.since)).expect("TX status");
+    out.set("available", json.from_bool(true)).expect("TX status");
+    out.set("accepted", json.from_int(accounting.accepted)).expect("TX status");
+    out.set("rejected", json.from_int(accounting.rejected)).expect("TX status");
+    out.set("succeeded", json.from_int(accounting.succeeded)).expect("TX status");
+    out.set("failed", json.from_int(accounting.failed)).expect("TX status");
+    out.set("unknown", json.from_int(accounting.unknown)).expect("TX status");
+    out.set("reported_rf_airtime_ns", json.from_int(accounting.airtime_ns)).expect("TX status");
+    out.set("airtime_complete", json.from_bool(accounting.complete)).expect("TX status");
+    out.set("diagnostic_drops", json.from_int(0)).expect("TX status");
+    if !accounting.problem.is_empty() {
+        out.set("last_problem", json.parse(accounting.problem).expect("TX problem JSON")).expect("TX status");
+    }
+    out
+}

@@ -1,0 +1,23 @@
+diff --git a/src/helpers/radiolib/CustomSX1262Wrapper.h b/src/helpers/radiolib/CustomSX1262Wrapper.h
+--- a/src/helpers/radiolib/CustomSX1262Wrapper.h
++++ b/src/helpers/radiolib/CustomSX1262Wrapper.h
+@@ -13,6 +13,8 @@ public:
+   CustomSX1262Wrapper(CustomSX1262& radio, mesh::MainBoard& board) : RadioLibWrapper(radio, board) { }
+ 
+   void setParams(float freq, float bw, uint8_t sf, uint8_t cr) override {
++    // Leave cached RX state so recvRaw restarts reception with the new settings.
++    idle();
+     ((CustomSX1262 *)_radio)->setFrequency(freq);
+     ((CustomSX1262 *)_radio)->setSpreadingFactor(sf);
+     ((CustomSX1262 *)_radio)->setBandwidth(bw);
+diff --git a/src/helpers/radiolib/RadioLibWrappers.cpp b/src/helpers/radiolib/RadioLibWrappers.cpp
+--- a/src/helpers/radiolib/RadioLibWrappers.cpp
++++ b/src/helpers/radiolib/RadioLibWrappers.cpp
+@@ -57,6 +57,7 @@ void RadioLibWrapper::setTxPower(int8_t dbm) {
++  idle();
+   _radio->setOutputPower(dbm);
+ }
+ 
+ void RadioLibWrapper::idle() {
+   _radio->standby();
+   state = STATE_IDLE;   // need another startReceive()

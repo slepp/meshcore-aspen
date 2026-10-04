@@ -1,0 +1,51 @@
+//! Nonblocking, same-UID client for the private owner packet socket.
+import hostlib.duplex;
+import hostlib.binary;
+
+extern "C" {
+    fn mc_owner_connect(path: bytes) -> i32;
+    fn mc_owner_receive_bounded(fd: i32, maximum: i32) -> bytes;
+    fn mc_write_once(fd: i32, data: bytes) -> i32;
+}
+
+pub enum OwnerError { Connection(i64); Write(i64); Incomplete; Invalid; }
+pub enum Read { Waiting; Reply(bytes); Failed(OwnerError); }
+impl Display for OwnerError {
+    fn fmt(self) -> string {
+        match self {
+            OwnerError.Connection(code) => f"private owner socket connection failed: errno={code}",
+            OwnerError.Write(code) => f"private owner socket write failed: errno={code}; outcome may be unknown",
+            OwnerError.Incomplete => "private owner socket reply is incomplete; outcome may be unknown",
+            OwnerError.Invalid => "private owner socket request or response bound is invalid",
+        }
+    }
+}
+
+pub fn connect(path: string) -> Result<duplex.Descriptor, OwnerError> {
+    let fd = unsafe { mc_owner_connect(path.to_bytes()) };
+    if fd < 0 { .Err(OwnerError.Connection(-(fd as i64))) }
+    else { .Ok(duplex.Descriptor { fd: fd }) }
+}
+
+pub fn connect_request(root: string, request: bytes) -> Result<duplex.Descriptor, OwnerError> {
+    if request.len() < 2 || request[0] != 1 { return .Err(OwnerError.Invalid); }
+    connect(root + if request[1] == 4 || request[1] == 5 { "/admin.sock" } else { "/owner.sock" })
+}
+
+/// False means backpressure, not submission; a complete packet is sent once.
+pub fn send(connection: duplex.Descriptor, data: bytes) -> Result<bool, OwnerError> {
+    let written = unsafe { mc_write_once(connection.fd, data) } as i64;
+    if written == -11 || written == -4 { return .Ok(false); }
+    if written < 0 { return .Err(OwnerError.Write(-written)); }
+    if written != data.len() { return .Err(OwnerError.Incomplete); }
+    .Ok(true)
+}
+
+pub fn read(connection: duplex.Descriptor, maximum: i64) -> Read {
+    if maximum < 2 || maximum > 65536 { return .Failed(OwnerError.Invalid); }
+    let data = unsafe { mc_owner_receive_bounded(connection.fd, maximum as i32) };
+    if data.len() < 1 { return .Failed(OwnerError.Invalid); }
+    if data[0] == 0 { return .Waiting; }
+    if data[0] != 1 || data.len() < 3 || data[1] != 1 { return .Failed(OwnerError.Incomplete); }
+    .Reply(binary.slice(data, 1, data.len()).expect("bounded owner response"))
+}

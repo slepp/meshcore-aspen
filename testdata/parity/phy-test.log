@@ -1,0 +1,5 @@
+combined real KissModem + multiplexer: priority/FIFO, timing/wrap, controls, budgets, config ownership, reconnect, reflection passed
+WiFi KISS multiplexer behavioural tests passed
+RemoteKissRadio matches 193 native extracted-kernel score vectors
+ok  	meshcore.local/meshcore/internal/radio	10.153s
+ok  	meshcore.local/meshcore/internal/radio	10.155s

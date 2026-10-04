@@ -1,0 +1,296 @@
+//! Readiness for native socket boundaries, delivered through a bounded Hew pipe.
+import hostlib.binary;
+
+import std.stream;
+
+extern "C" {
+    fn mc_events_new() -> i64;
+    fn mc_events_retain(handle: i64);
+    fn mc_events_release(handle: i64);
+    fn mc_events_wake(handle: i64) -> i32;
+    fn mc_events_stop(handle: i64) -> i32;
+    fn mc_events_add(handle: i64, fd: i32, flags: i32) -> i64;
+    fn mc_events_arm(handle: i64, key: i64, flags: i32) -> i32;
+    fn mc_events_remove(handle: i64, key: i64) -> i32;
+    fn mc_events_now() -> i64;
+    fn mc_events_descriptor(handle: i64) -> i32;
+    fn mc_events_drain(handle: i64) -> bytes;
+    #[offload]
+    fn mc_events_wait(handle: i64) -> bytes;
+}
+
+#[resource]
+pub type Group {
+    handle: i64;
+}
+
+impl Group {
+    fn close(consume self) {
+        unsafe { mc_events_release(self.handle); };
+    }
+}
+
+pub fn open() -> Result<Group, i64> {
+    let handle = unsafe { mc_events_new() };
+    if handle < 0 { .Err(-handle) } else { .Ok(Group { handle: handle }) }
+}
+
+pub fn share(group: Group) -> Group {
+    unsafe { mc_events_retain(group.handle); };
+    Group { handle: group.handle }
+}
+
+fn status(value: i32) -> Result<(), i64> {
+    if value < 0 { .Err(-(value as i64)) } else { .Ok(()) }
+}
+
+pub fn wake(group: Group) -> Result<(), i64> {
+    status(unsafe { mc_events_wake(group.handle) })
+}
+
+/// Wake the native wait before stopping or joining its pump actor.
+pub fn shutdown(group: Group) -> Result<(), i64> {
+    status(unsafe { mc_events_stop(group.handle) })
+}
+
+/// The service owns this guard; shared pump/connection references do not.
+/// It wakes native I/O on both normal return and a fault during root cleanup.
+#[resource]
+pub type Shutdown {
+    handle: i64;
+}
+
+impl Shutdown {
+    fn close(consume self) {
+        status(unsafe { mc_events_stop(self.handle) }).expect("wake native readiness on service exit");
+        unsafe { mc_events_release(self.handle); };
+    }
+}
+
+pub fn guard(group: Group) -> Shutdown {
+    unsafe { mc_events_retain(group.handle); };
+    Shutdown { handle: group.handle }
+}
+
+/// Own the stream reader as well as native shutdown. Closing the reader releases
+/// a pump blocked on bounded-stream capacity, not just one waiting in epoll.
+#[resource]
+pub type Driver {
+    handle: i64;
+    input: stream.Stream<Event>;
+}
+
+impl Driver {
+    fn close(consume self) {
+        let Driver { handle, input } = self;
+        status(unsafe { mc_events_stop(handle) }).expect("wake driver readiness on service exit");
+        input.close();
+        unsafe { mc_events_release(handle); };
+    }
+}
+
+pub fn driver(group: Group, consume input: stream.Stream<Event>) -> Driver {
+    unsafe { mc_events_retain(group.handle); };
+    Driver { handle: group.handle, input: input }
+}
+
+/// Notify the driver when a supervised owner drops its event binding.
+#[resource]
+pub type Notify {
+    handle: i64;
+}
+
+impl Notify {
+    fn close(consume self) {
+        status(unsafe { mc_events_wake(self.handle) }).expect("notify readiness owner retirement");
+        unsafe { mc_events_release(self.handle); };
+    }
+}
+
+pub fn notify_on_drop(group: Group) -> Notify {
+    unsafe { mc_events_retain(group.handle); };
+    Notify { handle: group.handle }
+}
+
+/// Read=1, write=2. The registration owns a duplicate until remove succeeds.
+pub fn add(group: Group, fd: i32, flags: i32) -> Result<i64, i64> {
+    let key = unsafe { mc_events_add(group.handle, fd, flags) };
+    if key < 0 { .Err(-key) } else { .Ok(key) }
+}
+
+/// One-shot interest: rearm only after handling readiness or changing interest.
+pub fn arm(group: Group, key: i64, flags: i32) -> Result<(), i64> {
+    status(unsafe { mc_events_arm(group.handle, key, flags) })
+}
+
+/// Remove before closing the original FD. Ignore queued events with retired keys.
+pub fn remove(group: Group, key: i64) -> Result<(), i64> {
+    status(unsafe { mc_events_remove(group.handle, key) })
+}
+
+#[resource]
+pub type Watch {
+    handle: i64;
+    key: i64;
+}
+
+impl Watch {
+    fn close(consume self) {
+        status(unsafe { mc_events_remove(self.handle, self.key) }).expect("remove native readiness registration");
+        unsafe { mc_events_release(self.handle); };
+    }
+}
+
+pub fn watch(group: Group, fd: i32, flags: i32) -> Result<Watch, i64> {
+    let key = add(group, fd, flags)?;
+    unsafe { mc_events_retain(group.handle); };
+    .Ok(Watch { handle: group.handle, key: key })
+}
+
+pub fn rearm(watch: Watch, flags: i32) -> Result<(), i64> {
+    status(unsafe { mc_events_arm(watch.handle, watch.key, flags) })
+}
+
+/// One parent pump can serve independently owned child groups without parking
+/// another offload worker for each driver.
+#[resource]
+pub type Channel {
+    parent: i64;
+    child: i64;
+    key: i64;
+}
+
+impl Channel {
+    fn close(consume self) {
+        status(unsafe { mc_events_remove(self.parent, self.key) }).expect("remove driver readiness channel");
+        unsafe {
+            mc_events_release(self.child);
+            mc_events_release(self.parent);
+        };
+    }
+}
+
+pub fn channel(parent: Group, child: Group) -> Result<Channel, i64> {
+    let key = add(parent, unsafe { mc_events_descriptor(child.handle) }, 1)?;
+    unsafe {
+        mc_events_retain(parent.handle);
+        mc_events_retain(child.handle);
+    };
+    .Ok(Channel { parent: parent.handle, child: child.handle, key: key })
+}
+
+pub type Route {
+    key: i64;
+    output: stream.Sink<Event>;
+}
+
+pub type Ready {
+    key: i64;
+    flags: i64;
+}
+
+pub enum Event {
+    Ready(Ready);
+    Changed;
+    Failed(i64);
+    Deadline;
+}
+
+fn stream_event(item: Option<Event>) -> Event {
+    match item { .Some(value) => value, .None => Event.Failed(125) }
+}
+
+pub fn until(input: stream.Stream<Event>, deadline: i64) -> Event {
+    let now = unsafe { mc_events_now() };
+    assert(now >= 0, "native readiness monotonic clock failed");
+    let delay = if deadline > now { deadline - now } else { 0 };
+    select {
+        item from input.recv() => stream_event(item),
+        after delay * 1ms => Event.Deadline,
+    }
+}
+
+pub fn channel_until(channel: Channel, input: stream.Stream<Event>, deadline: i64) -> Event {
+    let event = until(input, deadline);
+    if let Event.Ready(ready) = event {
+        if ready.key == channel.key {
+            let batch = unsafe { mc_events_drain(channel.child) };
+            if batch.is_empty() { return Event.Failed(0); }
+            if batch[0] == 2 { return Event.Failed(125); }
+            if batch[0] != 1 {
+                let code = if batch.len() == 5 { binary.integer(batch[1..5]).expect("driver readiness errno") } else { 0 };
+                return Event.Failed(code);
+            }
+            status(unsafe { mc_events_arm(channel.parent, channel.key, 1) }).expect("rearm drained driver readiness channel");
+            return Event.Changed;
+        }
+    }
+    event
+}
+
+pub fn routed_until(channel: Option<Channel>, input: stream.Stream<Event>, deadline: i64) -> Event {
+    match channel {
+        .Some(value) => channel_until(value, input, deadline),
+        .None => until(input, deadline),
+    }
+}
+
+pub fn wait(driver: Driver, deadline: i64) -> Event {
+    until(driver.input, deadline)
+}
+
+pub fn routed_wait(driver: Driver, channel: Option<Channel>, deadline: i64) -> Event {
+    routed_until(channel, driver.input, deadline)
+}
+
+pub fn channel_wait(driver: Driver, channel: Channel, deadline: i64) -> Event {
+    channel_until(channel, driver.input, deadline)
+}
+
+pub actor Pump {
+    let group: Group;
+    let output: stream.Sink<Event>;
+    let routes: Vec<Route> = Vec.new();
+    fn emit(item: Event) -> bool {
+        if let Event.Ready(ready) = item {
+            for route in routes {
+                if route.key == ready.key {
+                    let _ = route.output.send(item);
+                    return true;
+                }
+            }
+        }
+        if let Event.Failed(_) = item {
+            for route in routes { let _ = route.output.send(item); }
+        }
+        output.send(item).is_ok()
+    }
+    receive fn run() {
+        loop {
+            let batch = unsafe { mc_events_wait(group.handle) };
+            if batch.is_empty() {
+                let _ = emit(Event.Failed(0));
+                break;
+            }
+            if batch[0] == 2 { break; }
+            if batch[0] != 1 {
+                let code = if batch.len() == 5 {
+                    binary.integer(batch[1..5]).expect("readiness errno")
+                } else { 0 };
+                let _ = emit(Event.Failed(code));
+                break;
+            }
+            assert((batch.len() - 1) % 12 == 0, "invalid readiness batch");
+            var at = 1;
+            while at < batch.len() {
+                let key = binary.integer(batch[at..at + 8]).expect("readiness key");
+                let flags = binary.integer(batch[at + 8..at + 12]).expect("readiness flags");
+                let item = if key == 0 { Event.Changed } else { Event.Ready(Ready { key: key, flags: flags }) };
+                if !emit(item) { return; }
+                at += 12;
+            }
+        }
+        output.finish();
+        for route in routes { route.output.finish(); }
+    }
+}

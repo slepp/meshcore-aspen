@@ -1,0 +1,178 @@
+import observer_client;
+import observer_queue;
+import meshproto.observation;
+import std.encoding.hex;
+import std.encoding.json;
+import std.os;
+import wire;
+import hostlib.events;
+import std.stream;
+
+extern "C" {
+    fn mc_monotonic() -> i64;
+}
+
+fn now() -> i64 {
+    unsafe { mc_monotonic() }
+}
+
+fn item() -> observation.Reception {
+    observation.Reception { raw: hex.decode("150001"), timestamp_ms: 1735689600120,
+        sequence: 0, has_signal: true, snr_quarter: 42, rssi: -90 }
+}
+
+fn finish(consume driver: events.Driver, pump: events.Pump) {
+    driver.close();
+    stop(pump);
+    stopped(pump);
+}
+
+fn main() {
+    let group = events.open().expect("observer fixture readiness");
+    let (output, input) = stream.pipe<events.Event>(64).expect("observer fixture stream");
+    let shutdown = events.driver(group, input);
+    let pump = spawn events.Pump(group: events.share(group), output: output);
+    mailbox(pump, on_full: .Wait).run().expect("start observer fixture readiness");
+    let args = os.args();
+    let mode = args[1];
+    let jwt = mode == "jwt" || mode == "jwt-clock" || mode == "jwt-renew" || mode == "jwt-rollback";
+    let seed = hex.decode("0303030303030303030303030303030303030303030303030303030303030303");
+    let config = observation.Config {
+        identity: wire.public_key(seed),
+        format: if jwt { observation.Format.Capture } else { observation.Format.Internal },
+        prefix: "meshcore", iata: "YYC", origin: "Willow fixture",
+        model: "", firmware: "", radio: "", filter: .None,
+    };
+    let admission = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
+        config: config, capacity: 2, active: true });
+    let branch = spawn observer_client.PublisherBranch(plan: observer_client.Plan {
+        outbox: admission.outbox, config: config, url: args[2], ca_file: args[3],
+        client_id: "willow-fixture", username: if jwt { "" } else { "fixture-user" },
+        password: if jwt { bytes.new() } else { "fixture-password".to_bytes() },
+        audience: if jwt { "willow-fixture" } else { "" }, seed: seed,
+    });
+    let publisher = branch.publisher;
+    admission.outbox.bind(events.share(group)).expect("bind observer fixture admission");
+    let deferred = mode == "ping" || mode == "ping-timeout" || mode == "longalive" ||
+        mode == "jwt-renew" || mode == "jwt-rollback";
+    if !deferred {
+        assert(admission.outbox.observe(item()).expect("first observation"));
+    }
+    if mode == "burst" {
+        assert(admission.outbox.observe(item()).expect("second observation"));
+        assert(!admission.outbox.observe(item()).expect("bounded outage queue"));
+    }
+    let target: i64 = if mode == "burst" { 2 } else { 1 };
+    let began = now();
+    let end = began + 15000;
+    var stopping = false;
+    var injected = false;
+    var gate = false;
+    var reason = "";
+    var offset: i64 = 0;
+    var ping_jump = false;
+    var ping_seen = false;
+    var enqueued = !deferred;
+    var clock_offset: i64 = 0;
+    var clock_changed = false;
+    while now() < end {
+        let _ = admission.outbox.bind(events.share(group));
+        let tick = now() + offset;
+        let utc = if mode == "jwt-clock" && now() - began < 100 {
+            0
+        } else { 1735776000120 + tick - began + clock_offset };
+        let _ = publisher.step(tick, utc);
+        let snapshot = match publisher.snapshot() {
+            .Ok(value) => value,
+            .Err(_) => {
+                if let events.Event.Failed(code) = events.wait(shutdown, now() + 50) {
+                    panic(f"observer fixture readiness failed: errno={code}");
+                }
+                continue;
+            }
+        };
+        if snapshot.reason != reason {
+            reason = snapshot.reason;
+            println("OBSERVER_REASON " + reason);
+        }
+        let stats = admission.outbox.statistics().expect("admission statistics");
+        if mode == "bad-upgrade" && snapshot.phase == observer_client.Phase.Waiting && !snapshot.reason.is_empty() {
+            publisher.shutdown(tick).expect("invalid upgrade shutdown");
+            assert(!stats.connected && stats.published == 0);
+            println("OBSERVER_BAD_UPGRADE_OK");
+            finish(shutdown, pump);
+            return;
+        }
+        if injected && snapshot.phase == observer_client.Phase.Connecting {
+            assert(!stats.connected);
+        }
+        if (mode == "ping" || mode == "ping-timeout") && snapshot.phase == observer_client.Phase.Ready && !ping_jump {
+            offset = 10001;
+            ping_jump = true;
+        }
+        if snapshot.awaiting_pong {
+            ping_seen = true;
+        }
+        if (mode == "jwt-renew" || mode == "jwt-rollback") &&
+            snapshot.phase == observer_client.Phase.Ready && !clock_changed {
+            clock_offset = if mode == "jwt-renew" { 86100000 } else { -60000 };
+            clock_changed = true;
+            events.wake(group).expect("notify injected UTC change");
+        }
+        if !enqueued && snapshot.phase == observer_client.Phase.Ready &&
+            ((mode == "longalive" && now() - began >= 3500) ||
+             (ping_seen && !snapshot.awaiting_pong) || (clock_changed && snapshot.epoch == 2)) {
+            assert(admission.outbox.observe(item()).expect("deferred observation"));
+            enqueued = true;
+        }
+        if snapshot.phase == observer_client.Phase.OnlineAck && !gate {
+            assert(!snapshot.connected && !stats.connected && stats.published == 0);
+            gate = true;
+            println("OBSERVER_STATUS_ACK_GATE");
+        }
+        if mode == "panic" && !injected && snapshot.phase == observer_client.Phase.PacketAck && snapshot.writing == 0 {
+            assert(stats.published == 0 && stats.pending);
+            assert(publisher.inject_failure().is_err());
+            injected = true;
+            println("OBSERVER_PUBLISHER_PANIC_INJECTED");
+            continue;
+        }
+        if stats.published == target && !stopping {
+            stopping = true;
+            publisher.shutdown(tick).expect("graceful shutdown");
+            if mode == "closed-panic" {
+                assert(publisher.inject_failure().is_err());
+                injected = true;
+            }
+        }
+        if stopping && snapshot.phase == observer_client.Phase.Stopped {
+            let final_stats = admission.outbox.statistics().expect("final statistics");
+            assert(final_stats.published == target && final_stats.closed && !final_stats.connected);
+            assert(final_stats.queued == 0 && !final_stats.pending);
+            assert(final_stats.dropped == (if mode == "burst" { 1 } else { 0 }));
+            if mode == "panic" || mode == "closed-panic" {
+                assert(injected);
+            }
+            var result = json.object();
+            result.set("published", json.from_int(final_stats.published)).expect("field");
+            result.set("observed", json.from_int(final_stats.observed)).expect("field");
+            result.set("dropped", json.from_int(final_stats.dropped)).expect("field");
+            result.set("epoch", json.from_int(snapshot.epoch)).expect("field");
+            println("OBSERVER_CLIENT_OK " + result.stringify().expect("statistics JSON"));
+            finish(shutdown, pump);
+            return;
+        }
+        var deadline = end;
+        if mode == "longalive" && !enqueued && now() < began + 3500 { deadline = began + 3500; }
+        match publisher.wait(events.share(group), now() + offset, utc) {
+            .Ok(value) => {
+                if value != 9223372036854775807 && value - offset < deadline { deadline = value - offset; }
+            }
+            .Err(_) => { deadline = now() + 50; }
+        }
+        if let events.Event.Failed(code) = events.wait(shutdown, deadline) {
+            panic(f"observer fixture readiness failed: errno={code}");
+        }
+    }
+    panic("observer client fixture timed out");
+}

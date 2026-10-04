@@ -1,0 +1,17 @@
+[Unit]
+Description=MeshCore authenticated home HTTPS service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=@SERVICE_DIRECTORY@/service.env
+ExecStart=@BIN@ -listen @LISTEN@ -weather=true -compute=@COMPUTE@ -tls-cert @SERVICE_DIRECTORY@/server.crt -tls-key @SERVICE_DIRECTORY@/server.key
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,65 @@
+actor Counter {
+    var count: i64 = 0;
+    receive fn next() -> i64 {
+        count += 1;
+        count
+    }
+}
+
+#[resource]
+type OwnedCounter {
+    child: Counter;
+}
+
+impl OwnedCounter {
+    fn close(consume self) {
+        stop(self.child);
+    }
+}
+
+actor Owner {
+    let initial: i64;
+    var counter: Option<OwnedCounter> = .None;
+    fn ensure() -> Counter {
+        if counter.is_none() {
+            counter = .Some(OwnedCounter { child: spawn Counter(count: initial) });
+        }
+        match counter {
+            .Some(owned) => owned.child,
+            .None => panic("owner not initialized"),
+        }
+    }
+    receive fn child() -> Counter {
+        ensure()
+    }
+    receive fn fail() {
+        panic("owned incarnation failure");
+    }
+}
+
+supervisor Branch(initial: i64) {
+    strategy: one_for_one;
+    intensity: 1 within 60s;
+    child owner: Owner(initial: initial);
+}
+
+fn current(reference: ChildRef<Owner>) -> Counter {
+    reference.child().expect("stable child reference")
+}
+
+fn main() {
+    let branch = spawn Branch(initial: 7);
+    let owner = branch.owner;
+    let first = current(owner);
+    assert(first.next().expect("initial child") == 8);
+    assert(owner.fail().is_err());
+    sleep(300ms);
+    assert(first.next().is_err());
+    let second = current(owner);
+    assert(second.next().expect("replacement child") == 8);
+    stop(branch);
+    stopped(branch);
+    sleep(100ms);
+    assert(second.next().is_err());
+    println("SUPERVISED_RESOURCE_AND_CHILDREF_OK");
+}

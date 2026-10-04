@@ -1,0 +1,139 @@
+//! Logical role reset commits a new authority after the old application closes.
+import meshproto.companion_state as state;
+
+import std.encoding.json;
+
+import std.encoding.base64;
+
+import std.encoding.utf8;
+
+import std.crypto.crypto;
+
+import wire;
+
+fn retention_profile(profile: string) -> string {
+    if profile == "native_queue" {
+        "native-queue"
+    } else if profile == "durable_replay" {
+        "durable-replay"
+    } else {
+        profile
+    }
+}
+
+pub fn configure(path: string, key: bytes, cfg: json.Value) -> bool {
+    let input = json.parse(state.cstring(state.read(path))).expect("saved companion configuration");
+    var identity = key;
+    let authority = state.field(input, "state").type_of() != json.Kind.Null || state.field(input, "document").type_of() != json.Kind.Null;
+    if authority {
+        if state.integer(input, "version") != 1 || state.text(input, "document") != "companion.json" {
+            return false;
+        }
+        identity = state.blob(state.field(input, "identity"));
+        if identity.len() != 64 || wire.public_key(identity).len() != 32 {
+            return false;
+        }
+    }
+    var document = if authority {
+        state.field(input, "state")
+    } else {
+        input
+    };
+    if document.type_of() == json.Kind.Null {
+        let name = if state.text(cfg, "companion_name").is_empty() {
+            "Shared Radio Base"
+        } else {
+            state.text(cfg, "companion_name")
+        };
+        document = fresh(identity, name, state.text(cfg, "companion_retention"), 0, 0);
+    }
+    if !state.validate(document, identity) {
+        return false;
+    }
+    let configured = state.field(cfg, "companion_policy");
+    let requested = if configured.type_of() == json.Kind.Null {
+        json.object()
+    } else {
+        configured
+    };
+    if requested.type_of() != json.Kind.Object {
+        return false;
+    }
+    var prefs = json.parse(state.field(document, "Preferences").stringify().expect("saved preferences")).expect("companion preferences");
+    for name in ["path_hash_mode", "rxdelay", "txdelay", "direct_txdelay", "airtime_factor", "repeat", "local_advert_seconds", "flood_advert_seconds", "flood_max_hops", "unscoped_max_hops", "advert_max_hops", "loop", "default_scope", "wildcard_flags", "regions", "owner_info"] {
+        let value = state.field(requested, name);
+        if value.type_of() != json.Kind.Null {
+            prefs.set(name, value).expect("configured companion policy");
+        }
+    }
+    let advert_interval = state.integer(cfg, "advert_interval_seconds");
+    if advert_interval > 0 && state.field(requested, "flood_advert_seconds").type_of() == json.Kind.Null {
+        prefs.set("flood_advert_seconds", json.from_int(advert_interval)).expect("configured advert interval");
+    }
+    if advert_interval < 0 || !state.policy_valid(prefs) {
+        return false;
+    }
+    document.set("Preferences", prefs).expect("configured preferences");
+    let retention = retention_profile(state.text(cfg, "companion_retention"));
+    if !retention.is_empty() {
+        if retention != "native-queue" && retention != "durable-replay" {
+            return false;
+        }
+        document.set("Retention", json.from_string(retention)).expect("configured retention");
+    }
+    var output = input;
+    if authority {
+        output.set("state", document).expect("configured role authority");
+    } else {
+        output = document;
+    }
+    state.commit(path, output) == 0
+}
+
+pub fn fresh(key: bytes, name: string, retention: string, flood_seconds: i64, path_mode: i64) -> json.Value {
+    assert(!name.contains("\0") && flood_seconds >= 0 && flood_seconds <= 918000 && path_mode >= 0 && path_mode <= 2);
+    var encoded_name = name.to_bytes();
+    while encoded_name.len() > 31 || utf8.decode(encoded_name).is_err() {
+        encoded_name = wire.cut(encoded_name, 0, encoded_name.len() - 1);
+    }
+    assert(!encoded_name.is_empty());
+    var out = json.parse("{\"Version\":1,\"Latitude\":0,\"Longitude\":0,\"ClockOffset\":0,\"ManualAdd\":0,\"AdvertLocationPolicy\":0,\"AutoAddConfig\":0,\"AutoAddMaxHops\":0,\"TelemetryModes\":0,\"MultiACKs\":0,\"Contacts\":[],\"Messages\":[],\"Sequence\":0,\"LastModified\":0,\"Preferences\":{\"version\":1,\"repeat\":false,\"path_hash_mode\":0,\"rxdelay\":0,\"txdelay\":0.5,\"direct_txdelay\":0.2,\"airtime_factor\":1,\"local_advert_seconds\":0,\"flood_advert_seconds\":0,\"flood_max_hops\":64,\"unscoped_max_hops\":64,\"advert_max_hops\":8,\"loop\":0,\"wildcard_flags\":0,\"regions\":null,\"owner_info\":\"\",\"default_scope\":{\"name\":\"\",\"key\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}}}").expect("fresh companion defaults");
+    out.set("PublicKey", state.array(wire.public_key(key))).expect("fresh identity");
+    out.set("Name", json.from_string(utf8.decode(encoded_name).expect("fresh name"))).expect("fresh name");
+    let selected_retention = if retention.is_empty() {
+        "durable-replay"
+    } else {
+        retention_profile(retention)
+    };
+    assert(selected_retention == "native-queue" || selected_retention == "durable-replay");
+    out.set("Retention", json.from_string(selected_retention)).expect("fresh retention");
+    var prefs = state.field(out, "Preferences");
+    prefs.set("flood_advert_seconds", json.from_int(flood_seconds)).expect("fresh adverts");
+    prefs.set("path_hash_mode", json.from_int(path_mode)).expect("fresh path mode");
+    out.set("Preferences", prefs).expect("fresh preferences");
+    var channels = json.array();
+    var public = json.object();
+    let psk = base64.decode("izOH6cXN6mrJ5e26oRXNcg==");
+    public.set("Name", json.from_string("Public")).expect("public channel");
+    public.set("PSK", state.array(psk)).expect("public channel");
+    public.set("Hash", json.from_int(crypto.sha256(psk)[0] as i64)).expect("public channel");
+    channels.push(public).expect("channel table");
+    for _ in 1..40 {
+        channels.push(json.null()).expect("channel table");
+    }
+    out.set("Channels", channels).expect("fresh channels");
+    assert(state.validate(out, key));
+    out
+}
+
+pub fn reset(root: string, name: string, retention: string, flood_seconds: i64, path_mode: i64) -> bool {
+    let seed = crypto.random_bytes(32).expect("new factory-reset role identity");
+    let identity = state.expanded(seed);
+    let document = fresh(identity, name, retention, flood_seconds, path_mode);
+    var envelope = json.object();
+    envelope.set("version", json.from_int(1)).expect("reset authority");
+    envelope.set("document", json.from_string("companion.json")).expect("reset authority");
+    envelope.set("identity", state.encoded(identity)).expect("reset authority");
+    envelope.set("state", document).expect("reset authority");
+    state.commit(root + "/identity-state.json", envelope) == 0
+}

@@ -1,0 +1,25 @@
+import owner_client;
+import hostlib.duplex;
+import std.os;
+import std.encoding.hex;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 3);
+    let connection = owner_client.connect(args[1]).expect("private owner connect");
+    let request = hex.decode(args[2]);
+    let deadline = duplex.monotonic() + 9000;
+    var sent = false;
+    while duplex.monotonic() < deadline {
+        if !sent { sent = owner_client.send(connection, request).expect("owner send"); }
+        if sent {
+            match owner_client.read(connection, 65536) {
+                .Waiting => {}
+                .Reply(value) => { println(hex.encode(value)); return; }
+                .Failed(error) => panic(to_string(error)),
+            }
+        }
+        sleep(10ms);
+    }
+    panic("private owner command reply deadline expired; outcome unknown");
+}

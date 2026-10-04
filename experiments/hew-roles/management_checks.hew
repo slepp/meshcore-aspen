@@ -1,0 +1,107 @@
+import meshproto.management;
+
+import meshproto.preferences;
+
+import meshproto.radio;
+
+import hostlib.binary;
+
+import std.encoding.hex;
+
+fn main() {
+    let prefs = preferences.Preferences { name: "Willow", guest: "guest", admin: "admin", owner: "", width: 3, repeat: true, read_only: false, multi_acks: 0, loop_mode: 3, flood: 16, unscoped: 16, adverts: 8, local_seconds: 0, flood_seconds: 0, txdelay: 0.0, direct_delay: 0.0, latitude: 0.0, longitude: 0.0, rtc_offset: 0, advert_location: 0, rxdelay: 0.0, airtime_factor: 1.0, native_factor: true };
+    let updated = preferences.change(prefs, "owner.info", "operator|station").expect("owner update");
+    let restored = preferences.decode(preferences.encode(updated).expect("encode preferences")).expect("decode preferences");
+    assert(restored.owner == "operator\nstation");
+    var located = restored;
+    located.latitude = 53.546123456789;
+    located.longitude = -113.493987654321;
+    located.rtc_offset = -86401;
+    located.advert_location = 2;
+    located.rxdelay = 20.0;
+    located.airtime_factor = 99.0;
+    let encoded = preferences.encode(located).expect("located preferences");
+    let decoded = preferences.decode(encoded).expect("located preference decode");
+    assert(decoded.latitude == located.latitude && decoded.longitude == located.longitude);
+    assert(decoded.rtc_offset == -86401 && decoded.advert_location == 2);
+    assert(decoded.rxdelay == 20.0 && decoded.airtime_factor == 99.0);
+    for end in 0..encoded.len() {
+        assert(preferences.decode(binary.slice(encoded, 0, end).expect("truncated record")).is_none());
+    }
+    var version2 = binary.slice(encoded, 0, encoded.len() - 9).expect("v2 record");
+    version2[0] = 2;
+    let prior = preferences.decode(version2).expect("v2 preferences");
+    assert(prior.latitude == located.latitude && prior.rxdelay == 0.0 && prior.airtime_factor == 1.0);
+    var legacy = binary.slice(encoded, 0, encoded.len() - 34).expect("legacy record");
+    legacy[0] = 1;
+    let old = preferences.decode(legacy).expect("v1 preferences");
+    assert(old.latitude == 0.0 && old.longitude == 0.0 && old.rtc_offset == 0 && old.advert_location == 0);
+    for key in ["lat", "lon"] {
+        for value in ["NaN", "Inf", "-Inf", "181", "-181", "bad"] {
+            assert(preferences.change(located, key, value).is_err());
+        }
+    }
+    for value in [0.0, -0.0, 53.546123456789, -113.493987654321] {
+        assert(binary.finite_float64(binary.float64(value).expect("binary64")).expect("binary64 decode").to_bits() == value.to_bits());
+    }
+    assert(preferences.change(prefs, "path.hash.mode", "3").is_err());
+    let sample = radio.poll(radio.create(), 100, false);
+    assert(sample.command == 19);
+    assert(radio.next_deadline(radio.create(), 100, false) == 100);
+    assert(radio.next_deadline(radio.create(), 100, true) == 9223372036854775807);
+    assert(radio.next_deadline(sample.sampler, 100, true) == 2100);
+    assert(radio.poll(sample.sampler, 2100, false).sampler.failure.is_some());
+    assert(radio.accept(sample.sampler, hex.decode("06933c0f"), 2100).failure.is_some());
+    assert(radio.accept(sample.sampler, hex.decode("06f912b7"), 101).position == 0);
+    var sampled = radio.create();
+    let commands = [19, 16, 13, 20, 18];
+    let replies = ["06933c0f", "06908bff", "068db7", "069483ff", "0692010000000200000003000000"];
+    for index in 0..5 {
+        let step = radio.poll(sampled, 100 + index, false);
+        assert(step.command == commands[index]);
+        sampled = radio.accept(step.sampler, hex.decode(replies[index]), 100 + index);
+    }
+    assert(sampled.current.flags == 287 && sampled.current.battery_mv == 3900);
+    assert(sampled.current.temperature_c == -12.5 && sampled.current.errors == 3);
+    assert(radio.next_deadline(sampled, 104, false) == 15104);
+    assert(radio.next_deadline(sampled, 104, true) == 45105);
+    assert(radio.poll(sampled, 45200, true).sampler.current.flags == 0);
+    var source = hex.decode("26a401");
+    for value in [1, 0, 2300, 2, 0, 0, 0, 0, 0] {
+        source.append(binary.little(value, 4).expect("source statistic"));
+    }
+    source.append(binary.little(0, 2).expect("queue status"));
+    let with_airtime = radio.accept(sampled, source, 10000);
+    assert(with_airtime.current.tx_ms == 2300 && with_airtime.current.flags == 319);
+    assert(radio.poll(with_airtime, 45200, true).sampler.current.flags == 32);
+    assert(radio.poll(with_airtime, 55100, true).sampler.current.flags == 0);
+    var neighbours: Vec<management.Neighbour> = Vec.new();
+    neighbours.push(management.Neighbour { key: hex.decode("0101010101010101010101010101010101010101010101010101010101010101"), advert: 9, heard: 10, snr_quarter: -8 });
+    neighbours.push(management.Neighbour { key: hex.decode("0202020202020202020202020202020202020202020202020202020202020202"), advert: 19, heard: 20, snr_quarter: 12 });
+    assert(hex.encode(management.neighbours(neighbours, hex.decode("000200000001"), 30).expect("newest first")) == "02000200020a0000000c0114000000f8");
+    assert(management.neighbours(neighbours, hex.decode("010200000001"), 30).is_none());
+    assert(management.native_float(0.2) == "0.1999999");
+    assert(management.native_float(0.5) == "0.5");
+    assert(management.native_float(-12.5) == "-12.5");
+    assert(management.fixed_two(25.125).expect("decimal") == "25.12");
+    assert(management.fixed_two(-12.5).expect("decimal") == "-12.50");
+    assert(management.utc(0) == "00:00 - 1/1/1970 UTC");
+    assert(management.utc(4294967295) == "06:28 - 7/2/2106 UTC");
+    assert(management.truncate("abé", 3) == "ab");
+    assert(management.truncate("abé", 4) == "abé");
+    let unavailable = management.unavailable();
+    let counters = management.counters();
+    assert(management.status(false, unavailable, counters).len() == 56);
+    assert(management.status(true, unavailable, counters).len() == 52);
+    assert(management.telemetry(unavailable).is_none());
+    var telemetry = unavailable;
+    telemetry.flags = 9;
+    telemetry.battery_mv = 3900;
+    telemetry.temperature_c = -12.5;
+    assert(hex.encode(management.telemetry(telemetry).expect("sensors")) == "017401860167ff83");
+    for bits in [0, 2147483648, 1, 8388607, 8388608, 1065353216, 1045220557, 3251634176, 2139095039] {
+        let raw = binary.little(bits, 4).expect("float bits");
+        assert(binary.float32(binary.finite_float32(raw).expect("finite")).expect("encoded") == raw);
+    }
+    println("MANAGEMENT_CODEC_CHECKS passed");
+}

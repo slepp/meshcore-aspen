@@ -1,0 +1,7 @@
+import std.net.websocket;
+
+fn send_packet(connection: websocket.Conn) {
+    connection.send_binary(bytes.new());
+}
+
+fn main() {}

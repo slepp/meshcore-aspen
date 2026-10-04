@@ -1,0 +1,28 @@
+{
+  "replay": [
+    "@context dm alice",
+    "!note-read",
+    "!note-save lunch",
+    "@context dm bob",
+    "!note-read",
+    "!note-save dinner",
+    "@context dm alice",
+    "!note-read",
+    "@install firmware/runtime/plugins/examples/notes-v1.lua",
+    "!note-read",
+    "@context dm bob",
+    "!note-read",
+    "@install firmware/runtime/plugins/examples/notes-v2.lua",
+    "!note-read"
+  ],
+  "expect": [
+    {"type": "reply", "text": "No note"},
+    {"type": "reply", "text": "Saved"},
+    {"type": "reply", "text": "No note"},
+    {"type": "reply", "text": "Saved"},
+    {"type": "reply", "text": "lunch"},
+    {"type": "reply", "text": "lunch"},
+    {"type": "reply", "text": "dinner"},
+    {"type": "reply", "text": "dinner"}
+  ]
+}

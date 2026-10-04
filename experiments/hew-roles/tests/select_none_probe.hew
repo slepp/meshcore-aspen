@@ -1,0 +1,9 @@
+import std.stream;
+
+fn main() {
+    let (output, input): (stream.Sink<bytes>, stream.Stream<bytes>) = stream.pipe(1).expect("pipe");
+    let data: Option<bytes> = select {
+        packet from input.recv() => packet,
+        after 20ms => .None,
+    };
+}

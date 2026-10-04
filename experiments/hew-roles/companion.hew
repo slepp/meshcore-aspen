@@ -1,0 +1,1347 @@
+//! Serialized companion application state. TCP and modem resources stay outside.
+import meshproto.companion_state as state;
+
+import std.encoding.json;
+
+import std.encoding.utf8;
+
+import std.crypto.crypto;
+
+import std.crypto.sign;
+
+import wire;
+
+import transport;
+
+pub type Client {
+    id: i64;
+    version: i64;
+    cursor: u64;
+    signing: bool;
+    signature: bytes;
+    unscoped: bool;
+    scope_key: bytes;
+}
+
+pub type Event {
+    client: i64;
+    frame: bytes;
+}
+
+type Heard {
+    key: bytes;
+    path_data: bytes;
+    encoded: i64;
+    at: i64;
+}
+
+pub fn event(client: i64, frame: bytes) -> Event {
+    Event { client: client, frame: frame }
+}
+
+pub fn error(code: i64) -> bytes {
+    wire.cat(wire.byte(1), wire.byte(code))
+}
+
+fn reply(client: i64, frame: bytes) -> Vec<Event> {
+    var output: Vec<Event> = Vec.new();
+    output.push(event(client, frame));
+    output
+}
+
+fn pref(doc: json.Value) -> json.Value {
+    state.field(doc, "Preferences")
+}
+
+fn find(contacts: json.Value, prefix: bytes) -> i64 {
+    var found: i64 = -1;
+    for i in 0..state.count(contacts) {
+        let key = state.blob(state.field(state.item(contacts, i), "PublicKey"));
+        if key.len() == 32 && prefix.len() > 0 && prefix.len() <= 32 && wire.equal(wire.cut(key, 0, prefix.len()), prefix) {
+            if found >= 0 {
+                return -1;
+            }
+            found = i;
+        }
+    }
+    found
+}
+
+fn put(value: json.Value, name: string, n: i64) -> json.Value {
+    var out = value;
+    out.set(name, json.from_int(n)).expect("object field");
+    out
+}
+
+fn self_advert(key: bytes, doc: json.Value, now: i64) -> bytes {
+    var app = wire.byte(129 | (if state.integer(doc, "AdvertLocationPolicy") == 1 {
+        16
+    } else {
+        0
+    }));
+    if state.integer(doc, "AdvertLocationPolicy") == 1 {
+        app.append(wire.le(state.integer(doc, "Latitude"), 4));
+        app.append(wire.le(state.integer(doc, "Longitude"), 4));
+    }
+    app.append(state.text(doc, "Name").to_bytes());
+    let prefix = wire.cat(wire.public_key(key), wire.le(now, 4));
+    wire.encode(wire.packet(1, 4, wire.cat(wire.cat(prefix, wire.signature(key, wire.cat(prefix, app))), app)))
+}
+
+pub actor Base {
+    var document: json.Value;
+    var authority: json.Value;
+    var key: bytes;
+    var path: string;
+    var frequency: i64 = 912525;
+    var bandwidth: i64 = 250000;
+    var spreading: i64 = 7;
+    var coding: i64 = 5;
+    var power: i64 = 2;
+    var identity_export: bool = false;
+    var identity_import: bool = false;
+    var restart_allowed: bool = false;
+    var reset_allowed: bool = false;
+    var lifecycle_pending: i64 = 0;
+    var source_policy: bool = false;
+    var physical_provider: bool = false;
+    var physical_at: i64 = 0;
+    var measured_battery: bytes = bytes.new();
+    var measured_counters: bytes = bytes.new();
+    var filesystem_usage: bytes = bytes.new();
+    var physical_json: string = "{}";
+    var clients: Vec<Client> = Vec.new();
+    var transient: json.Value = json.array();
+    var heard: Vec<Heard> = Vec.new();
+    var fault: bool = false;
+    var closed: bool = false;
+    mailbox 64;
+
+    receive fn connect(id: i64) -> bool {
+        if closed || fault || id <= 0 || clients.len() >= 32 {
+            return false;
+        }
+        for c in clients {
+            if c.id == id {
+                return false;
+            }
+        }
+        clients.push(Client { id: id, version: 0, cursor: 0, signing: false, signature: bytes.new(), unscoped: false, scope_key: bytes.new() });
+        true
+    }
+    receive fn disconnect(id: i64) {
+        var keep: Vec<Client> = Vec.new();
+        for c in clients {
+            if c.id != id {
+                keep.push(c);
+            }
+        }
+        clients = keep;
+    }
+    receive fn snapshot() -> string {
+        document.stringify().expect("document")
+    }
+    receive fn public_key() -> bytes {
+        wire.public_key(key)
+    }
+    receive fn healthy() -> bool {
+        !fault && !closed
+    }
+    receive fn fail_closed() {
+        fault = true;
+    }
+    receive fn enable_source_policy() {
+        source_policy = true;
+    }
+    receive fn enable_physical_provider() {
+        physical_provider = true;
+    }
+    receive fn measurements(sample_at: i64, battery_mv: bytes, counters: bytes, usage: bytes, report: string) {
+        physical_at = sample_at;
+        measured_battery = battery_mv;
+        measured_counters = counters;
+        filesystem_usage = usage;
+        physical_json = report;
+    }
+    fn measurement_fresh() -> bool {
+        physical_at > 0 && transport.monotonic() - physical_at <= 45000
+    }
+    receive fn telemetry_error() -> string {
+        if measurement_fresh() {
+            ""
+        } else {
+            "physical modem telemetry unavailable or stale"
+        }
+    }
+    receive fn telemetry_snapshot() -> string {
+        if measurement_fresh() {
+            physical_json
+        } else {
+            "{}"
+        }
+    }
+    receive fn telemetry_data(permissions: i64) -> bytes {
+        sensor_data(permissions)
+    }
+    fn sensor_data(permissions: i64) -> bytes {
+        if !measurement_fresh() || permissions & 1 == 0 || measured_battery.len() != 2 || wire.uint(measured_battery) == 0 {
+            return bytes.new();
+        }
+        let volts = (wire.uint(measured_battery) as f32) / (1000.0 as f32);
+        let centivolts = (volts * (100.0 as f32)) as i64;
+        wire.cat(wire.cat(wire.byte(1), wire.byte(116)), wire.cat(wire.byte((centivolts >> 8) & 255), wire.byte(centivolts & 255)))
+    }
+    receive fn identity_callbacks(export_allowed: bool, import_allowed: bool) {
+        assert(!import_allowed || !path.is_empty());
+        identity_export = export_allowed;
+        identity_import = import_allowed;
+    }
+    receive fn lifecycle_callbacks(restart: bool, reset: bool) {
+        restart_allowed = restart;
+        reset_allowed = reset;
+    }
+    receive fn lifecycle_operation() -> i64 {
+        lifecycle_pending
+    }
+    receive fn phy(profile: bytes) {
+        assert(profile.len() == 18);
+        frequency = wire.uint(wire.cut(profile, 0, 4)) / 1000;
+        bandwidth = wire.uint(wire.cut(profile, 4, 8));
+        spreading = profile[8] as i64;
+        coding = profile[9] as i64;
+        power = (profile[10] as i8) as i64;
+    }
+    receive fn shutdown() -> bool {
+        closed = true;
+        clients = Vec.new();
+        save(document, key)
+    }
+    fn save(next: json.Value, next_key: bytes) -> bool {
+        if fault {
+            return false;
+        }
+        if path.is_empty() {
+            document = next;
+            key = next_key;
+            return true;
+        }
+        var stored = next;
+        var envelope = authority;
+        if authority.type_of() == json.Kind.Object {
+            envelope.set("state", next).expect("envelope");
+            envelope.set("identity", state.encoded(state.expanded(next_key))).expect("envelope identity");
+            stored = envelope;
+        }
+        let result = state.commit(path, stored);
+        if result == -2 {
+            fault = true;
+        }
+        if result != 0 {
+            return false;
+        }
+        document = next;
+        key = next_key;
+        authority = envelope;
+        true
+    }
+    fn set_client(c: Client) {
+        for i in 0..clients.len() {
+            if clients[i].id == c.id {
+                clients[i] = c;
+                return;
+            }
+        }
+    }
+    fn modified(now: i64) -> i64 {
+        let previous = state.integer(document, "LastModified");
+        if now > previous {
+            now
+        } else {
+            previous + 1
+        }
+    }
+    fn all_contacts() -> json.Value {
+        var out = state.field(document, "Contacts");
+        if out.type_of() == json.Kind.Null {
+            out = json.array();
+        }
+        for i in 0..state.count(transient) {
+            out.push(state.item(transient, i)).expect("transient");
+        }
+        out
+    }
+    fn put_transient(value: json.Value) {
+        let index = find(transient, state.blob(state.field(value, "PublicKey")));
+        if index >= 0 {
+            transient = state.replace(transient, index, value);
+            return;
+        }
+        if state.count(transient) >= 8 {
+            var oldest: i64 = 0;
+            for i in 1..8 {
+                if state.integer(state.item(transient, i), "LastModified") < state.integer(state.item(transient, oldest), "LastModified") {
+                    oldest = i;
+                }
+            }
+            transient = state.remove(transient, oldest);
+        }
+        transient.push(value).expect("transient append");
+    }
+    receive fn command(id: i64, b: bytes, wall_time: i64) -> Vec<Event> {
+        if closed || fault {
+            return reply(id, error(5));
+        }
+        var index: i64 = -1;
+        for i in 0..clients.len() {
+            if clients[i].id == id {
+                index = i;
+            }
+        }
+        if index < 0 {
+            return Vec.new();
+        }
+        if b.is_empty() || b.len() > 176 {
+            return reply(id, error(6));
+        }
+        var client = clients[index];
+        var next = document;
+        let next_key = key;
+        var changed = false;
+        var output: Vec<Event> = Vec.new();
+        var extra: Vec<Event> = Vec.new();
+        var transient_value = json.null();
+        var clear_transient = bytes.new();
+        let now = (wall_time + state.integer(document, "ClockOffset")) & 4294967295;
+        let cmd = b[0] as i64;
+        match cmd {
+            22 => {
+                if b.len() != 2 {
+                    return reply(id, error(6));
+                }
+                client.version = b[1] as i64;
+                var out = wire.cat(wire.byte(13), wire.cat(wire.byte(13), wire.cat(wire.byte(175), wire.byte(40))));
+                out = state.padded(out, 20);
+                out.append(state.padded("MeshCore Hew TCP host".to_bytes(), 40));
+                out.append(state.padded("hew-base".to_bytes(), 20));
+                out.push(if state.boolean(pref(document), "repeat") {
+                    1
+                } else {
+                    0
+                });
+                out.push(state.integer(pref(document), "path_hash_mode") as u8);
+                output.push(event(id, out));
+            }
+            1 => {
+                if b.len() < 8 {
+                    return reply(id, error(6));
+                }
+                var out = wire.cat(wire.byte(5), wire.cat(wire.byte(1), wire.cat(wire.byte(power), wire.byte(power))));
+                out.append(wire.public_key(key));
+                out.append(wire.le(state.integer(document, "Latitude"), 4));
+                out.append(wire.le(state.integer(document, "Longitude"), 4));
+                for name in ["MultiACKs", "AdvertLocationPolicy", "TelemetryModes", "ManualAdd"] {
+                    out.push(state.integer(document, name) as u8);
+                }
+                out.append(wire.le(frequency, 4));
+                out.append(wire.le(bandwidth, 4));
+                out.push(spreading as u8);
+                out.push(coding as u8);
+                out.append(state.text(document, "Name").to_bytes());
+                output.push(event(id, out));
+                if client.cursor < state.unsigned(document, "Sequence") {
+                    output.push(event(id, wire.byte(131)));
+                }
+            }
+            5 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                output.push(event(id, wire.cat(wire.byte(9), wire.le(now, 4))));
+            }
+            6 => {
+                if b.len() != 5 || wire.uint(wire.cut(b, 1, 5)) < now {
+                    return reply(id, error(6));
+                }
+                next = put(next, "ClockOffset", wire.uint(wire.cut(b, 1, 5)) - wall_time);
+                changed = true;
+            }
+            8 => {
+                if b.len() < 2 || b.len() > 33 {
+                    return reply(id, error(6));
+                }
+                let name = match utf8.decode(wire.cut(b, 1, b.len())) {
+                    .Ok(value) => value,
+                    .Err(_) => {
+                        return reply(id, error(6));
+                    }
+                };
+                if name.contains("\0") {
+                    return reply(id, error(6));
+                }
+                var data = name.to_bytes();
+                while data.len() > 31 || utf8.decode(data).is_err() {
+                    data = wire.cut(data, 0, data.len() - 1);
+                }
+                next.set("Name", json.from_string(utf8.decode(data).expect("name"))).expect("name");
+                changed = true;
+            }
+            14 => {
+                if b.len() != 9 {
+                    return reply(id, error(6));
+                }
+                let lat = wire.uint(wire.cut(b, 1, 5)) as i32;
+                let lon = wire.uint(wire.cut(b, 5, 9)) as i32;
+                if lat < -90000000 || lat > 90000000 || lon < -180000000 || lon > 180000000 {
+                    return reply(id, error(6));
+                }
+                next = put(put(next, "Latitude", lat as i64), "Longitude", lon as i64);
+                changed = true;
+            }
+            11 => {
+                if b.len() != 11 && b.len() != 12 {
+                    return reply(id, error(6));
+                }
+                if wire.uint(wire.cut(b, 1, 5)) != frequency || wire.uint(wire.cut(b, 5, 9)) != bandwidth || b[9] as i64 != spreading || b[10] as i64 != coding {
+                    return reply(id, error(1));
+                }
+                let repeat = b.len() == 12 && b[11] != 0;
+                if repeat && frequency != 433000 && frequency != 869495 && frequency != 918000 {
+                    return reply(id, error(6));
+                }
+                var p = pref(next);
+                p.set("repeat", json.from_bool(repeat)).expect("repeat");
+                next.set("Preferences", p).expect("preferences");
+                changed = true;
+            }
+            12 => {
+                if b.len() != 2 {
+                    return reply(id, error(6));
+                }
+                if (b[1] as i8) as i64 != power {
+                    return reply(id, error(1));
+                }
+            }
+            4 => {
+                if b.len() != 1 && b.len() != 5 {
+                    return reply(id, error(6));
+                }
+                let contacts = state.field(document, "Contacts");
+                output.push(event(id, wire.cat(wire.byte(2), wire.le(state.count(contacts), 4))));
+                for i in 0..state.count(contacts) {
+                    let contact = state.item(contacts, i);
+                    if b.len() == 1 || state.integer(contact, "LastModified") > wire.uint(wire.cut(b, 1, 5)) {
+                        output.push(event(id, state.contact_frame(contact, 3)));
+                    }
+                }
+                output.push(event(id, wire.cat(wire.byte(4), wire.le(state.integer(document, "LastModified"), 4))));
+            }
+            9 => {
+                if b.len() < 36 || b[33] > 4 {
+                    return reply(id, error(6));
+                }
+                let size = state.path_size(b[35] as i64);
+                if size < 0 || b.len() < 36 + size {
+                    return reply(id, error(6));
+                }
+                let contacts = state.field(document, "Contacts");
+                let pubkey = wire.cut(b, 1, 33);
+                let permanent = find(contacts, pubkey);
+                if permanent < 0 && b[33] != 0 && state.count(contacts) >= 350 {
+                    return reply(id, error(3));
+                }
+                let old = find(all_contacts(), pubkey);
+                var p = if old >= 0 {
+                    state.item(all_contacts(), old)
+                } else {
+                    json.object()
+                };
+                p.set("PublicKey", state.array(pubkey)).expect("key");
+                p = put(put(put(p, "Type", b[33] as i64), "Flags", b[34] as i64), "OutPathLen", b[35] as i64);
+                p.set("OutPath", state.array(state.padded(wire.cut(b, 36, if b.len() < 100 {
+                    b.len()
+                } else {
+                    100
+                }), 64))).expect("path");
+                if b.len() >= 132 {
+                    p.set("AdvertName", json.from_string(state.cstring(wire.cut(b, 100, 132)))).expect("name");
+                }
+                if b.len() >= 136 {
+                    p = put(p, "LastAdvert", wire.uint(wire.cut(b, 132, 136)));
+                }
+                if b.len() >= 144 {
+                    p = put(put(p, "AdvertLatitude", (wire.uint(wire.cut(b, 136, 140)) as i32) as i64), "AdvertLongitude", (wire.uint(wire.cut(b, 140, 144)) as i32) as i64);
+                }
+                p = put(p, "LastModified", modified(now));
+                next = put(next, "LastModified", modified(now));
+                var updated = contacts;
+                if updated.type_of() == json.Kind.Null {
+                    updated = json.array();
+                }
+                if b[33] == 0 {
+                    if permanent >= 0 {
+                        updated = state.remove(updated, permanent);
+                    }
+                    transient_value = p;
+                } else {
+                    if permanent >= 0 {
+                        updated = state.replace(updated, permanent, p);
+                    } else {
+                        updated.push(p).expect("contact append");
+                    }
+                    clear_transient = pubkey;
+                }
+                next.set("Contacts", updated).expect("contacts");
+                changed = true;
+            }
+            30 | 13 | 15 => {
+                if b.len() != 33 && !(cmd == 15 && b.len() == 7) {
+                    return reply(id, error(6));
+                }
+                let contacts = all_contacts();
+                let found = find(contacts, wire.cut(b, 1, b.len()));
+                if found < 0 {
+                    return reply(id, error(2));
+                }
+                var p = state.item(contacts, found);
+                let pubkey = state.blob(state.field(p, "PublicKey"));
+                if cmd == 30 {
+                    output.push(event(id, state.contact_frame(p, 3)));
+                } else {
+                    let permanent = find(state.field(document, "Contacts"), pubkey);
+                    var updated = state.field(document, "Contacts");
+                    if cmd == 13 {
+                        p = put(put(p, "OutPathLen", 255), "LastModified", modified(now));
+                        p.set("OutPath", state.array(state.padded(bytes.new(), 64))).expect("path");
+                        if permanent >= 0 {
+                            updated = state.replace(updated, permanent, p);
+                        } else {
+                            transient_value = p;
+                        }
+                        extra.push(event(0, wire.cat(wire.byte(129), pubkey)));
+                    } else {
+                        if permanent >= 0 {
+                            updated = state.remove(updated, permanent);
+                        }
+                        clear_transient = pubkey;
+                        extra.push(event(0, wire.cat(wire.byte(143), pubkey)));
+                    }
+                    next.set("Contacts", updated).expect("contacts");
+                    next = put(next, "LastModified", modified(now));
+                    changed = true;
+                }
+            }
+            17 => {
+                if b.len() != 1 && b.len() != 33 {
+                    return reply(id, error(6));
+                }
+                var raw = bytes.new();
+                if b.len() == 1 || wire.equal(wire.cut(b, 1, 33), wire.public_key(key)) {
+                    raw = self_advert(key, document, now);
+                } else {
+                    let found = find(all_contacts(), wire.cut(b, 1, 33));
+                    if found < 0 {
+                        return reply(id, error(2));
+                    }
+                    raw = state.blob(state.field(state.item(all_contacts(), found), "Advert"));
+                }
+                if raw.is_empty() {
+                    return reply(id, error(2));
+                }
+                output.push(event(id, wire.cat(wire.byte(11), raw)));
+            }
+            18 => {
+                let events = store_advert(wire.cut(b, 1, b.len()), true, now);
+                for e in events {
+                    output.push(event(if e.client == -1 {
+                        id
+                    } else {
+                        e.client
+                    }, e.frame));
+                }
+            }
+            31 => {
+                if b.len() != 2 || b[1] >= 40 {
+                    return reply(id, error(6));
+                }
+                let ch = state.item(state.field(document, "Channels"), b[1] as i64);
+                var out = wire.cat(wire.byte(18), wire.byte(b[1] as i64));
+                out.append(state.padded(if ch.type_of() == json.Kind.Null {
+                    bytes.new()
+                } else {
+                    state.text(ch, "Name").to_bytes()
+                }, 32));
+                out.append(state.padded(if ch.type_of() == json.Kind.Null {
+                    bytes.new()
+                } else {
+                    state.blob(state.field(ch, "PSK"))
+                }, 16));
+                output.push(event(id, out));
+            }
+            32 => {
+                if b.len() != 50 || b[1] >= 40 {
+                    return reply(id, error(6));
+                }
+                let name_data = wire.cut(b, 2, 34);
+                var end: i64 = 0;
+                while end < name_data.len() && name_data[end] != 0 {
+                    end += 1;
+                }
+                let name = match utf8.decode(wire.cut(name_data, 0, end)) {
+                    .Ok(n) => n,
+                    .Err(_) => {
+                        return reply(id, error(4));
+                    }
+                };
+                let psk = wire.cut(b, 34, 50);
+                var ch = json.object();
+                ch.set("Name", json.from_string(name)).expect("channel");
+                ch.set("PSK", state.array(psk)).expect("channel");
+                ch.set("Hash", json.from_int(crypto.sha256(psk)[0] as i64)).expect("channel");
+                next.set("Channels", state.replace(state.field(document, "Channels"), b[1] as i64, ch)).expect("channels");
+                changed = true;
+            }
+            10 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                let messages = state.field(document, "Messages");
+                var found = false;
+                for i in 0..state.count(messages) {
+                    let m = state.item(messages, i);
+                    let sequence = state.field(m, "Sequence").get_u64().expect("message sequence");
+                    if !found && sequence > client.cursor {
+                        var frame = state.blob(state.field(m, "Frame"));
+                        if client.version < 3 && (frame[0] == 16 || frame[0] == 17) {
+                            frame = wire.cat(wire.byte((frame[0] as i64) - 9), wire.cut(frame, 4, frame.len()));
+                        }
+                        output.push(event(id, frame));
+                        client.cursor = sequence;
+                        found = true;
+                    }
+                }
+                if !found {
+                    output.push(event(id, wire.byte(10)));
+                } else if state.text(document, "Retention") == "native-queue" {
+                    var minimum = client.cursor;
+                    for other in clients {
+                        if other.id != id && other.cursor < minimum {
+                            minimum = other.cursor;
+                        }
+                    }
+                    var retained = json.array();
+                    for i in 0..state.count(messages) {
+                        let m = state.item(messages, i);
+                        if state.field(m, "Sequence").get_u64().expect("sequence") > minimum {
+                            retained.push(m).expect("retained");
+                        }
+                    }
+                    next.set("Messages", retained).expect("messages");
+                    changed = true;
+                }
+            }
+            33 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                client.signing = true;
+                client.signature = bytes.new();
+                output.push(event(id, wire.cat(wire.cat(wire.byte(19), wire.byte(0)), wire.le(8192, 4))));
+            }
+            34 => {
+                if !client.signing {
+                    return reply(id, error(4));
+                }
+                if client.signature.len() + b.len() - 1 > 8192 {
+                    return reply(id, error(3));
+                }
+                client.signature.append(wire.cut(b, 1, b.len()));
+            }
+            35 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                if !client.signing {
+                    return reply(id, error(4));
+                }
+                output.push(event(id, wire.cat(wire.byte(20), wire.signature(key, client.signature))));
+                client.signing = false;
+                client.signature = bytes.new();
+            }
+            37 => {
+                if b.len() != 5 {
+                    return reply(id, error(6));
+                }
+                let pin = wire.uint(wire.cut(b, 1, 5));
+                if pin != 0 && (pin < 100000 || pin > 999999) {
+                    return reply(id, error(6));
+                }
+                output.push(event(id, wire.byte(15)));
+            }
+            38 => {
+                if b.len() < 2 || b.len() > 5 || (b.len() >= 4 && b[3] > 1) {
+                    return reply(id, error(6));
+                }
+                next = put(next, "ManualAdd", b[1] as i64);
+                if b.len() >= 3 {
+                    next = put(next, "TelemetryModes", (b[2] & 63) as i64);
+                }
+                if b.len() >= 4 {
+                    next = put(next, "AdvertLocationPolicy", b[3] as i64);
+                }
+                if b.len() == 5 {
+                    next = put(next, "MultiACKs", b[4] as i64);
+                }
+                changed = true;
+            }
+            40 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                output.push(event(id, wire.byte(21)));
+            }
+            41 => {
+                return reply(id, error(6));
+            }
+            42 => {
+                if b.len() != 34 || b[1] != 0 {
+                    return reply(id, error(6));
+                }
+                let peer = wire.cut(b, 2, 34);
+                for cached_path in heard {
+                    if wire.equal(cached_path.key, peer) {
+                        var out = wire.cat(wire.byte(22), wire.le(cached_path.at, 4));
+                        out.push(cached_path.encoded as u8);
+                        out.append(cached_path.path_data);
+                        return reply(id, out);
+                    }
+                }
+                let found = find(all_contacts(), wire.cut(b, 2, 34));
+                if found < 0 {
+                    return reply(id, error(2));
+                }
+                let p = state.item(all_contacts(), found);
+                let heard_at = state.integer(p, "HeardAt");
+                if heard_at == 0 {
+                    return reply(id, error(2));
+                }
+                var out = wire.cat(wire.byte(22), wire.le(heard_at, 4));
+                out.push(state.integer(p, "HeardPathLen") as u8);
+                out.append(state.blob(state.field(p, "HeardPath")));
+                output.push(event(id, out));
+            }
+            43 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                var out = wire.byte(23);
+                for name in ["rxdelay", "airtime_factor"] {
+                    let n = (state.decimal(pref(document), name) as f32) * 1000.0;
+                    if !(n as f64).is_finite() || n < 0.0 || (n as f64) > 4294967295.0 {
+                        return reply(id, error(4));
+                    }
+                    out.append(wire.le(n as i64, 4));
+                }
+                output.push(event(id, out));
+            }
+            21 => {
+                if b.len() != 9 {
+                    return reply(id, error(6));
+                }
+                let factor = ((wire.uint(wire.cut(b, 5, 9)) as f32) / 1000.0) as f64;
+                if wire.uint(wire.cut(b, 1, 5)) > 20000 {
+                    return reply(id, error(6));
+                }
+                if factor != state.decimal(pref(document), "airtime_factor") && !source_policy {
+                    return reply(id, error(1));
+                }
+                var p = pref(next);
+                p.set("rxdelay", json.from_float(((wire.uint(wire.cut(b, 1, 5)) as f32) / 1000.0) as f64).expect("rxdelay")).expect("rxdelay");
+                p.set("airtime_factor", json.from_float(factor).expect("factor")).expect("factor");
+                next.set("Preferences", p).expect("preferences");
+                changed = true;
+            }
+            58 => {
+                if b.len() != 2 && b.len() != 3 {
+                    return reply(id, error(6));
+                }
+                next = put(next, "AutoAddConfig", b[1] as i64);
+                if b.len() == 3 {
+                    next = put(next, "AutoAddMaxHops", if b[2] > 64 {
+                        64
+                    } else {
+                        b[2] as i64
+                    });
+                }
+                changed = true;
+            }
+            59 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                output.push(event(id, wire.cat(wire.byte(25), wire.cat(wire.byte(state.integer(document, "AutoAddConfig")), wire.byte(state.integer(document, "AutoAddMaxHops"))))));
+            }
+            61 => {
+                if b.len() != 3 || b[1] != 0 || b[2] > 2 {
+                    return reply(id, error(6));
+                }
+                var p = pref(next);
+                p = put(p, "path_hash_mode", b[2] as i64);
+                next.set("Preferences", p).expect("preferences");
+                changed = true;
+            }
+            54 => {
+                if (b.len() != 2 && b.len() != 18) || b[1] > 1 {
+                    return reply(id, error(6));
+                }
+                client.unscoped = b[1] == 1;
+                client.scope_key = if b[1] == 0 && b.len() == 18 {
+                    wire.cut(b, 2, 18)
+                } else {
+                    bytes.new()
+                };
+            }
+            63 => {
+                if b.len() != 1 && b.len() != 48 {
+                    return reply(id, error(6));
+                }
+                var flood_scope = json.object();
+                var name = "";
+                var scope_key = state.padded(bytes.new(), 16);
+                if b.len() == 48 {
+                    name = state.cstring(wire.cut(b, 1, 32));
+                    if name.is_empty() || name.to_bytes().len() > 30 {
+                        return reply(id, error(6));
+                    }
+                    scope_key = wire.cut(b, 32, 48);
+                }
+                flood_scope.set("name", json.from_string(name)).expect("scope");
+                flood_scope.set("key", state.array(scope_key)).expect("scope");
+                var p = pref(next);
+                p.set("default_scope", flood_scope).expect("scope");
+                next.set("Preferences", p).expect("preferences");
+                changed = true;
+            }
+            64 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                let flood_scope = state.field(pref(document), "default_scope");
+                var out = wire.byte(28);
+                let name = state.text(flood_scope, "name");
+                if !name.is_empty() {
+                    out.append(state.padded(name.to_bytes(), 31));
+                    out.append(state.blob(state.field(flood_scope, "key")));
+                }
+                output.push(event(id, out));
+            }
+            60 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                var out = wire.byte(26);
+                for freq in [433000, 869495, 918000] {
+                    out.append(wire.le(freq, 4));
+                    out.append(wire.le(freq, 4));
+                }
+                output.push(event(id, out));
+            }
+            20 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                if !physical_provider {
+                    return reply(id, error(1));
+                }
+                if !measurement_fresh() || measured_battery.len() != 2 || wire.uint(measured_battery) == 0 || filesystem_usage.len() != 8 {
+                    return reply(id, error(4));
+                }
+                return reply(id, wire.cat(wire.cat(wire.byte(12), measured_battery), filesystem_usage));
+            }
+            56 => {
+                if b.len() != 2 || b[1] > 2 {
+                    return reply(id, error(6));
+                }
+                if !physical_provider || b[1] != 2 {
+                    return reply(id, error(1));
+                }
+                if !measurement_fresh() {
+                    return reply(id, error(4));
+                }
+                if measured_counters.len() != 12 {
+                    return reply(id, error(1));
+                }
+                var out = wire.cat(wire.byte(24), wire.byte(2));
+                out.append(wire.cut(measured_counters, 0, 8));
+                out.append(wire.le(0, 16));
+                out.append(wire.cut(measured_counters, 8, 12));
+                return reply(id, out);
+            }
+            19 | 51 => {
+                let marker = if cmd == 19 {
+                    "reboot"
+                } else {
+                    "reset"
+                };
+                if !state.cstring(wire.cut(b, 1, b.len())).starts_with(marker) {
+                    return reply(id, error(6));
+                }
+                if (cmd == 19 && !restart_allowed) || (cmd == 51 && !reset_allowed) {
+                    return reply(id, error(1));
+                }
+                if lifecycle_pending != 0 || fault || closed {
+                    return reply(id, error(4));
+                }
+                lifecycle_pending = if cmd == 19 {
+                    1
+                } else {
+                    2
+                };
+                return Vec.new();
+            }
+            23 => {
+                if b.len() != 1 {
+                    return reply(id, error(6));
+                }
+                output.push(event(id, if identity_export {
+                    wire.cat(wire.byte(14), state.expanded(key))
+                } else {
+                    wire.byte(15)
+                }));
+            }
+            24 => {
+                if b.len() < 65 {
+                    return reply(id, error(6));
+                }
+                if !identity_import {
+                    output.push(event(id, wire.byte(15)));
+                } else {
+                    let imported = wire.cut(b, 1, 65);
+                    let public = wire.public_key(imported);
+                    if public.len() != 32 || public[0] == 0 || public[0] == 255 {
+                        return reply(id, error(6));
+                    }
+                    let probe = state.padded(bytes.new(), 32);
+                    let ours = wire.shared(imported, wire.public_key(probe));
+                    let theirs = wire.shared(probe, public);
+                    if ours.len() != 32 || !wire.equal(ours, theirs) || wire.equal(ours, probe) {
+                        return reply(id, error(6));
+                    }
+                    var replacement = document;
+                    replacement.set("PublicKey", state.array(public)).expect("imported public key");
+                    var envelope = authority;
+                    if envelope.type_of() != json.Kind.Object {
+                        envelope = json.object();
+                        envelope.set("version", json.from_int(1)).expect("envelope version");
+                        envelope.set("document", json.from_string("companion.json")).expect("envelope document");
+                    }
+                    envelope.set("state", replacement).expect("envelope state");
+                    envelope.set("identity", state.encoded(imported)).expect("envelope key");
+                    let target = if authority.type_of() == json.Kind.Object {
+                        path
+                    } else {
+                        path.slice(0, path.len() - "companion.json".len()) + "identity-state.json"
+                    };
+                    let committed = state.commit(target, envelope);
+                    if committed == -2 {
+                        fault = true;
+                    }
+                    if committed != 0 {
+                        return reply(id, error(5));
+                    }
+                    document = replacement;
+                    key = imported;
+                    authority = envelope;
+                    path = target;
+                    transient = json.array();
+                    for i in 0..clients.len() {
+                        var c = clients[i];
+                        c.signing = false;
+                        c.signature = bytes.new();
+                        clients[i] = c;
+                    }
+                    client.signing = false;
+                    client.signature = bytes.new();
+                }
+            }
+            _ => {
+                return reply(id, error(1));
+            }
+        }
+        if changed && !save(next, next_key) {
+            return reply(id, error(5));
+        }
+        if transient_value.type_of() == json.Kind.Object {
+            put_transient(transient_value);
+        }
+        if !clear_transient.is_empty() {
+            let found = find(transient, clear_transient);
+            if found >= 0 {
+                transient = state.remove(transient, found);
+            }
+        }
+        set_client(client);
+        if output.is_empty() {
+            output.push(event(id, wire.byte(0)));
+        }
+        for e in extra {
+            output.push(e);
+        }
+        output
+    }
+
+    receive fn journal(frame: bytes, cursor_key: bytes, cursor_stamp: i64) -> Vec<Event> {
+        journal_commit(frame, cursor_key, cursor_stamp, 0)
+    }
+    receive fn incoming_message(frame: bytes, peer: bytes, since: i64, now: i64) -> Vec<Event> {
+        journal_commit(frame, peer, since, now)
+    }
+    fn journal_commit(frame: bytes, cursor_key: bytes, cursor_stamp: i64, now: i64) -> Vec<Event> {
+        if closed || fault || frame.len() < 5 || frame.len() > 176 || (frame[0] != 16 && frame[0] != 17 && frame[0] != 27) {
+            return Vec.new();
+        }
+        var semantic = wire.cut(frame, 4, frame.len());
+        if frame[0] == 16 {
+            if semantic.len() < 11 {
+                return Vec.new();
+            }
+            semantic[6] = 0;
+        } else {
+            if semantic.len() < 2 {
+                return Vec.new();
+            }
+            semantic[1] = 0;
+        }
+        let digest = crypto.sha256(wire.cat(wire.byte(frame[0] as i64), semantic));
+        let messages = state.field(document, "Messages");
+        var next = document;
+        var transient_contact = json.null();
+        if !cursor_key.is_empty() {
+            let contacts = all_contacts();
+            let found = find(contacts, cursor_key);
+            if found < 0 {
+                return Vec.new();
+            }
+            var contact = state.item(contacts, found);
+            if cursor_stamp > state.integer(contact, "SyncSince") {
+                contact = put(contact, "SyncSince", cursor_stamp);
+            }
+            if now > 0 {
+                let at = modified(now);
+                contact = put(contact, "LastModified", at);
+                next = put(next, "LastModified", at);
+            }
+            let permanent = find(state.field(document, "Contacts"), cursor_key);
+            if permanent >= 0 {
+                next.set("Contacts", state.replace(state.field(document, "Contacts"), permanent, contact)).expect("room cursor");
+            } else {
+                transient_contact = contact;
+            }
+        }
+        for i in 0..state.count(messages) {
+            if wire.equal(state.blob(state.field(state.item(messages, i), "Digest")), digest) {
+                if save(next, key) {
+                    if transient_contact.type_of() == json.Kind.Object {
+                        put_transient(transient_contact);
+                    }
+                    return reply(-1, wire.byte(0));
+                }
+                return Vec.new();
+            }
+        }
+        var evict: i64 = -1;
+        if state.count(messages) >= 256 {
+            for i in 0..state.count(messages) {
+                let old = state.blob(state.field(state.item(messages, i), "Frame"));
+                if evict < 0 && (old[0] == 17 || old[0] == 27) {
+                    evict = i;
+                }
+            }
+            if evict < 0 && state.text(document, "Retention") != "native-queue" && !clients.is_empty() {
+                var minimum = state.field(document, "Sequence").get_u64().expect("sequence");
+                for client in clients {
+                    if client.cursor < minimum {
+                        minimum = client.cursor;
+                    }
+                }
+                for i in 0..state.count(messages) {
+                    if evict < 0 && state.field(state.item(messages, i), "Sequence").get_u64().expect("sequence") <= minimum {
+                        evict = i;
+                    }
+                }
+            }
+            if evict < 0 {
+                return Vec.new();
+            }
+        }
+        let sequence = state.field(document, "Sequence").get_u64().expect("sequence");
+        if sequence == ((-1) as u64) {
+            return Vec.new();
+        }
+        var updated = if evict >= 0 {
+            state.remove(messages, evict)
+        } else {
+            messages
+        };
+        if updated.type_of() == json.Kind.Null {
+            updated = json.array();
+        }
+        var message = json.object();
+        message.set("Sequence", json.from_u64(sequence + 1)).expect("sequence");
+        message.set("Frame", state.encoded(frame)).expect("frame");
+        message.set("Digest", state.array(digest)).expect("digest");
+        updated.push(message).expect("message");
+        next.set("Messages", updated).expect("messages");
+        next.set("Sequence", json.from_u64(sequence + 1)).expect("sequence");
+        if !save(next, key) {
+            return Vec.new();
+        }
+        if transient_contact.type_of() == json.Kind.Object {
+            put_transient(transient_contact);
+        }
+        var output = reply(-1, wire.byte(0));
+        let first = state.field(state.item(updated, 0), "Sequence").get_u64().expect("sequence");
+        for client in clients {
+            if client.cursor + 1 < first || (evict >= 0 && client.cursor < state.field(state.item(messages, evict), "Sequence").get_u64().expect("sequence")) {
+                output.push(event(client.id, bytes.new()));
+            } else {
+                output.push(event(client.id, wire.byte(131)));
+            }
+        }
+        output
+    }
+
+    receive fn advert(raw: bytes, wall: i64) -> Vec<Event> {
+        store_advert(raw, false, (wall + state.integer(document, "ClockOffset")) & 4294967295)
+    }
+    fn store_advert(raw: bytes, force: bool, now: i64) -> Vec<Event> {
+        if fault || closed {
+            return reply(-1, error(5));
+        }
+        let packet = match wire.decode(raw) {
+            .Some(p) => p,
+            .None => {
+                return reply(-1, error(6));
+            }
+        };
+        let b = packet.payload;
+        if packet.kind != 4 || b.len() < 101 || b.len() > 184 || !sign.verify(wire.cat(wire.cut(b, 0, 36), wire.cut(b, 100, b.len())), wire.cut(b, 36, 100), wire.cut(b, 0, 32)) || wire.equal(wire.cut(b, 0, 32), wire.public_key(key)) {
+            return reply(-1, error(6));
+        }
+        let flags = b[100];
+        var offset: i64 = 101;
+        var lat: i64 = 0;
+        var lon: i64 = 0;
+        if flags & 16 != 0 {
+            if b.len() < offset + 8 {
+                return reply(-1, error(6));
+            }
+            lat = (wire.uint(wire.cut(b, offset, offset + 4)) as i32) as i64;
+            lon = (wire.uint(wire.cut(b, offset + 4, offset + 8)) as i32) as i64;
+            offset += 8;
+        }
+        if flags & 32 != 0 {
+            offset += 2;
+        }
+        if flags & 64 != 0 {
+            offset += 2;
+        }
+        if offset >= b.len() || flags & 128 == 0 {
+            return reply(-1, error(6));
+        }
+        let name = state.cstring(wire.cut(b, offset, b.len()));
+        if name.is_empty() {
+            return reply(-1, error(6));
+        }
+        let contacts = state.field(document, "Contacts");
+        let pubkey = wire.cut(b, 0, 32);
+        if !force && (packet.route == 0 || packet.route == 1) {
+            var keep: Vec<Heard> = Vec.new();
+            for old in heard {
+                if !wire.equal(old.key, pubkey) {
+                    keep.push(old);
+                }
+            }
+            if keep.len() >= 16 {
+                var oldest: i64 = 0;
+                for i in 1..keep.len() {
+                    if keep[i].at < keep[oldest].at {
+                        oldest = i;
+                    }
+                }
+                var retained: Vec<Heard> = Vec.new();
+                for i in 0..keep.len() {
+                    if i != oldest {
+                        retained.push(keep[i]);
+                    }
+                }
+                keep = retained;
+            }
+            keep.push(Heard { key: pubkey, path_data: packet.path, encoded: packet.pathlen, at: now });
+            heard = keep;
+        }
+        let found = find(contacts, pubkey);
+        let stamp = wire.uint(wire.cut(b, 32, 36));
+        var p = if found >= 0 {
+            state.item(contacts, found)
+        } else {
+            json.object()
+        };
+        if found >= 0 && !force && stamp <= state.integer(p, "LastAdvert") {
+            return reply(-1, wire.byte(0));
+        }
+        if found < 0 {
+            p.set("PublicKey", state.array(pubkey)).expect("advert key");
+            p = put(put(p, "Flags", 0), "OutPathLen", 255);
+            p.set("OutPath", state.array(state.padded(bytes.new(), 64))).expect("advert path");
+        }
+        let kind = (flags & 15) as i64;
+        p = put(put(put(p, "Type", if kind <= 4 {
+            kind
+        } else {
+            0
+        }), "LastAdvert", stamp), "LastModified", modified(now));
+        p.set("AdvertName", json.from_string(name)).expect("advert name");
+        if flags & 16 != 0 {
+            p = put(put(p, "AdvertLatitude", lat), "AdvertLongitude", lon);
+        }
+        p = put(put(p, "HeardPathLen", packet.pathlen), "HeardAt", now);
+        p.set("HeardPath", state.encoded(packet.path)).expect("heard path");
+        p.set("Advert", state.encoded(wire.encode(wire.packet(1, 4, b)))).expect("signed advert");
+        var output = reply(-1, wire.byte(0));
+        var updated = contacts;
+        if updated.type_of() == json.Kind.Null {
+            updated = json.array();
+        }
+        if found < 0 && !force {
+            let auto_type = state.integer(document, "ManualAdd") == 0 || (kind >= 1 && kind <= 4 && (state.integer(document, "AutoAddConfig") & (1 << kind)) != 0);
+            let max_hops = state.integer(document, "AutoAddMaxHops");
+            if !auto_type || (max_hops > 0 && (packet.pathlen & 63) >= max_hops) {
+                output.push(event(0, state.contact_frame(p, 138)));
+                return output;
+            }
+        }
+        if found < 0 && state.count(updated) >= 350 {
+            if force {
+                return reply(-1, error(3));
+            }
+            var oldest: i64 = -1;
+            if state.integer(document, "AutoAddConfig") & 1 != 0 {
+                for i in 0..state.count(updated) {
+                    let candidate = state.item(updated, i);
+                    if state.integer(candidate, "Flags") & 1 == 0 && (oldest < 0 || state.integer(candidate, "LastModified") < state.integer(state.item(updated, oldest), "LastModified")) {
+                        oldest = i;
+                    }
+                }
+            }
+            if oldest < 0 {
+                output.push(event(0, state.contact_frame(p, 138)));
+                output.push(event(0, wire.byte(144)));
+                return output;
+            }
+            output.push(event(0, wire.cat(wire.byte(143), state.blob(state.field(state.item(updated, oldest), "PublicKey")))));
+            updated = state.remove(updated, oldest);
+        }
+        if found >= 0 {
+            updated = state.replace(updated, found, p);
+        } else {
+            updated.push(p).expect("advert contact");
+        }
+        var next = put(document, "LastModified", modified(now));
+        next.set("Contacts", updated).expect("advert contacts");
+        if !save(next, key) {
+            return reply(-1, error(5));
+        }
+        let unknown = find(transient, pubkey);
+        if unknown >= 0 {
+            transient = state.remove(transient, unknown);
+        }
+        if force || found < 0 {
+            output.push(event(0, state.contact_frame(p, 138)));
+        } else {
+            output.push(event(0, wire.cat(wire.byte(128), pubkey)));
+        }
+        output
+    }
+    receive fn learned_path(peer: bytes, encoded: i64, path_data: bytes, now: i64) -> Vec<Event> {
+        if state.path_size(encoded) != path_data.len() || encoded == 255 || fault || closed {
+            return Vec.new();
+        }
+        let contacts = all_contacts();
+        let found = find(contacts, peer);
+        if found < 0 {
+            return Vec.new();
+        }
+        var p = put(put(state.item(contacts, found), "OutPathLen", encoded), "LastModified", modified(now));
+        p.set("OutPath", state.array(state.padded(path_data, 64))).expect("learned path");
+        var next = put(document, "LastModified", modified(now));
+        let permanent = find(state.field(document, "Contacts"), peer);
+        if permanent >= 0 {
+            next.set("Contacts", state.replace(state.field(document, "Contacts"), permanent, p)).expect("contacts");
+        }
+        if !save(next, key) {
+            return Vec.new();
+        }
+        if permanent < 0 {
+            put_transient(p);
+        }
+        reply(0, wire.cat(wire.byte(129), peer))
+    }
+    receive fn remember_unknown(value: string) {
+        put_transient(json.parse(value).expect("unknown contact"));
+    }
+    receive fn contacts() -> string {
+        all_contacts().stringify().expect("contacts")
+    }
+    receive fn session_info(id: i64) -> Option<Client> {
+        for c in clients {
+            if c.id == id {
+                return .Some(c);
+            }
+        }
+        .None
+    }
+    receive fn active_key() -> bytes {
+        key
+    }
+    receive fn export_advert(wall: i64) -> bytes {
+        self_advert(key, document, (wall + state.integer(document, "ClockOffset")) & 4294967295)
+    }
+}
+
+pub fn open(path: string, key: bytes) -> Result<Base, string> {
+    let raw = state.read(path);
+    if raw.is_empty() {
+        return .Err("companion state is missing, unsafe or exceeds 16 MiB");
+    }
+    var document = match utf8.decode(raw) {
+        .Ok(text) => match json.parse(text) {
+            .Ok(value) => value,
+            .Err(_) => {
+                return .Err("companion state is invalid JSON");
+            }
+        }
+        .Err(_) => {
+            return .Err("companion state is not UTF-8");
+        }
+    };
+    var authority = json.null();
+    var identity = key;
+    if document.get_field("state").expect("document").is_some() {
+        authority = document;
+        if state.integer(authority, "version") != 1 || state.text(authority, "document") != "companion.json" {
+            return .Err("companion identity envelope version or document mismatch");
+        }
+        identity = state.blob(state.field(authority, "identity"));
+        if identity.len() != 64 || wire.public_key(identity).len() != 32 {
+            return .Err("companion envelope has invalid scalar-prefix identity");
+        }
+        document = state.field(authority, "state");
+    }
+    if !state.validate(document, identity) {
+        return .Err("companion state schema, capacity or identity mismatch");
+    }
+    if state.text(document, "Retention").is_empty() {
+        document.set("Retention", json.from_string("durable-replay")).expect("retention");
+    }
+    .Ok(spawn Base(document: document, authority: authority, key: identity, path: path))
+}

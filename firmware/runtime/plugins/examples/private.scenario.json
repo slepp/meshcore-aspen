@@ -1,0 +1,24 @@
+{
+  "replay": [
+    "@context dm alice",
+    "!save plan lunch",
+    "@context dm bob",
+    "!read plan",
+    "!save plan dinner",
+    "@context dm alice",
+    "!read plan",
+    "@fault commit",
+    "!save plan uncertain",
+    "@fault off",
+    "@duplicate",
+    "!read plan"
+  ],
+  "expect": [
+    {"type": "reply", "text": "created"},
+    {"type": "reply", "text": "empty"},
+    {"type": "reply", "text": "created"},
+    {"type": "reply", "text": "lunch"},
+    {"type": "reply", "text_contains": "outcome unknown"},
+    {"type": "reply", "duplicate": true}
+  ]
+}

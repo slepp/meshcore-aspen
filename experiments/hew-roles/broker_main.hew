@@ -1,0 +1,17 @@
+import broker;
+
+import std.os;
+
+fn main() {
+    let args = os.args();
+    if args.len() != 2 {
+        println("Usage: hew-broker PRIVATE_CONFIG_FILE");
+        panic("MQTT broker requires a private configuration path");
+    }
+    match broker.run(args[1]) {
+        .Ok(_) => {}
+        .Err(error) => {
+            panic(f"MQTT broker failed: {error}");
+        }
+    }
+}

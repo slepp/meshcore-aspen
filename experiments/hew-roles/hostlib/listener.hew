@@ -1,0 +1,175 @@
+//! Owned nonblocking numeric TCP listener. No protocol state in the native boundary.
+import hostlib.binary;
+
+import hostlib.events;
+
+import std.encoding.utf8;
+
+extern "C" {
+    fn hew_listener_open(host: bytes, port: i64) -> i64;
+    fn hew_listener_close(handle: i64);
+    fn hew_listener_port(handle: i64) -> i64;
+    fn hew_listener_accept(handle: i64) -> i64;
+    fn hew_listener_drop(handle: i64, token: i64);
+    fn hew_listener_read(handle: i64, token: i64) -> bytes;
+    fn hew_listener_write(handle: i64, token: i64, data: bytes) -> i64;
+    fn hew_listener_descriptor(handle: i64, token: i64) -> i32;
+    fn hew_listener_now() -> i64;
+    fn hew_listener_running() -> i32;
+    fn hew_listener_wall() -> i64;
+    fn hew_listener_heap() -> i64;
+    fn hew_listener_threads() -> i64;
+    fn hew_listener_loopback(host: bytes) -> i32;
+    fn hew_listener_equal(left: bytes, right: bytes) -> i32;
+    fn hew_listener_config(path: bytes) -> bytes;
+}
+
+#[resource]
+pub type Listener {
+    handle: i64;
+}
+
+impl Listener {
+    fn close(consume self) {
+        unsafe {
+            hew_listener_close(self.handle);
+        };
+    }
+}
+
+pub fn open(host: string, port: i64) -> Result<Listener, i64> {
+    let handle = unsafe {
+        hew_listener_open(host.to_bytes(), port)
+    };
+    if handle <= 0 {
+        return .Err(-handle);
+    }
+    .Ok(Listener { handle: handle })
+}
+
+pub fn port(owner: Listener) -> i64 {
+    unsafe {
+        hew_listener_port(owner.handle)
+    }
+}
+
+pub fn accept(owner: Listener) -> Result<i64, i64> {
+    let token = unsafe {
+        hew_listener_accept(owner.handle)
+    };
+    if token < 0 {
+        .Err(-token)
+    } else {
+        .Ok(token)
+    }
+}
+
+pub fn drop(owner: Listener, token: i64) {
+    unsafe {
+        hew_listener_drop(owner.handle, token);
+    };
+}
+
+/// Token zero watches accept; other tokens watch admitted client sockets.
+pub fn watch(owner: Listener, token: i64, group: events.Group, flags: i32) -> Result<i64, i64> {
+    let fd = unsafe { hew_listener_descriptor(owner.handle, token) };
+    if fd < 0 { return .Err(-(fd as i64)); }
+    events.add(group, fd, flags)
+}
+
+pub enum Read {
+    Idle;
+    Data(bytes);
+    End;
+    Failed;
+}
+
+pub fn read(owner: Listener, token: i64) -> Read {
+    let value = unsafe {
+        hew_listener_read(owner.handle, token)
+    };
+    if value.is_empty() {
+        return Read.Failed;
+    }
+    match value[0] {
+        0 => Read.Idle,
+        1 => Read.Data(binary.slice(value, 1, value.len()).expect("native read range")),
+        2 => Read.End,
+        _ => Read.Failed,
+    }
+}
+
+pub fn write(owner: Listener, token: i64, data: bytes) -> Result<i64, i64> {
+    let result = unsafe {
+        hew_listener_write(owner.handle, token, data)
+    };
+    if result < 0 {
+        .Err(-result)
+    } else {
+        .Ok(result)
+    }
+}
+
+pub fn now() -> i64 {
+    unsafe {
+        hew_listener_now()
+    }
+}
+
+pub fn running() -> bool {
+    unsafe {
+        hew_listener_running() != 0
+    }
+}
+
+pub fn wall() -> i64 {
+    unsafe {
+        hew_listener_wall()
+    }
+}
+
+pub fn heap() -> i64 {
+    unsafe {
+        hew_listener_heap()
+    }
+}
+
+pub fn threads() -> i64 {
+    unsafe {
+        hew_listener_threads()
+    }
+}
+
+pub fn loopback(host: string) -> bool {
+    unsafe {
+        hew_listener_loopback(host.to_bytes()) != 0
+    }
+}
+
+pub fn equal(left: bytes, right: bytes) -> bool {
+    unsafe {
+        hew_listener_equal(left, right) != 0
+    }
+}
+
+pub fn config(path: string) -> Result<string, string> {
+    let data = unsafe {
+        hew_listener_config(path.to_bytes())
+    };
+    if data.is_empty() {
+        return .Err("private config read returned no status");
+    }
+    if data[0] != 1 {
+        return .Err(match data[0] {
+            3 => "private config cannot be opened (must exist and must not be a symlink)",
+            4 => "private config file metadata cannot be read",
+            5 => "private config must be owner-only, owned by this user, regular and 1..4096 bytes",
+            6 => "private config file read failed",
+            _ => "private config path or size is invalid",
+        });
+    }
+    match utf8.decode(binary.slice(data, 1, data.len()).expect("config envelope")) {
+        .Ok(text) => .Ok(text),
+        .Err(_) => .Err("MQTT config must be UTF-8"),
+    }
+}

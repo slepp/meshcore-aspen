@@ -1,0 +1,32 @@
+{
+  "replay": [
+    "@channel #lab-one",
+    "@context channel alice Alice",
+    "!board put plan lunch",
+    "@grant shared on",
+    "!board put plan lunch",
+    "@context channel bob ForgedOwner",
+    "!board get plan",
+    "!board get plan extra",
+    "@channel #lab-two",
+    "!board get plan",
+    "@context dm alice",
+    "!recall plan",
+    "@channel #lab-one",
+    "@context channel alice Renamed",
+    "!board get plan",
+    "!board delete plan",
+    "!board list"
+  ],
+  "expect": [
+    {"type": "reply", "text_contains": "not granted"},
+    {"type": "reply", "text": "Board plan created; committed"},
+    {"type": "reply", "text": "lunch"},
+    {"type": "reply", "text": "Error: board get/delete take only a key"},
+    {"type": "reply", "text": "No board entry: plan"},
+    {"type": "reply", "text": "No note: plan"},
+    {"type": "reply", "text": "lunch"},
+    {"type": "reply", "text": "Board plan deleted; committed"},
+    {"type": "reply", "text": "No board entries"}
+  ]
+}

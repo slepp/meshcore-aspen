@@ -1,0 +1,270 @@
+//! Bounded MQTT 3.1.1 publisher framing. No network, subscription or RF authority.
+
+import std.encoding.utf8;
+import hostlib.binary;
+
+pub enum CodecError {
+    InvalidText;
+    InvalidTopic;
+    InvalidIdentifier;
+    InvalidKeepAlive;
+    InvalidCredentials;
+    InvalidHeader;
+    InvalidLength;
+    FrameTooLarge;
+    ChunkTooLarge;
+    InvalidReply;
+}
+
+impl Display for CodecError {
+    fn fmt(self) -> string {
+        match self {
+            CodecError.InvalidText => "MQTT text is invalid UTF-8, contains NUL or exceeds 65535 bytes",
+            CodecError.InvalidTopic => "MQTT publication topic is empty or contains a wildcard",
+            CodecError.InvalidIdentifier => "MQTT packet identifier must be 1..65535",
+            CodecError.InvalidKeepAlive => "MQTT keepalive must be 0..65535 seconds",
+            CodecError.InvalidCredentials => "MQTT password requires a username",
+            CodecError.InvalidHeader => "MQTT packet header has an invalid type or flags",
+            CodecError.InvalidLength => "MQTT remaining length exceeds four bytes",
+            CodecError.FrameTooLarge => "MQTT packet exceeds the configured body limit",
+            CodecError.ChunkTooLarge => "MQTT input chunk exceeds 4096 bytes",
+            CodecError.InvalidReply => "MQTT publisher received an invalid or unexpected reply",
+        }
+    }
+}
+
+pub fn text_valid(text: string) -> bool {
+    let data = text.to_bytes();
+    if data.len() > 65535 || utf8.decode(data).is_err() {
+        return false;
+    }
+    for value in data {
+        if value == 0 {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn topic_valid(topic: string) -> bool {
+    if topic.is_empty() || !text_valid(topic) {
+        return false;
+    }
+    for value in topic.to_bytes() {
+        if value == 35 || value == 43 {
+            return false;
+        }
+    }
+    true
+}
+
+fn big16(value: i64) -> bytes {
+    var out = bytes.new();
+    out.push(((value >> 8) & 255) as u8);
+    out.push((value & 255) as u8);
+    out
+}
+
+fn field(value: bytes) -> bytes {
+    var out = big16(value.len());
+    out.append(value);
+    out
+}
+
+fn header_valid(header: i64) -> bool {
+    if header < 16 || header > 239 {
+        return false;
+    }
+    let kind = header >> 4;
+    let flags = header & 15;
+    if kind == 3 {
+        let qos = (flags >> 1) & 3;
+        return qos < 3 && (qos != 0 || (flags & 8) == 0);
+    }
+    flags == (if kind == 6 || kind == 8 || kind == 10 { 2 } else { 0 })
+}
+
+pub fn frame(header: i64, body: bytes) -> Result<bytes, CodecError> {
+    if !header_valid(header) {
+        return .Err(CodecError.InvalidHeader);
+    }
+    if body.len() > 1048576 {
+        return .Err(CodecError.FrameTooLarge);
+    }
+    var out = bytes.new();
+    out.push(header as u8);
+    var remaining = body.len();
+    loop {
+        let digit = remaining % 128;
+        remaining /= 128;
+        out.push((digit | (if remaining > 0 { 128 } else { 0 })) as u8);
+        if remaining == 0 {
+            break;
+        }
+    }
+    out.append(body);
+    .Ok(out)
+}
+
+/// Clean session, QoS1 retained last will; credentials are never error text.
+pub fn connect(client: string, username: string, password: bytes, will_topic: string,
+               will_payload: bytes, keepalive: i64) -> Result<bytes, CodecError> {
+    if !password.is_empty() && username.is_empty() {
+        return .Err(CodecError.InvalidCredentials);
+    }
+    if !text_valid(client) || !text_valid(username) || password.len() > 65535 ||
+       will_payload.len() > 65535 {
+        return .Err(CodecError.InvalidText);
+    }
+    if !topic_valid(will_topic) {
+        return .Err(CodecError.InvalidTopic);
+    }
+    if keepalive < 0 || keepalive > 65535 {
+        return .Err(CodecError.InvalidKeepAlive);
+    }
+    var flags: i64 = 46;
+    if !username.is_empty() {
+        flags |= 128;
+    }
+    if !password.is_empty() {
+        flags |= 64;
+    }
+    var body = field("MQTT".to_bytes());
+    body.push(4);
+    body.push(flags as u8);
+    body.append(big16(keepalive));
+    body.append(field(client.to_bytes()));
+    body.append(field(will_topic.to_bytes()));
+    body.append(field(will_payload));
+    if !username.is_empty() {
+        body.append(field(username.to_bytes()));
+    }
+    if !password.is_empty() {
+        body.append(field(password));
+    }
+    frame(16, body)
+}
+
+/// QoS1 publication, with a new packet identifier for this clean session.
+pub fn publish(topic: string, payload: bytes, identifier: i64, retained: bool) -> Result<bytes, CodecError> {
+    if !topic_valid(topic) {
+        return .Err(CodecError.InvalidTopic);
+    }
+    if identifier < 1 || identifier > 65535 {
+        return .Err(CodecError.InvalidIdentifier);
+    }
+    if payload.len() > 1048576 - topic.to_bytes().len() - 4 {
+        return .Err(CodecError.FrameTooLarge);
+    }
+    var body = field(topic.to_bytes());
+    body.append(big16(identifier));
+    body.append(payload);
+    frame(if retained { 51 } else { 50 }, body)
+}
+
+pub type Packet {
+    header: i64;
+    body: bytes;
+}
+
+pub type Decoder {
+    buffer: bytes;
+    limit: i64;
+    failure: Option<CodecError>;
+}
+
+pub type Batch {
+    decoder: Decoder;
+    packets: Vec<Packet>;
+}
+
+pub fn decoder(limit: i64) -> Result<Decoder, CodecError> {
+    if limit < 2 || limit > 1048576 {
+        return .Err(CodecError.FrameTooLarge);
+    }
+    .Ok(Decoder { buffer: bytes.new(), limit: limit, failure: .None })
+}
+
+/// Deliver complete prefix packets even when a later record fails. A failure
+/// is terminal; callers process that prefix, then retire the connection.
+pub fn feed(state: Decoder, chunk: bytes) -> Batch {
+    var next = state;
+    var packets: Vec<Packet> = Vec.new();
+    if next.failure.is_some() {
+        return Batch { decoder: next, packets: packets };
+    }
+    if chunk.len() > 4096 {
+        next.buffer = bytes.new();
+        next.failure = .Some(CodecError.ChunkTooLarge);
+        return Batch { decoder: next, packets: packets };
+    }
+    next.buffer.append(chunk);
+    var at: i64 = 0;
+    while at < next.buffer.len() {
+        let header = next.buffer[at] as i64;
+        if !header_valid(header) {
+            next.failure = .Some(CodecError.InvalidHeader);
+            break;
+        }
+        var cursor = at + 1;
+        var shift: i64 = 0;
+        var remaining: i64 = 0;
+        var complete = false;
+        while cursor < next.buffer.len() && shift < 28 {
+            let digit = next.buffer[cursor] as i64;
+            cursor += 1;
+            remaining |= (digit & 127) << shift;
+            shift += 7;
+            if (digit & 128) == 0 {
+                complete = true;
+                break;
+            }
+        }
+        if !complete {
+            if shift == 28 {
+                next.failure = .Some(CodecError.InvalidLength);
+            }
+            break;
+        }
+        if remaining > next.limit {
+            next.failure = .Some(CodecError.FrameTooLarge);
+            break;
+        }
+        if remaining > next.buffer.len() - cursor {
+            break;
+        }
+        packets.push(Packet { header: header,
+            body: binary.slice(next.buffer, cursor, cursor + remaining).expect("checked MQTT body") });
+        at = cursor + remaining;
+    }
+    next.buffer = if next.failure.is_some() {
+        bytes.new()
+    } else {
+        binary.slice(next.buffer, at, next.buffer.len()).expect("checked MQTT residual")
+    };
+    Batch { decoder: next, packets: packets }
+}
+
+pub enum Reply {
+    Connected;
+    Rejected(i64);
+    Acknowledged(i64);
+    Pong;
+}
+
+pub fn reply(packet: Packet) -> Result<Reply, CodecError> {
+    let body = packet.body;
+    if packet.header == 32 && body.len() == 2 && body[0] == 0 && body[1] <= 5 {
+        return .Ok(if body[1] == 0 { Reply.Connected } else { Reply.Rejected(body[1] as i64) });
+    }
+    if packet.header == 64 && body.len() == 2 {
+        let identifier = ((body[0] as i64) << 8) | (body[1] as i64);
+        if identifier != 0 {
+            return .Ok(Reply.Acknowledged(identifier));
+        }
+    }
+    if packet.header == 208 && body.is_empty() {
+        return .Ok(Reply.Pong);
+    }
+    .Err(CodecError.InvalidReply)
+}

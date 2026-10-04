@@ -1,0 +1,156 @@
+//! Bounded byte-stream framing, independent of MeshCore and worker messages.
+//!
+//! Feed calls accept at most 4096 bytes. Returned state owns the incomplete
+//! suffix; complete frames own their bytes. Length errors terminate that stream.
+//! SLIP errors discard one record and resynchronize at the next END byte.
+
+import hostlib.binary;
+
+pub enum FrameError {
+    InvalidLimit;
+    ChunkTooLarge;
+    InvalidLength;
+}
+
+impl Display for FrameError {
+    fn fmt(self) -> string {
+        match self {
+            FrameError.InvalidLimit => "frame limit must be 1..4096 bytes",
+            FrameError.ChunkTooLarge => "framing input exceeds the bounded receive chunk",
+            FrameError.InvalidLength => "frame payload length is zero or exceeds its limit",
+        }
+    }
+}
+
+pub type LengthBatch {
+    pending: bytes;
+    frames: Vec<bytes>;
+}
+
+/// Four-byte little-endian payload length, excluding the header.
+pub fn length_encode(payload: bytes, maximum: i64) -> Result<bytes, FrameError> {
+    if maximum < 1 || maximum > 4096 {
+        return .Err(FrameError.InvalidLimit);
+    }
+    if payload.is_empty() || payload.len() > maximum {
+        return .Err(FrameError.InvalidLength);
+    }
+    var encoded = binary.little(payload.len(), 4).expect("bounded length");
+    encoded.append(payload);
+    .Ok(encoded)
+}
+
+/// A feed failure rejects the complete call, including any preceding records
+/// in that chunk. The caller must discard pending bytes and retire the stream.
+pub fn length_feed(pending: bytes, chunk: bytes, maximum: i64) -> Result<LengthBatch, FrameError> {
+    if maximum < 1 || maximum > 4096 {
+        return .Err(FrameError.InvalidLimit);
+    }
+    if chunk.len() > 4096 || pending.len() > maximum + 3 {
+        return .Err(FrameError.ChunkTooLarge);
+    }
+    var input = pending;
+    input.append(chunk);
+    var frames: Vec<bytes> = Vec.new();
+    var at: i64 = 0;
+    while input.len() - at >= 4 {
+        let size = binary.integer(binary.slice(input, at, at + 4).expect("header range")).expect("header integer");
+        if size < 1 || size > maximum {
+            return .Err(FrameError.InvalidLength);
+        }
+        if input.len() - at < size + 4 {
+            break;
+        }
+        frames.push(binary.slice(input, at + 4, at + 4 + size).expect("complete frame"));
+        at = at + 4 + size;
+    }
+    .Ok(LengthBatch { pending: binary.slice(input, at, input.len()).expect("pending suffix"), frames: frames })
+}
+
+pub type SlipState {
+    pending: bytes;
+    escaped: bool;
+    discard: bool;
+}
+
+pub type SlipBatch {
+    state: SlipState;
+    frames: Vec<bytes>;
+    discarded: i64;
+}
+
+pub fn slip_state() -> SlipState {
+    SlipState { pending: bytes.new(), escaped: false, discard: true }
+}
+
+pub fn slip_encode(payload: bytes, maximum: i64) -> Result<bytes, FrameError> {
+    if maximum < 1 || maximum > 4096 {
+        return .Err(FrameError.InvalidLimit);
+    }
+    if payload.is_empty() || payload.len() > maximum {
+        return .Err(FrameError.InvalidLength);
+    }
+    var encoded = bytes.new();
+    encoded.push(192);
+    for value in payload {
+        if value == 192 || value == 219 {
+            encoded.push(219);
+            encoded.push(if value == 192 {
+                220
+            } else {
+                221
+            });
+        } else {
+            encoded.push(value);
+        }
+    }
+    encoded.push(192);
+    .Ok(encoded)
+}
+
+/// Empty delimiters are ignored. An unfinished escape at END, invalid escape
+/// code, or oversized record increments discarded; later records may succeed.
+pub fn slip_feed(previous: SlipState, chunk: bytes, maximum: i64) -> Result<SlipBatch, FrameError> {
+    if maximum < 1 || maximum > 4096 || previous.pending.len() > maximum {
+        return .Err(FrameError.InvalidLimit);
+    }
+    if chunk.len() > 4096 {
+        return .Err(FrameError.ChunkTooLarge);
+    }
+    var state = previous;
+    var frames: Vec<bytes> = Vec.new();
+    var discarded: i64 = 0;
+    for value in chunk {
+        if value == 192 {
+            if !state.discard && !state.escaped && !state.pending.is_empty() {
+                frames.push(state.pending);
+            } else if state.escaped {
+                discarded = discarded + 1;
+            }
+            state = SlipState { pending: bytes.new(), escaped: false, discard: false };
+        } else if !state.discard {
+            if state.escaped {
+                if value == 220 {
+                    state.pending.push(192);
+                } else if value == 221 {
+                    state.pending.push(219);
+                } else {
+                    state.pending = bytes.new();
+                    state.discard = true;
+                    discarded = discarded + 1;
+                }
+                state.escaped = false;
+            } else if value == 219 {
+                state.escaped = true;
+            } else {
+                state.pending.push(value);
+            }
+            if state.pending.len() > maximum {
+                state.pending = bytes.new();
+                state.discard = true;
+                discarded = discarded + 1;
+            }
+        }
+    }
+    .Ok(SlipBatch { state: state, frames: frames, discarded: discarded })
+}

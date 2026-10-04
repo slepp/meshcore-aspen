@@ -1,0 +1,55 @@
+//! MeshCore observer identity JWT: Ed25519 with a hexadecimal signature.
+
+import std.crypto.sign;
+import std.encoding.base64;
+import std.encoding.hex;
+import std.encoding.json;
+
+fn unpadded(data: bytes) -> string {
+    var text = base64.encode_url(data);
+    while text.ends_with("=") {
+        text = text.slice(0, text.len() - 1);
+    }
+    text
+}
+
+pub fn username(public_key: bytes) -> Result<string, string> {
+    if public_key.len() != 32 {
+        return .Err("observer identity must be 32 bytes");
+    }
+    .Ok("v1_" + hex.encode_upper(public_key))
+}
+
+pub fn signing_input(public_key: bytes, audience: string, now: i64) -> Result<string, string> {
+    let _ = username(public_key)?;
+    if audience.is_empty() || now < 1735689600 || now > 9223372036854689407 {
+        return .Err("observer JWT requires an audience and synchronized clock");
+    }
+    if audience.to_bytes().len() > 4096 {
+        return .Err("observer JWT audience exceeds the credential bound");
+    }
+    var claims = json.object();
+    claims.set("publicKey", json.from_string(hex.encode_upper(public_key))).expect("JWT public key");
+    claims.set("aud", json.from_string(audience)).expect("JWT audience");
+    claims.set("iat", json.from_int(now)).expect("JWT issued time");
+    claims.set("exp", json.from_int(now + 86400)).expect("JWT expiry");
+    let payload = match claims.stringify() {
+        .Ok(text) => text,
+        .Err(_) => return .Err("observer JWT claims cannot be encoded"),
+    };
+    let header = "{\"alg\":\"Ed25519\",\"typ\":\"JWT\"}";
+    let input = unpadded(header.to_bytes()) + "." + unpadded(payload.to_bytes());
+    if input.len() + 129 > 4096 {
+        return .Err("observer JWT exceeds the verifier's 4096-byte credential bound");
+    }
+    .Ok(input)
+}
+
+/// Signature creation belongs to the identity owner, not this wire codec.
+pub fn finish(public_key: bytes, audience: string, now: i64, signature: bytes) -> Result<string, string> {
+    let input = signing_input(public_key, audience, now)?;
+    if signature.len() != 64 || !sign.verify(input.to_bytes(), signature, public_key) {
+        return .Err("observer JWT signature does not match its identity");
+    }
+    .Ok(input + "." + hex.encode_upper(signature))
+}

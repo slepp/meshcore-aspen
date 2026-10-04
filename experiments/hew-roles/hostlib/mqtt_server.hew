@@ -1,0 +1,490 @@
+//! MQTT server parsing and topic filters, independent of application topics.
+import hostlib.binary;
+
+import hostlib.mqtt;
+
+import std.encoding.utf8;
+
+import hostlib.mqtt_properties as properties;
+
+pub type Field {
+    value: bytes;
+    end: i64;
+}
+
+pub fn uint16(data: bytes, at: i64) -> Result<i64, string> {
+    if at < 0 || at + 2 > data.len() {
+        return .Err("truncated MQTT integer");
+    }
+    .Ok((data[at] as i64) * 256 + data[at + 1] as i64)
+}
+
+pub fn field(data: bytes, at: i64) -> Result<Field, string> {
+    let size = uint16(data, at)?;
+    let value = binary.slice(data, at + 2, at + 2 + size).ok_or("truncated MQTT field")?;
+    .Ok(Field { value: value, end: at + 2 + size })
+}
+
+pub fn text(value: bytes) -> Result<string, string> {
+    let decoded = match utf8.decode(value) {
+        .Ok(decoded_text) => decoded_text,
+        .Err(_) => {
+            return .Err("invalid MQTT UTF-8");
+        }
+    };
+    if !mqtt.text_valid(decoded) {
+        return .Err("invalid MQTT text");
+    }
+    .Ok(decoded)
+}
+
+pub fn big16(value: i64) -> bytes {
+    var out = bytes.new();
+    out.push(((value >> 8) & 255) as u8);
+    out.push((value & 255) as u8);
+    out
+}
+
+pub fn string_field(value: string) -> bytes {
+    var out = big16(value.to_bytes().len());
+    out.append(value.to_bytes());
+    out
+}
+
+pub fn filter_valid(value: string) -> bool {
+    if value.is_empty() || text(value.to_bytes()).is_err() {
+        return false;
+    }
+    if value.contains("#") && !value.ends_with("#") {
+        return false;
+    }
+    if value.len() == 6 && ascii_prefix(value, "$share") {
+        return false;
+    }
+    if shared(value) {
+        let levels = value.split("/");
+        if levels.len() < 3 || levels[1].contains("+") || levels[1].contains("#") {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn shared(filter: string) -> bool {
+    ascii_prefix(filter, "$share/")
+}
+
+pub fn ascii_prefix(value: string, prefix: string) -> bool {
+    let data = value.to_bytes();
+    let wanted = prefix.to_bytes();
+    if data.len() < wanted.len() {
+        return false;
+    }
+    for index in 0..wanted.len() {
+        let digit = data[index] as i64;
+        let lower = if digit >= 65 && digit <= 90 {
+            digit + 32
+        } else {
+            digit
+        };
+        if lower != wanted[index] as i64 {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn shared_filter(filter: string) -> string {
+    if !shared(filter) {
+        return filter;
+    }
+    let slash = filter.slice(7, filter.len()).find("/").expect("validated shared group") + 7;
+    filter.slice(slash + 1, filter.len())
+}
+
+pub fn matches(filter: string, topic: string) -> bool {
+    if topic.is_empty() {
+        return false;
+    }
+    if topic.starts_with("$") && !filter.starts_with("$") {
+        return false;
+    }
+    levels_match(filter, topic)
+}
+
+pub fn retained_matches(filter: string, topic: string) -> bool {
+    if topic.is_empty() {
+        return false;
+    }
+    if (topic == "$SYS" || topic.starts_with("$SYS/")) && !filter.starts_with("$") {
+        return false;
+    }
+    levels_match(filter, topic)
+}
+
+fn levels_match(filter: string, topic: string) -> bool {
+    let wanted = filter.split("/");
+    let actual = topic.split("/");
+    var at: i64 = 0;
+    while at < wanted.len() {
+        if wanted[at] == "#" {
+            return true;
+        }
+        if at >= actual.len() || (wanted[at] != "+" && wanted[at] != actual[at]) {
+            return false;
+        }
+        at += 1;
+    }
+    at == actual.len()
+}
+
+pub type Publication {
+    topic: string;
+    payload: bytes;
+    qos: i64;
+    retained: bool;
+    identifier: i64;
+    properties: properties.Properties;
+    origin: string;
+}
+
+pub fn publish(packet: mqtt.Packet) -> Result<Publication, string> {
+    publish_version(packet, 4)
+}
+
+pub fn publish_version(packet: mqtt.Packet, version: i64) -> Result<Publication, string> {
+    let topic_field = field(packet.body, 0)?;
+    let topic = text(topic_field.value)?;
+    if !topic.is_empty() && !mqtt.topic_valid(topic) {
+        return .Err("invalid MQTT publication topic");
+    }
+    let qos = (packet.header >> 1) & 3;
+    if qos > 2 {
+        return .Err("invalid MQTT publication QoS");
+    }
+    var at = topic_field.end;
+    var identifier: i64 = 0;
+    if qos > 0 {
+        identifier = uint16(packet.body, at)?;
+        if identifier == 0 {
+            return .Err("zero MQTT packet identifier");
+        }
+        at += 2;
+    }
+    var props = properties.empty();
+    if version == 5 {
+        let block = properties.decode(packet.body, at, 3)?;
+        props = block.properties;
+        at = block.end;
+    }
+    if props.alias_set && props.alias == 0 {
+        return .Err("invalid MQTT topic alias");
+    }
+    if topic.is_empty() && props.alias == 0 {
+        return .Err("missing MQTT publication topic");
+    }
+    if !props.identifiers.is_empty() {
+        return .Err("surplus MQTT publication subscription identifier");
+    }
+    .Ok(Publication { topic: topic, payload: binary.slice(packet.body, at, packet.body.len()).expect("publication suffix"), qos: qos, retained: (packet.header & 1) != 0, identifier: identifier, properties: props, origin: "" })
+}
+
+pub fn encode_publication(item: Publication, duplicate: bool) -> Result<bytes, string> {
+    encode_version(item, duplicate, 4, 0)
+}
+
+pub fn encode_version(item: Publication, duplicate: bool, version: i64, expiry: i64) -> Result<bytes, string> {
+    var body = string_field(item.topic);
+    if item.qos > 0 {
+        body.append(big16(item.identifier));
+    }
+    if version == 5 {
+        body.append(properties.publication(item.properties, expiry)?);
+    }
+    body.append(item.payload);
+    if body.len() > 268435455 {
+        return .Err("MQTT publication exceeds the wire limit");
+    }
+    var out = bytes.new();
+    out.push((48 | (item.qos << 1) | (if item.retained {
+        1
+    } else {
+        0
+    }) | (if duplicate {
+        8
+    } else {
+        0
+    })) as u8);
+    out.append(properties.variable_bytes(body.len()));
+    out.append(body);
+    .Ok(out)
+}
+
+pub type Connect {
+    client: string;
+    clean: bool;
+    keepalive: i64;
+    version: i64;
+    username: bytes;
+    password: bytes;
+    will: Option<Publication>;
+    properties: properties.Properties;
+}
+
+pub fn connect(body: bytes) -> Result<Connect, string> {
+    let protocol = field(body, 0)?;
+    if protocol.end + 4 > body.len() {
+        return .Err("truncated MQTT CONNECT");
+    }
+    let name = text(protocol.value)?;
+    let version = body[protocol.end] as i64;
+    if !((name == "MQTT" && (version == 4 || version == 5)) || (name == "MQIsdp" && version == 3)) {
+        return .Err("unsupported MQTT protocol version");
+    }
+    let flags = body[protocol.end + 1] as i64;
+    if (flags & 1) != 0 || ((flags & 4) == 0 && (flags & 32) != 0) || ((flags & 4) != 0 && ((flags >> 3) & 3) == 3) {
+        return .Err("invalid MQTT CONNECT flags");
+    }
+    let keepalive = uint16(body, protocol.end + 2)?;
+    var at = protocol.end + 4;
+    var props = properties.empty();
+    if version == 5 {
+        let block = properties.decode(body, at, 1)?;
+        props = block.properties;
+        at = block.end;
+    }
+    let client_field = field(body, at)?;
+    let client = text(client_field.value)?;
+    let clean = (flags & 2) != 0;
+    if version < 5 && client.is_empty() && !clean {
+        return .Err("empty persistent MQTT client identifier");
+    }
+    at = client_field.end;
+    var will: Option<Publication> = .None;
+    if (flags & 4) != 0 {
+        var will_props = properties.empty();
+        if version == 5 {
+            let block = properties.decode(body, at, 16)?;
+            will_props = block.properties;
+            at = block.end;
+        }
+        let topic_field = field(body, at)?;
+        let topic = text(topic_field.value)?;
+        if topic.is_empty() {
+            return .Err("empty MQTT will payload");
+        }
+        let payload_field = field(body, topic_field.end)?;
+        if payload_field.value.is_empty() {
+            return .Err("empty MQTT will payload");
+        }
+        at = payload_field.end;
+        will = .Some(Publication { topic: topic, payload: payload_field.value, qos: (flags >> 3) & 3, retained: (flags & 32) != 0, identifier: 0, properties: will_props, origin: client });
+    }
+    var username = bytes.new();
+    var password = bytes.new();
+    if (flags & 128) != 0 {
+        let value = field(body, at)?;
+        username = value.value;
+        at = value.end;
+    }
+    if (flags & 64) != 0 {
+        let value = field(body, at)?;
+        password = value.value;
+        at = value.end;
+        if password.is_empty() {
+            return .Err("empty MQTT password");
+        }
+    }
+    .Ok(Connect { client: client, clean: clean, keepalive: keepalive, version: version, username: username, password: password, will: will, properties: props })
+}
+
+pub type Subscription {
+    filter: string;
+    qos: i64;
+    options: i64;
+    identifier: i64;
+}
+
+pub type Subscribe {
+    identifier: i64;
+    subscriptions: Vec<Subscription>;
+}
+
+pub fn subscribe(body: bytes) -> Result<Subscribe, string> {
+    subscribe_version(body, 4)
+}
+
+pub fn subscribe_version(body: bytes, version: i64) -> Result<Subscribe, string> {
+    let identifier = uint16(body, 0)?;
+    if identifier == 0 {
+        return .Err("zero MQTT subscription identifier");
+    }
+    var at: i64 = 2;
+    var sub_identifier: i64 = 0;
+    if version == 5 {
+        let block = properties.decode(body, at, 8)?;
+        at = block.end;
+        if !block.properties.identifiers.is_empty() {
+            sub_identifier = block.properties.identifiers[0];
+        }
+    }
+    var subscriptions: Vec<Subscription> = Vec.new();
+    while at < body.len() {
+        let value = field(body, at)?;
+        let filter = text(value.value)?;
+        if value.end >= body.len() {
+            return .Err("invalid MQTT subscription");
+        }
+        let options = body[value.end] as i64;
+        let qos = options & 3;
+        if (version == 5 && qos > 2) || (version != 5 && options > 2) {
+            return .Err("invalid MQTT subscription QoS");
+        }
+        subscriptions.push(Subscription { filter: filter, qos: qos, options: if version == 5 {
+            options
+        } else {
+            0
+        }, identifier: sub_identifier });
+        at = value.end + 1;
+    }
+    if subscriptions.is_empty() {
+        return .Err("empty MQTT SUBSCRIBE");
+    }
+    .Ok(Subscribe { identifier: identifier, subscriptions: subscriptions })
+}
+
+pub type Unsubscribe {
+    identifier: i64;
+    filters: Vec<string>;
+}
+
+pub fn unsubscribe(body: bytes) -> Result<Unsubscribe, string> {
+    unsubscribe_version(body, 4)
+}
+
+pub fn unsubscribe_version(body: bytes, version: i64) -> Result<Unsubscribe, string> {
+    let identifier = uint16(body, 0)?;
+    if identifier == 0 {
+        return .Err("zero MQTT unsubscribe identifier");
+    }
+    var at: i64 = 2;
+    if version == 5 {
+        let block = properties.decode(body, at, 10)?;
+        at = block.end;
+    }
+    var filters: Vec<string> = Vec.new();
+    while at < body.len() {
+        let value = field(body, at)?;
+        let filter = text(value.value)?;
+        filters.push(filter);
+        at = value.end;
+    }
+    if filters.is_empty() {
+        return .Err("empty MQTT UNSUBSCRIBE");
+    }
+    .Ok(Unsubscribe { identifier: identifier, filters: filters })
+}
+
+pub fn acknowledge(body: bytes) -> Result<i64, string> {
+    let identifier = uint16(body, 0)?;
+    if body.len() != 2 {
+        return .Err("invalid MQTT acknowledgment");
+    }
+    .Ok(identifier)
+}
+
+pub type Acknowledgment {
+    identifier: i64;
+    reason: i64;
+    properties: properties.Properties;
+}
+
+pub fn acknowledgment(packet: mqtt.Packet, version: i64) -> Result<Acknowledgment, string> {
+    let identifier = uint16(packet.body, 0)?;
+    var reason: i64 = 0;
+    var props = properties.empty();
+    if version == 5 && packet.body.len() > 2 {
+        reason = packet.body[2] as i64;
+        if packet.body.len() > 3 {
+            let block = properties.decode(packet.body, 3, packet.header >> 4)?;
+            if block.end != packet.body.len() {
+                return .Err("trailing MQTT acknowledgment bytes");
+            }
+            props = block.properties;
+        }
+    }
+    .Ok(Acknowledgment { identifier: identifier, reason: reason, properties: props })
+}
+
+pub fn control(header: i64, body: bytes) -> bytes {
+    if header != 240 {
+        return mqtt.frame(header, body).expect("control packet");
+    }
+    var out = bytes.new();
+    out.push(240);
+    out.append(properties.variable_bytes(body.len()));
+    out.append(body);
+    out
+}
+
+pub fn feed(state: mqtt.Decoder, chunk: bytes) -> mqtt.Batch {
+    var next = state;
+    var packets: Vec<mqtt.Packet> = Vec.new();
+    if next.failure.is_some() {
+        return mqtt.Batch { decoder: next, packets: packets };
+    }
+    if chunk.len() > 4096 {
+        next.failure = .Some(mqtt.CodecError.ChunkTooLarge);
+    } else {
+        next.buffer.append(chunk);
+    }
+    var at: i64 = 0;
+    while next.failure.is_none() && at < next.buffer.len() && packets.len() < 32 {
+        let header = next.buffer[at] as i64;
+        let kind = header >> 4;
+        let flags = header & 15;
+        if kind == 0 || kind > 15 || (kind == 3 && (((flags >> 1) & 3) == 3 || ((flags & 6) == 0 && (flags & 8) != 0))) || (kind != 3 && flags != if kind == 6 || kind == 8 || kind == 10 {
+            2
+        } else {
+            0
+        }) {
+            next.failure = .Some(mqtt.CodecError.InvalidHeader);
+            break;
+        }
+        var cursor = at + 1;
+        var shift: i64 = 0;
+        var remaining: i64 = 0;
+        var complete = false;
+        while cursor < next.buffer.len() && shift < 28 {
+            let digit = next.buffer[cursor] as i64;
+            cursor += 1;
+            remaining |= (digit & 127) << shift;
+            shift += 7;
+            if digit < 128 {
+                complete = true;
+                break;
+            }
+        }
+        if !complete {
+            if shift == 28 && cursor < next.buffer.len() {
+                next.failure = .Some(mqtt.CodecError.InvalidLength);
+            }
+            break;
+        }
+        if remaining > next.limit {
+            next.failure = .Some(mqtt.CodecError.FrameTooLarge);
+            break;
+        }
+        if remaining > next.buffer.len() - cursor {
+            break;
+        }
+        packets.push(mqtt.Packet { header: header, body: binary.slice(next.buffer, cursor, cursor + remaining).expect("decoded packet body") });
+        at = cursor + remaining;
+    }
+    next.buffer = if next.failure.is_some() {
+        bytes.new()
+    } else {
+        binary.slice(next.buffer, at, next.buffer.len()).expect("decoder suffix")
+    };
+    mqtt.Batch { decoder: next, packets: packets }
+}

@@ -1,0 +1,56 @@
+//! Detached dial/negotiation keeps companion TCP clients live during recovery.
+import hostlib.supervised_io as duplex;
+
+import session;
+
+import wire;
+
+import hostlib.events;
+
+pub enum State {
+    Waiting;
+    Failed(string);
+    Connected(session.Negotiated);
+}
+
+pub actor ResultSlot {
+    let group: events.Group;
+    var result: State = State.Waiting;
+    receive fn finish(update: Result<session.Negotiated, string>) {
+        result = match update {
+            .Ok(connection) => State.Connected(connection),
+            .Err(error) => State.Failed(error),
+        };
+        events.wake(group).expect("wake companion source recovery owner");
+    }
+    receive fn take() -> State {
+        let answer = result;
+        result = State.Waiting;
+        answer
+    }
+}
+
+pub actor Connector {
+    let endpoint: ChildRef<duplex.Endpoint>;
+    let profile: bytes;
+    let completed: ResultSlot;
+    receive fn idle() {}
+    receive fn connect(host: string, port: i64, factor: f64) {
+        let result = if duplex.open(endpoint, host, port, 3000).is_err() {
+            .Err("companion modem TCP dial failed")
+        } else {
+            let decoder = spawn wire.Decoder(buffer: bytes.new());
+            let negotiated: Result<session.Negotiated, string> = match session.negotiate_source(endpoint, decoder, profile, factor) {
+                .Some(value) => .Ok(value),
+                .None => .Err("companion modem ordinary-source negotiation failed"),
+            };
+            stop(decoder);
+            stopped(decoder);
+            negotiated
+        };
+        if result.is_err() {
+            duplex.close(endpoint);
+        }
+        completed.finish(result).expect("source recovery result");
+    }
+}

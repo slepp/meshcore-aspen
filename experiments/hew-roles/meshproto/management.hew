@@ -1,0 +1,374 @@
+//! Pure MeshCore management codecs. Packet authentication/routing belongs to
+//! the caller; these bounded value APIs do not perform I/O or own role state.
+
+import hostlib.binary;
+
+import std.encoding.utf8;
+
+pub type Telemetry {
+    flags: i64;
+    battery_mv: i64;
+    noise_dbm: i64;
+    current_rssi: i64;
+    temperature_c: f64;
+    received: i64;
+    sent: i64;
+    errors: i64;
+    tx_ms: i64;
+    rx_ms: i64;
+    error_events: i64;
+}
+
+pub fn unavailable() -> Telemetry {
+    Telemetry { flags: 0, battery_mv: 0, noise_dbm: 0, current_rssi: 0, temperature_c: 0.0, received: 0, sent: 0, errors: 0, tx_ms: 0, rx_ms: 0, error_events: 0 }
+}
+
+pub type Counters {
+    received: i64;
+    sent: i64;
+    flood_received: i64;
+    direct_received: i64;
+    flood_sent: i64;
+    direct_sent: i64;
+    flood_duplicates: i64;
+    direct_duplicates: i64;
+    uptime: i64;
+    queued: i64;
+    posted: i64;
+    pushed: i64;
+    measured: bool;
+    rssi: i64;
+    snr_quarter: i64;
+}
+
+pub fn counters() -> Counters {
+    Counters { received: 0, sent: 0, flood_received: 0, direct_received: 0, flood_sent: 0, direct_sent: 0, flood_duplicates: 0, direct_duplicates: 0, uptime: 0, queued: 0, posted: 0, pushed: 0, measured: false, rssi: -32768, snr_quarter: -32768 }
+}
+
+fn little(value: i64, size: i64) -> bytes {
+    binary.little(value, size).expect("fixed management scalar width")
+}
+
+/// Native status body, without the echoed request timestamp: room 52, relay 56.
+/// Flags: battery=1, noise=2, current RSSI=4, temperature=8, physical
+/// counters=16, measured TX airtime=32, RX airtime=64, error-event mask=128.
+/// Bit 256 marks a completed optional snapshot even if every sensor is absent.
+pub fn status(room: bool, t: Telemetry, c: Counters) -> bytes {
+    var data = little(if t.flags & 1 != 0 {
+        t.battery_mv
+    } else {
+        0
+    }, 2);
+    data.append(little(c.queued, 2));
+    data.append(little(if t.flags & 2 != 0 {
+        t.noise_dbm
+    } else {
+        -32768
+    }, 2));
+    data.append(little(if c.measured {
+        c.rssi
+    } else if t.flags & 4 != 0 {
+        t.current_rssi
+    } else {
+        -32768
+    }, 2));
+    data.append(little(if t.flags & 16 != 0 {
+        t.received
+    } else {
+        c.received
+    }, 4));
+    data.append(little(if t.flags & 16 != 0 {
+        t.sent
+    } else {
+        c.sent
+    }, 4));
+    data.append(little(if t.flags & 32 != 0 {
+        t.tx_ms / 1000
+    } else {
+        0
+    }, 4));
+    data.append(little(c.uptime, 4));
+    data.append(little(c.flood_sent, 4));
+    data.append(little(c.direct_sent, 4));
+    data.append(little(c.flood_received, 4));
+    data.append(little(c.direct_received, 4));
+    data.append(little(if t.flags & 128 != 0 {
+        t.error_events
+    } else {
+        0
+    }, 2));
+    data.append(little(if c.measured {
+        c.snr_quarter
+    } else {
+        -32768
+    }, 2));
+    data.append(little(c.direct_duplicates, 2));
+    data.append(little(c.flood_duplicates, 2));
+    if room {
+        data.append(little(c.posted, 2));
+        data.append(little(c.pushed, 2));
+    } else {
+        data.append(little(if t.flags & 64 != 0 {
+            t.rx_ms / 1000
+        } else {
+            0
+        }, 4));
+        data.append(little(if t.flags & 16 != 0 {
+            t.errors
+        } else {
+            0
+        }, 4));
+    }
+    data
+}
+
+fn sensor(channel: i64, kind: i64, value: i64) -> bytes {
+    var data = little(channel, 1);
+    data.append(little(kind, 1));
+    data.append(little(value >> 8, 1));
+    data.append(little(value, 1));
+    data
+}
+
+/// Cayenne voltage/temperature records; no fabricated zero-valued sensors.
+pub fn telemetry(t: Telemetry) -> Option<bytes> {
+    if t.flags & 9 == 0 {
+        return .None;
+    }
+    var data = bytes.new();
+    if t.flags & 1 != 0 {
+        if t.battery_mv < 0 || t.battery_mv > 65535 {
+            return .None;
+        }
+        let volts = (t.battery_mv as f32) / (1000 as f32);
+        data.append(sensor(1, 116, (volts * (100 as f32)) as i64));
+    }
+    if t.flags & 8 != 0 {
+        let scaled = ((t.temperature_c as f32) * (10 as f32)) as f64;
+        if !scaled.is_finite() || scaled <= -32769.0 || scaled >= 32768.0 {
+            return .None;
+        }
+        data.append(sensor(1, 103, scaled as i64));
+    }
+    .Some(data)
+}
+
+pub fn truncate(value: string, maximum: i64) -> string {
+    if maximum <= 0 {
+        return "";
+    }
+    let data = value.to_bytes();
+    var end = if data.len() < maximum {
+        data.len()
+    } else {
+        maximum
+    };
+    while end > 0 {
+        if let .Ok(text) = utf8.decode(binary.slice(data, 0, end).expect("bounded UTF8 prefix")) {
+            return text;
+        }
+        end -= 1;
+    }
+    ""
+}
+
+pub fn trim_left(value: string) -> string {
+    let data = value.to_bytes();
+    var at: i64 = 0;
+    while at < data.len() && (data[at] == 32 || data[at] == 9) {
+        at += 1;
+    }
+    utf8.decode(binary.slice(data, at, data.len()).expect("ASCII trim")).expect("UTF8 boundary")
+}
+
+pub fn trim(value: string) -> string {
+    let data = trim_left(value).to_bytes();
+    var end = data.len();
+    while end > 0 && (data[end - 1] == 32 || data[end - 1] == 9) {
+        end -= 1;
+    }
+    utf8.decode(binary.slice(data, 0, end).expect("ASCII trim")).expect("UTF8 boundary")
+}
+
+pub fn upper(value: string) -> string {
+    var data = bytes.new();
+    for byte in value.to_bytes() {
+        data.push(if byte >= 97 && byte <= 122 {
+            byte - 32
+        } else {
+            byte
+        });
+    }
+    utf8.decode(data).expect("ASCII case preserves UTF8")
+}
+
+/// StrHelper::ftoa representation: binary32, 24-bit fraction, seven digits.
+pub fn native_float(value: f64) -> string {
+    let rounded = (value as f32) as f64;
+    if rounded == 0.0 {
+        return "0.0";
+    }
+    let bits = rounded.to_bits() as i64;
+    let exponent = ((bits >> 52) & 2047) - 1023;
+    if exponent >= 31 || exponent < -23 {
+        return "0";
+    }
+    let mantissa = ((bits >> 29) & 8388607) | 8388608;
+    var whole: i64 = 0;
+    var fraction: i64 = 0;
+    if exponent >= 23 {
+        whole = mantissa << (exponent - 23);
+    } else if exponent >= 0 {
+        whole = mantissa >> (23 - exponent);
+        fraction = (mantissa << (exponent + 1)) & 16777215;
+    } else {
+        fraction = mantissa >> (-(exponent + 1));
+    }
+    let sign = if bits < 0 {
+        "-"
+    } else {
+        ""
+    };
+    var digits = bytes.new();
+    for index in 0..7 {
+        fraction *= 10;
+        digits.push(((fraction >> 24) + 48) as u8);
+        fraction = fraction & 16777215;
+    }
+    var end = digits.len();
+    while end > 1 && digits[end - 1] == 48 {
+        end -= 1;
+    }
+    let tail = utf8.decode(binary.slice(digits, 0, end).expect("fraction digits")).expect("ASCII fraction");
+    f"{sign}{whole}.{tail}"
+}
+
+pub fn fixed_two(value: f64) -> Option<string> {
+    if !value.is_finite() || value < -1000000000000.0 || value > 1000000000000.0 {
+        return .None;
+    }
+    let sign = if (value.to_bits() as i64) < 0 {
+        "-"
+    } else {
+        ""
+    };
+    let magnitude = if value < 0.0 {
+        -value
+    } else {
+        value
+    };
+    let scaled = magnitude * 100.0;
+    var units = scaled as i64;
+    let fraction = scaled - (units as f64);
+    if fraction > 0.5 || (fraction == 0.5 && units % 2 != 0) {
+        units += 1;
+    }
+    let tail = two(units % 100);
+    .Some(f"{sign}{units / 100}.{tail}")
+}
+
+fn two(value: i64) -> string {
+    if value < 10 {
+        f"0{value}"
+    } else {
+        to_string(value)
+    }
+}
+
+/// UTC display for the native unsigned-32-bit timestamp range.
+pub fn utc(stamp: i64) -> string {
+    let seconds = stamp & 4294967295;
+    var days = seconds / 86400;
+    var year: i64 = 1970;
+    for candidate in 1970..2107 {
+        let leap = candidate % 4 == 0 && (candidate % 100 != 0 || candidate % 400 == 0);
+        let count: i64 = if leap {
+            366
+        } else {
+            365
+        };
+        year = candidate;
+        if days < count {
+            break;
+        }
+        days -= count;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let february: i64 = if leap {
+        29
+    } else {
+        28
+    };
+    let months = [31, february, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    var month: i64 = 1;
+    for count in months {
+        if days < count {
+            break;
+        }
+        days -= count;
+        month += 1;
+    }
+    let hour = two((seconds / 3600) % 24);
+    let minute = two((seconds / 60) % 60);
+    f"{hour}:{minute} - {days + 1}/{month}/{year} UTC"
+}
+
+pub type Neighbour {
+    key: bytes;
+    advert: i64;
+    heard: i64;
+    snr_quarter: i64;
+}
+
+/// REQ 6 body: version, count, offset LE16, sort order, key width.
+pub fn neighbours(input: Vec<Neighbour>, request: bytes, now: i64) -> Option<bytes> {
+    if request.len() < 6 || request[0] != 0 || input.len() > 50 {
+        return .None;
+    }
+    let count = request[1] as i64;
+    var offset = binary.integer(binary.slice(request, 2, 4).expect("offset")).expect("offset scalar");
+    let order = request[4] as i64;
+    let width = if request[5] > 32 {
+        32
+    } else {
+        request[5] as i64
+    };
+    var list = input;
+    for index in 1..list.len() {
+        var at = index;
+        while at > 0 {
+            let left = list[at - 1];
+            let right = list[at];
+            let swap = match order {
+                0 => left.heard < right.heard,
+                1 => left.heard > right.heard,
+                2 => left.snr_quarter < right.snr_quarter,
+                3 => left.snr_quarter > right.snr_quarter,
+                _ => false,
+            };
+            if !swap {
+                break;
+            }
+            list.set(at - 1, right);
+            list.set(at, left);
+            at -= 1;
+        }
+    }
+    var entries = bytes.new();
+    var included: i64 = 0;
+    while offset < list.len() && included < count && entries.len() + width + 5 <= 130 {
+        let neighbour = list[offset];
+        if neighbour.key.len() != 32 {
+            return .None;
+        }
+        entries.append(binary.slice(neighbour.key, 0, width).expect("bounded key width"));
+        entries.append(little(now - neighbour.heard, 4));
+        entries.append(little(neighbour.snr_quarter, 1));
+        offset += 1;
+        included += 1;
+    }
+    var result = little(list.len(), 2);
+    result.append(little(included, 2));
+    result.append(entries);
+    .Some(result)
+}

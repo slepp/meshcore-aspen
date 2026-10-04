@@ -1,0 +1,32 @@
+{
+  "replay": [
+    "!net_status",
+    "@network setup-examples",
+    "@grant home on",
+    "@network reply {\"service\":\"fixture\",\"status\":\"ok\"}",
+    "!net_status",
+    "@network reply {\"text\":\"hello\"}",
+    "!net_echo hello",
+    "@advance 61000",
+    "@network reply {\"ok\":true,\"result\":{\"sum\":5}}",
+    "!net_sum 2 3",
+    "!net_sum x 3",
+    "@network reply {\"ok\":true,\"result\":{\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}}",
+    "!net_digest hello",
+    "@advance 61000",
+    "@network reply {\"ok\":true,\"result\":{\"status\":\"ok\"}}",
+    "!net_health",
+    "@network reply []",
+    "!net_status"
+  ],
+  "expect": [
+    {"type": "reply", "text_contains": "not granted"},
+    {"type": "reply", "text": "fixture: ok"},
+    {"type": "reply", "text": "hello"},
+    {"type": "reply", "text": "Sum: 5"},
+    {"type": "reply", "text_contains": "requires integer"},
+    {"type": "reply", "text": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+    {"type": "reply", "text": "Home: ok"},
+    {"type": "reply", "text_contains": "Error:"}
+  ]
+}

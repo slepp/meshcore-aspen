@@ -1,0 +1,9 @@
+import service;
+
+import std.os;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 2);
+    service.run(args[1]);
+}

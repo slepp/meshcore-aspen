@@ -1,0 +1,2 @@
+cryptography>=37,<49
+PyNaCl>=1.5,<2

@@ -1,0 +1,287 @@
+//! Owned, shell-free duplex children with bounded argument vectors.
+//!
+//! No shell or ambient command interpretation. Executables are absolute paths;
+//! arguments retain empty values, spaces and Unicode. Framing belongs elsewhere.
+//! Graceful/TERM/KILL retirement policy is Hew, not a native retry loop.
+
+import hostlib.binary;
+
+import hostlib.duplex;
+import hostlib.events;
+
+extern "C" {
+    #[offload]
+    fn mc_spawn_duplex(executable: bytes, arguments: bytes) -> bytes;
+    fn mc_child_poll(pid: i32) -> i32;
+    fn mc_child_signal(pid: i32, force: i32) -> i32;
+    fn mc_child_no_entry(code: i32) -> i32;
+    fn mc_errno_kind(code: i32) -> i32;
+    fn mc_shutdown(fd: i32);
+    fn mc_child_drop(pid: i32);
+}
+
+pub enum ProcessError {
+    InvalidPath;
+    InvalidArguments;
+    LaunchFailed;
+    System(i64);
+    ReapTimedOut;
+    ActorStopped;
+}
+
+impl Display for ProcessError {
+    fn fmt(self) -> string {
+        match self {
+            ProcessError.InvalidPath => "child executable must be an absolute, NUL-free path",
+            ProcessError.InvalidArguments => "child arguments exceed 32 items/16384 encoded bytes or contain NUL",
+            ProcessError.LaunchFailed => "native child spawn failed",
+            ProcessError.System(code) => f"child lifecycle syscall failed: errno={code}",
+            ProcessError.ReapTimedOut => "child did not exit after SIGKILL; final resource cleanup required",
+            ProcessError.ActorStopped => "child owner stopped before reporting retirement",
+        }
+    }
+}
+
+pub enum ExitStatus {
+    Exited(i64);
+    Signalled(i64);
+    AlreadyReaped;
+}
+
+#[resource]
+type OwnedProcess {
+    pid: i32;
+}
+
+impl OwnedProcess {
+    fn close(consume self) {
+        unsafe {
+            mc_child_drop(self.pid);
+        };
+    }
+}
+
+fn wait_until(pid: i32, deadline: i64) -> Result<Option<ExitStatus>, ProcessError> {
+    loop {
+        let result = unsafe {
+            mc_child_poll(pid)
+        };
+        if result > 0 && result <= 256 {
+            return .Ok(.Some(ExitStatus.Exited((result - 1) as i64)));
+        }
+        if result > 256 {
+            return .Ok(.Some(ExitStatus.Signalled((result - 257) as i64)));
+        }
+        if result < 0 {
+            if unsafe {
+                mc_errno_kind(-result)
+            } == 1 {
+                if duplex.monotonic() >= deadline {
+                    return .Ok(.None);
+                }
+                continue;
+            }
+            if unsafe {
+                mc_child_no_entry(-result)
+            } == 1 {
+                return .Ok(.Some(ExitStatus.AlreadyReaped));
+            }
+            return .Err(ProcessError.System(-(result as i64)));
+        }
+        if duplex.monotonic() >= deadline {
+            return .Ok(.None);
+        }
+        sleep(10ms);
+    }
+}
+
+pub actor Child {
+    let channel: duplex.Descriptor;
+    var process: OwnedProcess;
+    mailbox 32;
+    receive fn id() -> i64 {
+        process.pid as i64
+    }
+    receive fn read(timeout_ms: i64) -> duplex.Read {
+        duplex.read_fd(channel.fd, timeout_ms)
+    }
+    receive fn write(data: bytes) -> Result<i64, duplex.WriteFailure> {
+        duplex.write_fd(channel.fd, data, 1500)
+    }
+    receive fn watch(consume group: events.Group) -> Result<i64, i64> {
+        events.add(group, channel.fd, 1)
+    }
+    receive fn finish() -> Result<ExitStatus, ProcessError> {
+        if process.pid == 0 {
+            return .Ok(ExitStatus.AlreadyReaped);
+        }
+        unsafe {
+            mc_shutdown(channel.fd);
+        };
+        for phase in 0..3 {
+            if phase > 0 {
+                let result = unsafe {
+                    mc_child_signal(process.pid, (phase - 1) as i32)
+                };
+                if result < 0 {
+                    return .Err(ProcessError.System(-(result as i64)));
+                }
+            }
+            if let .Some(status) = wait_until(process.pid, duplex.monotonic() + 1000)? {
+                process.pid = 0;
+                return .Ok(status);
+            }
+        }
+        .Err(ProcessError.ReapTimedOut)
+    }
+}
+
+fn valid_path(path: string) -> bool {
+    if !path.starts_with("/") || path.to_bytes().len() >= 4096 {
+        return false;
+    }
+    for value in path.to_bytes() {
+        if value == 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Each argv item remains one argument; no quoting or shell parsing is applied.
+pub fn start(executable: string, arguments: Vec<string>) -> Result<Child, ProcessError> {
+    if !valid_path(executable) {
+        return .Err(ProcessError.InvalidPath);
+    }
+    if arguments.len() > 32 {
+        return .Err(ProcessError.InvalidArguments);
+    }
+    var encoded = bytes.new();
+    for argument in arguments {
+        let raw = argument.to_bytes();
+        if encoded.len() + raw.len() + 1 > 16384 {
+            return .Err(ProcessError.InvalidArguments);
+        }
+        for value in raw {
+            if value == 0 {
+                return .Err(ProcessError.InvalidArguments);
+            }
+        }
+        encoded.append(raw);
+        encoded.push(0);
+    }
+    let record = unsafe {
+        mc_spawn_duplex(executable.to_bytes(), encoded)
+    };
+    if record.len() != 8 {
+        return .Err(ProcessError.LaunchFailed);
+    }
+    let fd = binary.integer(binary.slice(record, 0, 4).expect("spawn fd")).expect("spawn fd integer") as i32;
+    let pid = binary.integer(binary.slice(record, 4, 8).expect("spawn pid")).expect("spawn pid integer") as i32;
+    .Ok(spawn Child(channel: duplex.Descriptor { fd: fd }, process: OwnedProcess { pid: pid }))
+}
+
+pub fn read(child: Child, timeout_ms: i64) -> duplex.Read {
+    match child.read(timeout_ms) {
+        .Ok(value) => value,
+        .Err(_) => duplex.Read.Failed(duplex.IoError.ActorStopped),
+    }
+}
+
+pub fn write(child: Child, data: bytes) -> Result<i64, duplex.WriteFailure> {
+    match child.write(data) {
+        .Ok(value) => value,
+        .Err(_) => .Err(duplex.WriteFailure { error: duplex.IoError.ActorStopped, committed: -1 }),
+    }
+}
+
+/// No replacement child should start until this returns and the old owner has
+/// stopped. Resource fallback force-kills/reaps an owned child on actor failure.
+pub fn close(child: Child) -> Result<ExitStatus, ProcessError> {
+    let result = match child.finish() {
+        .Ok(value) => value,
+        .Err(_) => .Err(ProcessError.ActorStopped),
+    };
+    stop(child);
+    stopped(child);
+    result
+}
+
+#[resource]
+type OwnedChild {
+    child: Child;
+}
+
+impl OwnedChild {
+    fn close(consume self) {
+        stop(self.child);
+    }
+}
+
+/// Stable process owner. A Hew actor fault drops the old child; the protocol
+/// coordinator must fence its requests before explicitly launching another.
+pub actor WorkerOwner {
+    var owned: Option<OwnedChild> = .None;
+    mailbox 32;
+    receive fn launch(executable: string, arguments: Vec<string>) -> Result<i64, ProcessError> {
+        if owned.is_some() {
+            return .Err(ProcessError.InvalidArguments);
+        }
+        let child = start(executable, arguments)?;
+        let pid = child.id().expect("owned child PID");
+        owned = .Some(OwnedChild { child: child });
+        .Ok(pid)
+    }
+    receive fn id() -> i64 {
+        match owned {
+            .Some(owner) => owner.child.id().expect("child PID"),
+            .None => 0,
+        }
+    }
+    receive fn read(timeout_ms: i64) -> duplex.Read {
+        match owned {
+            .Some(owner) => match owner.child.read(timeout_ms) {
+                .Ok(result) => result,
+                .Err(_) => panic("owned native child actor failed"),
+            }
+            .None => duplex.Read.End,
+        }
+    }
+    receive fn write(data: bytes) -> Result<i64, duplex.WriteFailure> {
+        match owned {
+            .Some(owner) => match owner.child.write(data) {
+                .Ok(result) => result,
+                .Err(_) => panic("owned native child actor failed"),
+            }
+            .None => .Err(duplex.WriteFailure { error: duplex.IoError.Closed, committed: 0 }),
+        }
+    }
+    receive fn retire() -> Result<ExitStatus, ProcessError> {
+        let status = match owned {
+            .Some(owner) => close(owner.child),
+            .None => .Ok(ExitStatus.AlreadyReaped),
+        };
+        owned = .None;
+        status
+    }
+    receive fn watch(consume group: events.Group) -> Result<i64, duplex.IoError> {
+        let child = match owned {
+            .Some(owner) => owner.child,
+            .None => return .Err(duplex.IoError.Closed),
+        };
+        match child.watch(events.share(group)) {
+            .Ok(.Ok(key)) => .Ok(key),
+            .Ok(.Err(code)) => .Err(duplex.IoError.System(code)),
+            .Err(_) => .Err(duplex.IoError.ActorStopped),
+        }
+    }
+    receive fn fault_for_test() {
+        panic("injected native worker owner incarnation failure");
+    }
+}
+
+pub supervisor WorkerBranch {
+    strategy: one_for_one;
+    intensity: 2 within 60s;
+    child worker: WorkerOwner();
+}

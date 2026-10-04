@@ -1,0 +1,101 @@
+import std.encoding.utf8;
+import std.string;
+
+pub type Endpoint {
+    transport_url: string;
+    host: string;
+    port: i64;
+    tls: bool;
+    websocket: bool;
+}
+
+fn lower_ascii(text: string) -> string {
+    var data = bytes.new();
+    for byte in text.to_bytes() {
+        data.push(if byte >= 65 && byte <= 90 { byte + 32 } else { byte });
+    }
+    utf8.decode(data).expect("ASCII case folding preserves UTF-8")
+}
+
+fn hex_digit(value: u8) -> bool {
+    (value >= 48 && value <= 57) || (value >= 65 && value <= 70) || (value >= 97 && value <= 102)
+}
+
+/// Checked operator URL policy. The transport independently enforces the host
+/// restriction; errors never echo credentials or the supplied URL.
+pub fn parse(text: string) -> Result<Endpoint, string> {
+    if text.is_empty() || text.to_bytes().len() > 4096 {
+        return .Err("MQTT URL is required and must not exceed 4096 bytes");
+    }
+    for byte in text.to_bytes() {
+        if byte <= 32 || byte == 127 || byte == 92 || byte == 63 || byte == 35 {
+            return .Err("MQTT URL must not contain whitespace, backslashes, query or fragment");
+        }
+    }
+    let boundary = match text.find("://") {
+        .Some(value) => value,
+        .None => return .Err("MQTT URL requires tcp, tls, ssl, ws or wss scheme"),
+    };
+    let scheme = lower_ascii(text.slice(0, boundary));
+    let websocket = scheme == "ws" || scheme == "wss";
+    let tls = scheme == "tls" || scheme == "ssl" || scheme == "wss";
+    if !websocket && scheme != "tcp" && scheme != "tls" && scheme != "ssl" {
+        return .Err("MQTT URL requires tcp, tls, ssl, ws or wss scheme");
+    }
+    let rest = text.slice(boundary + 3, text.len());
+    let slash = match rest.find("/") { .Some(value) => value, .None => rest.len() };
+    let authority = rest.slice(0, slash);
+    var path = rest.slice(slash, rest.len());
+    if authority.find("@").is_some() {
+        return .Err("MQTT credentials belong in separate settings, not the URL");
+    }
+    var host = authority;
+    var suffix = "";
+    if authority.starts_with("[::1]") {
+        host = "[::1]";
+        suffix = authority.slice(5, authority.len());
+    } else if let .Some(colon) = authority.find(":") {
+        host = authority.slice(0, colon);
+        suffix = authority.slice(colon, authority.len());
+    }
+    let normalized = lower_ascii(host);
+    if normalized != "localhost" && normalized != "127.0.0.1" && normalized != "[::1]" &&
+        normalized != "mqtt-meshcore-1.ve6slp.ca" {
+        return .Err("MQTT broker must be loopback or mqtt-meshcore-1.ve6slp.ca");
+    }
+    var port: i64 = if tls { 443 } else { 80 };
+    if suffix.is_empty() {
+        if !websocket {
+            return .Err("MQTT tcp/tls/ssl URL requires an explicit port");
+        }
+    } else {
+        if !suffix.starts_with(":") || suffix.len() < 2 || suffix.len() > 6 {
+            return .Err("MQTT port must be an integer from 1 through 65535");
+        }
+        let digits = suffix.slice(1, suffix.len());
+        for byte in digits.to_bytes() {
+            if byte < 48 || byte > 57 {
+                return .Err("MQTT port must be an integer from 1 through 65535");
+            }
+        }
+        port = string.to_int(digits).expect("bounded decimal port");
+        if port < 1 || port > 65535 {
+            return .Err("MQTT port must be an integer from 1 through 65535");
+        }
+    }
+    if !websocket && !path.is_empty() && path != "/" {
+        return .Err("MQTT tcp/tls/ssl URL cannot contain a resource path");
+    }
+    let data = path.to_bytes();
+    for index in 0..data.len() {
+        if data[index] == 37 && (index + 2 >= data.len() || !hex_digit(data[index + 1]) || !hex_digit(data[index + 2])) {
+            return .Err("MQTT WebSocket path contains an invalid percent escape");
+        }
+    }
+    if path.is_empty() {
+        path = "/";
+    }
+    let transport = if websocket { scheme } else { if tls { "https" } else { "http" } };
+    .Ok(Endpoint { transport_url: transport + "://" + host + ":" + to_string(port) + path,
+        host: host, port: port, tls: tls, websocket: websocket })
+}

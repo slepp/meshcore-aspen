@@ -1,0 +1,194 @@
+//! Local dashboard permissions, bounded HTTP messages and expiring sessions.
+import std.text.regex;
+import std.crypto.crypto;
+import std.encoding.hex;
+import std.encoding.utf8;
+
+pub fn bot_allowed(command: string) -> bool {
+    if command.starts_with("role config ") || command.starts_with("role name ") {
+        return command == "role config bot" || command == "role name bot";
+    }
+    if command.to_bytes().len() > 160 { return false; }
+    let read = regex.new("^(?:help(?: (?:bot|source|data|role|stats))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|name|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|shared|home|reminders|events|channel-wait|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch))?|read [0-9]+)|data (?:help|status|read [0-9a-f]{16} [0-9]+))$");
+    let write = regex.new("^(?:bot (?:name [\\x20-\\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|cancel)|source (?:begin [0-9a-f]{16} [0-9]{1,4} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel|rollback|remove|retry|help [\\x20-\\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel) [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$");
+    read.is_match(command) || write.is_match(command)
+}
+
+pub fn role_allowed(command: string) -> bool {
+    if command.to_bytes().len() > 160 { return false; }
+    let read = regex.new("^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\\.info|radio|freq|tx|stats|repeat|path\\.hash\\.mode|advert\\.interval|flood\\.advert\\.interval|rxdelay|txdelay|direct\\.txdelay|af|dutycycle))$");
+    let write = regex.new("^(?:set (?:name [\\x20-\\x7e]{1,31}|repeat (?:on|off)|path\\.hash\\.mode [012]|advert\\.interval [0-9]{1,3}|flood\\.advert\\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$");
+    read.is_match(command) || write.is_match(command)
+}
+
+pub fn native_command(command: string) -> string {
+    if command.starts_with("bot ") { return command.slice(4, command.len()); }
+    if command == "role config bot" { return "config"; }
+    if command == "role name bot" { return "name"; }
+    if command == "help bot" { return "help"; }
+    if command == "help source" { return "source help"; }
+    if command == "help data" { return "data help"; }
+    command
+}
+
+pub fn role_error(reply: string) -> bool {
+    let pattern = regex.new("^(?:Error(?:[:, ]|$)|Err(?:[ -]|$))");
+    pattern.is_match(reply)
+}
+
+pub type Request {
+    method: string;
+    path: string;
+    host: string;
+    origin: string;
+    intent: string;
+    credential: string;
+    body: bytes;
+}
+pub enum Decode {
+    Waiting;
+    Invalid;
+    Complete(Request);
+}
+
+fn token(text: string) -> bool {
+    if text.is_empty() { return false; }
+    let pattern = regex.new("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$");
+    pattern.is_match(text)
+}
+
+fn lower_ascii(text: string) -> string {
+    var result = bytes.new();
+    for byte in text.to_bytes() {
+        result.push(if byte >= 65 && byte <= 90 { byte + 32 } else { byte });
+    }
+    utf8.decode(result).expect("ASCII header name")
+}
+
+/// One HTTP/1.1 request per connection; no chunking, pipelining or folding.
+pub fn decode(data: bytes) -> Decode {
+    if data.len() > 8448 { return .Invalid; }
+    var end: i64 = -1;
+    if data.len() >= 4 {
+        for i in 0..(data.len() - 3) {
+            if end < 0 && data[i] == 13 && data[i + 1] == 10 && data[i + 2] == 13 && data[i + 3] == 10 { end = i; }
+        }
+    }
+    if end < 0 { return if data.len() >= 8192 { .Invalid } else { .Waiting }; }
+    if end + 4 > 8192 { return .Invalid; }
+    var header = bytes.new();
+    for i in 0..end { header.push(data[i]); }
+    let text = match utf8.decode(header) { .Ok(text) => text, .Err(_) => return .Invalid };
+    let lines = text.split("\r\n");
+    if lines.is_empty() { return .Invalid; }
+    let first = lines[0].split(" ");
+    if first.len() != 3 || first[2] != "HTTP/1.1" || !token(first[0]) || !first[1].starts_with("/") { return .Invalid; }
+    let target = first[1].to_bytes();
+    for byte in target { if byte < 33 || byte > 126 { return .Invalid; } }
+    var host = "";
+    var origin = "";
+    var intent = "";
+    var credential = "";
+    var content_length: i64 = 0;
+    var seen: Vec<string> = Vec.new();
+    for i in 1..lines.len() {
+        let line = lines[i];
+        let parts = line.split(":");
+        if parts.len() < 2 || !token(parts[0]) { return .Invalid; }
+        let name = lower_ascii(parts[0]);
+        for old in seen { if old == name { return .Invalid; } }
+        seen.push(name);
+        let raw = line.to_bytes();
+        for byte in raw { if (byte < 32 && byte != 9) || byte == 127 { return .Invalid; } }
+        let value = line.slice(parts[0].len() + 1, line.len()).trim();
+        if name == "host" { host = value; }
+        else if name == "origin" { origin = value; }
+        else if name == "x-host-intent" { intent = value; }
+        else if name == "x-host-admin" { credential = value; }
+        else if name == "transfer-encoding" || name == "expect" { return .Invalid; }
+        else if name == "content-length" {
+            if value.is_empty() || value.len() > 3 { return .Invalid; }
+            for byte in value.to_bytes() {
+                if byte < 48 || byte > 57 { return .Invalid; }
+                content_length = content_length * 10 + (byte as i64) - 48;
+            }
+            if content_length > 256 { return .Invalid; }
+        }
+    }
+    let authority = regex.new("^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(?::[0-9]{1,5})?$");
+    if !authority.is_match(host) { return .Invalid; }
+    let total = end + 4 + content_length;
+    if data.len() < total { return .Waiting; }
+    if data.len() != total { return .Invalid; }
+    var body = bytes.new();
+    for i in (end + 4)..total { body.push(data[i]); }
+    .Complete(Request { method: first[0], path: first[1], host: host, origin: origin, intent: intent, credential: credential, body: body })
+}
+
+pub fn intended(request: Request) -> bool {
+    request.intent == "admin-v1" && (request.origin.is_empty() || request.origin == "http://" + request.host)
+}
+
+pub fn response(code: i64, content_type: string, body: string) -> bytes {
+    let reason = match code {
+        200 => "OK", 400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
+        404 => "Not Found", 405 => "Method Not Allowed", 408 => "Request Timeout",
+        409 => "Conflict", 429 => "Too Many Requests", 503 => "Service Unavailable",
+        504 => "Gateway Timeout", _ => panic("unsupported dashboard response code"),
+    };
+    let retry = if code == 429 { "Retry-After: 60\r\n" } else { "" };
+    (f"HTTP/1.1 {code} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {body.to_bytes().len()}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'\r\n" + retry + "\r\n" + body).to_bytes()
+}
+
+type Session { digest: bytes; expires: i64; }
+pub type Login { code: i64; text: string; }
+pub actor Authentication {
+    let expected: bytes;
+    let valid: bool;
+    let direct_token: bool;
+    var sessions: Vec<Session> = Vec.new();
+    var window: i64 = -1;
+    var attempts: i64 = 0;
+    fn expire(now: i64) {
+        var retained: Vec<Session> = Vec.new();
+        for item in sessions { if now < item.expires { retained.push(item); } }
+        sessions = retained;
+    }
+    receive fn login(body: bytes, now: i64) -> Login {
+        if window < 0 || now - window >= 60000 { window = now; attempts = 0; }
+        if attempts >= 5 { return Login { code: 429, text: "Host login limit reached; wait one minute" }; }
+        attempts += 1;
+        if body.len() > 256 || !valid || !crypto.constant_time_eq(expected, crypto.sha256(body)) {
+            return Login { code: 401, text: "Host admin authentication required" };
+        }
+        expire(now);
+        if sessions.len() >= 4 { return Login { code: 429, text: "Host admin sessions full; logout or wait ten minutes" }; }
+        let random = match crypto.random_bytes(32) {
+            .Ok(value) => value,
+            .Err(_) => return Login { code: 503, text: "Host session creation unavailable" },
+        };
+        let id = hex.encode(random);
+        sessions.push(Session { digest: crypto.sha256(id.to_bytes()), expires: now + 600000 });
+        Login { code: 200, text: id }
+    }
+    receive fn authenticated(id: string, now: i64) -> bool {
+        expire(now);
+        let digest = crypto.sha256(id.to_bytes());
+        var session = false;
+        for item in sessions { session = crypto.constant_time_eq(item.digest, digest) || session; }
+        session || (direct_token && valid && crypto.constant_time_eq(expected, digest))
+    }
+    receive fn logout(id: string) {
+        let digest = crypto.sha256(id.to_bytes());
+        var retained: Vec<Session> = Vec.new();
+        for item in sessions { if !crypto.constant_time_eq(item.digest, digest) { retained.push(item); } }
+        sessions = retained;
+    }
+}
+
+pub fn authentication(secret: string, direct_token: bool) -> Authentication {
+    let minimum = if direct_token { 32 } else { 12 };
+    var valid = secret.to_bytes().len() >= minimum && secret.to_bytes().len() <= 256;
+    for byte in secret.to_bytes() { valid = valid && byte >= 33 && byte <= 126; }
+    spawn Authentication(expected: crypto.sha256(secret.to_bytes()), valid: valid, direct_token: direct_token)
+}

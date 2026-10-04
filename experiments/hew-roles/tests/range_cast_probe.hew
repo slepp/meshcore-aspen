@@ -1,0 +1,7 @@
+fn main() {
+    var output = bytes.new();
+    for value in 0..256 {
+        output.push(value as u8);
+    }
+    println(output.len());
+}

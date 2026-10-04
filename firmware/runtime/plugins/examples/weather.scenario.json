@@ -1,0 +1,21 @@
+{
+  "replay": [
+    "@network setup",
+    "@grant home on",
+    "@network reply {\"ok\":true,\"result\":{\"source\":\"open-meteo\",\"location\":\"Fixture City\",\"country\":\"Testland\",\"temperature_c\":12.5,\"weather_code\":3,\"observed_at\":\"2026-09-28T12:00:00Z\",\"source_age_seconds\":900}}",
+    "!weather Fixture City",
+    "!service weather Fixture City",
+    "!service weather",
+    "@advance 61000",
+    "@network reply {\"ok\":true,\"result\":{\"text\":\"hello\"}}",
+    "!service echo hello",
+    "!service echo"
+  ],
+  "expect": [
+    {"type": "reply", "text": "Weather Fixture City: 12.5 C; code 3; age 900s"},
+    {"type": "reply", "text": "Weather Fixture City: 12.5 C; code 3; age 900s"},
+    {"type": "reply", "text_contains": "no default place"},
+    {"type": "reply", "text": "Home echo: hello"},
+    {"type": "reply", "text_contains": "requires 1..120"}
+  ]
+}

@@ -1,0 +1,9 @@
+import dashboard;
+
+import std.os;
+
+fn main() {
+    let args = os.args();
+    assert(args.len() == 2, "usage: hew-dashboard PRIVATE-CONFIG");
+    dashboard.run(args[1]);
+}
