@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import product_versions as versions
 import release_candidate as candidate
+import release_native as native
 
 
 def linux_elf_fixture():
@@ -186,6 +187,39 @@ class CandidateTests(unittest.TestCase):
                 self.save()
                 with self.assertRaisesRegex(ValueError, error):
                     candidate.verify(self.directory)
+
+    def test_debian12_environment_rejects_wrong_source_and_newer_abi(self):
+        self.birch_metadata()
+        build = self.manifest["build"]
+        receipt = {"profile": native.PROFILE, "image_id": "sha256:" + "a" * 64,
+                   "dockerfile": native.DOCKERFILE, "dockerfile_sha256": "a" * 64,
+                   "source_commit": self.manifest["source"]["commit"],
+                   "source_date_epoch": build["source_date_epoch"],
+                   "distribution": {"ID": "debian", "VERSION_ID": "12"},
+                   "native_abi": build["native_abi"], "native_linked_libraries": build["native_linked_libraries"],
+                   "go_modules": build["go_modules"], "toolchain": {"go": "fixture", "cxx": "fixture"}}
+        build["native_environment"] = receipt
+        receipt["source_commit"] = "b" * 40
+        self.save()
+        with self.assertRaisesRegex(ValueError, "environment receipt mismatch"):
+            candidate.verify(self.directory)
+        receipt["source_commit"] = self.manifest["source"]["commit"]
+        build["native_abi"]["bot-native-worker"]["required_symbol_versions"]["GLIBC"] = "2.43"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "exceeds its Debian 12 baseline"):
+            candidate.verify(self.directory)
+
+    def test_native_container_isolated_mounts_and_network(self):
+        args = native.container_command("sha256:" + "a" * 64, Path("/fresh-public-source"),
+                                        Path("/public-go-sdk"), ["make", "host-build"])
+        self.assertIn("type=bind,source=/fresh-public-source,target=/src", args)
+        self.assertIn("type=bind,source=/public-go-sdk,target=/opt/go,readonly", args)
+        self.assertEqual(args[args.index("--network") + 1], "none")
+        self.assertIn("--read-only", args)
+        self.assertIn("no-new-privileges", args)
+        self.assertFalse(any("docker.sock" in arg or "/dev/tty" in arg for arg in args))
+        with self.assertRaises(ValueError):
+            native.container_command("image", Path("/src"), Path("/go"), ["make"], network="host")
 
     def test_refuse_private_files_and_unsafe_names(self):
         for name in ("private-profile.json", "../private-profile.json"):

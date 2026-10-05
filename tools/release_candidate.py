@@ -180,7 +180,9 @@ def archive_tree(source, destination):
                 archive.add(path, arcname=path.relative_to(source), recursive=False)
 
 
-def build(product, ref, output):
+def build(product, ref, output, native_image=None):
+    if (product == "birch") != bool(native_image):
+        raise ValueError("Birch requires --native-image with the exact Debian 12 image ID; Aspen does not use it")
     data = load()
     for path, content in generated(data).items():
         if (ROOT / path).read_text() != content:
@@ -217,6 +219,8 @@ def build(product, ref, output):
     toolchain = {"platformio": run(["pio", "--version"], env=env),
                  "python": platform.python_version(), "build_os": platform.platform()}
     linked_libraries = []
+    native_receipt = {}
+    native_source = None
     if product == "aspen":
         command(["make", "-C", "firmware/esp32", "bot-firmware", f"BUILD={work}",
                  f"CONFIG={ROOT / config}", f"ENV={profile}"])
@@ -232,28 +236,20 @@ def build(product, ref, output):
         stage_birch_files(work)
         shutil.copy2(ROOT / config, work / "platformio.local.ini")
         command(["pio", "run", "--project-dir", str(work), "-e", profile])
-        command(["make", "host-build"])
-        native = ROOT / ".tmp" / ("onchip-release-worker-" + stem)
-        native_stage = ROOT / ".tmp" / ("onchip-release-native-" + stem)
-        if native.exists() or native_stage.exists():
-            raise ValueError("Refusing to reuse a native worker build directory")
-        command(["make", "-C", "firmware/esp32", "bot-native-worker", f"BOT_BUILD={native}",
-                 f"BUILD={native_stage}", f"CONFIG={ROOT / 'firmware/esp32/platformio.public.ini.example'}"])
+        from release_native import build_native
+        native_source, native_receipt = build_native(native_image, stem, env, command)
+        native = native_source / ".tmp/onchip-native-worker"
         for name in HOST_FILES:
-            path = native / name if name == "bot-native-worker" else ROOT / "bin" / name
+            path = native / name if name == "bot-native-worker" else native_source / "bin" / name
             shutil.copy2(path, directory / name)
-        toolchain.update(go=run(["go", "version"], env=env),
-                         cxx=run(["c++", "--version"], env=env).splitlines()[0],
-                         native_cxx_sha256=digest(Path(shutil.which("c++", path=env["PATH"]))),
-                         readelf=run(["readelf", "--version"], env=env).splitlines()[0],
-                         readelf_sha256=digest(Path(shutil.which("readelf", path=env["PATH"]))))
-        linked_libraries = native_libraries(directory / "bot-native-worker", env)
-        # Native worker libraries and source needed for relinking live outside work.
+        toolchain.update(native_receipt["toolchain"])
+        linked_libraries = native_receipt["native_linked_libraries"]
+        # Include the older-baseline objects/sources/headers actually used.
         with tarfile.open(directory / "native-relink.tar.gz", "w:gz") as archive:
-            for path in (native, native_stage, ROOT / ".tmp/onchip-phy", ROOT / ".tmp/onchip-lua",
-                         ROOT / ".tmp/MeshCore/.pio/libdeps", ROOT / ".tmp/native-test-deps",
-                         ROOT / ".cache/meshcore-wamr"):
-                archive.add(path, arcname=path.relative_to(ROOT))
+            for relative in (".tmp/onchip-native-worker", ".tmp/onchip-native-source", ".tmp/onchip-phy",
+                             ".tmp/onchip-lua", ".tmp/MeshCore/.pio/libdeps", ".tmp/native-test-deps",
+                             ".cache/meshcore-wamr", ".tmp/native-toolchain", ".tmp/native-receipt.json"):
+                archive.add(native_source / relative, arcname=relative)
     pio_build = work / ".pio/build" / profile
     for name in IMAGES - {"boot_app0.bin"}:
         shutil.copy2(pio_build / name, directory / name)
@@ -277,14 +273,7 @@ def build(product, ref, output):
     with tarfile.open(directory / "dependency-notices.tar.gz", "w:gz") as archive:
         archive.add(ROOT / "LICENSES", arcname="LICENSES")
         if product == "birch":
-            modules = json_stream(run(["go", "list", "-m", "-json", "all"], env=env))
-            for module in modules:
-                if module.get("Version") and module.get("Dir"):
-                    for path in Path(module["Dir"]).rglob("*"):
-                        if path.is_file() and path.name.upper().startswith(("LICENSE", "COPYING", "NOTICE")):
-                            archive.add(path, arcname="go/" + module["Path"] + "/" +
-                                        str(path.relative_to(module["Dir"])))
-            archive.add(Path(run(["go", "env", "GOROOT"], env=env)) / "LICENSE", arcname="go/TOOLCHAIN-LICENSE")
+            archive.add(native_source / ".tmp/native-toolchain/notices", arcname="native-and-go")
     versioned = tag(product, version)
     manifest = {
         "schema_version": 1, "product": product, "version": version, "tag": versioned,
@@ -293,10 +282,11 @@ def build(product, ref, output):
         "build": {"profile": profile, "config_path": config, "config_sha256": digest(ROOT / config),
                   "source_date_epoch": int(env["SOURCE_DATE_EPOCH"]), "toolchain": toolchain,
                   "dependencies": inventory,
-                  "go_modules": json_stream(run(["go", "list", "-m", "-json", "all"], env=env)) if product == "birch" else [],
+                  "go_modules": native_receipt.get("go_modules", []),
                   "go_sum_sha256": digest(ROOT / "go.sum"),
                   "native_linked_libraries": linked_libraries,
-                  "native_abi": {name: native_abi(directory / name, env) for name in sorted(HOST_FILES)} if product == "birch" else {},
+                  "native_abi": native_receipt.get("native_abi", {}),
+                  "native_environment": native_receipt,
                   "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                   "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de"},
         "compatibility": data["compatibility"],
@@ -391,6 +381,28 @@ def verify(directory):
             raise ValueError("Birch worker ABI omits required symbol versions")
         if not set(abi["bot-native-worker"]["needed_sonames"]) <= {item["soname"] for item in libraries}:
             raise ValueError("Birch worker ABI and linked-library receipts differ")
+        # Older candidates retain their unqualified, host-native receipts. New
+        # Debian 12 builds must identify the exact image and actual baseline ABI.
+        native = build.get("native_environment")
+        if native:
+            from release_native import DOCKERFILE, PROFILE
+            if (native.get("profile") != PROFILE or
+                    not re.fullmatch(r"sha256:[0-9a-f]{64}", native.get("image_id", "")) or
+                    native.get("dockerfile") != DOCKERFILE or
+                    not re.fullmatch(r"[0-9a-f]{64}", native.get("dockerfile_sha256", "")) or
+                    native.get("source_commit") != source["commit"] or
+                    native.get("source_date_epoch") != build["source_date_epoch"] or
+                    native.get("distribution", {}).get("ID") != "debian" or
+                    native.get("distribution", {}).get("VERSION_ID") != "12" or
+                    native.get("native_abi") != abi or native.get("native_linked_libraries") != libraries or
+                    native.get("go_modules") != build["go_modules"] or
+                    any(toolchain.get(key) != value for key, value in native.get("toolchain", {}).items())):
+                raise ValueError("Birch Debian 12 environment receipt mismatch")
+            limits = {"GLIBC": "2.36", "GLIBCXX": "3.4.30", "CXXABI": "1.3.13", "OPENSSL": "3.0.0"}
+            for item in abi.values():
+                for family, version in item["required_symbol_versions"].items():
+                    if tuple(map(int, version.split("."))) > tuple(map(int, limits[family].split("."))):
+                        raise ValueError("Birch packaged ELF exceeds its Debian 12 baseline")
     names = set()
     for entry in manifest["files"]:
         name = entry["name"]
@@ -441,6 +453,10 @@ def verify(directory):
             raise ValueError("Build configuration differs from the public source archive")
         if hashlib.sha256(archive.extractfile("go.sum").read()).hexdigest() != build["go_sum_sha256"]:
             raise ValueError("Go dependencies differ from the public source archive")
+        if product == "birch" and build.get("native_environment"):
+            native = build["native_environment"]
+            if hashlib.sha256(archive.extractfile(native["dockerfile"]).read()).hexdigest() != native["dockerfile_sha256"]:
+                raise ValueError("Native Dockerfile differs from the public source archive")
     return manifest
 
 
@@ -451,12 +467,13 @@ def main():
     builder.add_argument("--product", choices=PROFILES, required=True)
     builder.add_argument("--public-ref", required=True)
     builder.add_argument("--output", type=Path, default=ROOT / ".tmp/candidates")
+    builder.add_argument("--native-image", help="Exact sha256:... ID built from release/Dockerfile.debian12 (Birch)")
     checker = commands.add_parser("verify")
     checker.add_argument("directory", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "build":
-            build(args.product, args.public_ref, args.output)
+            build(args.product, args.public_ref, args.output, args.native_image)
         else:
             verify(args.directory)
             print("Candidate hashes and metadata verified; hardware qualification remains pending")

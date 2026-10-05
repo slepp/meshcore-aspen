@@ -52,17 +52,22 @@ Aspen repository. The command checks that the selected public ref resolves to
 that exact HEAD. It uses tracked public profiles and a reduced environment,
 creates new build/output directories, and never reads private provisioning files.
 Use Python 3.13, PlatformIO, the pinned ESP32 toolchain and the contributor build
-dependencies. Birch also requires Linux x86_64, Go 1.26.7 or newer, C++17, CMake
-and OpenSSL development libraries for the native worker.
+dependencies. Birch also requires Linux x86_64, Docker and the public Go 1.26.7
+SDK. Its host tools and worker build in the disposable Debian 12 image below.
 ELF inspection uses GNU `readelf` from binutils.
 
 ```sh
 make release-check
 python3 tools/release_candidate.py build --product aspen \
   --public-ref refs/heads/release/product-versioning
-# Run on Linux x86_64 for the matching host + modem build:
+# Run on Linux x86_64. Build a new image with the public Dockerfile hash label:
+dockerfile_sha=$(sha256sum release/Dockerfile.debian12 | cut -d' ' -f1)
+docker build --iidfile .tmp/debian12-image-id \
+  --label "org.meshcore.release.dockerfile-sha256=$dockerfile_sha" \
+  -f release/Dockerfile.debian12 release
 python3 tools/release_candidate.py build --product birch \
-  --public-ref refs/heads/release/product-versioning
+  --public-ref refs/heads/release/product-versioning \
+  --native-image "$(cat .tmp/debian12-image-id)"
 python3 tools/release_candidate.py verify .tmp/candidates/EXTRACTED-CANDIDATE
 ```
 
@@ -82,13 +87,17 @@ The builder cross-checks its ELF inspection with GNU `readelf`; the portable
 Python verifier reads each packaged ELF and rejects a receipt that lowers or
 otherwise changes its actual requirements.
 Compare these with the intended host before installation and qualify that
-distribution using the exact packaged worker. The current Obelisk toolchain
-can produce a worker requiring GLIBC 2.43 (including `sqrtf@GLIBC_2.43`), so its
-candidate is not an installable bundle for Debian 12 or Ubuntu 24.04. The Go
-tools have separate ABI receipts; their requirements do not qualify the worker.
-Building a portable bundle requires an agreed older distribution baseline and
-its compiler, CMake, OpenSSL and cJSON development dependencies. Do not relabel
-a newer-ABI binary as portable or silently replace its libraries.
+distribution using the exact packaged worker. Birch now builds its Go tools and
+worker in Debian 12 with GCC 12, OpenSSL 3 and cJSON. The image starts from a
+pinned Debian 12 build-pack digest and adds CMake and cJSON development headers.
+Its exact image ID, Dockerfile hash, package/library hashes and compiler receipts
+are recorded. The verifier checks those receipts against the archived public
+Dockerfile and packaged ELF files, and rejects symbol requirements above the
+Debian 12 baseline. Fresh source and object directories prevent reuse of objects
+from a newer host. Module downloads use a new public dependency cache; compilation
+runs without external network access. Distribution support still requires the
+exact packaged worker's software qualification results. Earlier host-native
+candidates requiring GLIBC 2.43 retain their original receipts and limitations.
 
 For first Aspen installation, follow [offline USB setup](../firmware/esp32/PUBLIC_SETUP.md).
 Keep private SPIFFS setup and identity backups outside the public bundle. Ordinary
