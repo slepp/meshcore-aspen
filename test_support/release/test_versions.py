@@ -245,6 +245,12 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(candidate.json_stream('{"Path":"one"}\n{"Path":"two"}\n'),
                          [{"Path": "one"}, {"Path": "two"}])
 
+    def test_loader_package_receipt_ignores_dpkg_diversion_metadata(self):
+        path = Path("/lib64/ld-linux-x86-64.so.2")
+        output = f"diversion by libc6 from: {path}\ndiversion by libc6 to: /lib64/ld-alt.so\nlibc6:amd64: {path}\n"
+        self.assertEqual(candidate.package_owner(output, path), "libc6:amd64")
+        self.assertIsNone(candidate.package_owner(output, Path("/different-loader")))
+
     def test_birch_cold_staging_resolves_sntp_header_chain(self):
         dest = self.directory / "examples/kiss_modem"
         dest.mkdir(parents=True)

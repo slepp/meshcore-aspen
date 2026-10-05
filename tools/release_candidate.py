@@ -64,6 +64,14 @@ def native_abi(binary, env):
     return receipt
 
 
+def package_owner(text, path):
+    for line in text.splitlines():
+        match = re.fullmatch(r"([a-z0-9][a-z0-9+.-]*(?::[a-z0-9-]+)?): (.+)", line)
+        if match and match.group(2) == str(path):
+            return match.group(1)
+    return None
+
+
 def json_stream(text):
     decoder = json.JSONDecoder()
     values = []
@@ -136,8 +144,8 @@ def native_libraries(binary, env):
             for probe in (Path(path), Path(path).resolve()):
                 found = subprocess.run(["dpkg-query", "-S", str(probe)], env=env, text=True,
                                        capture_output=True, check=False)
-                if found.returncode == 0:
-                    package = found.stdout.split(": ", 1)[0]
+                package = package_owner(found.stdout, probe) if found.returncode == 0 else None
+                if package:
                     item["package"] = package
                     item["package_version"] = run(["dpkg-query", "-W", "-f=${Version}", package], env=env)
                     break
