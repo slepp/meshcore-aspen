@@ -34,6 +34,7 @@ bool localTransmitSource(uint8_t slot, uint32_t generation,
                          RadioDashboard::RoleStatus &status);
 void loop();
 void observerStatistics(char *reply, size_t capacity);
+bool sharedRadioReadCommand(const LocalRadio &radio, const char *command, char *reply, size_t capacity);
 bool repeaterBegin(WifiKissMultiplexer &mux);
 bool roomBegin(WifiKissMultiplexer &mux);
 bool companionBegin(WifiKissMultiplexer &mux);

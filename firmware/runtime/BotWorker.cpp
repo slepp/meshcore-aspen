@@ -58,11 +58,20 @@ struct BotWorker::Control {
   }
 };
 struct BotWorker::Storage {
-  char staged[BotSourceLimit + 1]{};
 #if ONCHIP_BOT_SINGLE_SESSION
-  char retained[BotSourceLimit + 1]{};
+  std::unique_ptr<char[]> staged, retained;
   size_t retainedSize = 0;
+  const char *retainedText() const { return retained ? retained.get() : BotDefaultSource; }
+#else
+  char staged[BotSourceLimit + 1]{};
 #endif
+  char *stagedText() {
+#if ONCHIP_BOT_SINGLE_SESSION
+    return staged.get();
+#else
+    return staged;
+#endif
+  }
   size_t stagedSize = 0;
   size_t fileSize = 0;
   uint8_t fileSha256[32]{};
@@ -624,11 +633,20 @@ uint32_t BotWorker::reserveSourcePublication(const BotWorker *validator, bool wa
 bool BotWorker::stage(const char *source, size_t size, uint32_t publication) {
   if (!storage_ || !source || !size || size > BotSourceLimit ||
       !claimSourceMutation(publication)) return false;
-  memcpy(storage_->staged, source, size);
-  storage_->staged[size] = 0;
-  storage_->stagedSize = size;
   storage_->result = {};
   storage_->result.operation = Operation::Stage;
+#if ONCHIP_BOT_SINGLE_SESSION
+  storage_->staged.reset(new (std::nothrow) char[size + 1]);
+  if (!storage_->staged) {
+    storage_->stagedSize = 0;
+    strcpy(storage_->result.error, "Lua source recovery buffer unavailable; active source unchanged");
+    control_->state = Pending;
+    return true;
+  }
+#endif
+  memcpy(storage_->stagedText(), source, size);
+  storage_->staged[size] = 0;
+  storage_->stagedSize = size;
   control_->state = Pending;
   return true;
 }
@@ -1545,12 +1563,16 @@ bool BotWorker::loadStagedFile() {
   if (!file) return fail("Command source SPIFFS file unavailable");
   if (file.isDirectory() || file.size() != s.fileSize)
     return fail("Command source file length does not match bounded manifest");
+#if ONCHIP_BOT_SINGLE_SESSION
+  s.staged.reset(new (std::nothrow) char[s.fileSize + 1]);
+  if (!s.staged) return fail("Lua source recovery buffer unavailable; active source unchanged");
+#endif
   for (size_t offset = 0; offset < s.fileSize;) {
     if (uint32_t(millis() - started) >= BotSourceReadBudgetMs)
       return fail("Command source read deadline exceeded");
     const size_t remaining = s.fileSize - offset;
     const size_t chunk = remaining < 256 ? remaining : 256;
-    if (file.read(reinterpret_cast<uint8_t *>(s.staged + offset), chunk) != chunk)
+    if (file.read(reinterpret_cast<uint8_t *>(s.stagedText() + offset), chunk) != chunk)
       return fail("Command source SPIFFS read incomplete");
     offset += chunk;
   }
@@ -1561,7 +1583,7 @@ bool BotWorker::loadStagedFile() {
   file.close();
   uint8_t digest[32];
   mesh::Utils::sha256(digest, sizeof(digest),
-                      reinterpret_cast<const uint8_t *>(s.staged), s.fileSize);
+                      reinterpret_cast<const uint8_t *>(s.stagedText()), s.fileSize);
   if (memcmp(digest, s.fileSha256, sizeof(digest)))
     return fail("Command source SHA-256 does not match manifest");
   s.result.sourceReadMs = uint32_t(millis() - started);
@@ -1579,6 +1601,10 @@ bool BotWorker::copySourceFile() {
     snprintf(s.result.error, sizeof(s.result.error), "%s", message);
     return false;
   };
+#if ONCHIP_BOT_SINGLE_SESSION
+  s.staged.reset(new (std::nothrow) char[s.fileSize + 1]);
+  if (!s.staged) return fail("Command source copy buffer unavailable");
+#endif
   if (s.copyFrom[0]) {
     auto input = SPIFFS.open(s.copyFrom, "r");
     if (!input || input.isDirectory() || input.size() != s.fileSize)
@@ -1587,18 +1613,18 @@ bool BotWorker::copySourceFile() {
       const size_t n = std::min(size_t(256), s.fileSize - offset);
       if (control_->stopping || uint32_t(millis() - started) >= BotSourceCopyBudgetMs)
         return fail("Source copy deadline/cancellation");
-      if (input.read(reinterpret_cast<uint8_t *>(s.staged + offset), n) != n)
+      if (input.read(reinterpret_cast<uint8_t *>(s.stagedText() + offset), n) != n)
         return fail("Source copy input incomplete");
       offset += n;
     }
-  } else memcpy(s.staged, BotDefaultSource, s.fileSize);
+  } else memcpy(s.stagedText(), BotDefaultSource, s.fileSize);
   auto output = SPIFFS.open(s.copyTo, "w");
   if (!output) return fail("Source copy destination unavailable");
   for (size_t offset = 0; offset < s.fileSize;) {
     const size_t n = std::min(size_t(256), s.fileSize - offset);
     if (control_->stopping || uint32_t(millis() - started) >= BotSourceCopyBudgetMs)
       return fail("Source copy deadline/cancellation");
-    if (output.write(reinterpret_cast<const uint8_t *>(s.staged + offset), n) != n)
+    if (output.write(reinterpret_cast<const uint8_t *>(s.stagedText() + offset), n) != n)
       return fail("Source copy write incomplete");
     offset += n;
     pauseWorker();
@@ -1611,7 +1637,7 @@ bool BotWorker::copySourceFile() {
     const size_t n = std::min(sizeof(bytes), s.fileSize - offset);
     if (control_->stopping || uint32_t(millis() - started) >= BotSourceCopyBudgetMs)
       return fail("Source copy deadline/cancellation");
-    if (check.read(bytes, n) != n || memcmp(bytes, s.staged + offset, n))
+    if (check.read(bytes, n) != n || memcmp(bytes, s.stagedText() + offset, n))
       return fail("Source copy readback mismatch");
     offset += n;
   }
@@ -1661,7 +1687,7 @@ void BotWorker::run() {
     auto &r = s.result;
     if (r.operation == Operation::Stage || r.operation == Operation::StageFile) {
       s.candidate.clear();
-      r.ok = r.operation != Operation::StageFile || loadStagedFile();
+      r.ok = r.operation == Operation::StageFile ? loadStagedFile() : s.stagedSize != 0;
 #if ONCHIP_BOT_SINGLE_SESSION
       if (r.ok) {
         if (s.active.manifest().commands && s.nextGeneration >= UINT32_MAX - 1) {
@@ -1691,7 +1717,7 @@ void BotWorker::run() {
           r.ok = false; strcpy(r.error, "Source generation capacity exhausted");
         } else {
           s.candidateGeneration = ++s.nextGeneration;
-          r.ok = s.candidate.load(s.staged, s.stagedSize, s.candidateGeneration,
+          r.ok = s.candidate.load(s.stagedText(), s.stagedSize, s.candidateGeneration,
                                   r.stats, r.error, sizeof(r.error));
 #if ONCHIP_BOT_WASM
           const auto &other = s.candidate.isWasm() ? s.active.manifest() : s.wasmActive.manifest();
@@ -1710,10 +1736,11 @@ void BotWorker::run() {
         s.stagedSize = 0;
 #if ONCHIP_BOT_SINGLE_SESSION
         s.candidate.clear();
+        s.staged.reset();
         if (control_->sourceSuspended && s.retainedSize) {
           BotVmStats recovered;
           char error[96]{};
-          if (s.active.load(s.retained, s.retainedSize, control_->generation,
+          if (s.active.load(s.retainedText(), s.retainedSize, control_->generation,
                             recovered, error, sizeof(error))) {
             s.active.setEventEpoch(&control_->eventEpoch);
             control_->subscriptions = s.subscriptions();
@@ -1729,8 +1756,10 @@ void BotWorker::run() {
       s.stagedSize = 0;
       s.candidate.clear();
 #if ONCHIP_BOT_SINGLE_SESSION
+      s.staged.reset();
     } else if (r.operation == Operation::Recover) {
       s.candidate.clear();
+      s.staged.reset();
       s.stagedSize = 0;
       r.ok = !control_->sourceSuspended;
       if (!r.ok && s.retainedSize) {
@@ -1740,7 +1769,7 @@ void BotWorker::run() {
         } else {
           control_->generation = ++s.nextGeneration;
           for (auto &timer : s.timers) timer = {};
-          r.ok = s.active.load(s.retained, s.retainedSize, control_->generation,
+          r.ok = s.active.load(s.retainedText(), s.retainedSize, control_->generation,
                                r.stats, r.error, sizeof(r.error));
         }
         if (r.ok) {
@@ -1770,7 +1799,11 @@ void BotWorker::run() {
         s.active.swap(s.candidate);
 #endif
 #if ONCHIP_BOT_SINGLE_SESSION
-        memcpy(s.retained, s.staged, s.stagedSize + 1);
+        const bool bundled = s.stagedSize == strlen(BotDefaultSource) &&
+                             !memcmp(s.stagedText(), BotDefaultSource, s.stagedSize);
+        if (bundled) s.retained.reset();
+        else s.retained.swap(s.staged);
+        s.staged.reset();
         s.retainedSize = s.stagedSize;
         control_->sourceSuspended = false;
 #endif

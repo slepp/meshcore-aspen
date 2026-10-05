@@ -10,6 +10,9 @@
 #include "RadioNetwork.h"
 #include "RadioFirmwareIdentity.h"
 #include <atomic>
+#ifndef MESHCORE_ONCHIP
+#include "EspSntpClock.h"
+#endif
 
 #if KISS_STREAM_ENDPOINT
 #include <HardwareSerial.h>
@@ -39,6 +42,7 @@ static HardwareSerial queued_uart(1);
 #include <helpers/sensors/GpsTime.h>
 #include "onchip/Config.h"
 #include "onchip/Runtime.h"
+#include "onchip/Clock.h"
 #include "onchip/CompanionSessions.h"
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "onchip/CommandBot.h"
@@ -73,7 +77,6 @@ SET_LOOP_TASK_STACK_SIZE(16384)
 #endif
 
 #define NOISE_FLOOR_CALIB_INTERVAL_MS 2000
-#define AGC_RESET_INTERVAL_MS 30000
 
 StdRNG rng;
 mesh::LocalIdentity identity;
@@ -374,6 +377,9 @@ void setup() {
   loadOrCreateIdentity();
   if (dispatch_watched) esp_task_wdt_reset();
   sensors.begin();
+#ifndef MESHCORE_ONCHIP
+  radio_time::start();
+#endif
 #if ENV_INCLUDE_GPS && defined(MESHCORE_ONCHIP)
   meshcore::gpsTimeHandler() = [](uint32_t utc) {
     if (!onchip::receiveGpsTime(utc)) return;
@@ -390,7 +396,13 @@ void setup() {
   modem->setGetStatsCallback(onGetStats);
   modem->begin();
   if (dispatch_watched) esp_task_wdt_reset();
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR2021)
+  kiss_stream.attachRadio(radio_driver, rng, onSetRadio, onSetTxPower,
+                          [](bool enabled) { return radio_driver.setRxBoostedGainMode(enabled); },
+                          []() { return radio_driver.getRxBoostedGainMode(); });
+#else
   kiss_stream.attachRadio(radio_driver, rng, onSetRadio, onSetTxPower);
+#endif
 #ifdef MESHCORE_ONCHIP
   RadioConfig startup_radio = {
       static_cast<uint32_t>(ONCHIP_RADIO_FREQ_MHZ * 1000000.0 + 0.5),
@@ -457,6 +469,37 @@ void loop() {
   kiss_stream.pollStream();
 #endif
   serviceWifi();
+#ifndef MESHCORE_ONCHIP
+  radio_time::poll();
+#endif
+  static char timeCommand[96]{};
+  static unsigned timeCommandLength = 0;
+  static bool timeCommandOverflow = false;
+  unsigned timeCommandBudget = 64;
+  while (timeCommandBudget-- && Serial.available()) {
+    const char c = Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      char reply[160];
+      timeCommand[timeCommandLength] = 0;
+      if (timeCommandOverflow) Serial.println("Error: USB time command exceeds 95 bytes");
+#ifdef MESHCORE_ONCHIP
+      else if (onchip::networkClockCommand(timeCommand, reply, sizeof(reply), true)) Serial.println(reply);
+#else
+      else if (!strcmp(timeCommand, "get sntp.current")) {
+        uint32_t lower, upper;
+        if (radio_time::bounds(lower, upper))
+          snprintf(reply, sizeof(reply), "utc=%u..%u source=sntp", unsigned(lower), unsigned(upper));
+        else strcpy(reply, "Error: SNTP unsynchronized or expired");
+        Serial.println(reply);
+      } else if (radio_time::configCommand(timeCommand, reply, sizeof(reply), true)) Serial.println(reply);
+#endif
+      else if (timeCommandLength) Serial.println("Error: use get sntp.current|server|interval; set sntp.server HOST; set sntp.interval SECONDS");
+      timeCommandLength = 0; timeCommandOverflow = false;
+    } else if (timeCommandLength + 1 < sizeof(timeCommand))
+      timeCommand[timeCommandLength++] = c;
+    else timeCommandOverflow = true;
+  }
   sensors.loop();
   rtc_clock.tick();
 #ifdef MESHCORE_ONCHIP
@@ -470,8 +513,9 @@ void loop() {
       && !modem->isHostOutputBackedUp()
 #endif
       ) {
-    if (!kiss_stream.hasPendingTransmit() &&
-        (uint32_t)(millis() - next_agc_reset_ms) >= AGC_RESET_INTERVAL_MS) {
+    const uint32_t agcInterval = uint32_t(kiss_stream.agcResetIntervalSeconds()) * 1000;
+    if (agcInterval && !kiss_stream.hasPendingTransmit() &&
+        (uint32_t)(millis() - next_agc_reset_ms) >= agcInterval) {
       radio_driver.resetAGC();
       next_agc_reset_ms = millis();
     }

@@ -98,6 +98,7 @@ static_assert(ONCHIP_MQTT_PACKET_FILTER >= 0 &&
                   ONCHIP_MQTT_PACKET_FILTER <= 0xffff,
               "MQTT packet filter must be a 16-bit payload-type mask");
 #ifndef ONCHIP_SNTP_SERVER
+// Initial defaults only; the shared modem's saved SNTP settings override them.
 #define ONCHIP_SNTP_SERVER "pool.ntp.org"
 #endif
 #ifndef ONCHIP_SNTP_INTERVAL_SECONDS

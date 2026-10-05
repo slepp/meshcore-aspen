@@ -183,6 +183,15 @@ clock-network-test: prepare
 			tests/clock_network.cpp $(NATIVE)/Clock.cpp \
 			-o $(TEST_BUILD)/clock-network && $(TEST_BUILD)/clock-network || exit; \
 	done
+.PHONY: radio-time-test
+radio-time-test:
+	@mkdir -p $(TEST_BUILD)
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra tests/radio_time_protocol.cpp -o $(TEST_BUILD)/radio-time
+	$(TEST_BUILD)/radio-time
+.PHONY: radio-time-native-test
+radio-time-native-test:
+	$(MAKE) lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 RADIO_TIME_ONLY=1 ONCHIP_BOT_WASM=0 \
+		TEST_FLAGS='$(TEST_FLAGS) -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1'
 lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATION),$(if $(ADAPTIVE_ADMIN_ONLY),,$(if $(filter 1,$(ONCHIP_BOT_WASM)),bot-wasm-examples)))
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	@mkdir -p $(TEST_BUILD)
@@ -220,7 +229,7 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 		$(PHY_BUILD)/ed/*.o $(PHY_BUILD)/CayenneLPP.o $(PHY_BUILD)/CayenneLPPPolyline.o \
 		-o $(TEST_BUILD)/lifecycle
 	BOT_WASM_CREDENTIAL_MODULE="$(ROOT)/.tmp/wasm-examples/c-admin.wasm" \
-		$(TEST_BUILD)/lifecycle $(if $(OBSERVER_PUBLIC_ONLY),--observer-public-test,$(if $(ADAPTIVE_ADMIN_ONLY),--adaptive-admin-test,$(if $(NATIVE_DISCOVERY_ONLY),--native-discovery-test,$(TEST_BUILD)/roles.json $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin $(TEST_BUILD)/python-query.bin $(TEST_BUILD)/native-status.bin)))
+		$(TEST_BUILD)/lifecycle $(if $(RADIO_TIME_ONLY),--radio-time-test,$(if $(OBSERVER_PUBLIC_ONLY),--observer-public-test,$(if $(ADAPTIVE_ADMIN_ONLY),--adaptive-admin-test,$(if $(NATIVE_DISCOVERY_ONLY),--native-discovery-test,$(TEST_BUILD)/roles.json $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin $(TEST_BUILD)/python-query.bin $(TEST_BUILD)/native-status.bin))))
 ifeq ($(OBSERVER_PUBLIC_ONLY),)
 ifeq ($(if $(SIGNED_INTEGRATION),,$(BOT_INTEGRATION)),)
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/rf_vector.py verify $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin

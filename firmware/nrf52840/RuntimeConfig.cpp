@@ -55,6 +55,12 @@ bool RuntimeConfig::begin() {
   mesh::LocalIdentity saved;
   char name[32];
   if (!load("_nrfbot", saved, name) || !saved.matches(bot.self_id)) return false;
+  uint8_t provider[32]{};
+  timeProviderFault = !loadTimeProvider(provider);
+  uint8_t nonzero = 0;
+  for (uint8_t byte : provider) nonzero |= byte;
+  bot.setTimeProvider(!timeProviderFault && nonzero ? provider : nullptr);
+  if (timeProviderFault) Serial.println("Time provider record unreadable; RF clock disabled; use set bot.time.provider KEY64|off");
 #if !NRFMAST_PRODUCTION_LUA
   bool adaptive = false;
   adaptivePolicyFault = !loadAdaptive(adaptive);
@@ -66,6 +72,40 @@ bool RuntimeConfig::begin() {
 #endif
   if (!ble.begin()) Serial.println("BLE: saved configuration unreadable; BLE disabled; provision a PIN through USB");
   return !name[0] || bot.setName(name);
+}
+
+bool RuntimeConfig::loadTimeProvider(uint8_t key[32]) {
+  memset(key, 0, 32);
+  if (!fs.exists("/pine-time")) return true;
+  auto file = fs.open("/pine-time");
+  uint8_t record[36]{};
+  const bool valid = file && file.size() == sizeof(record) &&
+      file.read(record, sizeof(record)) == sizeof(record) && !memcmp(record, "TPR\1", 4);
+  file.close();
+  if (valid) memcpy(key, record + 4, 32);
+  return valid;
+}
+bool RuntimeConfig::saveTimeProvider(const uint8_t key[32]) {
+  uint8_t record[36] = {'T', 'P', 'R', 1}, actual[36]{};
+  memcpy(record + 4, key, 32);
+  fs.remove("/pine-time.new");
+#if defined(NRF52_PLATFORM)
+  auto file = fs.open("/pine-time.new", FILE_O_WRITE);
+#else
+  auto file = fs.open("/pine-time.new", "w");
+#endif
+  if (!file) return false;
+  const bool written = file.write(record, sizeof(record)) == sizeof(record);
+  file.close();
+  file = fs.open("/pine-time.new");
+  const bool verified = written && file && file.size() == sizeof(record) &&
+      file.read(actual, sizeof(actual)) == sizeof(actual) && !memcmp(record, actual, sizeof(record));
+  file.close();
+  if (!verified || !fs.rename("/pine-time.new", "/pine-time")) {
+    fs.remove("/pine-time.new"); return false;
+  }
+  uint8_t saved[32];
+  return loadTimeProvider(saved) && !memcmp(saved, key, 32);
 }
 
 bool RuntimeConfig::loadAdaptive(bool& enabled) {
@@ -166,6 +206,46 @@ bool RuntimeConfig::setBotName(const char* name) {
   return load("_nrfbot", saved, oldName) && save("_nrfbot", saved, name) && bot.setName(name);
 }
 bool RuntimeConfig::handleCommand(uint32_t senderTimestamp, const char* command, char* reply) {
+  if (!strcmp(command, "get bot.time.provider")) {
+    char hex[65] = "off";
+    const auto *key = bot.getTimeProvider();
+    if (key) mesh::Utils::toHex(hex, key, 32);
+    uint8_t saved[32]{}, off[32]{};
+    const bool readable = loadTimeProvider(saved);
+    const char *state = !readable ? "unreadable" :
+        !memcmp(saved, key ? key : off, 32) ? "match" : "different";
+    snprintf(reply, 157, "provider=%s fault=%u saved=%s; direct=0 refresh<=900s deadline=5s",
+             hex, timeProviderFault, state);
+    return true;
+  }
+  if (!strncmp(command, "set bot.time.provider ", 22)) {
+    const char *value = command + 22;
+    uint8_t key[32]{};
+    bool valid = !strcmp(value, "off");
+    if (!valid && strlen(value) == 64 && mesh::Utils::fromHex(key, sizeof(key), value)) {
+      uint8_t nonzero = 0;
+      for (uint8_t byte : key) nonzero |= byte;
+      valid = nonzero && memcmp(key, bot.self_id.pub_key, 32) && memcmp(key, repeater.pub_key, 32);
+    }
+    if (!valid) strcpy(reply, "Error: use set bot.time.provider KEY64|off; pin an external provider's full public key");
+    else if (!saveTimeProvider(key))
+      strcpy(reply, "Error: time provider save/readback failed; inspect saved record before retry");
+    else {
+      bot.setTimeProvider(!strcmp(value, "off") ? nullptr : key);
+      timeProviderFault = false;
+      strcpy(reply, "OK saved/live; prior RF trust revoked; waiting for pinned direct provider advert and fresh UTC");
+    }
+    return true;
+  }
+  if (!strcmp(command, "bot time.fetch")) {
+    strcpy(reply, bot.fetchTime() ? "Queued one encrypted time request; outcome unconfirmed; no automatic replay" :
+        "Error: time fetch unavailable; inspect provider, learned zero-hop path, RF queue/airtime and 10s cooldown");
+    return true;
+  }
+  if (!strcmp(command, "help time")) {
+    strcpy(reply, "get bot.time.provider; set bot.time.provider KEY64|off; bot time.fetch; bot time; RF provider direct/zero-hop; saved pin; no admin ACL needed");
+    return true;
+  }
   if (!strcmp(command, "ver")) {
     snprintf(reply, 157, "v%s (Build: %s)", MESHCORE_SLP_PINE_VERSION, __DATE__);
     return true;

@@ -293,7 +293,8 @@ firmware-prepare: $(MESHCORE_DIR)/.git
 	cp firmware/esp32/wifi_kiss_main.cpp $(MESHCORE_DIR)/examples/kiss_modem/main.cpp
 	cp firmware/shared/WifiKissMultiplexer.h firmware/shared/WifiKissMultiplexer.cpp firmware/shared/QueuedTxProtocol.h \
 		firmware/shared/RadioDashboard.h firmware/shared/RadioDashboard.cpp firmware/shared/RadioDashboardPage.h \
-		firmware/shared/RadioNetwork.h firmware/shared/RadioFirmwareIdentity.h $(MESHCORE_DIR)/examples/kiss_modem/
+		firmware/shared/RadioNetwork.h firmware/shared/RadioFirmwareIdentity.h \
+		firmware/shared/SntpConfig.h firmware/shared/EspSntpClock.h $(MESHCORE_DIR)/examples/kiss_modem/
 	cp firmware/platformio.local.ini $(MESHCORE_DIR)/platformio.local.ini
 	cp firmware/esp32/FirmwareIdentity.h $(MESHCORE_DIR)/examples/kiss_modem/
 

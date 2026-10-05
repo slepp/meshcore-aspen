@@ -54,6 +54,7 @@ creates new build/output directories, and never reads private provisioning files
 Use Python 3.13, PlatformIO, the pinned ESP32 toolchain and the contributor build
 dependencies. Birch also requires Linux x86_64, Go 1.26.7 or newer, C++17, CMake
 and OpenSSL development libraries for the native worker.
+ELF inspection uses GNU `readelf` from binutils.
 
 ```sh
 make release-check
@@ -73,6 +74,18 @@ tag/full SHA and public source full SHA. Hashes identify exact output bytes;
 this workflow does not claim byte-for-byte reproducible builds. The manifest
 always records an **unqualified candidate**. A successful build is one release
 gate, not hardware acceptance.
+
+Linux x86_64 identifies the architecture, not support for every distribution.
+Each Birch manifest records the ELF interpreter, required SONAMEs and minimum
+GLIBC, GLIBCXX, CXXABI and OpenSSL symbol versions for all four host binaries.
+Compare these with the intended host before installation and qualify that
+distribution using the exact packaged worker. The current Obelisk toolchain
+can produce a worker requiring GLIBC 2.43 (including `sqrtf@GLIBC_2.43`), so its
+candidate is not an installable bundle for Debian 12 or Ubuntu 24.04. The Go
+tools have separate ABI receipts; their requirements do not qualify the worker.
+Building a portable bundle requires an agreed older distribution baseline and
+its compiler, CMake, OpenSSL and cJSON development dependencies. Do not relabel
+a newer-ABI binary as portable or silently replace its libraries.
 
 For first Aspen installation, follow [offline USB setup](../firmware/esp32/PUBLIC_SETUP.md).
 Keep private SPIFFS setup and identity backups outside the public bundle. Ordinary

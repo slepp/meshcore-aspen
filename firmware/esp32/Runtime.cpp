@@ -46,6 +46,28 @@ static RadioDashboard::RoleStatus botStatus;
 static RoleProfile bootProfile;
 static WifiKissMultiplexer *roleMux;
 static bool observerActive;
+bool sharedRadioReadCommand(const LocalRadio &radio, const char *command, char *reply, size_t capacity) {
+  const bool cad = !strcmp(command, "get cad");
+  const bool threshold = !strcmp(command, "get int.thresh");
+  const bool agc = !strcmp(command, "get agc.reset.interval");
+  const bool rxBoost = !strcmp(command, "get rxboost");
+  if (!cad && !threshold && !agc && !rxBoost) return false;
+  const auto *mux = radio.sharedRadio();
+  if (!mux) {
+    snprintf(reply, capacity, "Error: shared-radio settings unavailable");
+  } else if (cad) {
+    snprintf(reply, capacity, "> %s", mux->cadEnabled() ? "on" : "off");
+  } else if (threshold) {
+    snprintf(reply, capacity, "> %d", mux->interferenceThreshold());
+  } else if (agc) {
+    snprintf(reply, capacity, "> %u", unsigned(mux->agcResetIntervalSeconds()));
+  } else if (!mux->rxBoostAvailable()) {
+    snprintf(reply, capacity, "Error: shared-radio RX boost unavailable");
+  } else {
+    snprintf(reply, capacity, "> %s", mux->rxBoostEnabled() ? "on" : "off");
+  }
+  return true;
+}
 void observerStatistics(char *reply, size_t capacity) {
   if (observerActive) observer.statistics(reply, capacity);
   else snprintf(reply, capacity, "Error: observer is not running");

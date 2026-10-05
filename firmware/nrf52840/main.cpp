@@ -66,6 +66,8 @@ public:
       strcpy(output, "Error: SYSTEMOFF strands Pine; use reboot or disconnect local power"); return;
     }
     if (statsCommand(body, output)) return;
+    if (runtimeConfig && !strcmp(body, "bot time.fetch") &&
+        runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
 #if NRFMAST_PRODUCTION_LUA
     if (luaAdminCommand(body, output)) return;
 #endif

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <map>
+#include <string>
 
 using esp_err_t = int;
 using nvs_handle_t = unsigned;
@@ -26,6 +28,7 @@ struct Store {
   unsigned commits = 0;
   std::vector<uint8_t> durable;
   std::vector<uint8_t> pending;
+  std::map<std::string, std::vector<uint8_t>> auxiliary, pendingAuxiliary;
 };
 inline Store store;
 inline void reset() { store = {}; }
@@ -40,29 +43,41 @@ inline esp_err_t nvs_open(const char*, int mode, nvs_handle_t* handle) {
   *handle = 1;
   return ESP_OK;
 }
-inline void nvs_close(nvs_handle_t) { nvs_test::store.pending.clear(); }
-inline esp_err_t nvs_get_blob(nvs_handle_t, const char*, void* data, size_t* length) {
+inline void nvs_close(nvs_handle_t) {
+  nvs_test::store.pending.clear();
+  nvs_test::store.pendingAuxiliary.clear();
+}
+inline esp_err_t nvs_get_blob(nvs_handle_t, const char* key, void* data, size_t* length) {
   auto& s = nvs_test::store;
   if (s.fail_read) return ESP_FAIL;
-  if (s.durable.empty()) return ESP_ERR_NVS_NOT_FOUND;
-  if (*length < s.durable.size()) return ESP_ERR_NVS_INVALID_LENGTH;
-  *length = s.durable.size();
-  memcpy(data, s.durable.data(), *length);
+  const std::vector<uint8_t> *value = &s.durable;
+  if (strcmp(key, "profile")) {
+    const auto found = s.auxiliary.find(key);
+    if (found == s.auxiliary.end()) return ESP_ERR_NVS_NOT_FOUND;
+    value = &found->second;
+  }
+  if (value->empty()) return ESP_ERR_NVS_NOT_FOUND;
+  if (*length < value->size()) return ESP_ERR_NVS_INVALID_LENGTH;
+  *length = value->size();
+  memcpy(data, value->data(), *length);
   return ESP_OK;
 }
-inline esp_err_t nvs_set_blob(nvs_handle_t, const char*, const void* data, size_t length) {
+inline esp_err_t nvs_set_blob(nvs_handle_t, const char* key, const void* data, size_t length) {
   auto& s = nvs_test::store;
   ++s.writes;
   if (s.fail_write) return ESP_FAIL;
   const auto* bytes = static_cast<const uint8_t*>(data);
-  s.pending.assign(bytes, bytes + length);
+  if (!strcmp(key, "profile")) s.pending.assign(bytes, bytes + length);
+  else s.pendingAuxiliary[key].assign(bytes, bytes + length);
   return ESP_OK;
 }
 inline esp_err_t nvs_commit(nvs_handle_t) {
   auto& s = nvs_test::store;
   ++s.commits;
   if (s.fail_commit && !s.commit_despite_failure) return ESP_FAIL;
-  s.durable = s.pending;
+  if (!s.pending.empty()) s.durable = s.pending;
+  for (const auto &record : s.pendingAuxiliary) s.auxiliary[record.first] = record.second;
   s.pending.clear();
+  s.pendingAuxiliary.clear();
   return s.fail_commit ? ESP_FAIL : ESP_OK;
 }

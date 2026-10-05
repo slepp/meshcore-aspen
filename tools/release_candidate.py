@@ -27,6 +27,39 @@ IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin", "boot_app0.bin"}
 HOST_FILES = {"meshcore-host", "meshcore-check", "meshcore-rf-check", "bot-native-worker"}
 
 
+def stage_birch_files(work):
+    dest = work / "examples/kiss_modem"
+    shutil.copy2(ROOT / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
+    for name in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp", "QueuedTxProtocol.h",
+                 "RadioDashboard.h", "RadioDashboard.cpp", "RadioDashboardPage.h",
+                 "RadioNetwork.h", "RadioFirmwareIdentity.h", "EspSntpClock.h", "SntpConfig.h"):
+        shutil.copy2(ROOT / "firmware/shared" / name, dest / name)
+    shutil.copy2(ROOT / "firmware/esp32/FirmwareIdentity.h", dest / "FirmwareIdentity.h")
+
+
+def required_symbol_versions(text):
+    # Definitions/exported symbols are not runtime requirements.
+    needs = text.partition("Version needs section")[2]
+    result = {}
+    for family, version in re.findall(r"Name: (GLIBCXX|GLIBC|CXXABI|OPENSSL)_([0-9]+(?:\.[0-9]+)+)\b", needs):
+        if family not in result or tuple(map(int, version.split("."))) > tuple(map(int, result[family].split("."))):
+            result[family] = version
+    return result
+
+
+def native_abi(binary, env):
+    program = run(["readelf", "--program-headers", "--wide", str(binary)], env=env)
+    interpreter = re.search(r"Requesting program interpreter: ([^\]]+)\]", program)
+    dynamic = run(["readelf", "--dynamic", "--wide", str(binary)], env=env)
+    return {
+        "architecture": "x86_64",
+        "interpreter": interpreter.group(1) if interpreter else None,
+        "needed_sonames": sorted(re.findall(r"\(NEEDED\).*Shared library: \[([^\]]+)\]", dynamic)),
+        "required_symbol_versions": required_symbol_versions(run(["readelf", "--version-info", str(binary)], env=env)),
+        "distribution_qualified": False,
+    }
+
+
 def json_stream(text):
     decoder = json.JSONDecoder()
     values = []
@@ -179,13 +212,7 @@ def build(product, ref, output):
         shutil.rmtree(work / "upstream")
         (work / "upstream.tar").unlink()
         command(["patch", "--directory", str(work), "-p1", "--input", str(ROOT / "firmware/shared/radio-reconfigure.patch")])
-        dest = work / "examples/kiss_modem"
-        shutil.copy2(ROOT / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
-        for name in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp", "QueuedTxProtocol.h",
-                     "RadioDashboard.h", "RadioDashboard.cpp", "RadioDashboardPage.h",
-                     "RadioNetwork.h", "RadioFirmwareIdentity.h"):
-            shutil.copy2(ROOT / "firmware/shared" / name, dest / name)
-        shutil.copy2(ROOT / "firmware/esp32/FirmwareIdentity.h", dest / "FirmwareIdentity.h")
+        stage_birch_files(work)
         shutil.copy2(ROOT / config, work / "platformio.local.ini")
         command(["pio", "run", "--project-dir", str(work), "-e", profile])
         command(["make", "host-build"])
@@ -200,7 +227,9 @@ def build(product, ref, output):
             shutil.copy2(path, directory / name)
         toolchain.update(go=run(["go", "version"], env=env),
                          cxx=run(["c++", "--version"], env=env).splitlines()[0],
-                         native_cxx_sha256=digest(Path(shutil.which("c++", path=env["PATH"]))))
+                         native_cxx_sha256=digest(Path(shutil.which("c++", path=env["PATH"]))),
+                         readelf=run(["readelf", "--version"], env=env).splitlines()[0],
+                         readelf_sha256=digest(Path(shutil.which("readelf", path=env["PATH"]))))
         linked_libraries = native_libraries(directory / "bot-native-worker", env)
         # Native worker libraries and source needed for relinking live outside work.
         with tarfile.open(directory / "native-relink.tar.gz", "w:gz") as archive:
@@ -250,6 +279,7 @@ def build(product, ref, output):
                   "go_modules": json_stream(run(["go", "list", "-m", "-json", "all"], env=env)) if product == "birch" else [],
                   "go_sum_sha256": digest(ROOT / "go.sum"),
                   "native_linked_libraries": linked_libraries,
+                  "native_abi": {name: native_abi(directory / name, env) for name in sorted(HOST_FILES)} if product == "birch" else {},
                   "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                   "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de"},
         "compatibility": data["compatibility"],
@@ -323,6 +353,27 @@ def verify(directory):
         for item in libraries:
             if not re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) or type(item["bytes"]) is not int or item["bytes"] <= 0:
                 raise ValueError("Birch has an invalid native-library hash/size")
+        if not toolchain.get("readelf") or not re.fullmatch(r"[0-9a-f]{64}", toolchain.get("readelf_sha256", "")):
+            raise ValueError("Birch is missing the ELF inspection tool receipt")
+        abi = build.get("native_abi", {})
+        if set(abi) != HOST_FILES:
+            raise ValueError("Birch is missing host ABI receipts")
+        for item in abi.values():
+            if (item.get("architecture") != "x86_64" or item.get("distribution_qualified") is not False or
+                    (item.get("interpreter") is not None and item["interpreter"] != "/lib64/ld-linux-x86-64.so.2") or
+                    not isinstance(item.get("needed_sonames"), list) or
+                    any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+", name) for name in item["needed_sonames"]) or
+                    not isinstance(item.get("required_symbol_versions"), dict) or
+                    any(family not in {"GLIBC", "GLIBCXX", "CXXABI", "OPENSSL"} or
+                        not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", version)
+                        for family, version in item["required_symbol_versions"].items())):
+                raise ValueError("Birch has an invalid or falsely qualified host ABI receipt")
+        if not {"libcjson.so.1", "libssl.so.3", "libcrypto.so.3"} <= set(abi["bot-native-worker"]["needed_sonames"]):
+            raise ValueError("Birch worker ABI omits cJSON/OpenSSL dependencies")
+        if not {"GLIBC", "GLIBCXX", "CXXABI", "OPENSSL"} <= set(abi["bot-native-worker"]["required_symbol_versions"]):
+            raise ValueError("Birch worker ABI omits required symbol versions")
+        if not set(abi["bot-native-worker"]["needed_sonames"]) <= {item["soname"] for item in libraries}:
+            raise ValueError("Birch worker ABI and linked-library receipts differ")
     names = set()
     for entry in manifest["files"]:
         name = entry["name"]

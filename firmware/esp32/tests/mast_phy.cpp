@@ -185,7 +185,101 @@ static void overlapping_presence_during_transmit() {
   assert(event(receive(mast.peers[1]), queued_tx::SUCCEEDED));
 }
 
+static bool rxBoost = false, rxBoostFail = false;
+static bool setRxBoost(bool enabled) {
+  if (rxBoostFail) return false;
+  rxBoost = enabled;
+  return true;
+}
+
+static void saved_shared_controls() {
+  nvs_test::reset();
+  Radio radio;
+  RNG rng;
+  auto attach = [&](WifiKissMultiplexer &mux) {
+    mux.attachRadio(radio, rng, configure, power, setRxBoost, []() { return rxBoost; });
+  };
+  WifiKissMultiplexer mux;
+  attach(mux);
+  assert(mux.setInitialConfiguration({912525000, 250000, 7, 5, 22}, true));
+  const auto legacy = nvs_test::store.durable;
+  assert(mux.agcResetIntervalSeconds() == 30 && !mux.rxBoostConfigured());
+  assert(mux.applyMastCAD(false));
+  assert(!mux.cadEnabled());
+  assert(mux.applyMastInterference(12) && mux.interferenceThreshold() == 12);
+  assert(mux.applyMastAirtimeFactor(2) && mux.airtimeFactor() == 2);
+  assert(!mux.applyMastAirtimeFactor(NAN) && !mux.applyMastAirtimeFactor(10));
+  assert(mux.applyMastControls(120, true, true));
+  assert(mux.rxBoostEnabled() && mux.agcResetIntervalSeconds() == 120);
+  const auto savedProfile = nvs_test::store.durable;
+  const auto savedControls = nvs_test::store.auxiliary.at("controls");
+  const auto generation = mux.configurationGeneration();
+  radio.busy = true;
+  assert(!mux.applyMastControls(0, true, false));
+  assert(nvs_test::store.auxiliary.at("controls") == savedControls &&
+         mux.configurationGeneration() == generation);
+  radio.busy = false;
+  rxBoost = false;
+  {
+    WifiKissMultiplexer restarted;
+    attach(restarted);
+    assert(restarted.setInitialConfiguration({912525000, 250000, 7, 5, 22}, true));
+    assert(!restarted.cadEnabled() && restarted.interferenceThreshold() == 12 &&
+           restarted.airtimeFactor() == 2 && restarted.rxBoostEnabled() &&
+           restarted.agcResetIntervalSeconds() == 120);
+    assert(restarted.currentConfiguration().freq_hz == 912525000 &&
+           restarted.currentConfiguration().tx_power == 22);
+    assert(restarted.applyMastControls(0, true, false));
+    assert(!restarted.rxBoostEnabled() && restarted.agcResetIntervalSeconds() == 0);
+    nvs_test::store.fail_commit = nvs_test::store.commit_despite_failure = true;
+    assert(!restarted.applyMastControls(60, true, true) && !restarted.localReady());
+  }
+  nvs_test::store.fail_commit = nvs_test::store.commit_despite_failure = false;
+  {
+    WifiKissMultiplexer restarted;
+    attach(restarted);
+    assert(restarted.setInitialConfiguration({912525000, 250000, 7, 5, 22}, true));
+    assert(restarted.agcResetIntervalSeconds() == 60 && restarted.rxBoostEnabled());
+    rxBoostFail = true;
+    assert(!restarted.applyMastControls(0, true, false) && !restarted.localReady());
+    rxBoostFail = false;
+  }
+  assert(nvs_test::store.durable == savedProfile);
+  nvs_test::store.auxiliary["controls"][7] = 2;
+  {
+    WifiKissMultiplexer corrupted;
+    attach(corrupted);
+    assert(!corrupted.setInitialConfiguration({912525000, 250000, 7, 5, 22}, true) &&
+           !corrupted.localReady());
+  }
+  nvs_test::store.auxiliary.clear();
+  nvs_test::store.durable = legacy;
+  rxBoost = true;
+  {
+    WifiKissMultiplexer legacyRestart;
+    attach(legacyRestart);
+    assert(legacyRestart.setInitialConfiguration({912525000, 250000, 7, 5, 22}, true));
+    assert(legacyRestart.agcResetIntervalSeconds() == 30 &&
+           legacyRestart.rxBoostEnabled() && !legacyRestart.rxBoostConfigured());
+  }
+  nvs_test::reset();
+  {
+    Fixture failed(1, true, true);
+    failed.radio.busy = true;
+    failed.job(0, 1, 0, 0, 0x5a);
+    assert(event(receive(failed.peers[0]), queued_tx::ACCEPTED));
+    assert(failed.radio.transmitted.empty());
+    failed.radio.busy = false;
+    nvs_test::store.fail_commit = true;
+    assert(!failed.mux.applyMastControls(60, false, false) && !failed.mux.localReady());
+    const auto terminal = receive(failed.peers[0]);
+    assert(event(terminal, queued_tx::FAILED, queued_tx::NOT_CONFIGURED));
+    assert(!failed.mux.hasPendingTransmit() && failed.radio.transmitted.empty());
+  }
+}
+
 int main() {
+  saved_shared_controls();
   role_claims();
   overlapping_presence_during_transmit();
   nvs_test::reset();
@@ -198,7 +292,8 @@ int main() {
   const uint8_t changed_offsets[] = {7, 11, 15, 16, 17, 18, 22, 23};
   for (uint8_t offset : changed_offsets) {
     request = original;
-    ++request[offset];
+    if (offset == 22) request[offset] ^= 1;
+    else ++request[offset];
     mast.hardware(0, request);
     const auto frames = receive(mast.peers[0]);
     assert(frames.size() == 1 && frames[0].size() == 26 &&

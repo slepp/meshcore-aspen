@@ -428,6 +428,19 @@ struct Management::Core : mesh::Mesh {
                       const mesh::Identity &sender, uint8_t *data,
                       size_t length) override {
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
+    if (packet->isRouteDirect() && packet->getPathHashCount() == 0) {
+      uint8_t reply[32];
+      if (networkTimeReply(data, length, reply)) {
+        static uint32_t lastReply = 0;
+        static bool sent = false;
+        const uint32_t now = millis();
+        if ((sent && uint32_t(now - lastReply) < 10000u) ||
+            packets.getOutboundTotal() || _radio->getEstAirtimeFor(80) > 1000u) return;
+        sent = true; lastReply = now;
+        sendEncrypted(packet, secret, sender, reply, sizeof(reply));
+        return;
+      }
+    }
     if (length >= 5 && data[4] == 2) {
       publicOwnerRequest(packet, secret, sender, data, length); return;
     }
@@ -687,8 +700,7 @@ void Management::loop() {
     core_->lastMillis = now;
     ClockSnapshot clocks;
     if (clockSnapshot(clocks) && (clocks.network_epoch || clocks.gps_epoch)) {
-      const bool gps = clocks.gps_epoch &&
-          (!clocks.network_epoch || clocks.gps_age_ms <= clocks.network_age_ms);
+      const bool gps = clocks.gps_epoch && clocks.gps_age_ms < 3600000u;
       const uint64_t epoch = gps ? uint64_t(clocks.gps_epoch) + clocks.gps_age_ms / 1000 :
                                   uint64_t(clocks.network_epoch) + clocks.network_age_seconds;
       if (epoch <= 4102444800u)

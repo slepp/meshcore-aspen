@@ -8,6 +8,9 @@
 #include "SharedRadio.h"
 #include <cmath>
 #include <cstdio>
+#if NRFMAST_PRODUCTION_LUA
+#include "PineRuntimePlatform.h"
+#endif
 
 namespace nrfmast {
 #if NRFMAST_PRODUCTION_LUA
@@ -36,7 +39,14 @@ void CommandBot::begin(bool advertiseOnBoot) {
 }
 
 void CommandBot::loop() {
+  if (timePacket && uint32_t(_ms->getMillis() - lastTimeRequest) >= radio_time::DeadlineMs)
+    cancelTimeRequest();
   BaseChatMesh::loop();
+  const uint32_t timeNow = _ms->getMillis();
+  timeRequest.pending(timeNow);
+  if (providerEnabled && int32_t(timeNow - nextTimeRequest) >= 0) {
+    if (!fetchTime()) nextTimeRequest = timeNow + 10000u;
+  }
 #if !NRFMAST_PRODUCTION_LUA
   sampleAdmission();
 #endif
@@ -44,6 +54,62 @@ void CommandBot::loop() {
   importPending = false;
   if (startupAdvertPending && int32_t(uint32_t(_ms->getMillis()) - startupAdvertAt) >= 0)
     advertise();
+}
+void CommandBot::setTimeProvider(const uint8_t *key) {
+  cancelTimeRequest();
+  providerEnabled = key != nullptr;
+  memset(timeProvider, 0, sizeof(timeProvider));
+  if (key) memcpy(timeProvider, key, sizeof(timeProvider));
+  nextTimeRequest = _ms->getMillis();
+#if NRFMAST_PRODUCTION_LUA
+  revokeRadioTime();
+#endif
+}
+void CommandBot::cancelTimeRequest() {
+  if (timePacket) {
+    for (int i = 0; i < _mgr->getOutboundTotal(); ++i) {
+      if (_mgr->getOutboundByIdx(i) != timePacket) continue;
+      auto *queued = _mgr->removeOutboundByIdx(i);
+      if (queued) releasePacket(queued);
+      break;
+    }
+    // An already-admitted transmission belongs to the native dispatcher/radio.
+    // Its outcome may be uncertain; never free it or queue a replacement here.
+    timePacket = nullptr;
+  }
+  timeRequest.cancel();
+}
+bool CommandBot::fetchTime() {
+  const uint32_t now = _ms->getMillis();
+  if (!providerEnabled || !transmitEnabled || awaitingAck || importPending ||
+      _mgr->getOutboundTotal() || timeRequest.pending(now) ||
+      (timeAttempted && uint32_t(now - lastTimeRequest) < 10000u) ||
+      _radio->getEstAirtimeFor(100) > radio_time::MaxAirtimeMs) return false;
+  auto *contact = lookupContactByPubKey(timeProvider, sizeof(timeProvider));
+  // Version 1 deliberately supports only a learned direct, zero-hop provider.
+  // An unknown or relayed path never falls back to flooding.
+  if (!contact || contact->out_path_len != 0) return false;
+  uint8_t request[radio_time::RequestSize]{};
+  const uint32_t tag = getRTCClock()->getCurrentTimeUnique();
+  radio_time::put32(request, tag);
+  request[4] = radio_time::RequestType; request[5] = radio_time::ProtocolVersion;
+  getRNG()->random(request + 6, 8);
+  auto *packet = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, contact->id,
+                                    contact->getSharedSecret(self_id), request, sizeof(request));
+  if (!packet) return false;
+  timeRequest.begin(timeProvider, request + 6, tag, now);
+  timePacket = packet;
+  lastTimeRequest = now; timeAttempted = true;
+  nextTimeRequest = now + radio_time::RefreshMs;
+  sendDirect(packet, contact->out_path, 0);
+  return true;
+}
+void CommandBot::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int senderIndex,
+                                const uint8_t *secret, uint8_t *data, size_t length) {
+  timeResponseDirect = type == PAYLOAD_TYPE_RESPONSE && packet->isRouteDirect() &&
+      packet->getPathHashCount() == 0 && length == radio_time::ResponseSize;
+  BaseChatMesh::onPeerDataRecv(packet, type, senderIndex, secret, data, length);
+  timeResponseDirect = false;
 }
 
 #if !NRFMAST_PRODUCTION_LUA
@@ -243,7 +309,10 @@ int CommandBot::companionSend(const ContactInfo& to, uint8_t type, uint8_t attem
   return result;
 }
 
-void CommandBot::onDiscoveredContact(ContactInfo& contact, bool isNew, uint8_t, const uint8_t*) {
+void CommandBot::onDiscoveredContact(ContactInfo& contact, bool isNew, uint8_t pathLength, const uint8_t*) {
+  if (providerEnabled && !memcmp(contact.id.pub_key, timeProvider, 32) &&
+      (pathLength & 63u) == 0)
+    contact.out_path_len = 0;
   if (companion) companion->discovered(contact, isNew);
 }
 
@@ -257,6 +326,23 @@ void CommandBot::onCommandDataRecv(const ContactInfo& contact, mesh::Packet* pac
 }
 
 void CommandBot::onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t length) {
+  uint32_t lower, upper, lifetime;
+  const uint32_t now = _ms->getMillis();
+  const bool wasPending = timeRequest.pending(now);
+  if (timeRequest.accept(contact.id.pub_key, data, length, timeResponseDirect,
+                         now, lower, upper, lifetime)) {
+    const uint32_t refresh = lifetime / 2 < radio_time::RefreshMs ? lifetime / 2 : radio_time::RefreshMs;
+    nextTimeRequest = uint32_t(_ms->getMillis()) + (refresh < 10000u ? 10000u : refresh);
+#if NRFMAST_PRODUCTION_LUA
+    trustRadioTime(lower, upper, lifetime);
+#else
+    if (lower > getRTCClock()->getCurrentTime()) getRTCClock()->setCurrentTime(lower);
+#endif
+  } else if (wasPending && !timeRequest.pending(now)) {
+#if NRFMAST_PRODUCTION_LUA
+    revokeRadioTime();
+#endif
+  }
   if (companion) companion->response(contact, data, length);
 }
 
@@ -269,12 +355,14 @@ void CommandBot::onContactsFull() {
   ++failures;
   Serial.println("bot: contact table full");
 }
-#if !NRFMAST_PRODUCTION_LUA
 void CommandBot::logTx(mesh::Packet* packet, int) {
+  if (packet == timePacket) timePacket = nullptr;
+#if !NRFMAST_PRODUCTION_LUA
   if (packet == adaptivePacket) settleReply(true);
-}
 #endif
+}
 void CommandBot::logTxFail(mesh::Packet* packet, int) {
+  if (packet == timePacket) timePacket = nullptr;
 #if !NRFMAST_PRODUCTION_LUA
   if (packet == adaptivePacket) settleReply(false);
 #endif

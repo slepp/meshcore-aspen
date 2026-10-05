@@ -245,7 +245,7 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
     say(saveOwner(next) ? "Saved trusted bot owner; identities unchanged" : "Error: owner commit/readback failed; inspect bot owner");
   } else if (!strcmp(text, "bot time")) {
     uint32_t earliest, latest; const bool trusted = trustedNetworkTime(earliest, latest);
-    snprintf(reply.text, sizeof(reply.text), "UTC trusted=%u source=%s bounds=%lu..%lu; GPS fix/companion set-time/admin bot time; no GPS: refresh every 30min/restart",
+    snprintf(reply.text, sizeof(reply.text), "UTC trusted=%u source=%s bounds=%lu..%lu; GPS/paired BLE/admin or saved bot.time.provider; RF refresh=15min; no RTC fallback",
              trusted, nrfmast::luaTimeSource(), (unsigned long)earliest, (unsigned long)latest);
   } else if (!strncmp(text, "bot time ", 9)) {
     uint32_t utc;

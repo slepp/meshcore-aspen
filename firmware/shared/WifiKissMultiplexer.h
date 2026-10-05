@@ -57,14 +57,23 @@ public:
   bool setNativeRolePresence(uint8_t mask, const uint8_t* keys, uint8_t count);
   void setActiveRolePresence(uint8_t mask);
   void attachRadio(mesh::Radio& radio, mesh::RNG& rng, SetRadioCallback configure,
-                   SetTxPowerCallback power);
+                   SetTxPowerCallback power, bool (*setRxBoost)(bool) = nullptr,
+                   bool (*getRxBoost)() = nullptr);
   bool setInitialConfiguration(const RadioConfig& config,
                                bool require_operator_phy = false);
   // Dispatch-task only, after authenticated mast administration acknowledges
   // the change on the old PHY. Queued old-generation jobs fail explicitly.
   bool applyMastConfiguration(const RadioConfig& config, bool persist);
   bool applyMastCAD(bool enabled);
+  bool applyMastInterference(uint8_t threshold);
+  bool applyMastAirtimeFactor(float factor);
+  bool applyMastControls(uint16_t agcSeconds, bool configureRxBoost, bool rxBoost);
   bool cadEnabled() const { return _profile[15] != 0; }
+  uint16_t agcResetIntervalSeconds() const { return _agc_seconds; }
+  float airtimeFactor() const { return queued_tx::getFloat(_profile + 11); }
+  bool rxBoostAvailable() const { return _set_rx_boost && _get_rx_boost; }
+  bool rxBoostConfigured() const { return _rx_boost_configured; }
+  bool rxBoostEnabled() const { return _get_rx_boost && _get_rx_boost(); }
   bool hasPersistedConfiguration() const { return queued_tx::get32(_persisted_profile) != 0; }
   bool restoreMastConfiguration();
   uint32_t configurationGeneration() const { return _configuration_generation; }
@@ -107,6 +116,7 @@ public:
   size_t write(const uint8_t* data, size_t size) override;
 
 private:
+  void configurationFailed();
   static constexpr uint16_t MAX_ENCODED_FRAME = KISS_MAX_ENCODED_FRAME_SIZE;
   static constexpr uint16_t CLIENT_OUTPUT_CAPACITY = 2 * MAX_ENCODED_FRAME;
   static constexpr uint16_t CLIENT_INPUT_BUDGET = 512;
@@ -221,6 +231,10 @@ private:
   mesh::RNG* _rng = nullptr;
   SetRadioCallback _configure = nullptr;
   SetTxPowerCallback _power = nullptr;
+  bool (*_set_rx_boost)(bool) = nullptr;
+  bool (*_get_rx_boost)() = nullptr;
+  uint16_t _agc_seconds = 30;
+  bool _rx_boost_configured = false, _rx_boost = false;
   ClientTarget _owner{};
   uint8_t _profile[queued_tx::PROFILE_SIZE]{};
   uint8_t _persisted_profile[queued_tx::PROFILE_SIZE]{};

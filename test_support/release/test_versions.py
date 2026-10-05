@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import struct
+import re
 import tarfile
 import tempfile
 import unittest
@@ -117,18 +118,41 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity mismatch"):
             candidate.verify(self.directory)
 
-    def test_refuse_incomplete_birch_bundle(self):
+    def birch_metadata(self):
         version = versions.load()["products"]["birch"]["version"]
         self.manifest.update(product="birch", version=version, tag=versions.tag("birch", version),
                              identity=versions.identity("birch", version))
         self.manifest["build"].update(profile="public_birch", config_path="release/platformio.birch.ini")
-        self.manifest["build"]["toolchain"].update(go="fixture", cxx="fixture", native_cxx_sha256="a" * 64)
+        self.manifest["build"]["toolchain"].update(go="fixture", cxx="fixture", native_cxx_sha256="a" * 64,
+                                                   readelf="fixture", readelf_sha256="a" * 64)
         self.manifest["build"].update(go_modules=[{"Path": "fixture"}], native_linked_libraries=[
             {"soname": name, "sha256": "a" * 64, "bytes": 1}
             for name in ("libcjson.so.1", "libssl.so.3", "libcrypto.so.3")])
+        self.manifest["build"]["native_abi"] = {name: {
+            "architecture": "x86_64", "interpreter": "/lib64/ld-linux-x86-64.so.2",
+            "needed_sonames": ["libcjson.so.1", "libssl.so.3", "libcrypto.so.3"],
+            "required_symbol_versions": {"GLIBC": "2.36", "GLIBCXX": "3.4.30", "CXXABI": "1.3.9", "OPENSSL": "3.0.0"},
+            "distribution_qualified": False,
+        } for name in candidate.HOST_FILES}
+
+    def test_refuse_incomplete_birch_bundle(self):
+        self.birch_metadata()
         self.save()
         with self.assertRaisesRegex(ValueError, "Incomplete product bundle"):
             candidate.verify(self.directory)
+
+    def test_refuse_missing_and_false_birch_abi_claims(self):
+        for change, error in (
+            (lambda abi: abi.clear(), "missing host ABI receipts"),
+            (lambda abi: abi["bot-native-worker"].update(distribution_qualified=True), "falsely qualified host ABI"),
+            (lambda abi: abi["bot-native-worker"]["required_symbol_versions"].clear(), "omits required symbol versions"),
+        ):
+            with self.subTest(error=error):
+                self.birch_metadata()
+                change(self.manifest["build"]["native_abi"])
+                self.save()
+                with self.assertRaisesRegex(ValueError, error):
+                    candidate.verify(self.directory)
 
     def test_refuse_private_files_and_unsafe_names(self):
         for name in ("private-profile.json", "../private-profile.json"):
@@ -187,3 +211,39 @@ class CandidateTests(unittest.TestCase):
     def test_go_dependency_inventory_stream(self):
         self.assertEqual(candidate.json_stream('{"Path":"one"}\n{"Path":"two"}\n'),
                          [{"Path": "one"}, {"Path": "two"}])
+
+    def test_birch_cold_staging_resolves_sntp_header_chain(self):
+        dest = self.directory / "examples/kiss_modem"
+        dest.mkdir(parents=True)
+        candidate.stage_birch_files(self.directory)
+        self.assertIn('#include "EspSntpClock.h"', (dest / "main.cpp").read_text())
+        pending = ["EspSntpClock.h"]
+        seen = set()
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            original = ROOT / "firmware/shared" / name
+            self.assertEqual((dest / name).read_bytes(), original.read_bytes())
+            for include in re.findall(r'^#include "([^\"]+)"', original.read_text(), re.M):
+                if (ROOT / "firmware/shared" / include).is_file():
+                    pending.append(include)
+        self.assertIn("SntpConfig.h", seen)
+
+    def test_elf_requirements_use_only_needed_versions_and_numeric_order(self):
+        text = '''Version definition section '.gnu.version_d' contains entries:
+          Name: GLIBC_99.0
+        Version needs section '.gnu.version_r' contains entries:
+          Name: GLIBC_2.9
+          Name: GLIBC_2.43
+          Name: GLIBC_2.2.5
+          Name: GLIBC_PRIVATE
+          Name: GLIBCXX_3.4.9
+          Name: GLIBCXX_3.4.30
+          Name: CXXABI_1.3.9
+          Name: OPENSSL_3.0.0
+        '''
+        self.assertEqual(candidate.required_symbol_versions(text), {
+            "GLIBC": "2.43", "GLIBCXX": "3.4.30", "CXXABI": "1.3.9", "OPENSSL": "3.0.0"})
+        self.assertEqual(candidate.required_symbol_versions("No version information found in this file."), {})

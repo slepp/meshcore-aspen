@@ -60,13 +60,17 @@ private:
   Management *management_ = nullptr;
   ProfileJournal *journal_ = nullptr;
   uint8_t appliedMask_ = 0;
-  enum class Effect { None, Reboot, Wifi, Radio, Temporary, CAD } effect_ = Effect::None;
+  enum class Effect { None, Reboot, Wifi, Radio, Temporary, CAD, Interference, Airtime, Controls } effect_ = Effect::None;
   uint32_t ticket_ = 0, nextTicket_ = 0, admittedAt_ = 0, readyAt_ = 0;
   uint32_t cancelledTicket_ = 0;
   bool armed_ = false, temporary_ = false;
   uint32_t duration_ = 0, restoreAt_ = 0;
   RadioConfig nextRadio_{};
   bool nextCAD_ = true;
+  uint8_t nextInterference_ = 0;
+  float nextAirtime_ = 1;
+  uint16_t nextAGCSeconds_ = 30;
+  bool nextRxConfigured_ = false, nextRxBoost_ = false;
   char outcome_[80] = "idle";
   bool reserve(Effect effect, Reply &reply);
   void roleCommand(char *command, Reply &reply, Transport transport,

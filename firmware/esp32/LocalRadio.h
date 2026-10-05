@@ -62,6 +62,7 @@ public:
     return slot >= 0 && mux->getQueuedRadioStats(slot, stats);
   }
   RadioConfig configuration() const { return mux->currentConfiguration(); }
+  const WifiKissMultiplexer *sharedRadio() const { return mux; }
   mesh::Radio &physical() const { return mux->physicalRadio(); }
   uint16_t queuedCount() const {
     return slot >= 0 ? mux->sourceQueuedCount(slot) : 0;

@@ -101,6 +101,11 @@ Successful command results and errors are plain text, without JSON wrapping.
 | `get name`, `set name TEXT` | Read/change the saved Management name, not another role or identity |
 | `get owner.info`, `set owner.info TEXT` | Management-local persisted text, 0..119 printable ASCII bytes; `|` separates lines |
 | `get radio`, `get freq`, `get tx` | Effective shared PHY readback; persistent and temporary setters keep the existing explicit mast syntax |
+| `get cad`, `set cad on\|off` | Effective shared hardware CAD; response-gated, saved for all modem users |
+| `get int.thresh`, `set int.thresh N` | Saved shared interference threshold, `0..255`; `0` disables detection |
+| `get agc.reset.interval`, `set agc.reset.interval N` | Saved shared AGC interval, `0..1020` seconds, rounded down to four-second units; `0` disables resets |
+| `get rxboost`, `set rxboost on\|off` | Effective/saved boosted receiver gain; explicit error if the driver does not expose it |
+| `get af`, `set af F` | Saved aggregate airtime factor, finite `0..9`; native role `af` remains a separate source budget |
 | `bot status` | `bot applied=A saved=S ready=R state=TEXT` |
 | `bot key` | `KEY ` followed by 64 lowercase hex characters, or an error if disabled |
 | `roles MASK` | Save mask 0..15: repeater=1, room=2, companion=4, observer=8 |
@@ -132,6 +137,13 @@ old-PHY reply TX completion or web-response send, then a 500 ms guard.
 Inspect `job` and read back state; failure/timeout may leave saved and applied
 state different. Serialize control workflows: there is one pending effect.
 KISS `CONFIG GET` wire format is unchanged and reports effective PHY/generation.
+CAD, threshold, aggregate `af` and shared control changes use the same response
+fence and advance the effective generation, retiring old-generation jobs.
+AGC/RX boost use a separate versioned control record, not an extension to the
+18-byte KISS profile. Legacy installs retain a 30-second AGC interval and their
+hardware's initial RX gain until an owner saves controls. Control commit or
+hardware-application failures may leave saved and applied state different;
+the radio stops admission until a successful restart restores valid controls.
 `tempradio` requires a durable profile and returns to that complete profile,
 not a preceding transient configuration; restoration does not write NVS.
 Failed/cancelled acceptance transmission replaces the cached `Accepted`

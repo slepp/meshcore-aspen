@@ -38,6 +38,7 @@ struct ClockSnapshot {
   uint32_t gps_epoch = 0;
   uint64_t gps_age_ms = 0;
   uint32_t rejected_samples = 0;
+  uint32_t network_interval_seconds = 3600;
   bool network_enabled = false;
   ClockStatus roles[3]{};
 };
@@ -54,6 +55,9 @@ RoleClock &companionClock();
 bool clockSnapshot(ClockSnapshot &snapshot);
 // Conservative UTC bounds from a fresh SNTP or GPS sample, never a role RTC.
 bool trustedNetworkTime(uint32_t &earliest, uint32_t &latest, const char **reason = nullptr);
+bool networkClockCommand(const char *command, char *reply, size_t capacity, bool writeAllowed = false);
+bool networkTimeReply(const uint8_t *request, size_t size, uint8_t *reply);
+bool publicTimeCommand(const uint8_t *data, size_t size);
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
 // Dispatch-thread publication from the kernel-verified native clock provider.
 // Zero bounds revoke trust without changing stored deadlines.

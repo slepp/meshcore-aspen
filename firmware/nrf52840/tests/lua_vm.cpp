@@ -5,6 +5,16 @@
 #include <iostream>
 #include <iomanip>
 #include <cstdlib>
+#include <new>
+static size_t nothrowBlockLimit = SIZE_MAX, nothrowCalls, failedNothrowCall;
+void *operator new(size_t size, const std::nothrow_t &) noexcept {
+  if (++nothrowCalls == failedNothrowCall || size > nothrowBlockLimit) return nullptr;
+  try { return ::operator new(size); }
+  catch (const std::bad_alloc &) { return nullptr; }
+}
+void operator delete(void *memory, const std::nothrow_t &) noexcept {
+  ::operator delete(memory);
+}
 static size_t physicalLive, physicalPeak;
 void onchipBotVmHeapModel(size_t oldSize, size_t newSize) {
   const auto cost = [](size_t size) { return size ? ((size + 7) & ~size_t(7)) + 8 : 0; };
@@ -86,10 +96,32 @@ static void customCapacity() {
          BotVmLimits{}.heapBytes, BotVmLimits{}.heapBytes - jobPeak, physicalPeak);
 }
 
+static void fragmentedJobBuffers() {
+  nothrowBlockLimit = (BotSession::StorageBytes - BotSession::InitializationStorageBytes) / BotJobLimit;
+  BotSession session;
+  BotVmStats stats;
+  char error[128]{};
+  assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 1, stats, error, sizeof(error)));
+  assert(session.start(1, event("!ping"), error, sizeof(error)));
+  assert(session.start(2, event("!ping"), error, sizeof(error)));
+  BotSession::Result result;
+  assert(session.poll(result) && result.ok && !strcmp(result.action.text, "Pong"));
+  assert(session.poll(result) && result.ok && !strcmp(result.action.text, "Pong"));
+  session.clear();
+  failedNothrowCall = nothrowCalls + 2;
+  assert(!session.load(BotDefaultSource, strlen(BotDefaultSource), 2, stats, error, sizeof(error)) &&
+         strstr(error, "Lua job buffer") && !session.manifest().count);
+  failedNothrowCall = 0;
+  assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 3, stats, error, sizeof(error)));
+  nothrowBlockLimit = SIZE_MAX;
+  puts("Pine fragmented heap: separate job-sized blocks retain both slots; partial allocation failure cleans up and reloads");
+}
+
 int main() {
   static_assert(sizeof(void *) == 4 && alignof(double) == 8, "Run Pine validation with -m32 -malign-double");
   static_assert(BotJobLimit == 2 && BotValueLimit == 128 && BotTransactionLimit == 2);
   assert(BotSession::InitializationStorageBytes < BotSession::StorageBytes);
+  fragmentedJobBuffers();
   if (std::getenv("PINE_DUMP_REGISTRY")) {
     BotManifest manifest;
     BotVmStats stats;

@@ -139,6 +139,35 @@ factor, coding rate, transmit power and repeater delay settings remain unchanged
 CAD adds a channel check; it does not replace randomized carrier retries or
 the roles' normal transmit/receive delays, and cannot prevent every collision.
 
+### Other shared-radio settings
+
+Use Aspen's authenticated management connection to read or change these settings:
+
+| Read | Change | Meaning |
+| --- | --- | --- |
+| `get int.thresh` | `set int.thresh 0..255` | Interference threshold above the measured noise floor; `0` disables interference detection |
+| `get agc.reset.interval` | `set agc.reset.interval 0..1020` | Periodic AGC reset interval in seconds; rounded down to four-second units, `0` disables resets |
+| `get rxboost` | `set rxboost on\|off` | Shared receiver boosted-gain mode on supported radio drivers |
+| `get af` | `set af 0..9` | Aggregate shared-radio airtime factor; roles retain their separate `af` budgets |
+
+Changes are saved and applied after the acceptance reply. Read `job` and the
+setting again to confirm application. They affect every host and on-device role
+using this modem; they do not change frequency, bandwidth, SF, CR or transmit
+power. Temporary radio mode rejects these changes until the saved profile returns.
+
+Existing installations without a saved AGC setting retain the 30-second
+shared-modem reset interval. Without a saved RX-boost setting, the firmware
+leaves the hardware's initial gain mode unchanged. Unsupported RX boost returns
+an explicit error. Unreadable control records or an unconfirmed control
+commit/application disable the radio rather than report a successful change.
+An app-only update retains these settings.
+
+Native repeater/room reads of CAD, interference threshold, AGC interval and RX
+boost report the shared modem's effective values. Their physical-radio setters
+remain disabled: a role cannot independently retune or change the modem used
+by its siblings. Repeater/room forwarding, adverts, delays, ACLs, names and
+per-role airtime budgets remain in their existing native saved preferences.
+
 ## Internal MQTT observer
 
 Aspen can publish received radio packets directly
