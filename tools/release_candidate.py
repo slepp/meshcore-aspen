@@ -67,6 +67,18 @@ def partitions(path):
                      "offset": address, "bytes": size})
     if not rows or any(item["offset"] + item["bytes"] > 0x800000 for item in rows):
         raise ValueError("Expected an 8 MiB ESP32 partition layout")
+    names = set()
+    end = 0x9000  # Reserve bootloader and the partition-table sector.
+    for item in sorted(rows, key=lambda row: row["offset"]):
+        if (not item["bytes"] or item["bytes"] % 0x1000 or item["offset"] % 0x1000 or
+                (item["type"] == 0 and item["offset"] % 0x10000)):
+            raise ValueError("Partition size/address alignment invalid")
+        if item["name"] in names or not re.fullmatch(r"[A-Za-z0-9_-]+", item["name"]):
+            raise ValueError("Partition name invalid or duplicated")
+        if item["offset"] < end:
+            raise ValueError("Partition ranges overlap reserved storage or another partition")
+        names.add(item["name"])
+        end = item["offset"] + item["bytes"]
     return rows
 
 

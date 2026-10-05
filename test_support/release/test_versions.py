@@ -164,6 +164,20 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "initial-install offsets mismatch"):
             candidate.verify(self.directory)
 
+    def test_refuse_overlapping_or_invalid_partitions(self):
+        cases = (
+            [(0, 0x10, 0x10000, 0x330000, b"app0"), (1, 0x82, 0x10000, 0x330000, b"spiffs")],
+            [(0, 0x10, 0x10000, 0, b"app0")],
+            [(0, 0x10, 0x11000, 0x330000, b"app0")],
+            [(0, 0x10, 0x10000, 0x10000, b"app0"), (0, 0x11, 0x20000, 0x10000, b"app0")],
+        )
+        for rows in cases:
+            with self.subTest(rows=rows):
+                path = self.directory / "partitions.bin"
+                path.write_bytes(b"".join(struct.pack("<HBBII16sI", 0x50aa, *row, 0) for row in rows))
+                with self.assertRaises(ValueError):
+                    candidate.partitions(path)
+
     def test_refuse_wrong_archive_commit(self):
         self.manifest["source"]["commit"] = "b" * 40
         self.save()
