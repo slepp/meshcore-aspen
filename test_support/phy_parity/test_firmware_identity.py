@@ -7,14 +7,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / ".tmp/public-esp-birch-identity"
+RELEASE = json.loads((ROOT / "release/products.json").read_text())
 
 
 class FirmwareIdentityTests(unittest.TestCase):
     def test_linked_profile_and_dashboard_json(self):
         BUILD.mkdir(parents=True, exist_ok=True)
         profiles = (
-            ("birch", [], "1.17.1-slp-birch"),
-            ("aspen", ["-DMESHCORE_ONCHIP=1"], "1.17.1-slp-aspen"),
+            ("birch", [], "birch-" + RELEASE["products"]["birch"]["version"]),
+            ("aspen", ["-DMESHCORE_ONCHIP=1"], "aspen-" + RELEASE["products"]["aspen"]["version"]),
             ("pine", ["-DMESHCORE_ONCHIP=1", "-DNRF52_PLATFORM=1"], "1.17.1-slp-pine"),
             ("onchip-override", ["-DMESHCORE_ONCHIP=1",
                                  '-DONCHIP_FIRMWARE_VERSION="operator-profile"'], "operator-profile"),
@@ -33,6 +34,8 @@ class FirmwareIdentityTests(unittest.TestCase):
                 status = json.loads(body)
                 self.assertEqual(constant, expected)
                 self.assertEqual(status["firmware_version"], expected)
+                self.assertEqual(status["upstream_tag"], RELEASE["upstream"]["tag"])
+                self.assertEqual(status["upstream_commit"], RELEASE["upstream"]["commit"])
                 self.assertEqual(status["api_version"], 1)
                 self.assertEqual(status["device_name"], "operator-selected-name")
 

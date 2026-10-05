@@ -43,6 +43,19 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	cfg.RadioAddress = mast.listener.Addr().String()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	socket := filepath.Join(cfg.StateDir, "bot", "native", "admin.sock")
+	readReady := func() (int, readiness) {
+		t.Helper()
+		response, err := (&http.Client{Timeout: time.Second}).Get("http://" + cfg.StatusListen + "/readyz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var check readiness
+		if err := json.NewDecoder(response.Body).Decode(&check); err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, check
+	}
 
 	start := func() context.CancelFunc {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -62,18 +75,8 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 				status["bot"].State == "running" && status["bot"].Endpoint == "" &&
 				status["bot"].RadioConnected != nil && *status["bot"].RadioConnected
 		})
-		response, err := (&http.Client{Timeout: time.Second}).Get("http://" + cfg.StatusListen + "/readyz")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var check readiness
-		if err := json.NewDecoder(response.Body).Decode(&check); err != nil {
-			response.Body.Close()
-			t.Fatal(err)
-		}
-		response.Body.Close()
-		if reason := check.NotReady["bot"]; reason != "" {
-			t.Fatalf("ready native bot was not included in host readiness: %s", reason)
+		if code, check := readReady(); code != http.StatusOK || !check.Ready || check.NotReady["bot"] != "" {
+			t.Fatalf("ready native bot was not included in host readiness: HTTP %d %+v", code, check)
 		}
 		return func() {
 			cancel()
@@ -383,11 +386,24 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 		return json.NewDecoder(response.Body).Decode(&status) == nil &&
 			status["bot"].State == "faulted" && status["bot"].PublicKey == bot.String()
 	})
-	if reply := admin("source status"); !strings.HasPrefix(reply, "Error:") {
-		t.Fatalf("missing native source slot was treated as ready: %s", reply)
+	reply := admin("source status")
+	metadata, outcome, found := strings.Cut(reply, "; ")
+	if !found || !strings.HasPrefix(metadata, "gen=") || !strings.Contains(metadata, " active=0 ") ||
+		!strings.HasPrefix(outcome, "Error: package source file unavailable or size changed; ") {
+		t.Fatalf("missing native source slot did not retain its selected journal and report the source error: %s", reply)
 	}
-	if reply := admin("source remove"); !strings.Contains(reply, "restoring bundled handlers") {
-		t.Fatalf("sealed source could not be repaired privately: %s", reply)
+	// A valid journal with a missing file exhausts its bounded retries before
+	// admitting removal; it is distinct from a sealed corrupt journal.
+	waitAuthority(t, func() bool {
+		metadata, outcome, found := strings.Cut(admin("source status"), "; ")
+		return found && strings.Contains(metadata, " active=0 ") &&
+			outcome == "Error: package source file unavailable or size changed; use source retry; startup blocked"
+	})
+	if code, check := readReady(); code != http.StatusServiceUnavailable || check.Ready || check.NotReady["bot"] == "" {
+		t.Fatalf("missing native source slot was treated as ready: HTTP %d %+v", code, check)
+	}
+	if reply := admin("source remove"); reply != "Accepted verification; source status reports durable activation outcome" {
+		t.Fatalf("missing source could not be repaired privately: %s", reply)
 	}
 	waitAuthority(t, func() bool {
 		response, err := (&http.Client{Timeout: time.Second}).Get("http://" + cfg.StatusListen + "/status")
@@ -399,6 +415,17 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 		return json.NewDecoder(response.Body).Decode(&status) == nil &&
 			status["bot"].State == "running" && status["bot"].PublicKey == bot.String()
 	})
+	waitAuthority(t, func() bool {
+		metadata, outcome, found := strings.Cut(admin("source status"), "; ")
+		return found && strings.Contains(metadata, " active=3 ") && outcome == "source durably saved and active"
+	})
+	if code, check := readReady(); code != http.StatusOK || !check.Ready || check.NotReady["bot"] != "" {
+		t.Fatalf("recovered native bot was not included in host readiness: HTTP %d %+v", code, check)
+	}
+	if reply := admin("source hash"); !strings.HasPrefix(reply, fmt.Sprintf("SHA256 %x gen=", digest)) {
+		t.Fatalf("recovery did not restore the original bundled source: %s", reply)
+	}
+	checkDataAfterRestart()
 	if api := admin("source api"); !strings.Contains(api, "commands=8") {
 		t.Fatalf("native source API lost its legacy commands field: %s", api)
 	}

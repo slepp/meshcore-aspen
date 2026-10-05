@@ -288,7 +288,7 @@ void publishHostClock(uint64_t earliestUtcMs, uint64_t latestUtcMs, uint64_t sam
   // Revoked clock trust stays denied even if a reader delays the snapshot write.
   if (publishing.test_and_set(std::memory_order_acquire)) return;
   hostClock = {earliestUtcMs, latestUtcMs, sampledAt, epoch};
-  published = {};
+  published = ClockSnapshot{};
   published.sampled_at_ms = hostClock.sampledAt;
   published.build_epoch = ONCHIP_CLOCK_BUILD_EPOCH;
   published.network_enabled = earliestUtcMs != 0;

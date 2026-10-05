@@ -70,14 +70,14 @@ existing installation. Aspen, Birch and Pine retain their own setup guides.
 | Aspen | ESP32 runs the selected roles and bot | Its local SX1262 |
 | Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
 
-Firmware profiles identify where the roles run, independently of a node's
-saved name or keys: **`slp-aspen`** is ESP32 on-device roles, **`slp-birch`** is
-host roles through an external modem, and **`slp-pine`** is nRF on-device roles.
-`ver` and companion device information report the profile. ESP32 and nRF
-version strings include the pinned MeshCore release, for example
-`1.17.1-slp-aspen`; the Birch modem reports `1.17.1-slp-birch` in USB
-diagnostics and dashboard `firmware_version`. The Birch host reports
-`host-v2-slp-birch` and the MeshCore reference separately.
+Aspen and Birch use independent product versions. The current source reports
+`aspen-0.1.0-rc.1` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
+Show releases as **Aspen 0.1.0 RC1 · based on MeshCore 1.17.1** and tag them
+`aspen-v0.1.0-rc.1` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
+host, native worker and modem bundle. Pine retains `1.17.1-slp-pine`.
+The [release guide](release/README.md) lists compatibility contracts, candidate
+build commands and qualification gates. Existing website downloads and the
+older GitHub draft keep their original identities and source revisions.
 Choose enabled roles and features in the build and saved configuration.
 
 ## Start a WiFi radio and Go host

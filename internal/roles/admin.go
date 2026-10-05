@@ -108,8 +108,8 @@ func (s *Service) commandWithTelemetry(timestamp uint32, command string, telemet
 		if s.room {
 			level = 1
 		}
-		reply = fmt.Sprintf("meshcore-host %s (MeshCore room/repeater protocol level %d; reference %s)",
-			buildinfo.Profile, level, buildinfo.MeshCoreReference)
+		reply = fmt.Sprintf("Birch %s (MeshCore %s; room/repeater protocol level %d)",
+			buildinfo.ProductVersion, buildinfo.MeshCoreReference, level)
 	case !s.room && command == "neighbors":
 		list := append([]neighbour(nil), s.neighbours...)
 		sort.SliceStable(list, func(i, j int) bool { return list[i].Heard > list[j].Heard })

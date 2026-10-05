@@ -3,7 +3,8 @@ UPSTREAM ?= $(ROOT)/.tmp/onchip-upstream
 BUILD ?= $(ROOT)/.tmp/onchip-MeshCore
 CONFIG ?=
 ENV ?= Xiao_S3_WIO_onchip
-PIN := d92964352441e53b93e8667b802e04f6e072b39e
+include $(ROOT)/release/versions.mk
+PIN := $(MESHCORE_RELEASE_SHA)
 .DEFAULT_GOAL := test
 PUBLIC_UPDATE_SOURCE ?= EspFieldUpdate.cpp
 .PHONY: public-update-test

@@ -4,7 +4,9 @@ import unittest
 import shutil
 import uuid
 import hashlib
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from esp_update_manifest import canonical, sign
@@ -57,7 +59,10 @@ class ESPFieldUpdate(unittest.TestCase):
             wrapper = native / "Companion.cpp"
             clock.write_text("retained clock\n")
             wrapper.write_text("retained role wrapper\n")
-            stage_field_network(build)
+            with patch.object(sys, "path", [str(root / "firmware/shared"), *sys.path]):
+                with patch("gps_time.stage_gps_time") as stage_gps:
+                    stage_field_network(build)
+            stage_gps.assert_called_once_with(build)
             self.assertEqual(clock.read_text(), "retained clock\n")
             self.assertEqual(wrapper.read_text(), "retained role wrapper\n")
             main = (native.parent / "main.cpp").read_text()

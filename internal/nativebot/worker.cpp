@@ -232,7 +232,10 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
   if (!std::strcmp(command, "help")) {
     std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; channel; path; airtime; adaptive; advert.zerohop; key bot (Go owner). Grants: help grants");
   } else if (!std::strcmp(command, "help grants")) {
-    std::strcpy(reply, "shared/reminders [status|on|off]; events [status|MASK 0..31] (1 startup,2 connectivity,4 message,8 node_status,16 scheduled); repeaters help; policy reads saved/applied; cancel stops commands/events, not reminders. Defaults off; packages never authorize scripts.");
+    constexpr char helpGrants[] = "shared/reminders [status|on|off]; events [status|MASK 0..31] (1 startup,2 connectivity,4 message,8 node_status,16 scheduled); repeaters help; policy saved/applied; cancel stops commands/events, not reminders. Defaults off; packages never authorize scripts.";
+    static_assert(sizeof(helpGrants) <= sizeof(reply) && sizeof(helpGrants) - 1 <= 256,
+                  "ADMIN help must fit its buffer and the v1 reply limit");
+    std::memcpy(reply, helpGrants, sizeof(helpGrants));
   } else if (!std::strcmp(command, "status")) {
     const auto &stats = bot.counters();
     std::snprintf(reply, sizeof(reply),

@@ -3,6 +3,7 @@ package roles
 import (
 	"bytes"
 	"encoding/hex"
+	"meshcore.local/meshcore/internal/buildinfo"
 	"testing"
 	"time"
 
@@ -205,7 +206,7 @@ func TestRepeaterDiscoveryAndOwnerWire(t *testing.T) {
 	r.next(t)
 	r.inject(t, peerWire(t, 0, admin, id, []byte{3, 0, 0, 0, 7}), false)
 	body := decrypted(t, r.next(t), admin, id)
-	if string(cstring(body[4:])) != "host-v2-slp-birch\nHost\nFirst\nSecond" {
+	if string(cstring(body[4:])) != buildinfo.HostVersion+"\nHost\nFirst\nSecond" {
 		t.Fatalf("owner-info level-2 body: %x", body)
 	}
 }

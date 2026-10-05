@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"meshcore.local/meshcore/internal/buildinfo"
 	"net"
 	"os"
 	"path/filepath"
@@ -573,7 +574,7 @@ func TestClientProtocolVersionsRemainIndependent(t *testing.T) {
 		if len(info) != 82 || info[0] != protocol.RespDeviceInfo || info[1] != 13 {
 			t.Fatalf("target %d received invalid protocol 13 device info: %x", version, info)
 		}
-		if string(bytes.TrimRight(info[60:80], "\x00")) != "host-v2-slp-birch" {
+		if string(bytes.TrimRight(info[60:80], "\x00")) != buildinfo.HostVersion {
 			t.Fatalf("target %d received invalid profile version: %q", version, info[60:80])
 		}
 		parsed, err := protocol.ParseResponse(info)

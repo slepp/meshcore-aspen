@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Existing Debian 12 build-pack base; its compiler/OpenSSL dependencies are kept.
+FROM node@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8ccd56d56024c4d
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cmake libcjson-dev \
+ && rm -rf /var/lib/apt/lists/*
+LABEL org.meshcore.release.profile="debian12-linux-x86_64"
+# The caller mounts only a fresh public source/build tree and the existing Go SDK.
+WORKDIR /src
