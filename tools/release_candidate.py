@@ -18,6 +18,7 @@ import tarfile
 import zipfile
 
 from product_versions import ROOT, display, generated, identity, load, tag
+from elf_abi import inspect_elf
 
 PROFILES = {
     "aspen": ("public_aspen", "firmware/esp32/platformio.public.ini.example"),
@@ -51,13 +52,16 @@ def native_abi(binary, env):
     program = run(["readelf", "--program-headers", "--wide", str(binary)], env=env)
     interpreter = re.search(r"Requesting program interpreter: ([^\]]+)\]", program)
     dynamic = run(["readelf", "--dynamic", "--wide", str(binary)], env=env)
-    return {
+    receipt = {
         "architecture": "x86_64",
         "interpreter": interpreter.group(1) if interpreter else None,
         "needed_sonames": sorted(re.findall(r"\(NEEDED\).*Shared library: \[([^\]]+)\]", dynamic)),
         "required_symbol_versions": required_symbol_versions(run(["readelf", "--version-info", str(binary)], env=env)),
         "distribution_qualified": False,
     }
+    if receipt != inspect_elf(binary):
+        raise ValueError("ELF inspection disagrees with GNU readelf")
+    return receipt
 
 
 def json_stream(text):
@@ -119,9 +123,14 @@ def native_libraries(binary, env):
     libraries = []
     for line in run(["ldd", str(binary)], env=env).splitlines():
         match = re.search(r"(\S+)\s+=>\s+(/\S+)", line)
-        if not match:
-            continue
-        name, path = match.groups()
+        if match:
+            name, path = match.groups()
+        else:
+            loader = re.match(r"\s*(/\S+)\s+\(", line)
+            if not loader:
+                continue
+            path = loader.group(1)
+            name = Path(path).name
         item = {"soname": name, "sha256": digest(Path(path)), "bytes": Path(path).stat().st_size}
         if shutil.which("dpkg-query", path=env.get("PATH")):
             for probe in (Path(path), Path(path).resolve()):
@@ -391,6 +400,10 @@ def verify(directory):
         required |= HOST_FILES | {"native-relink.tar.gz"}
     if required != names:
         raise ValueError("Incomplete product bundle; Birch requires the host and matching modem together")
+    if product == "birch":
+        for name in HOST_FILES:
+            if build["native_abi"][name] != inspect_elf(directory / name):
+                raise ValueError(f"Birch ABI receipt differs from packaged ELF: {name}")
     extras = {path.name for path in directory.iterdir()} - names - {"manifest.json", "build.log"}
     if extras:
         raise ValueError("Unmanifested files in candidate directory")

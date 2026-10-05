@@ -78,6 +78,9 @@ gate, not hardware acceptance.
 Linux x86_64 identifies the architecture, not support for every distribution.
 Each Birch manifest records the ELF interpreter, required SONAMEs and minimum
 GLIBC, GLIBCXX, CXXABI and OpenSSL symbol versions for all four host binaries.
+The builder cross-checks its ELF inspection with GNU `readelf`; the portable
+Python verifier reads each packaged ELF and rejects a receipt that lowers or
+otherwise changes its actual requirements.
 Compare these with the intended host before installation and qualify that
 distribution using the exact packaged worker. The current Obelisk toolchain
 can produce a worker requiring GLIBC 2.43 (including `sqrtf@GLIBC_2.43`), so its

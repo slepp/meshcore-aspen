@@ -17,6 +17,39 @@ import product_versions as versions
 import release_candidate as candidate
 
 
+def linux_elf_fixture():
+    """ELF64 dynamic/version-needs records, independent of the test host OS."""
+    names = ["libcjson.so.1", "libssl.so.3", "libcrypto.so.3", "libc.so.6", "libstdc++.so.6",
+             "GLIBC_2.43", "GLIBCXX_3.4.30", "CXXABI_1.3.9", "OPENSSL_3.0.0"]
+    strings, offsets = bytearray(b"\0"), {}
+    for name in names:
+        offsets[name] = len(strings)
+        strings.extend(name.encode() + b"\0")
+    interpreter = b"/lib64/ld-linux-x86-64.so.2\0"
+    dynamic = b"".join(struct.pack("<qQ", 1, offsets[name]) for name in names[:5]) + struct.pack("<qQ", 0, 0)
+    records = []
+    for library, versions in (("libc.so.6", ["GLIBC_2.43"]),
+                              ("libstdc++.so.6", ["GLIBCXX_3.4.30", "CXXABI_1.3.9"]),
+                              ("libcrypto.so.3", ["OPENSSL_3.0.0"])):
+        auxiliaries = b"".join(struct.pack("<IHHII", 0, 0, 2, offsets[name], 16 if i + 1 < len(versions) else 0)
+                               for i, name in enumerate(versions))
+        records.append(struct.pack("<HHIII", 1, len(versions), offsets[library], 16,
+                                   16 + len(auxiliaries) if library != "libcrypto.so.3" else 0) + auxiliaries)
+    body = interpreter + strings + dynamic + b"".join(records)
+    string_offset = 120 + len(interpreter)
+    dynamic_offset = string_offset + len(strings)
+    version_offset = dynamic_offset + len(dynamic)
+    section_offset = 120 + len(body)
+    ident = b"\x7fELF\x02\x01\x01" + b"\0" * 9
+    header = struct.pack("<16sHHIQQQIHHHHHH", ident, 3, 62, 1, 0, 64, section_offset, 0, 64, 56, 1, 64, 4, 0)
+    program = struct.pack("<IIQQQQQQ", 3, 4, 120, 0, 0, len(interpreter), len(interpreter), 1)
+    sections = b"\0" * 64
+    sections += struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, string_offset, len(strings), 0, 0, 1, 0)
+    sections += struct.pack("<IIQQQQIIQQ", 0, 6, 0, 0, dynamic_offset, len(dynamic), 1, 0, 8, 16)
+    sections += struct.pack("<IIQQQQIIQQ", 0, 0x6ffffffe, 0, 0, version_offset, len(b"".join(records)), 1, 3, 4, 0)
+    return header + program + body + sections
+
+
 class VersionTests(unittest.TestCase):
     def test_tags_and_user_labels(self):
         self.assertEqual(versions.tag("aspen", "0.1.0-rc.1"), "aspen-v0.1.0-rc.1")
@@ -247,3 +280,41 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(candidate.required_symbol_versions(text), {
             "GLIBC": "2.43", "GLIBCXX": "3.4.30", "CXXABI": "1.3.9", "OPENSSL": "3.0.0"})
         self.assertEqual(candidate.required_symbol_versions("No version information found in this file."), {})
+
+    def test_elf_inspection_rejects_truncated_and_wrong_architecture(self):
+        path = self.directory / "worker"
+        path.write_bytes(linux_elf_fixture())
+        self.assertEqual(candidate.inspect_elf(path)["required_symbol_versions"]["GLIBC"], "2.43")
+        for content in (linux_elf_fixture()[:55],
+                        linux_elf_fixture()[:18] + struct.pack("<H", 183) + linux_elf_fixture()[20:]):
+            path.write_bytes(content)
+            with self.assertRaises(ValueError):
+                candidate.inspect_elf(path)
+
+    def test_refuse_lowered_abi_without_changing_packaged_binary(self):
+        self.birch_metadata()
+        config = candidate.PROFILES["birch"][1]
+        (self.directory / "build-profile.ini").write_bytes((ROOT / config).read_bytes())
+        self.manifest["build"]["config_sha256"] = candidate.digest(self.directory / "build-profile.ini")
+        (self.directory / "firmware.bin").write_bytes(versions.identity("birch", self.manifest["version"]).encode())
+        with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
+                          pax_headers={"comment": self.manifest["source"]["commit"]}) as archive:
+            for name in [*versions.generated(versions.load()), "release/products.json", "go.sum", config]:
+                archive.add(ROOT / name, arcname=name)
+        for name in candidate.HOST_FILES:
+            (self.directory / name).write_bytes(linux_elf_fixture())
+            self.manifest["build"]["native_abi"][name] = candidate.inspect_elf(self.directory / name)
+        (self.directory / "native-relink.tar.gz").write_bytes(b"fixture")
+        self.manifest["build"]["native_linked_libraries"] = [
+            {"soname": name, "sha256": "a" * 64, "bytes": 1}
+            for name in self.manifest["build"]["native_abi"]["bot-native-worker"]["needed_sonames"]]
+        self.manifest["files"] = [candidate.record(path, candidate.artifact_role(path.name))
+                                  for path in sorted(self.directory.iterdir()) if path.name != "manifest.json"]
+        self.save()
+        candidate.verify(self.directory)
+        original_files = copy.deepcopy(self.manifest["files"])
+        self.manifest["build"]["native_abi"]["bot-native-worker"]["required_symbol_versions"]["GLIBC"] = "2.36"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "ABI receipt differs from packaged ELF"):
+            candidate.verify(self.directory)
+        self.assertEqual(self.manifest["files"], original_files)
