@@ -131,7 +131,7 @@ class WorkerProcessTest(unittest.TestCase):
                 return ready
         self.fail("durable source did not become ready and advertise")
 
-    def admin(self, process, command, request_id=17):
+    def admin(self, process, command, request_id=17, faulted=False):
         process.stdin.write(frame(4, struct.pack("<I", request_id) + command.encode("ascii")))
         process.stdin.flush()
         for _ in range(35):
@@ -141,7 +141,11 @@ class WorkerProcessTest(unittest.TestCase):
                 self.assertLessEqual(len(body), 260)
                 self.assertEqual(struct.unpack_from("<I", body)[0], request_id)
                 return body[4:].decode("ascii")
-            self.assertIn(tag, (0x81, 0x83, 0x86))
+            if faulted:
+                self.assertEqual(tag, 0x83, "faulted source transmitted or became ready")
+                self.assertEqual(body[:2], b"\x00\x01")
+            else:
+                self.assertIn(tag, (0x81, 0x83, 0x86))
         self.fail("admin receipt missing")
 
     def active(self, process, slot):
@@ -461,6 +465,20 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("saved=0 live=0", self.admin(third, "adaptive"))
         self.stop(third)
 
+    def test_help_grants_reply_is_bounded_and_worker_stays_ready(self):
+        process = self.start()
+        self.ready(process)
+        policy = self.admin(process, "policy", request_id=18)
+        reply = self.admin(process, "help grants", request_id=19)
+        self.assertLessEqual(len(reply.encode("ascii")), 256)
+        self.assertIn("MASK 0..31", reply)
+        self.assertIn("16 scheduled", reply)
+        self.assertIn("Defaults off", reply)
+        self.assertIn("packages never authorize scripts", reply)
+        self.assertEqual(self.admin(process, "policy", request_id=20), policy)
+        self.assertIn("ready=1 jobs=0", self.admin(process, "status", request_id=21))
+        self.stop(process)
+
     def test_private_native_grants_validate_apply_and_restart(self):
         first = self.start()
         key = self.ready(first)
@@ -472,7 +490,7 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("clock", self.admin(first, "help"))
         for field in ("https=", "scheduler=", "uncertainty-us=", "scheduler-limit-us=2000000", "reason="):
             self.assertIn(field, self.admin(first, "clock"))
-        self.assertIn("package capabilities never authorize", self.admin(first, "help grants"))
+        self.assertIn("packages never authorize scripts", self.admin(first, "help grants"))
         self.assertIn("use help", self.admin(first, "not-a-native-command"))
         self.assertEqual(self.admin(first, "policy"), self.admin(first, "source api grants"))
         self.assertIn("ready=1 jobs=0", self.admin(first, "status"))
@@ -481,14 +499,14 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("clock=", self.admin(first, "source api reminders"))
         self.assertIn("autonomous=0", self.admin(first, "source api reminders"))
         self.assertIn("autonomous-reminders=0", self.admin(first, "source api storage"))
-        self.assertIn("active=0", self.admin(first, "source api events"))
+        self.assertIn("subscribed=0", self.admin(first, "source api events"))
         for capability in ("kv", "reminders", "events"):
             self.assertIn(capability, self.admin(first, "source api package"))
 
         invalid = ("shared ", "shared yes", "shared on extra", "shared off ", "shared ON",
                    "reminders ", "reminders yes", "reminders on extra", "reminders off ", "reminders ON",
                    "events ",
-                   "events -1", "events +1", "events 16", "events 256", "events 4294967296",
+                   "events -1", "events +1", "events 32", "events 256", "events 4294967296",
                    "events 1x", "events 1 extra", "events 1 ", "events on", "events off")
         for command in invalid:
             before = self.admin(first, "policy")
@@ -501,7 +519,7 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("saved=1 applied=1", self.admin(first, "reminders status"))
         # The granted mask is independent of which handlers the active source declares.
         self.assertIn("saved=15 applied=15 subscribed=0", self.admin(first, "events status"))
-        self.assertIn("active=0", self.admin(first, "source api events"))
+        self.assertIn("subscribed=0", self.admin(first, "source api events"))
         self.assertIn("saved=15 applied=15 subscribed=0", self.admin(first, "source api events"))
         for command in invalid:
             before = self.admin(first, "policy")
@@ -577,11 +595,11 @@ class WorkerProcessTest(unittest.TestCase):
 
         install("complete")
         self.wait_bot_value(process, key, "complete")
-        for invalid in ("shared off extra", "reminders off extra", "events 16"):
+        for invalid in ("shared off extra", "reminders off extra", "events 32"):
             self.assertTrue(self.admin(process, invalid).startswith("Error:"), invalid)
         self.wait_bot_value(process, key, "complete-done")
         self.assertGreaterEqual(self.native_status(process)["completed"], 1)
-        self.assertIn("active=1", self.admin(process, "source api events"))
+        self.assertIn("subscribed=1", self.admin(process, "source api events"))
         self.stop(process)
 
     def test_interrupted_source_upload_resumes_on_restart(self):
@@ -607,9 +625,10 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn(digest, self.admin(second, "source hash"))
         self.stop(second)
 
-    def test_sealed_source_emits_no_advert_until_recovered(self):
+    def test_missing_source_emits_no_advert_until_recovered(self):
         first = self.start()
-        self.ready(first)
+        key = self.ready(first)
+        bundled_hash = self.admin(first, "source hash").split()[1]
         self.upload(first, b"function custom() reply('active') end")
         self.active(first, 0)
         self.stop(first)
@@ -621,34 +640,50 @@ class WorkerProcessTest(unittest.TestCase):
         management = None
         for _ in range(4):
             tag, body = receive(second.stdout, timeout=3)
-            self.assertIn(tag, (0x86, 0x83), "sealed source transmitted or became ready")
+            self.assertIn(tag, (0x86, 0x83), "missing source transmitted or became ready")
             if tag == 0x86:
                 management = body
             if tag == 0x83:
                 self.assertEqual(body[:2], b"\x00\x01")
                 break
         else:
-            self.fail("sealed source did not publish faulted status")
+            self.fail("missing source did not publish faulted status")
         self.assertIsNotNone(management)
+        self.assertEqual(management[:32], key)
         for _ in range(2):
             tag, body = receive(second.stdout, timeout=3)
-            self.assertEqual(tag, 0x83, "sealed source advertised or became ready while awaiting recovery")
+            self.assertEqual(tag, 0x83, "missing source advertised or became ready while awaiting recovery")
             self.assertEqual(body[:2], b"\x00\x01")
-        self.assertIn("Error:", self.admin(second, "source status"))
-        self.assertIn("Error:", self.admin(second, "advert.zerohop"))
-        self.assertIn("restoring bundled handlers", self.admin(second, "source remove"))
+        deadline = time.monotonic() + 9
+        while True:
+            status = self.admin(second, "source status", faulted=True)
+            metadata, separator, outcome = status.partition("; ")
+            self.assertTrue(separator, status)
+            self.assertIn(" active=0 ", metadata)
+            self.assertTrue(outcome.startswith("Error: package source file unavailable or size changed; "), status)
+            if outcome == "Error: package source file unavailable or size changed; use source retry; startup blocked":
+                break
+            self.assertEqual(outcome, "Error: package source file unavailable or size changed; live retry pending")
+            self.assertLess(time.monotonic(), deadline, "missing-source retries did not terminate")
+            time.sleep(0.05)
+        self.assertTrue(self.admin(second, "advert.zerohop", faulted=True).startswith("Error:"))
+        self.assertEqual(self.admin(second, "source remove"),
+                         "Accepted verification; source status reports durable activation outcome")
         advert = ready = False
         for _ in range(35):
-            tag, _ = receive(second.stdout)
+            tag, body = receive(second.stdout)
             if tag == 0x81:
                 advert = True
             elif tag == 0x82:
+                self.assertEqual(body[:32], key)
                 ready = True
                 break
             else:
                 self.assertEqual(tag, 0x83)
         self.assertTrue(advert, "recovered bot did not advertise after source activation")
         self.assertTrue(ready)
+        self.active(second, 3)
+        self.assertTrue(self.admin(second, "source hash").startswith(f"SHA256 {bundled_hash} gen="))
         self.stop(second)
 
     def test_partial_frame_eof_is_fatal(self):

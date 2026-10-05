@@ -156,7 +156,7 @@ ADMIN frames still terminate the worker as described above.
 | `reminders [status]` | Saved/applied personal reminder grant and scheduler UTC trust (`clock=0/1`). |
 | `reminders on` / `reminders off` | Persist and apply the reminder grant. Defaults off. Off fences outstanding dispatch and creation and suspends pending reminders; it does not delete records. |
 | `events [status]` | Saved/applied event mask and `subscribed`, the current grant intersected with handlers declared by the active source. |
-| `events MASK` | Persist and apply a decimal mask 0..15: 1 startup, 2 connectivity, 4 message, 8 node_status. 0 withdraws all subscriptions; the default is 0. |
+| `events MASK` | Persist and apply a decimal mask 0..31: 1 startup, 2 connectivity, 4 message, 8 node_status, 16 scheduled. 0 withdraws all subscriptions; the default is 0. |
 | `cancel` | Cancel running commands/events and delayed collectors. Personal reminder records/grants are unchanged. Already admitted RF/storage effects may have completed or have an unknown outcome. |
 
 Boolean writes accept only exact `on` or `off`; invalid arguments/masks return
