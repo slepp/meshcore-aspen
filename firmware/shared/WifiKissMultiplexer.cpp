@@ -1010,7 +1010,7 @@ bool WifiKissMultiplexer::setInitialConfiguration(const RadioConfig &config,
 
 void WifiKissMultiplexer::dashboardStatus(
     RadioDashboard::RadioStatus &status) const {
-  status = {};
+  status = RadioDashboard::RadioStatus{};
 #if KISS_STREAM_ENDPOINT
   status.stream.enabled = true;
   status.stream.slot = STREAM_SLOT;

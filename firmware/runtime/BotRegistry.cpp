@@ -173,7 +173,7 @@ bool validateBotSchema(const char *input, char *error, size_t capacity) {
 }
 bool parseBotArguments(const BotCommand &command, const char *input,
                        BotArguments &arguments, char *error, size_t capacity) {
-  arguments = {};
+  arguments = BotArguments{};
   if (!input || strlen(input) > BotArgumentsLimit) return fail(error, capacity, "Command arguments exceed capacity");
   Parameter parameters[BotParameterLimit]{};
   unsigned count;
