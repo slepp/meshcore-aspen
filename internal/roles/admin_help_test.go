@@ -2,6 +2,7 @@
 package roles
 
 import (
+	"meshcore.local/meshcore/internal/buildinfo"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,7 @@ func TestAdminHelpAndProfile(t *testing.T) {
 			}
 		}
 		reply, _, err := s.command("ver")
-		if err != nil || !strings.Contains(reply, "slp-birch") || !strings.Contains(reply, "reference 1.17.1") {
+		if err != nil || !strings.Contains(reply, "Birch "+buildinfo.ProductVersion) || !strings.Contains(reply, "MeshCore "+buildinfo.MeshCoreReference) {
 			t.Errorf("room=%v version=%q err=%v", room, reply, err)
 		}
 		s.mu.Unlock()

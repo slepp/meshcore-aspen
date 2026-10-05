@@ -1,13 +1,15 @@
 # Set up a public Aspen radio over USB
 
 Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
-`1.17.1-slp-aspen` application. The application needs your **private SPIFFS setup
+Aspen application. The application needs your **private SPIFFS setup
 image before it starts RF or administration**. Provision your credentials
 offline over USB. This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads)
 (`1.17.1-slp-aspen`, earlier source `8b41d9c`) or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image.
+per-node setup image. Current source builds identify `aspen-0.1.0-rc.1`; see the
+[release guide](../../release/README.md) before substituting a candidate for the
+historical download.
 
 The application supports repeater, room, companion, Management and Lua/Wasm
 roles on one shared modem. The companion service is TCP port 5000 when WiFi is

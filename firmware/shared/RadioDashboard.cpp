@@ -274,6 +274,10 @@ size_t RadioDashboard::formatJSON(const Snapshot &s, const char *name,
   j.string(name);
   j.append(",\"firmware_version\":");
   j.string(radio_firmware::version);
+  j.append(",\"upstream_tag\":");
+  j.string(MESHCORE_UPSTREAM_TAG);
+  j.append(",\"upstream_commit\":");
+  j.string(MESHCORE_UPSTREAM_COMMIT);
   j.append(",\"publication\":%" PRIu64 ",\"uptime_ms\":%" PRIu64
            ",\"wifi\":{\"connected\":%s,\"rssi_dbm\":",
            s.publication, s.uptime_ms, r.wifi_connected ? "true" : "false");

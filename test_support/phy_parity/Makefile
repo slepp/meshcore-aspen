@@ -217,6 +217,7 @@ firmware-prepare: prepare
 	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/QueuedTxProtocol.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	cp $(ROOT)/firmware/shared/RadioDashboard.h $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboardPage.h $(ROOT)/firmware/shared/RadioFirmwareIdentity.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	cp $(ROOT)/firmware/shared/RadioNetwork.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
+	cp $(ROOT)/firmware/esp32/FirmwareIdentity.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	mkdir -p $(ROOT)/.tmp/phy-firmware/src/helpers/remote
 	cp $(ROOT)/firmware/shared/RemoteKissRadio.* $(ROOT)/firmware/remote-radio/esp32/Esp32TcpKissLink.h $(ROOT)/.tmp/phy-firmware/src/helpers/remote/
 	cp $(ROOT)/firmware/shared/QueuedTxProtocol.h $(ROOT)/.tmp/phy-firmware/src/helpers/remote/

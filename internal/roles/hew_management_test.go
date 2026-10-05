@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"meshcore.local/meshcore/internal/buildinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,7 +200,7 @@ func TestHewDiscoverySerializedDifferential(t *testing.T) {
 	}
 	goOwner := strings.TrimRight(string(decrypted(t, want, client, id)[4:]), "\x00")
 	hewOwner := strings.TrimRight(string(decrypted(t, got[0], client, id)[4:]), "\x00")
-	if strings.Replace(goOwner, "host-v2-slp-birch\n", "host-v2-slp-willow\n", 1) != hewOwner {
+	if strings.Replace(goOwner, buildinfo.HostVersion+"\n", "host-v2-slp-willow\n", 1) != hewOwner {
 		t.Fatalf("owner Go=%q Hew=%q", goOwner, hewOwner)
 	}
 	for index, query := range []byte{1, 2, 3, 3, 3} {

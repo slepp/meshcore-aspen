@@ -6,7 +6,9 @@ import sys
 
 snapshot = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert snapshot["api_version"] == 1
-assert snapshot["firmware_version"] == "1.17.1-slp-birch"
+from pathlib import Path
+release = json.loads((Path(__file__).resolve().parents[2] / "release/products.json").read_text())
+assert snapshot["firmware_version"] == "birch-" + release["products"]["birch"]["version"]
 assert snapshot["memory"] == {
     "free_bytes": 0,
     "minimum_bytes": 0,

@@ -14,10 +14,14 @@ The [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads) is
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-This is the **`slp-aspen`** firmware profile. `ver` and companion device
-information report `1.17.1-slp-aspen`, independently of saved device/role names,
+New source builds use the **Aspen 0.1.0 RC1** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.0-rc.1`,
+independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
+
+See the [release guide](../../release/README.md) for candidate tags, manifests and
+qualification; the historical website image above retains its original version.
 
 For a host-based setup, use the [Go guide](../../HOST_GUIDE.md).
 For nRF native notes/BLE, use the [nRF guide](../nrf52840/README.md);

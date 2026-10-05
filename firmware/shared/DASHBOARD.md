@@ -22,9 +22,10 @@ Read the running firmware profile from `GET /api/status`:
 curl --fail --silent --show-error http://DEVICE/api/status | jq -r .firmware_version
 ```
 
-A standalone shared modem reports `1.17.1-slp-birch`; the on-device ESP32
-profile reports `1.17.1-slp-aspen`, independently of saved service names.
-This field is also present in live snapshots. Legacy KISS `GET_VERSION`
+A standalone shared modem reports `birch-0.1.0-rc.1`; the on-device ESP32
+profile reports `aspen-0.1.0-rc.1`, independently of saved service names.
+This field is also present in live snapshots. `upstream_tag` and
+`upstream_commit` expose the full MeshCore base identity. Legacy KISS `GET_VERSION`
 remains the two-byte protocol version `1.0`, and its device-name response
 remains the board manufacturer name.
 

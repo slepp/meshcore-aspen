@@ -1,4 +1,5 @@
-MESHCORE_REF ?= companion-v1.17.1
+include release/versions.mk
+MESHCORE_REF ?= $(MESHCORE_RELEASE_REF)
 .DEFAULT_GOAL := help
 MESHCORE_DIR := .tmp/MeshCore
 PHYLESS_DIR := .tmp/phyless-MeshCore
@@ -53,6 +54,7 @@ help:
 		'  make test               Extended tests; fetch upstream/native dependencies on first use'
 
 check:
+	$(MAKE) release-check
 	$(MAKE) test-python
 	TMPDIR=$(CURDIR)/.tmp python3 -m unittest -v test_support.test_operator_inventory
 	MKISS_DEVICE_ADDRESS= MESHCORE_OBSERVER_INTERNAL_TEST=0 MESHCORE_ASPEN_PRIVATE_VALIDATOR=0 \
@@ -78,6 +80,11 @@ host-build:
 host-test:
 	@mkdir -p .tmp
 	TMPDIR=$(CURDIR)/.tmp $(GO) test -race $(HOST_TEST_PACKAGES)
+
+.PHONY: release-check
+release-check:
+	python3 tools/product_versions.py --check
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test_support/release -v
 
 .PHONY: hew-base hew-base-test hew-base-symbols
 hew-base:
@@ -288,6 +295,7 @@ firmware-prepare: $(MESHCORE_DIR)/.git
 		firmware/shared/RadioDashboard.h firmware/shared/RadioDashboard.cpp firmware/shared/RadioDashboardPage.h \
 		firmware/shared/RadioNetwork.h firmware/shared/RadioFirmwareIdentity.h $(MESHCORE_DIR)/examples/kiss_modem/
 	cp firmware/platformio.local.ini $(MESHCORE_DIR)/platformio.local.ini
+	cp firmware/esp32/FirmwareIdentity.h $(MESHCORE_DIR)/examples/kiss_modem/
 
 firmware: firmware-prepare
 	cd $(MESHCORE_DIR) && pio run -e $(FIRMWARE_ENV)

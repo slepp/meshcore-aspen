@@ -16,10 +16,13 @@ connections, installation, radio maintenance and external KISS clients.
 For standalone deployment, use the [ESP32 guide](firmware/esp32/README.md)
 or [nRF52840 guide](firmware/nrf52840/README.md).
 
-Host roles use the **`slp-birch`** profile. Their `ver` command reports the
+Host roles use the **Birch 0.1.0 RC1** product version. Their `ver` command reports the
 MeshCore protocol/reference separately from the host implementation; companion
-and native owner-information replies identify `host-v2-slp-birch`.
+and native owner-information replies identify `birch-0.1.0-rc.1`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
+Birch releases keep the host, native worker and matching modem together. See
+the [release guide](release/README.md) for compatibility and RC qualification.
+
 Configure WiFi on the external modem. See the
 [app endpoint guide](firmware/shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 

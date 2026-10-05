@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/slepp/meshcore-aspen",
+  "upstream": {
+    "repository": "https://github.com/meshcore-dev/MeshCore",
+    "version": "1.17.1",
+    "tag": "companion-v1.17.1",
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e"
+  },
+  "products": {
+    "aspen": {"version": "0.1.0-rc.1"},
+    "birch": {"version": "0.1.0-rc.1"}
+  },
+  "compatibility": {
+    "queued_phy": 1,
+    "native_worker": 1,
+    "companion": 13,
+    "dashboard_api": 1,
+    "wasm_application_abi": 1
+  }
+}

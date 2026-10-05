@@ -2,6 +2,7 @@
 package roles
 
 import (
+	"meshcore.local/meshcore/internal/buildinfo"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestOwnerInfoProfileFitsDirectAndRoutedReplies(t *testing.T) {
 		if len(body) <= 4 || u32(body) != stamp {
 			t.Fatalf("owner timestamp: %x", body)
 		}
-		header := "host-v2-slp-birch\n" + strings.Repeat("n", 31) + "\n"
+		header := buildinfo.HostVersion + "\n" + strings.Repeat("n", 31) + "\n"
 		text := string(cstring(body[4:]))
 		if !strings.HasPrefix(text, header) || len(text) <= len(header) || len(text) > len(header)+119 {
 			t.Fatalf("invalid bounded owner body: %q", text)
