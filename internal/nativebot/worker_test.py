@@ -109,9 +109,10 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertTrue(activated and advertised)
         self.stop(process)
 
-    def ready(self, process):
-        process.stdin.write(self.hello)
-        process.stdin.flush()
+    def ready(self, process, hello=True):
+        if hello:
+            process.stdin.write(self.hello)
+            process.stdin.flush()
         ready = None
         startup_advert = False
         for _ in range(35):

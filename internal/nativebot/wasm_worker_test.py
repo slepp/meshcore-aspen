@@ -103,10 +103,38 @@ class WasmLifecycleTests(unittest.TestCase):
         struct.pack_into("<I", damaged, 12, zlib.crc32(damaged[16:]))
         path.write_bytes(damaged)
         second = self.helper.start()
-        self.assertEqual(self.helper.ready(second), key)
-        self.assertIn(lua_hash, self.command(second, "lua", "hash"))
-        self.assertIn("Error:", self.command(second, "wasm", "status"))
-        self.assertIn("Removed corrupt deployment journal", self.command(second, "wasm", "remove"))
+        second.stdin.write(self.helper.hello)
+        second.stdin.flush()
+        management = None
+        for _ in range(4):
+            tag, body = worker_test.receive(second.stdout, timeout=3)
+            self.assertIn(tag, (0x86, 0x83), "corrupt Wasm source transmitted or became ready")
+            if tag == 0x86:
+                management = body
+            else:
+                self.assertEqual(body[:2], b"\x00\x01")
+                break
+        else:
+            self.fail("corrupt Wasm source did not publish faulted status")
+        self.assertIsNotNone(management)
+        self.assertEqual(management[:32], key)
+        self.assertIn(lua_hash, self.helper.admin(second, "source hash", faulted=True))
+        deadline = time.monotonic() + 9
+        while True:
+            status = self.helper.admin(second, "source wasm status", faulted=True)
+            metadata, separator, outcome = status.partition("; ")
+            self.assertTrue(separator, status)
+            self.assertIn(" active=0 ", metadata)
+            self.assertTrue(outcome.startswith("Error: durable package runtime does not match source selector; "), status)
+            if outcome == "Error: durable package runtime does not match source selector; use source wasm retry; startup blocked":
+                break
+            self.assertEqual(outcome, "Error: durable package runtime does not match source selector; live retry pending")
+            self.assertLess(time.monotonic(), deadline, "corrupt-Wasm retries did not terminate")
+            time.sleep(.05)
+        self.assertTrue(self.helper.admin(second, "advert.zerohop", faulted=True).startswith("Error:"))
+        self.assertEqual(self.command(second, "wasm", "remove"),
+                         "Accepted verification; source status reports durable activation outcome")
+        self.assertEqual(self.helper.ready(second, hello=False), key)
         self.active(second, "wasm", 3)
         self.assertIn(lua_hash, self.command(second, "lua", "hash"))
         self.helper.stop(second)
