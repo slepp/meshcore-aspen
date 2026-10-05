@@ -400,8 +400,8 @@ def verify(directory):
                 raise ValueError("Birch Debian 12 environment receipt mismatch")
             limits = {"GLIBC": "2.36", "GLIBCXX": "3.4.30", "CXXABI": "1.3.13", "OPENSSL": "3.0.0"}
             for item in abi.values():
-                for family, version in item["required_symbol_versions"].items():
-                    if tuple(map(int, version.split("."))) > tuple(map(int, limits[family].split("."))):
+                for family, required_version in item["required_symbol_versions"].items():
+                    if tuple(map(int, required_version.split("."))) > tuple(map(int, limits[family].split("."))):
                         raise ValueError("Birch packaged ELF exceeds its Debian 12 baseline")
     names = set()
     for entry in manifest["files"]:

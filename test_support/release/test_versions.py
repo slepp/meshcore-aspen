@@ -18,10 +18,10 @@ import release_candidate as candidate
 import release_native as native
 
 
-def linux_elf_fixture():
+def linux_elf_fixture(glibc="2.43"):
     """ELF64 dynamic/version-needs records, independent of the test host OS."""
     names = ["libcjson.so.1", "libssl.so.3", "libcrypto.so.3", "libc.so.6", "libstdc++.so.6",
-             "GLIBC_2.43", "GLIBCXX_3.4.30", "CXXABI_1.3.9", "OPENSSL_3.0.0"]
+             "GLIBC_" + glibc, "GLIBCXX_3.4.30", "CXXABI_1.3.9", "OPENSSL_3.0.0"]
     strings, offsets = bytearray(b"\0"), {}
     for name in names:
         offsets[name] = len(strings)
@@ -29,7 +29,7 @@ def linux_elf_fixture():
     interpreter = b"/lib64/ld-linux-x86-64.so.2\0"
     dynamic = b"".join(struct.pack("<qQ", 1, offsets[name]) for name in names[:5]) + struct.pack("<qQ", 0, 0)
     records = []
-    for library, versions in (("libc.so.6", ["GLIBC_2.43"]),
+    for library, versions in (("libc.so.6", ["GLIBC_" + glibc]),
                               ("libstdc++.so.6", ["GLIBCXX_3.4.30", "CXXABI_1.3.9"]),
                               ("libcrypto.so.3", ["OPENSSL_3.0.0"])):
         auxiliaries = b"".join(struct.pack("<IHHII", 0, 0, 2, offsets[name], 16 if i + 1 < len(versions) else 0)
@@ -332,25 +332,7 @@ class CandidateTests(unittest.TestCase):
                 candidate.inspect_elf(path)
 
     def test_refuse_lowered_abi_without_changing_packaged_binary(self):
-        self.birch_metadata()
-        config = candidate.PROFILES["birch"][1]
-        (self.directory / "build-profile.ini").write_bytes((ROOT / config).read_bytes())
-        self.manifest["build"]["config_sha256"] = candidate.digest(self.directory / "build-profile.ini")
-        (self.directory / "firmware.bin").write_bytes(versions.identity("birch", self.manifest["version"]).encode())
-        with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
-                          pax_headers={"comment": self.manifest["source"]["commit"]}) as archive:
-            for name in [*versions.generated(versions.load()), "release/products.json", "go.sum", config]:
-                archive.add(ROOT / name, arcname=name)
-        for name in candidate.HOST_FILES:
-            (self.directory / name).write_bytes(linux_elf_fixture())
-            self.manifest["build"]["native_abi"][name] = candidate.inspect_elf(self.directory / name)
-        (self.directory / "native-relink.tar.gz").write_bytes(b"fixture")
-        self.manifest["build"]["native_linked_libraries"] = [
-            {"soname": name, "sha256": "a" * 64, "bytes": 1}
-            for name in self.manifest["build"]["native_abi"]["bot-native-worker"]["needed_sonames"]]
-        self.manifest["files"] = [candidate.record(path, candidate.artifact_role(path.name))
-                                  for path in sorted(self.directory.iterdir()) if path.name != "manifest.json"]
-        self.save()
+        self.complete_birch()
         candidate.verify(self.directory)
         original_files = copy.deepcopy(self.manifest["files"])
         self.manifest["build"]["native_abi"]["bot-native-worker"]["required_symbol_versions"]["GLIBC"] = "2.36"
@@ -358,3 +340,48 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ABI receipt differs from packaged ELF"):
             candidate.verify(self.directory)
         self.assertEqual(self.manifest["files"], original_files)
+
+    def complete_birch(self, glibc="2.43", debian=False):
+        self.birch_metadata()
+        config = candidate.PROFILES["birch"][1]
+        (self.directory / "build-profile.ini").write_bytes((ROOT / config).read_bytes())
+        self.manifest["build"]["config_sha256"] = candidate.digest(self.directory / "build-profile.ini")
+        (self.directory / "firmware.bin").write_bytes(versions.identity("birch", self.manifest["version"]).encode())
+        with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
+                          pax_headers={"comment": self.manifest["source"]["commit"]}) as archive:
+            names = [*versions.generated(versions.load()), "release/products.json", "go.sum", config]
+            if debian:
+                names.append(native.DOCKERFILE)
+            for name in names:
+                archive.add(ROOT / name, arcname=name)
+        for name in candidate.HOST_FILES:
+            (self.directory / name).write_bytes(linux_elf_fixture(glibc))
+            self.manifest["build"]["native_abi"][name] = candidate.inspect_elf(self.directory / name)
+        (self.directory / "native-relink.tar.gz").write_bytes(b"fixture")
+        self.manifest["build"]["native_linked_libraries"] = [
+            {"soname": name, "sha256": "a" * 64, "bytes": 1}
+            for name in self.manifest["build"]["native_abi"]["bot-native-worker"]["needed_sonames"]]
+        if debian:
+            build = self.manifest["build"]
+            build["native_environment"] = {
+                "profile": native.PROFILE, "image_id": "sha256:" + "a" * 64,
+                "dockerfile": native.DOCKERFILE, "dockerfile_sha256": candidate.digest(ROOT / native.DOCKERFILE),
+                "source_commit": self.manifest["source"]["commit"], "source_date_epoch": build["source_date_epoch"],
+                "distribution": {"ID": "debian", "VERSION_ID": "12"},
+                "native_abi": copy.deepcopy(build["native_abi"]),
+                "native_linked_libraries": copy.deepcopy(build["native_linked_libraries"]),
+                "go_modules": copy.deepcopy(build["go_modules"]), "toolchain": {"go": "fixture", "cxx": "fixture"}}
+        self.manifest["files"] = [candidate.record(path, candidate.artifact_role(path.name))
+                                  for path in sorted(self.directory.iterdir()) if path.name != "manifest.json"]
+        self.save()
+
+    def test_complete_debian12_birch_preserves_product_identity_and_checks_elf(self):
+        self.complete_birch("2.34", debian=True)
+        candidate.verify(self.directory)
+        self.assertEqual(self.manifest["identity"], versions.identity("birch", self.manifest["version"]))
+        build = self.manifest["build"]
+        for receipts in (build["native_abi"], build["native_environment"]["native_abi"]):
+            receipts["bot-native-worker"]["required_symbol_versions"]["GLIBC"] = "2.33"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "ABI receipt differs from packaged ELF"):
+            candidate.verify(self.directory)
