@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import struct
 import tarfile
 import tempfile
 import unittest
@@ -60,29 +61,42 @@ class CandidateTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         data = versions.load()
         config = candidate.PROFILES["aspen"][1]
-        files = candidate.IMAGES | {"source.tar.gz", "firmware-relink.tar.gz", "build-profile.ini", "LICENSE", "THIRD_PARTY.md"}
+        files = candidate.IMAGES | {"source.tar.gz", "firmware-relink.tar.gz", "build-profile.ini", "LICENSE", "NOTICE",
+                                   "THIRD_PARTY.md", "dependency-notices.tar.gz"}
         for name in files:
             (self.directory / name).write_bytes(b"fixture")
-        (self.directory / "firmware.bin").write_bytes(b"ESP fixture " + versions.identity("aspen", "0.1.0-rc.1").encode())
+        version = data["products"]["aspen"]["version"]
+        (self.directory / "firmware.bin").write_bytes(b"ESP fixture " + versions.identity("aspen", version).encode())
         (self.directory / "build-profile.ini").write_bytes((ROOT / config).read_bytes())
+        (self.directory / "partitions.bin").write_bytes(struct.pack(
+            "<HBBII16sI", 0x50aa, 0, 0x10, 0x10000, 0x330000, b"app0", 0))
         sha = "a" * 40
         with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
                           pax_headers={"comment": sha}) as archive:
-            for path in [*versions.generated(data), "release/products.json", config]:
+            for path in [*versions.generated(data), "release/products.json", "go.sum", config]:
                 content = (ROOT / path).read_bytes()
                 info = tarfile.TarInfo(path)
                 info.size = len(content)
                 archive.addfile(info, io.BytesIO(content))
         self.manifest = {
-            "schema_version": 1, "product": "aspen", "version": "0.1.0-rc.1",
-            "tag": "aspen-v0.1.0-rc.1", "identity": "aspen-0.1.0-rc.1",
+            "schema_version": 1, "product": "aspen", "version": version,
+            "tag": versions.tag("aspen", version), "identity": versions.identity("aspen", version),
             "source": {"repository": data["repository"], "commit": sha, "dirty": False},
             "upstream": data["upstream"], "compatibility": data["compatibility"],
+            "layout": {"partitions": candidate.partitions(self.directory / "partitions.bin"),
+                       "initial_install_offsets": {"bootloader.bin": 0, "partitions.bin": 0x8000,
+                                                   "boot_app0.bin": 0xe000, "firmware.bin": 0x10000}},
             "build": {"profile": "public_aspen", "config_path": config,
                       "config_sha256": hashlib.sha256((ROOT / config).read_bytes()).hexdigest(),
-                      "toolchain": {"platformio": "fixture"}, "dependencies": {"fixture": "1"}},
+                      "source_date_epoch": 1791180000,
+                      "toolchain": {"platformio": "fixture", "python": "3.13", "build_os": "Linux",
+                                    "firmware_cxx": "fixture", "firmware_cxx_sha256": "a" * 64},
+                      "dependencies": {"resolved_packages": "fixture", "build_metadata": {"fixture": "1"}},
+                      "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
+                      "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de",
+                      "go_sum_sha256": hashlib.sha256((ROOT / "go.sum").read_bytes()).hexdigest()},
             "qualification": {"state": "unqualified_candidate", "hardware_tested": False},
-            "files": [candidate.record(self.directory / name, "fixture") for name in sorted(files)],
+            "files": [candidate.record(self.directory / name, candidate.artifact_role(name)) for name in sorted(files)],
         }
         self.save()
 
@@ -104,8 +118,14 @@ class CandidateTests(unittest.TestCase):
             candidate.verify(self.directory)
 
     def test_refuse_incomplete_birch_bundle(self):
-        self.manifest.update(product="birch", tag="birch-v0.1.0-rc.1", identity="birch-0.1.0-rc.1")
+        version = versions.load()["products"]["birch"]["version"]
+        self.manifest.update(product="birch", version=version, tag=versions.tag("birch", version),
+                             identity=versions.identity("birch", version))
         self.manifest["build"].update(profile="public_birch", config_path="release/platformio.birch.ini")
+        self.manifest["build"]["toolchain"].update(go="fixture", cxx="fixture", native_cxx_sha256="a" * 64)
+        self.manifest["build"].update(go_modules=[{"Path": "fixture"}], native_linked_libraries=[
+            {"soname": name, "sha256": "a" * 64, "bytes": 1}
+            for name in ("libcjson.so.1", "libssl.so.3", "libcrypto.so.3")])
         self.save()
         with self.assertRaisesRegex(ValueError, "Incomplete product bundle"):
             candidate.verify(self.directory)
@@ -123,6 +143,25 @@ class CandidateTests(unittest.TestCase):
         self.manifest["qualification"]["hardware_tested"] = True
         self.save()
         with self.assertRaisesRegex(ValueError, "qualification requires separate review"):
+            candidate.verify(self.directory)
+
+    def test_refuse_wrong_artifact_roles(self):
+        for item in self.manifest["files"]:
+            item["role"] = "application"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "artifact role mismatch"):
+            candidate.verify(self.directory)
+
+    def test_refuse_missing_provenance_receipts(self):
+        self.manifest["build"]["toolchain"] = {"platformio": "fixture"}
+        self.save()
+        with self.assertRaisesRegex(ValueError, "missing toolchain receipt"):
+            candidate.verify(self.directory)
+
+    def test_refuse_wrong_partition_layout(self):
+        self.manifest["layout"]["initial_install_offsets"]["firmware.bin"] = 0x8000
+        self.save()
+        with self.assertRaisesRegex(ValueError, "initial-install offsets mismatch"):
             candidate.verify(self.directory)
 
     def test_refuse_wrong_archive_commit(self):

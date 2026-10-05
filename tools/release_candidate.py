@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import tarfile
 import zipfile
@@ -22,7 +23,7 @@ PROFILES = {
     "aspen": ("public_aspen", "firmware/esp32/platformio.public.ini.example"),
     "birch": ("public_birch", "release/platformio.birch.ini"),
 }
-IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin"}
+IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin", "boot_app0.bin"}
 HOST_FILES = {"meshcore-host", "meshcore-check", "meshcore-rf-check", "bot-native-worker"}
 
 
@@ -47,6 +48,49 @@ def digest(path):
 
 def record(path, role):
     return {"name": path.name, "role": role, "bytes": path.stat().st_size, "sha256": digest(path)}
+
+
+def artifact_role(name):
+    return ("application" if name == "firmware.bin" else "initial_install" if name in IMAGES
+            else "host" if name in HOST_FILES else "build_material")
+
+
+def partitions(path):
+    content = path.read_bytes()
+    rows = []
+    for offset in range(0, len(content), 32):
+        row = content[offset:offset + 32]
+        if len(row) != 32 or row[:2] != b"\xaa\x50":
+            break
+        _, kind, subtype, address, size, label, _ = struct.unpack("<HBBII16sI", row)
+        rows.append({"name": label.rstrip(b"\0").decode("ascii"), "type": kind, "subtype": subtype,
+                     "offset": address, "bytes": size})
+    if not rows or any(item["offset"] + item["bytes"] > 0x800000 for item in rows):
+        raise ValueError("Expected an 8 MiB ESP32 partition layout")
+    return rows
+
+
+def native_libraries(binary, env):
+    libraries = []
+    for line in run(["ldd", str(binary)], env=env).splitlines():
+        match = re.search(r"(\S+)\s+=>\s+(/\S+)", line)
+        if not match:
+            continue
+        name, path = match.groups()
+        item = {"soname": name, "sha256": digest(Path(path)), "bytes": Path(path).stat().st_size}
+        if shutil.which("dpkg-query", path=env.get("PATH")):
+            for probe in (Path(path), Path(path).resolve()):
+                found = subprocess.run(["dpkg-query", "-S", str(probe)], env=env, text=True,
+                                       capture_output=True, check=False)
+                if found.returncode == 0:
+                    package = found.stdout.split(": ", 1)[0]
+                    item["package"] = package
+                    item["package_version"] = run(["dpkg-query", "-W", "-f=${Version}", package], env=env)
+                    break
+        libraries.append(item)
+    if not {"libcjson.so.1", "libssl.so.3", "libcrypto.so.3"} <= {item["soname"] for item in libraries}:
+        raise ValueError("Native worker linked-library receipt is missing cJSON or OpenSSL 3")
+    return libraries
 
 
 def public_source(ref):
@@ -110,6 +154,7 @@ def build(product, ref, output):
         raise ValueError("Upstream checkout differs from the release pin")
     toolchain = {"platformio": run(["pio", "--version"], env=env),
                  "python": platform.python_version(), "build_os": platform.platform()}
+    linked_libraries = []
     if product == "aspen":
         command(["make", "-C", "firmware/esp32", "bot-firmware", f"BUILD={work}",
                  f"CONFIG={ROOT / config}", f"ENV={profile}"])
@@ -132,8 +177,8 @@ def build(product, ref, output):
         shutil.copy2(ROOT / config, work / "platformio.local.ini")
         command(["pio", "run", "--project-dir", str(work), "-e", profile])
         command(["make", "host-build"])
-        native = ROOT / ".tmp/onchip-release-birch-worker"
-        native_stage = ROOT / ".tmp/onchip-release-birch-native"
+        native = ROOT / ".tmp" / ("onchip-release-worker-" + stem)
+        native_stage = ROOT / ".tmp" / ("onchip-release-native-" + stem)
         if native.exists() or native_stage.exists():
             raise ValueError("Refusing to reuse a native worker build directory")
         command(["make", "-C", "firmware/esp32", "bot-native-worker", f"BOT_BUILD={native}",
@@ -142,7 +187,9 @@ def build(product, ref, output):
             path = native / name if name == "bot-native-worker" else ROOT / "bin" / name
             shutil.copy2(path, directory / name)
         toolchain.update(go=run(["go", "version"], env=env),
-                         cxx=run(["c++", "--version"], env=env).splitlines()[0])
+                         cxx=run(["c++", "--version"], env=env).splitlines()[0],
+                         native_cxx_sha256=digest(Path(shutil.which("c++", path=env["PATH"]))))
+        linked_libraries = native_libraries(directory / "bot-native-worker", env)
         # Native worker libraries and source needed for relinking live outside work.
         with tarfile.open(directory / "native-relink.tar.gz", "w:gz") as archive:
             for path in (native, native_stage, ROOT / ".tmp/onchip-phy", ROOT / ".tmp/onchip-lua",
@@ -150,21 +197,36 @@ def build(product, ref, output):
                          ROOT / ".cache/meshcore-wamr"):
                 archive.add(path, arcname=path.relative_to(ROOT))
     pio_build = work / ".pio/build" / profile
-    for name in IMAGES:
+    for name in IMAGES - {"boot_app0.bin"}:
         shutil.copy2(pio_build / name, directory / name)
+    framework = Path(env["HOME"]) / ".platformio/packages/framework-arduinoespressif32"
+    shutil.copy2(framework / "tools/partitions/boot_app0.bin", directory / "boot_app0.bin")
     if identity(product, version).encode() not in (directory / "firmware.bin").read_bytes():
         raise ValueError("Built image does not contain the selected product identity")
-    inventory = json.loads(run(["pio", "pkg", "list", "--project-dir", str(work),
-                                "-e", profile, "--json-output"], env=env))
-    compiler = Path(env["HOME"]) / ".platformio/packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-g++"
+    metadata = json.loads(run(["pio", "project", "metadata", "--project-dir", str(work),
+                               "-e", profile, "--json-output"], env=env))
+    inventory = {"resolved_packages": run(["pio", "pkg", "list", "--project-dir", str(work),
+                                           "-e", profile], env=env), "build_metadata": metadata[profile]}
+    compiler = Path(metadata[profile]["cxx_path"])
     toolchain["firmware_cxx"] = run([str(compiler), "--version"], env=env).splitlines()[0]
     toolchain["firmware_cxx_sha256"] = digest(compiler)
     # Include actual resolved libraries, objects, ELF/map and build source/config.
     archive_tree(work, directory / "firmware-relink.tar.gz")
     command(["git", "archive", "--format=tar.gz", "--output=" + str(directory / "source.tar.gz"), "HEAD"])
     shutil.copy2(ROOT / config, directory / "build-profile.ini")
-    for name in ("LICENSE", "THIRD_PARTY.md"):
+    for name in ("LICENSE", "NOTICE", "THIRD_PARTY.md"):
         shutil.copy2(ROOT / name, directory / name)
+    with tarfile.open(directory / "dependency-notices.tar.gz", "w:gz") as archive:
+        archive.add(ROOT / "LICENSES", arcname="LICENSES")
+        if product == "birch":
+            modules = json_stream(run(["go", "list", "-m", "-json", "all"], env=env))
+            for module in modules:
+                if module.get("Version") and module.get("Dir"):
+                    for path in Path(module["Dir"]).rglob("*"):
+                        if path.is_file() and path.name.upper().startswith(("LICENSE", "COPYING", "NOTICE")):
+                            archive.add(path, arcname="go/" + module["Path"] + "/" +
+                                        str(path.relative_to(module["Dir"])))
+            archive.add(Path(run(["go", "env", "GOROOT"], env=env)) / "LICENSE", arcname="go/TOOLCHAIN-LICENSE")
     versioned = tag(product, version)
     manifest = {
         "schema_version": 1, "product": product, "version": version, "tag": versioned,
@@ -175,17 +237,20 @@ def build(product, ref, output):
                   "dependencies": inventory,
                   "go_modules": json_stream(run(["go", "list", "-m", "-json", "all"], env=env)) if product == "birch" else [],
                   "go_sum_sha256": digest(ROOT / "go.sum"),
+                  "native_linked_libraries": linked_libraries,
                   "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                   "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de"},
         "compatibility": data["compatibility"],
+        "layout": {"partitions": partitions(directory / "partitions.bin"),
+                   "initial_install_offsets": {"bootloader.bin": 0, "partitions.bin": 0x8000,
+                                               "boot_app0.bin": 0xe000, "firmware.bin": 0x10000},
+                   "application_update": "Only the selected health-confirmed application slot; preserve NVS/SPIFFS/OTA selection"},
         "hardware": "Seeed XIAO ESP32-S3R8 + Wio SX1262; 8 MiB flash/PSRAM",
         "qualification": {"state": "unqualified_candidate", "hardware_tested": False,
                           "blockers": (["Blank-board WiFi provisioning for the matching Go host modem is not qualified"]
                                        if product == "birch" else []) +
                                       ["Review exact build/test receipts and perform separately authorized hardware acceptance before publishing"]},
-        "files": [record(path, "application" if path.name == "firmware.bin" else
-                         "initial_install" if path.name in IMAGES else
-                         "host" if path.name in HOST_FILES else "build_material")
+        "files": [record(path, artifact_role(path.name))
                   for path in sorted(directory.iterdir()) if path.name != "build.log"],
     }
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -220,18 +285,45 @@ def verify(directory):
         raise ValueError("Candidate build profile mismatch")
     if manifest["build"]["config_sha256"] != digest(directory / "build-profile.ini"):
         raise ValueError("Candidate build config hash mismatch")
-    if not manifest["build"]["toolchain"] or not manifest["build"]["dependencies"]:
-        raise ValueError("Candidate is missing resolved toolchain/dependencies")
+    build = manifest["build"]
+    toolchain = build["toolchain"]
+    for key in ("platformio", "python", "build_os", "firmware_cxx"):
+        if not isinstance(toolchain.get(key), str) or not toolchain[key]:
+            raise ValueError(f"Candidate is missing toolchain receipt: {key}")
+    for value in (toolchain.get("firmware_cxx_sha256", ""), build.get("go_sum_sha256", ""),
+                  build.get("lua_archive_sha256", "")):
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("Candidate has an invalid compiler/dependency hash")
+    if not re.fullmatch(r"[0-9a-f]{40}", build.get("wamr_commit", "")):
+        raise ValueError("Candidate is missing the exact WAMR commit")
+    if type(build.get("source_date_epoch")) is not int or build["source_date_epoch"] <= 0:
+        raise ValueError("Candidate is missing the build epoch")
+    if not build["dependencies"].get("resolved_packages") or not build["dependencies"].get("build_metadata"):
+        raise ValueError("Candidate is missing resolved PlatformIO dependencies")
+    if product == "birch":
+        if not toolchain.get("go") or not toolchain.get("cxx") or not build.get("go_modules"):
+            raise ValueError("Birch is missing host/native build receipts")
+        if not re.fullmatch(r"[0-9a-f]{64}", toolchain.get("native_cxx_sha256", "")):
+            raise ValueError("Birch is missing the native compiler hash")
+        libraries = build.get("native_linked_libraries", [])
+        if not {"libcjson.so.1", "libssl.so.3", "libcrypto.so.3"} <= {item["soname"] for item in libraries}:
+            raise ValueError("Birch is missing the linked cJSON/OpenSSL receipt")
+        for item in libraries:
+            if not re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) or type(item["bytes"]) is not int or item["bytes"] <= 0:
+                raise ValueError("Birch has an invalid native-library hash/size")
     names = set()
     for entry in manifest["files"]:
         name = entry["name"]
         if name in names or Path(name).name != name:
             raise ValueError("Duplicate or unsafe manifest filename")
         names.add(name)
+        if entry["role"] != artifact_role(name):
+            raise ValueError(f"Candidate artifact role mismatch: {name}")
         path = directory / name
         if path.is_symlink() or not path.is_file() or record(path, entry["role"]) != entry:
             raise ValueError(f"Candidate file hash/size mismatch: {name}")
-    required = IMAGES | {"source.tar.gz", "firmware-relink.tar.gz", "build-profile.ini", "LICENSE", "THIRD_PARTY.md"}
+    required = IMAGES | {"source.tar.gz", "firmware-relink.tar.gz", "build-profile.ini", "LICENSE", "NOTICE",
+                        "THIRD_PARTY.md", "dependency-notices.tar.gz"}
     if product == "birch":
         required |= HOST_FILES | {"native-relink.tar.gz"}
     if required != names:
@@ -241,6 +333,16 @@ def verify(directory):
         raise ValueError("Unmanifested files in candidate directory")
     if identity(product, version).encode() not in (directory / "firmware.bin").read_bytes():
         raise ValueError("Candidate firmware identity mismatch")
+    if manifest["layout"]["partitions"] != partitions(directory / "partitions.bin"):
+        raise ValueError("Candidate partition layout mismatch")
+    expected_offsets = {"bootloader.bin": 0, "partitions.bin": 0x8000,
+                        "boot_app0.bin": 0xe000, "firmware.bin": 0x10000}
+    if manifest["layout"]["initial_install_offsets"] != expected_offsets:
+        raise ValueError("Candidate initial-install offsets mismatch")
+    apps = [item for item in manifest["layout"]["partitions"] if item["type"] == 0]
+    if not apps or not any(item["offset"] == 0x10000 for item in apps) or any(
+            item["bytes"] < (directory / "firmware.bin").stat().st_size for item in apps):
+        raise ValueError("Candidate image does not fit the application layout")
     if manifest["qualification"]["state"] != "unqualified_candidate" or manifest["qualification"]["hardware_tested"] is not False:
         raise ValueError("This tool records build candidates; qualification requires separate review")
     with tarfile.open(directory / "source.tar.gz") as archive:
@@ -253,6 +355,8 @@ def verify(directory):
             raise ValueError("Archived release authority differs from the selected candidate")
         if hashlib.sha256(archive.extractfile(config).read()).hexdigest() != manifest["build"]["config_sha256"]:
             raise ValueError("Build configuration differs from the public source archive")
+        if hashlib.sha256(archive.extractfile("go.sum").read()).hexdigest() != build["go_sum_sha256"]:
+            raise ValueError("Go dependencies differ from the public source archive")
     return manifest
 
 
