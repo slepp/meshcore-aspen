@@ -2503,12 +2503,12 @@ struct BotSession::Impl {
   };
   using Jobs = std::array<Job, BotJobLimit>;
 #if ONCHIP_BOT_COMPACT_PROFILE
-  // Source validation cannot run jobs; reserve their buffers after parser GC.
-  std::unique_ptr<Jobs> jobStorage;
-  Jobs &jobs() { return *jobStorage; }
+  // Reserve individual buffers before parser allocations fragment the heap.
+  std::array<std::unique_ptr<Job>, BotJobLimit> jobStorage;
+  Job &job(unsigned index) { return *jobStorage[index]; }
 #else
   Jobs jobStorage;
-  Jobs &jobs() { return jobStorage; }
+  Job &job(unsigned index) { return jobStorage[index]; }
 #endif
   Budget heap{};
   Call loader{};
@@ -2844,6 +2844,23 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   impl_ = new (memory) Impl;
   auto &s = *impl_;
   s.generation = generation; s.heap.limits = limits;
+#if ONCHIP_BOT_COMPACT_PROFILE
+#ifdef NRF52_PLATFORM
+  if (sizeof(Impl::Jobs) + 8192u + BotJobLimit * 16u >
+      unsigned(std::max(dbgHeapFree(), 0))) {
+    snprintf(error, errorSize, "Lua job buffers need %uB; free=%uB reserve=8192B",
+             unsigned(sizeof(Impl::Jobs)), unsigned(std::max(dbgHeapFree(), 0)));
+    clear(); return false;
+  }
+#endif
+  for (auto &job : s.jobStorage) {
+    job.reset(new (std::nothrow) Impl::Job);
+    if (!job) {
+      snprintf(error, errorSize, "Lua job buffer %uB unavailable", unsigned(sizeof(Impl::Job)));
+      clear(); return false;
+    }
+  }
+#endif
   s.loader = {source, size, nullptr, nullptr};
   s.loader.manifest = &s.program;
   s.loader.budget = &s.heap; s.loader.retained = true;
@@ -2881,24 +2898,6 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   stats = s.heap.stats;
   s.heap.running = false;
   s.loader.source = nullptr; s.loader.size = 0;
-#if ONCHIP_BOT_COMPACT_PROFILE
-  if (ok) {
-#ifdef NRF52_PLATFORM
-    if (sizeof(Impl::Jobs) + 8192u + 16u > unsigned(std::max(dbgHeapFree(), 0))) {
-      snprintf(error, errorSize, "Lua job buffers need %uB; free=%uB reserve=8192B",
-               unsigned(sizeof(Impl::Jobs)), unsigned(std::max(dbgHeapFree(), 0)));
-      ok = false;
-    }
-#endif
-    if (ok) {
-      s.jobStorage.reset(new (std::nothrow) Impl::Jobs);
-      if (!s.jobStorage) {
-        snprintf(error, errorSize, "Lua job buffers unavailable");
-        ok = false;
-      }
-    }
-  }
-#endif
   if (!ok) clear();
   return ok;
 }
@@ -2933,9 +2932,11 @@ void BotSession::cancelEvents() {
 #if ONCHIP_BOT_WASM
   if (wasm_) wasm_->cancelEvents();
 #endif
-  if (impl_) for (auto &job : impl_->jobs())
+  if (impl_) for (unsigned i = 0; i < BotJobLimit; ++i) {
+    auto &job = impl_->job(i);
     if (job.state != Impl::Job::Free && job.state != Impl::Job::Done && job.event.kind != BotEvent::Command)
       impl_->fail(job, "Event subscription/grant/source changed; admitted effects may have committed");
+  }
 }
 bool BotSession::start(uint32_t id, const BotEvent &event, char *error, size_t errorSize) {
 #if ONCHIP_BOT_WASM
@@ -2948,7 +2949,8 @@ bool BotSession::start(uint32_t id, const BotEvent &event, char *error, size_t e
     snprintf(error, errorSize, "Retained VM unavailable or invalid event"); return false;
   }
   Impl::Job *job = nullptr;
-  for (auto &candidate : impl_->jobs()) {
+  for (unsigned i = 0; i < BotJobLimit; ++i) {
+    auto &candidate = impl_->job(i);
     if (candidate.state != Impl::Job::Free && candidate.result.job == id) {
       snprintf(error, errorSize, "Duplicate invocation ID"); return false;
     }
@@ -2990,18 +2992,22 @@ bool BotSession::hasPendingIo() const {
 #if ONCHIP_BOT_WASM
   if (wasm_) return wasm_->hasPendingIo();
 #endif
-  if (impl_) for (const auto &job : impl_->jobs())
+  if (impl_) for (unsigned i = 0; i < BotJobLimit; ++i) {
+    const auto &job = impl_->job(i);
     if (job.state == Impl::Job::Waiting && !job.dispatched) return true;
+  }
   return false;
 }
 bool BotSession::nextIo(BotIoRequest &request) {
 #if ONCHIP_BOT_WASM
   if (wasm_) return wasm_->nextIo(request);
 #endif
-  if (impl_) for (auto &job : impl_->jobs())
+  if (impl_) for (unsigned i = 0; i < BotJobLimit; ++i) {
+    auto &job = impl_->job(i);
     if (job.state == Impl::Job::Waiting && !job.dispatched) {
       request = job.request; job.dispatched = true; return true;
     }
+  }
   return false;
 }
 bool BotSession::complete(const BotIoResult &result) {
@@ -3023,7 +3029,8 @@ bool BotSession::complete(const BotIoResult &result) {
   for (unsigned i = 0; i < result.keys.count; ++i)
     if (!result.keys.keys[i][0] || !memchr(result.keys.keys[i], 0, sizeof(result.keys.keys[i])) ||
         (i && strcmp(result.keys.keys[i - 1], result.keys.keys[i]) >= 0)) return false;
-  if (impl_) for (auto &job : impl_->jobs())
+  if (impl_) for (unsigned index = 0; index < BotJobLimit; ++index) {
+    auto &job = impl_->job(index);
     if (job.state == Impl::Job::Waiting && job.dispatched && job.request.token == result.token) {
       if (job.event.kind != BotEvent::Command && impl_->loader.eventEpoch &&
           job.event.eventEpoch != impl_->loader.eventEpoch->load()) {
@@ -3036,25 +3043,30 @@ bool BotSession::complete(const BotIoResult &result) {
       job.completion = result; job.call.completion = &job.completion;
       impl_->resume(job, 0); return true;
     }
+  }
   return false;
 }
 bool BotSession::poll(Result &result) {
 #if ONCHIP_BOT_WASM
   if (wasm_) return wasm_->poll(result);
 #endif
-  if (impl_) for (auto &job : impl_->jobs())
+  if (impl_) for (unsigned i = 0; i < BotJobLimit; ++i) {
+    auto &job = impl_->job(i);
     if (job.state == Impl::Job::Done) {
       result = job.result; impl_->release(job); return true;
     }
+  }
   return false;
 }
 void BotSession::cancel(uint32_t except) {
 #if ONCHIP_BOT_WASM
   if (wasm_) wasm_->cancel(except);
 #endif
-  if (impl_) for (auto &job : impl_->jobs())
+  if (impl_) for (unsigned i = 0; i < BotJobLimit; ++i) {
+    auto &job = impl_->job(i);
     if (job.state != Impl::Job::Free && job.result.job != except)
       impl_->fail(job, "Source cancelled; pending operation outcome may be unknown");
+  }
 }
 } // namespace onchip
 #endif

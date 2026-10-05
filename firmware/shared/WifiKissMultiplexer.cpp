@@ -19,6 +19,58 @@ constexpr char PROFILE_NAMESPACE[] = "mesh-phy";
 constexpr char PROFILE_KEY[] = "profile";
 constexpr uint8_t RECORD_PREFIX[] = {'M', 'C', 'P', 1};
 constexpr size_t RECORD_SIZE = sizeof(RECORD_PREFIX) + queued_tx::PROFILE_SIZE;
+constexpr char CONTROLS_KEY[] = "controls";
+constexpr uint8_t CONTROLS_PREFIX[] = {'M', 'C', 'C', 1};
+constexpr size_t CONTROLS_SIZE = 8;
+
+bool restoreControls(uint16_t &agcSeconds, bool &rxConfigured, bool &rxBoost) {
+  nvs_handle_t handle;
+  esp_err_t error = nvs_open(PROFILE_NAMESPACE, NVS_READONLY, &handle);
+  if (error == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (error != ESP_OK) {
+    Serial.printf("Shared-radio controls storage open failed: %s\n", esp_err_to_name(error));
+    return false;
+  }
+  uint8_t record[CONTROLS_SIZE];
+  size_t size = sizeof(record);
+  error = nvs_get_blob(handle, CONTROLS_KEY, record, &size);
+  nvs_close(handle);
+  if (error == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (error != ESP_OK || size != sizeof(record) ||
+      memcmp(record, CONTROLS_PREFIX, sizeof(CONTROLS_PREFIX)) ||
+      queued_tx::get16(record + 4) > 1020 || record[6] > 1 || record[7] > 1) {
+    Serial.println("Shared-radio controls record unreadable or invalid; radio startup refused");
+    return false;
+  }
+  agcSeconds = queued_tx::get16(record + 4);
+  rxConfigured = record[6];
+  rxBoost = record[7];
+  return true;
+}
+
+bool persistControls(uint16_t agcSeconds, bool rxConfigured, bool rxBoost) {
+  uint8_t record[CONTROLS_SIZE], actual[CONTROLS_SIZE];
+  memcpy(record, CONTROLS_PREFIX, sizeof(CONTROLS_PREFIX));
+  queued_tx::put16(record + 4, agcSeconds);
+  record[6] = rxConfigured;
+  record[7] = rxBoost;
+  nvs_handle_t handle;
+  esp_err_t error = nvs_open(PROFILE_NAMESPACE, NVS_READWRITE, &handle);
+  if (error != ESP_OK) {
+    Serial.printf("Shared-radio controls storage open failed: %s\n", esp_err_to_name(error));
+    return false;
+  }
+  error = nvs_set_blob(handle, CONTROLS_KEY, record, sizeof(record));
+  if (error == ESP_OK) error = nvs_commit(handle);
+  size_t size = sizeof(actual);
+  if (error == ESP_OK) error = nvs_get_blob(handle, CONTROLS_KEY, actual, &size);
+  const bool verified = error == ESP_OK && size == sizeof(actual) &&
+                        !memcmp(record, actual, sizeof(record));
+  nvs_close(handle);
+  if (!verified)
+    Serial.println("Shared-radio controls commit/readback failed; saved state may differ; radio disabled");
+  return verified;
+}
 
 bool enableSessionKeepalive(int fd, uint8_t slot) {
   constexpr int idle = 45, interval = 10, probes = 3, enabled = 1;
@@ -782,11 +834,15 @@ bool WifiKissMultiplexer::enqueueFrame(uint8_t slot, const uint8_t *encoded,
 
 void WifiKissMultiplexer::attachRadio(mesh::Radio &radio, mesh::RNG &rng,
                                       SetRadioCallback configure,
-                                      SetTxPowerCallback power) {
+                                      SetTxPowerCallback power,
+                                      bool (*setRxBoost)(bool),
+                                      bool (*getRxBoost)()) {
   _radio = &radio;
   _rng = &rng;
   _configure = configure;
   _power = power;
+  _set_rx_boost = setRxBoost;
+  _get_rx_boost = getRxBoost;
   queued_tx::putFloat(_profile + 11, 1.0f);
   _credit_updated = millis();
 }
@@ -818,10 +874,60 @@ bool WifiKissMultiplexer::applyMastCAD(bool enabled) {
   return applyMastProfile(profile, true);
 }
 
+bool WifiKissMultiplexer::applyMastInterference(uint8_t threshold) {
+  uint8_t profile[queued_tx::PROFILE_SIZE];
+  memcpy(profile, _profile, sizeof(profile));
+  queued_tx::put16(profile + 16, threshold);
+  return applyMastProfile(profile, true);
+}
+
+bool WifiKissMultiplexer::applyMastAirtimeFactor(float factor) {
+  if (!isfinite(factor) || factor < 0 || factor > 9) return false;
+  uint8_t profile[queued_tx::PROFILE_SIZE];
+  memcpy(profile, _profile, sizeof(profile));
+  queued_tx::putFloat(profile + 11, factor);
+  return applyMastProfile(profile, true);
+}
+
+bool WifiKissMultiplexer::applyMastControls(uint16_t agcSeconds, bool configureRxBoost,
+                                           bool rxBoost) {
+  if (!localReady() || _transmitting || _radio->isReceiving() || agcSeconds > 1020 ||
+      (configureRxBoost && !rxBoostAvailable())) return false;
+  if (!persistControls(agcSeconds, configureRxBoost, rxBoost)) {
+    configurationFailed();
+    return false;
+  }
+  _agc_seconds = agcSeconds;
+  _rx_boost_configured = configureRxBoost;
+  _rx_boost = rxBoost;
+  if (configureRxBoost &&
+      (!_set_rx_boost(rxBoost) || _get_rx_boost() != rxBoost)) {
+    Serial.println("Saved RX boost could not be applied/read back; radio disabled");
+    configurationFailed();
+    return false;
+  }
+  uint8_t profile[queued_tx::PROFILE_SIZE];
+  memcpy(profile, _profile, sizeof(profile));
+  return applyMastProfile(profile, false);
+}
+
+void WifiKissMultiplexer::configurationFailed() {
+  _configuration_fault = true;
+  for (auto &job : _jobs)
+    if (job.used) {
+      notify(job, queued_tx::FAILED, queued_tx::NOT_CONFIGURED,
+             uint32_t(millis() - job.admitted));
+      job.used = false;
+    }
+}
+
 bool WifiKissMultiplexer::applyMastProfile(const uint8_t *profile, bool persist) {
   if (!_radio || !_configure || !_power || !localReady() || _transmitting || _radio->isReceiving())
     return false;
-  if (persist && !persistProfile(profile)) return false;
+  if (persist && !persistProfile(profile)) {
+    configurationFailed();
+    return false;
+  }
   if (persist) memcpy(_persisted_profile, profile, queued_tx::PROFILE_SIZE);
   for (auto &job : _jobs)
     if (job.used) {
@@ -847,7 +953,7 @@ bool WifiKissMultiplexer::applyMastProfile(const uint8_t *profile, bool persist)
 
 bool WifiKissMultiplexer::setInitialConfiguration(const RadioConfig &config,
                                                  bool require_operator_phy) {
-  _configuration_fault = true;
+  configurationFailed();
   queued_tx::put32(_profile, config.freq_hz);
   queued_tx::put32(_profile + 4, config.bw_hz);
   _profile[8] = config.sf;
@@ -860,6 +966,8 @@ bool WifiKissMultiplexer::setInitialConfiguration(const RadioConfig &config,
   uint8_t expected_phy[11];
   memcpy(expected_phy, _profile, sizeof(expected_phy));
   if (!restoreProfile(_profile, _profile_committed))
+    return false;
+  if (!restoreControls(_agc_seconds, _rx_boost_configured, _rx_boost))
     return false;
   if (require_operator_phy) {
 #if !defined(MESHCORE_MAST_ADMIN) || !MESHCORE_MAST_ADMIN
@@ -880,6 +988,11 @@ bool WifiKissMultiplexer::setInitialConfiguration(const RadioConfig &config,
              queued_tx::get32(_profile + 4) / 1000.0, _profile[8],
              _profile[9]);
   _power(_profile[10]);
+  if (_rx_boost_configured &&
+      (!rxBoostAvailable() || !_set_rx_boost(_rx_boost) || _get_rx_boost() != _rx_boost)) {
+    Serial.println("Saved shared-radio RX boost unavailable; radio startup refused");
+    return false;
+  }
   _radio->setCADEnabled(_profile[15] != 0);
   _radio->triggerNoiseFloorCalibrate(
       static_cast<int16_t>(queued_tx::get16(_profile + 16)));

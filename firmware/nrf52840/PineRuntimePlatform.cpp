@@ -51,11 +51,35 @@ void pollLuaTime() {
   trustedTime.poll(millis());
   clockGate.clear(std::memory_order_release);
 }
+bool trustRadioTime(uint32_t lower, uint32_t upper, uint32_t lifetimeMs) {
+  while (clockGate.test_and_set(std::memory_order_acquire)) delay(1);
+  const uint32_t now = millis();
+  if (trustedSource.load() == LuaTimeSource::Gps && trustedTime.fresh(now)) {
+    clockGate.clear(std::memory_order_release); return false;
+  }
+  const bool accepted = trustedTime.refreshBounds(lower, upper, now, lifetimeMs);
+  if (accepted) {
+    trustedSource.store(LuaTimeSource::RadioProvider);
+    // RTC unique timestamps and pending deadlines must never move backwards.
+    if (lower > rtc_clock.getCurrentTime()) rtc_clock.setCurrentTime(lower);
+    onchip::commandBotService().synchronizeTime(lower);
+  }
+  clockGate.clear(std::memory_order_release);
+  return accepted;
+}
+void revokeRadioTime() {
+  while (clockGate.test_and_set(std::memory_order_acquire)) delay(1);
+  if (trustedSource.load() == LuaTimeSource::RadioProvider) {
+    trustedTime.revoke(); trustedSource.store(LuaTimeSource::None);
+  }
+  clockGate.clear(std::memory_order_release);
+}
 const char* luaTimeSource() {
   switch (trustedSource.load(std::memory_order_acquire)) {
     case LuaTimeSource::Admin: return "admin-console";
     case LuaTimeSource::BleCompanion: return "paired-ble";
     case LuaTimeSource::Gps: return "gps";
+    case LuaTimeSource::RadioProvider: return "radio-provider";
     default: return "none";
   }
 }
@@ -130,10 +154,16 @@ bool clockSnapshot(ClockSnapshot &value) {
 }
 bool trustedNetworkTime(uint32_t &earliest, uint32_t &latest, const char **reason) {
   earliest = latest = 0;
-  ClockSnapshot sample;
-  if (!clockSnapshot(sample) ||
-      !nrfmast::trustedTimeBounds(sample.network_epoch, sample.network_age_ms, earliest, latest)) {
-    if (reason) *reason = "UTC unavailable/older than 1h; obtain GPS fix, reconnect paired companion or refresh bot time through repeater admin";
+  if (clockGate.test_and_set(std::memory_order_acquire)) {
+    if (reason) *reason = "UTC publication busy";
+    return false;
+  }
+  const uint32_t now = millis();
+  trustedTime.poll(now);
+  const bool valid = trustedTime.bounds(now, earliest, latest);
+  clockGate.clear(std::memory_order_release);
+  if (!valid) {
+    if (reason) *reason = "UTC unavailable/expired; obtain GPS fix, refresh paired companion/admin time or inspect bot time.provider";
     return false;
   }
   if (reason) *reason = nullptr;

@@ -5,7 +5,11 @@
 #define CONFIG_HTTPD_WS_SUPPORT 1
 #define CONFIG_LWIP_MAX_SOCKETS 16
 using esp_err_t = int;
-constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_NOT_FOUND = -2,
+#ifndef MESHCORE_TEST_ESP_ERRORS_DEFINED
+#define MESHCORE_TEST_ESP_ERRORS_DEFINED
+constexpr int ESP_OK = 0, ESP_FAIL = -1;
+#endif
+constexpr int ESP_ERR_NOT_FOUND = -2,
               ESP_ERR_NO_MEM = -3, HTTPD_SOCK_ERR_FAIL = -4;
 using httpd_handle_t = void *;
 using httpd_free_ctx_fn_t = void (*)(void *);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <helpers/BaseChatMesh.h>
+#include "RadioTimeProtocol.h"
 #ifndef NRFMAST_PRODUCTION_LUA
 #define NRFMAST_PRODUCTION_LUA 0
 #endif
@@ -29,6 +30,13 @@ class CommandBot : public BaseChatMesh {
   bool startupAdvertPending = false;
   NoteStore* notes = nullptr;
   CompanionInterface* companion = nullptr;
+  uint8_t timeProvider[32]{};
+  bool providerEnabled = false, timeResponseDirect = false;
+  uint32_t nextTimeRequest = 0, lastTimeRequest = 0;
+  bool timeAttempted = false;
+  radio_time::PendingTimeRequest timeRequest;
+  mesh::Packet* timePacket = nullptr;
+  void cancelTimeRequest();
 #if !NRFMAST_PRODUCTION_LUA
   SharedRadio* adaptiveRadio = nullptr;
   onchip::AdaptiveAdmission adaptive;
@@ -41,6 +49,7 @@ class CommandBot : public BaseChatMesh {
 #endif
 
 protected:
+  void onPeerDataRecv(mesh::Packet*, uint8_t, int, const uint8_t*, uint8_t*, size_t) override;
 #if NRFMAST_PRODUCTION_LUA
   bool shouldAckMessage(const char* text) const override;
 #endif
@@ -73,9 +82,7 @@ protected:
   uint8_t onContactRequest(const ContactInfo&, uint32_t, const uint8_t*, uint8_t, uint8_t*) override { return 0; }
   void onContactResponse(const ContactInfo&, const uint8_t*, uint8_t) override;
   void logTxFail(mesh::Packet*, int) override;
-#if !NRFMAST_PRODUCTION_LUA
   void logTx(mesh::Packet*, int) override;
-#endif
 
 public:
   uint32_t replies = 0, throttled = 0, failures = 0, timeouts = 0;
@@ -85,6 +92,9 @@ public:
       : BaseChatMesh(radio, ms, rng, rtc, pool, tables), transmitEnabled(canTransmit) {}
   void begin(bool advertiseOnBoot = false);
   void loop();
+  void setTimeProvider(const uint8_t *key);
+  const uint8_t *getTimeProvider() const { return providerEnabled ? timeProvider : nullptr; }
+  bool fetchTime();
   bool advertise(bool zeroHop = false);
   const char* getName() const { return name; }
   static bool validName(const char* value);

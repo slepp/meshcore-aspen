@@ -18,10 +18,20 @@
 #include <cstring>
 #include <atomic>
 #include <cstdlib>
+#include <new>
 
 extern "C" void *pvPortMalloc(size_t size) { return std::malloc(size); }
 extern "C" void vPortFree(void *pointer) { std::free(pointer); }
 static std::atomic<unsigned> failVmAllocationAfter{0};
+static std::atomic<bool> failSourceAllocation{false};
+void *operator new[](size_t size, const std::nothrow_t &) noexcept {
+  if (failSourceAllocation.exchange(false)) return nullptr;
+  try { return ::operator new[](size); }
+  catch (const std::bad_alloc &) { return nullptr; }
+}
+void operator delete[](void *pointer, const std::nothrow_t &) noexcept {
+  ::operator delete[](pointer);
+}
 extern "C" void *__real_calloc(size_t count, size_t size);
 extern "C" void *__wrap_calloc(size_t count, size_t size) {
   if (count == 1 && size == onchip::BotSession::InitializationStorageBytes) {
@@ -161,6 +171,14 @@ void workerSources() {
   invoke(worker, "!put", 2, "written");
   const auto oldGeneration = worker.generation();
   const auto oldSourceGeneration = worker.sourceGeneration();
+  failSourceAllocation = true;
+  const char *replacement = "function replacement() return 'new' end";
+  assert(worker.stage(replacement, strlen(replacement)));
+  const auto allocationFailure = wait(worker);
+  assert(!allocationFailure.ok && strstr(allocationFailure.error, "source recovery buffer unavailable") &&
+         !worker.sourceSuspended() && worker.generation() == oldGeneration &&
+         worker.sourceGeneration() == oldSourceGeneration);
+  invoke(worker, "!old", 900, "old");
   BotIoRequest pending[2];
   unsigned nextPendingJob = 20;
   const auto suspend = [&] {
@@ -244,6 +262,24 @@ void workerSources() {
   invoke(worker, "!get", 7, "saved");
   worker.stop();
   puts("Pine worker: suspended-job cancel/replacement fences, one-live-VM malformed/runaway/OOM recovery, native commands, publication and persistent KV restart");
+}
+void bundledSourceRecovery() {
+  uint8_t key[32]{2};
+  BotWorker worker;
+  assert(worker.begin(key));
+  assert(worker.stage(BotDefaultSource, strlen(BotDefaultSource)) && wait(worker).ok);
+  assert(worker.activate() && wait(worker).ok);
+  assert(worker.stage("function broken(", 16) && !wait(worker).ok && !worker.sourceSuspended());
+  invoke(worker, "!ping", 910, "Pong");
+  const char *replacement = "function replacement() return 'new' end";
+  assert(worker.stage(replacement, strlen(replacement)) && wait(worker).ok);
+  assert(worker.recoverSource() && wait(worker).ok && !worker.sourceSuspended());
+  invoke(worker, "!ping", 911, "Pong");
+  assert(worker.stage(replacement, strlen(replacement)) && wait(worker).ok);
+  assert(worker.activate() && wait(worker).ok);
+  invoke(worker, "!replacement", 912, "new");
+  worker.stop();
+  puts("Pine worker: bundled recovery reloads read-only source without a retained heap copy; custom replacement remains recoverable");
 }
 void failedSourceRecovery() {
   uint8_t key[32]{1};
@@ -417,6 +453,7 @@ int main() {
   metadataCuts(flash);
   adaptiveSettings(flash);
   workerSources();
+  bundledSourceRecovery();
   failedSourceRecovery();
   sourceParserValidation();
   deadlines();

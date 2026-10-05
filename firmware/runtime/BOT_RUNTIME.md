@@ -982,6 +982,17 @@ management remains available for recovery. Pine uses its existing single
 session, 48 KiB heap and two-job profile; home/HTTPS commands remain unavailable,
 including through an override or `call_original`.
 
+Pine reserves each invocation buffer separately before Lua initialization,
+while the board heap still has large free blocks.
+Its single-session worker keeps exact-sized staged and active recovery sources,
+rather than reserving the maximum source length for both buffers.
+Before suspending the active VM, source replacement allocates the staged
+source; an allocation failure leaves the active program running.
+Activation transfers that buffer to recovery storage without another allocation. The Lua heap
+limit, two invocation slots and 8 KiB board-heap reserve are unchanged.
+The unchanged bundled source is recovered from its read-only firmware copy;
+it does not need a second heap copy while a custom source loads.
+
 **Source API migration:** the old `return function(e)`/action-table ABI is
 explicitly rejected, not silently interpreted as a command registry. Existing
 custom sources must be rewritten to named functions and reinstalled. A legacy

@@ -43,7 +43,8 @@ build_flags =
   -D ONCHIP_ADMIN_PASSWORD='"${sysenv.ONCHIP_ADMIN_PASSWORD}"'
   -D ONCHIP_ROOM_PASSWORD='"${sysenv.ONCHIP_ROOM_PASSWORD}"'
   -D ONCHIP_MQTT_URI='"${sysenv.ONCHIP_MQTT_URI}"'
-  ; Standard asynchronous SNTP. Set the server to '""' to remain offline.
+  ; Initial SNTP defaults; saved get/set sntp.server and sntp.interval override them.
+  ; Set the initial server to '""', or use set sntp.server off, to remain offline.
   -D ONCHIP_SNTP_SERVER='"pool.ntp.org"'
   -D ONCHIP_SNTP_INTERVAL_SECONDS=3600
   -D MAX_CONTACTS=256

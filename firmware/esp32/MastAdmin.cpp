@@ -2,6 +2,7 @@
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastAdmin.h"
 #include "Config.h"
+#include "Clock.h"
 #include "BotHttps.h"
 #include "BotSettings.h"
 #include "CommandBot.h"
@@ -118,6 +119,8 @@ const char *commandUsage(const char *topic) {
     {"radio", "radio FREQ_HZ BW_HZ SF CR TX_DBM; read: get radio|get freq|get tx; shared PHY changes after reply"},
     {"tempradio", "tempradio SECONDS FREQ_HZ BW_HZ SF CR TX_DBM; duration 1..3600; restores saved PHY"},
     {"cad", "get cad; set cad on|off; hardware channel activity detection before shared-radio TX; saved after reply"},
+    {"radio-controls", "get/set cad on|off; int.thresh 0..255; agc.reset.interval 0..1020 seconds (4s units); rxboost on|off; af 0..9; saved after reply"},
+    {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
     {"roles", "roles MASK; MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots; Management stays available"},
     {"key", "key ROLE [pending|cancel|HEX128]; use key help; private imports: encrypted RF only"},
@@ -131,7 +134,7 @@ const char *commandUsage(const char *topic) {
     {"room", "room access; native Room settings belong to the Room contact"},
     {"companion", "companion stats|errors|help; native contacts/channels use the companion connection"},
     {"stats", "stats [radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion]; schema=1 key=value; counters since boot"},
-    {"get", "get name|owner.info|radio|freq|tx|cad|wifi.FIELD; WiFi fields: enabled,ssid,pwd,ip,status"},
+    {"get", "get name|owner.info|radio|freq|tx|cad|int.thresh|agc.reset.interval|rxboost|af|wifi.FIELD; help radio-controls; help wifi"},
     {"set", "set name TEXT; set owner.info TEXT (| separates lines); set wifi.ssid|pwd TEXT; set wifi.enabled 0|1; set cad on|off"}
   };
   for (const auto &entry : topics)
@@ -450,6 +453,75 @@ void MastAdmin::preferenceCommand(char *command, Reply &reply, Transport transpo
            "Error: owner.info commit/readback unknown; inspect get owner.info before retry");
   } else if (!strcmp(command, "get cad")) {
     snprintf(reply.text, sizeof(reply.text), "> %s", mux_->cadEnabled() ? "on" : "off");
+  } else if (!strcmp(command, "get int.thresh")) {
+    snprintf(reply.text, sizeof(reply.text), "> %d", mux_->interferenceThreshold());
+  } else if (!strcmp(command, "get af")) {
+    snprintf(reply.text, sizeof(reply.text), "> %.9g", double(mux_->airtimeFactor()));
+  } else if (!strcmp(command, "get agc.reset.interval")) {
+    snprintf(reply.text, sizeof(reply.text), "> %u", unsigned(mux_->agcResetIntervalSeconds()));
+  } else if (!strcmp(command, "get rxboost")) {
+    if (!mux_->rxBoostAvailable()) {
+      strcpy(reply.text, "Error: shared-radio RX boost unavailable"); return;
+    }
+    snprintf(reply.text, sizeof(reply.text), "> %s", mux_->rxBoostEnabled() ? "on" : "off");
+  } else if (!strncmp(command, "set int.thresh ", 15) ||
+             !strncmp(command, "set af ", 7) ||
+             !strncmp(command, "set agc.reset.interval ", 23) ||
+             !strncmp(command, "set rxboost ", 12)) {
+    if (temporary_) {
+      strcpy(reply.text, "Error: temporary radio active; wait for saved PHY restoration"); return;
+    }
+    Effect effect;
+    uint8_t nextInterference = 0;
+    float nextAirtime = 1;
+    uint16_t nextAGCSeconds = mux_->agcResetIntervalSeconds();
+    bool nextRxConfigured = mux_->rxBoostConfigured(), nextRxBoost = mux_->rxBoostEnabled();
+    if (!strncmp(command, "set int.thresh ", 15)) {
+      uint32_t value;
+      if (!number(command + 15, value) || value > 255) {
+        strcpy(reply.text, "Error: int.thresh requires 0..255; 0 disables interference detection"); return;
+      }
+      nextInterference = uint8_t(value);
+      effect = Effect::Interference;
+    } else if (!strncmp(command, "set af ", 7)) {
+      char *end;
+      const double value = strtod(command + 7, &end);
+      if (!command[7] || *end || !isfinite(value) || value < 0 || value > 9) {
+        strcpy(reply.text, "Error: shared-radio af requires a finite value in 0..9"); return;
+      }
+      nextAirtime = float(value);
+      effect = Effect::Airtime;
+    } else {
+      if (!strncmp(command, "set agc.reset.interval ", 23)) {
+        uint32_t value;
+        if (!number(command + 23, value) || value > 1020) {
+          strcpy(reply.text, "Error: agc.reset.interval requires 0..1020 seconds; 0 disables resets"); return;
+        }
+        nextAGCSeconds = uint16_t(value - value % 4);
+      } else {
+        if (!mux_->rxBoostAvailable()) {
+          strcpy(reply.text, "Error: shared-radio RX boost unavailable"); return;
+        }
+        if (strcmp(command + 12, "on") && strcmp(command + 12, "off")) {
+          strcpy(reply.text, "Error: use set rxboost on|off"); return;
+        }
+        nextRxConfigured = true;
+        nextRxBoost = !strcmp(command + 12, "on");
+      }
+      effect = Effect::Controls;
+    }
+    if (!reserve(effect, reply)) return;
+    nextInterference_ = nextInterference;
+    nextAirtime_ = nextAirtime;
+    nextAGCSeconds_ = nextAGCSeconds;
+    nextRxConfigured_ = nextRxConfigured;
+    nextRxBoost_ = nextRxBoost;
+    if (!strncmp(command, "set agc.reset.interval ", 23))
+      snprintf(reply.text, sizeof(reply.text),
+               "Accepted shared-radio setting after reply; AGC interval=%us (4-second units); inspect job",
+               unsigned(nextAGCSeconds_));
+    else
+      strcpy(reply.text, "Accepted shared-radio setting after reply; inspect get setting and job for saved/applied result");
   } else if (!strncmp(command, "set cad", 7)) {
     if (strcmp(command, "set cad on") && strcmp(command, "set cad off")) {
       strcpy(reply.text, "Error: use set cad on|off"); return;
@@ -886,6 +958,7 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     if (*p < 32 || *p > 126) {
       strcpy(reply.text, "Error: printable CLI text required"); return;
     }
+  if (networkClockCommand(input, reply.text, sizeof(reply.text), true)) return;
   if (!strcmp(input, "help") || !strncmp(input, "help ", 5)) {
     if (!input[4]) {
       static constexpr char Help[] = "status; stats; ver; board; help TOPIC; role; key; password; bot help; bot https; source; wifi; radio; get; set; auth; data; telemetry";
@@ -1451,13 +1524,18 @@ void MastAdmin::loop() {
     return;
   }
   if (!armed_ || int32_t(now - readyAt_) < 0) return;
-  if (effect_ == Effect::Radio || effect_ == Effect::Temporary || effect_ == Effect::CAD) {
+  if (effect_ == Effect::Radio || effect_ == Effect::Temporary || effect_ == Effect::CAD ||
+      effect_ == Effect::Interference || effect_ == Effect::Airtime || effect_ == Effect::Controls) {
     if (mux_->isActuallyTransmitting() || mux_->physicalRadio().isReceiving()) return;
     const bool temporary = effect_ == Effect::Temporary;
     const bool applied = effect_ == Effect::CAD ? mux_->applyMastCAD(nextCAD_) :
+                         effect_ == Effect::Interference ? mux_->applyMastInterference(nextInterference_) :
+                         effect_ == Effect::Airtime ? mux_->applyMastAirtimeFactor(nextAirtime_) :
+                         effect_ == Effect::Controls ?
+                             mux_->applyMastControls(nextAGCSeconds_, nextRxConfigured_, nextRxBoost_) :
                                                  mux_->applyMastConfiguration(nextRadio_, !temporary);
     if (!applied) {
-      strcpy(outcome_, "Error: radio apply/storage failed; old PHY retained");
+      strcpy(outcome_, "Error: shared-radio apply/storage failed; inspect saved/applied status before retry");
     } else {
       if (temporary) {
         restoreAt_ = now + duration_;

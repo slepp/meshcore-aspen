@@ -2508,7 +2508,7 @@ void CommandBot::dashboardStatus(RadioDashboard::RoleStatus &status) const {
   status = status_;
   if (adaptivePolicyFault_)
     snprintf(status.fault, sizeof(status.fault), "%s", AdaptivePolicyFault);
-  if (sourceStartupBlocked_)
+  if (sourceStartupBlocked_ && (!status_.fault[0] || (core_ && core_->initialized)))
     snprintf(status.fault, sizeof(status.fault), "%s", sourceStartupFault_);
   status.ready = sourceReady() && !core_->administratorBlocked && !sourceStartupBlocked_;
   status.source_slot = radio_.sourceSlot();

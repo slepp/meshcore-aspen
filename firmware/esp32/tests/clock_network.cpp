@@ -5,6 +5,8 @@
 #include <cstring>
 #include <string>
 #include <sys/time.h>
+#include "../../shared/EspSntpClock.h"
+#include "../../shared/RadioTimeProtocol.h"
 
 static unsigned long now;
 static bool publishDuringMillis;
@@ -147,10 +149,73 @@ int main() {
     now += 10;
     onchip::receiveNetworkTime(1790265700u);
     onchip::loopClocks();
-    assert(onchip::trustedNetworkTime(earliest, latest) && earliest == 1790265700u &&
-           latest == earliest + 1);
-    assert(onchip::companionClock().source() == onchip::ClockSource::Network);
+    assert(onchip::trustedNetworkTime(earliest, latest) && earliest == 1790265598u &&
+           latest == 1790265602u);
+    assert(onchip::companionClock().source() == onchip::ClockSource::Gps);
   }
+  char reply[160];
+  assert(onchip::networkClockCommand("set sntp.server ntp.example.org", reply, sizeof(reply), false));
+  assert(!strncmp(reply, "Error:", 6));
+  assert(onchip::networkClockCommand("set sntp.server ntp.example.org", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "OK ", 3) && configuredServer == "ntp.example.org");
+  assert(onchip::networkClockCommand("set sntp.interval 60", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "OK ", 3) && configuredInterval == 60000);
+  assert(onchip::networkClockCommand("set sntp.interval 59", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "Error:", 6) && configuredInterval == 60000);
+  assert(onchip::networkClockCommand("set sntp.server bad host", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "Error:", 6) && configuredServer == "ntp.example.org");
+  identity_test::failCommit = true;
+  assert(onchip::networkClockCommand("set sntp.interval 120", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "Error:", 6) && configuredInterval == 60000);
+  identity_test::failCommit = false;
+  radio_time::settings = {};
+  radio_time::settingsLoaded = false;
+  onchip::beginNetworkClock();
+  assert(configuredServer == "ntp.example.org" && configuredInterval == 60000);
+  onchip::beginClocks();
+  uint8_t timeRequest[16]{}, response[32]{};
+  radio_time::put32(timeRequest, 99);
+  timeRequest[4] = radio_time::RequestType; timeRequest[5] = radio_time::ProtocolVersion;
+  assert(onchip::networkTimeReply(timeRequest, sizeof(timeRequest), response) && response[7] == 1);
+  timeval fresh{1790266000, 0};
+  notification(&fresh);
+  onchip::loopClocks();
+  assert(onchip::networkClockCommand("get sntp.current", reply, sizeof(reply)));
+  assert(strstr(reply, "source=sntp"));
+  assert(onchip::networkTimeReply(timeRequest, sizeof(timeRequest), response) && response[6] == 1 &&
+         !response[7] && radio_time::get32(response + 28) == 120000);
+  const auto oldHandler = radio_time::sampleHandler.load();
+  const auto oldGeneration = radio_time::generation.load();
+  assert(onchip::networkClockCommand("set sntp.server ntp.changed.example.org", reply, sizeof(reply), true));
+  oldHandler(1790266000, oldGeneration);
+  onchip::loopClocks();
+  assert(!onchip::trustedNetworkTime(earliest, latest));
+  notification(&fresh);
+  onchip::loopClocks();
+  assert(onchip::trustedNetworkTime(earliest, latest));
+  uint8_t cli[32]{};
+  cli[4] = 1 << 2;
+  strcpy(reinterpret_cast<char *>(cli + 5), "get sntp.current");
+  assert(onchip::publicTimeCommand(cli, sizeof(cli)));
+  strcpy(reinterpret_cast<char *>(cli + 5), "set sntp.interval 60");
+  assert(!onchip::publicTimeCommand(cli, sizeof(cli)));
+  now += 120001;
+  onchip::loopClocks();
+  assert(!onchip::trustedNetworkTime(earliest, latest));
+  assert(onchip::networkTimeReply(timeRequest, sizeof(timeRequest), response) && response[7] == 1);
+  assert(onchip::networkClockCommand("set sntp.server off", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "OK ", 3));
+  assert(!onchip::trustedNetworkTime(earliest, latest));
+  identity_test::durable.at({"mc-time", "sntp"}).resize(2);
+  radio_time::settings = {};
+  radio_time::settingsLoaded = false;
+  onchip::beginClocks();
+  onchip::beginNetworkClock();
+  onchip::loopClocks();
+  assert(radio_time::settingsFault && !radio_time::settings.server[0]);
+  assert(!onchip::trustedNetworkTime(earliest, latest));
+  assert(onchip::networkClockCommand("set sntp.server ntp.example.org", reply, sizeof(reply), true));
+  assert(!strncmp(reply, "OK ", 3) && !radio_time::settingsFault);
   puts("PASS actual clock SDK callback, offline configuration and HTTP "
-       "status/staleness; GPS UTC, expiry and millis rollover");
+       "status/staleness; GPS preference; saved/live SNTP, IO failure, guest read-only UTC and expiry");
 }

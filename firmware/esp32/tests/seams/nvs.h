@@ -7,7 +7,11 @@
 #include <vector>
 using esp_err_t = int;
 using nvs_handle_t = unsigned;
-constexpr int ESP_OK = 0, ESP_FAIL = -1, ESP_ERR_NVS_NOT_FOUND = 1;
+#ifndef MESHCORE_TEST_ESP_ERRORS_DEFINED
+#define MESHCORE_TEST_ESP_ERRORS_DEFINED
+constexpr int ESP_OK = 0, ESP_FAIL = -1;
+#endif
+constexpr int ESP_ERR_NVS_NOT_FOUND = 1;
 constexpr int ESP_ERR_INVALID_STATE = 2, ESP_ERR_INVALID_ARG = 3;
 constexpr int ESP_ERR_NVS_INVALID_LENGTH = 4;
 constexpr int ESP_ERR_NVS_NOT_ENOUGH_SPACE = 5;

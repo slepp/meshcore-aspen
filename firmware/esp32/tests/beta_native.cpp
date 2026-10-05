@@ -133,6 +133,60 @@ struct BetaFixture {
   }
 };
 static std::string encode(const uint8_t *bytes, size_t size);
+static void public_time_guest() {
+  beginClocks();
+  beginNetworkClock(true);
+  BetaFixture f;
+  Peer guest;
+  const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
+  uint8_t secret[32];
+  guest.self_id.calcSharedSecret(secret, f.management.publicKey());
+  const auto query = [&]() {
+    timeMs += 11000;
+    loopClocks();
+    uint8_t request[14]{};
+    queued_tx::put32(request, ++guest.timestamp);
+    request[4] = 4; request[5] = 1; request[13] = 77;
+    auto *packet = guest.createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, guest.self_id,
+        mesh::Identity(f.management.publicKey()), secret, request, sizeof(request));
+    assert(packet);
+    packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0;
+    const auto raw = guest.wire(packet);
+    f.radio.sent.clear();
+    f.mux.received(raw.data(), raw.size(), -90, 5); f.step(50);
+    for (const auto &wire : f.radio.sent) {
+      mesh::Packet response;
+      assert(response.readFrom(wire.data(), wire.size()));
+      if (response.getPayloadType() != PAYLOAD_TYPE_RESPONSE) continue;
+      uint8_t plain[184]{};
+      const auto size = mesh::Utils::MACThenDecrypt(secret, plain,
+          response.payload + 2, response.payload_len - 2);
+      assert(size == 32 && response.isRouteDirect() && response.getPathHashCount() == 0);
+      assert(queued_tx::get32(plain) == guest.timestamp && plain[4] == 4 && plain[5] == 1 &&
+             plain[15] == 77);
+      return Bytes(plain, plain + size);
+    }
+    assert(false && "Guest encrypted UTC response unavailable");
+    return Bytes{};
+  };
+  const auto unsynchronized = query();
+  assert(unsynchronized[7] == 1 && queued_tx::get32(unsynchronized.data() + 16) == 0);
+  receiveNetworkTime(1800000000);
+  loopClocks();
+  const auto synchronized = query();
+  assert(!synchronized[7] && synchronized[6] == 1 &&
+      queued_tx::get32(synchronized.data() + 16) >= 1800000000);
+  assert(!f.management.authenticatedNativeSender(guest.self_id.pub_key));
+  assert(f.send(guest, "set sntp.server attacker.invalid", false, false).empty());
+  timeMs += uint64_t(ONCHIP_SNTP_INTERVAL_SECONDS) * 2000 + 1;
+  loopClocks();
+  const auto expired = query();
+  assert(expired[7] == 1 && queued_tx::get32(expired.data() + 16) == 0);
+  assert(identity_test::durable == baseline && filesystem_test::files == files);
+  beginClocks();
+  puts("PASS guest time: no-login native identity encryption, tag/nonce/direct correlation, fresh-only UTC, expired/build denial and unchanged ACL/settings/storage");
+}
 static void management_cli_compatibility() {
   const auto durable = identity_test::durable;
   const auto files = filesystem_test::files;
@@ -198,6 +252,27 @@ static void management_cli_compatibility() {
     assert(rf("get cad") == "> off" && !f.mux.cadEnabled());
     assert(rf("set cad on").find("Accepted shared-radio CAD") == 0);
     assert(rf("get cad") == "> on" && f.mux.cadEnabled());
+    assert(rf("get int.thresh") == "> 0");
+    assert(rf("set int.thresh 12").find("Accepted shared-radio setting") == 0);
+    assert(rf("get int.thresh") == "> 12" && f.mux.interferenceThreshold() == 12);
+    assert(rf("set int.thresh 256").find("Error:") == 0);
+    assert(rf("set int.thresh -1").find("Error:") == 0);
+    assert(rf("set int.thresh 0").find("Accepted shared-radio setting") == 0);
+    assert(rf("get af") == "> 1");
+    assert(rf("set af 2.5").find("Accepted shared-radio setting") == 0);
+    assert(rf("get af") == "> 2.5");
+    for (const char *value : {"nan", "inf", "-1", "10", "1junk"})
+      assert(rf((std::string("set af ") + value).c_str()).find("Error:") == 0);
+    assert(rf("set af 1").find("Accepted shared-radio setting") == 0);
+    assert(rf("get agc.reset.interval") == "> 30");
+    assert(rf("set agc.reset.interval 26").find("Accepted shared-radio setting") == 0);
+    assert(rf("get agc.reset.interval") == "> 24");
+    for (const char *value : {"1021", "-1", "1x"})
+      assert(rf((std::string("set agc.reset.interval ") + value).c_str()).find("Error:") == 0);
+    assert(rf("set agc.reset.interval 0").find("Accepted shared-radio setting") == 0);
+    assert(rf("get agc.reset.interval") == "> 0");
+    assert(rf("get rxboost") == "Error: shared-radio RX boost unavailable");
+    assert(rf("set rxboost on") == "Error: shared-radio RX boost unavailable");
     assert(f.mux.currentConfiguration().freq_hz == 912525000 &&
            f.mux.currentConfiguration().bw_hz == 250000 &&
            f.mux.currentConfiguration().sf == 7 &&
@@ -630,7 +705,9 @@ static void interrupted_upload() {
     assert(f.action("bot shared") == "Shared KV on");
     assert(f.action("bot shared off") == "Saved and applied shared KV policy");
     assert(f.action("bot events").find("saved=0 subscribed=0") != std::string::npos);
-    assert(f.action("bot events 16").find("Error:") == 0);
+    assert(f.action("bot events 32").find("Error:") == 0);
+    assert(f.action("bot events 16").find("Saved event") == 0);
+    assert(f.action("bot events").find("saved=16") != std::string::npos);
     assert(f.action("bot events 15").find("Saved event") == 0);
     assert(f.action("bot events").find("saved=15") != std::string::npos);
     identity_test::failCommit = true;
@@ -1928,6 +2005,11 @@ static void adaptive_policy_admin() {
 
 int main(int argc, char **argv) {
   setbuf(stdout, nullptr);
+  if (argc == 2 && !strcmp(argv[1], "--radio-time-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    public_time_guest();
+    return 0;
+  }
 #ifdef ONCHIP_SOURCE_BOOT_HEALTH_TEST
   assert(saveRoleProfile({0}) && saveBotEnabled(true));
   selected_source_boot_health();

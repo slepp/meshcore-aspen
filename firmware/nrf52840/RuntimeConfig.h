@@ -20,6 +20,9 @@ class RuntimeConfig {
   void importKey(bool botRole, uint32_t senderTimestamp, const char* value, char* reply);
   bool loadAdaptive(bool& enabled);
   bool saveAdaptive(bool enabled);
+  bool loadTimeProvider(uint8_t key[32]);
+  bool saveTimeProvider(const uint8_t key[32]);
+  bool timeProviderFault = false;
 
 public:
   BleConfig ble;

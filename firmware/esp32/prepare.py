@@ -109,6 +109,12 @@ def stage_field_network(target):
                  target / "examples/kiss_modem/main.cpp")
     shutil.copy2(source.parent / "shared/RadioFirmwareIdentity.h",
                  target / "examples/kiss_modem/RadioFirmwareIdentity.h")
+    for name in ("SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
+        shutil.copy2(source.parent / "shared" / name,
+                     target / "examples/kiss_modem" / name)
+        role_headers = target / "examples/kiss_modem/onchip"
+        if role_headers.is_dir():
+            shutil.copy2(source.parent / "shared" / name, role_headers / name)
     shutil.copy2(source / "FirmwareIdentity.h",
                  target / "examples/kiss_modem/FirmwareIdentity.h")
     # Keep the clock resource on the existing HTTP server.
@@ -127,6 +133,8 @@ def generate(upstream, target):
     source = Path(__file__).resolve().parent
     dest = target / "examples/kiss_modem/onchip"
     dest.mkdir(parents=True, exist_ok=True)
+    for name in ("SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
+        shutil.copy2(source.parent / "shared" / name, dest / name)
     data = target / "onchip-data"
     data.mkdir(exist_ok=True)
     shutil.copy2(source / "data/onchip-layout", data / "onchip-layout")
@@ -215,7 +223,11 @@ def generate(upstream, target):
                                   "", text, flags=re.M)
                 text = re.sub(r"^  board\.(?:setLoRaFemLnaEnabled|setLoRaFemPaGainEnabled|setAdcMultiplier)\([^\n]*\);\n",
                               "", text, flags=re.M)
-                text = text.replace("radio_driver.getRxBoostedGainMode()", "false")
+                if role == "companion":
+                    text = replace_once(text,
+                        '  MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",\n'
+                        '                     radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");',
+                        '  // Physical RX gain is owned and reported by the shared modem.')
                 if role != "companion":
                     text = body(text, f"bool {cls}::formatFileSystem()",
                                 '  Serial.println("Use the local deferred role erase command");\n  return false;')
@@ -231,11 +243,16 @@ def generate(upstream, target):
                     text = text.replace("radio_driver.resetStats();", "")
                     anchor = "  // handle ACL related commands"
                     text = replace_once(text, anchor, f"""
+  if (onchip::networkClockCommand(command, reply, 160, false)) return;
   if (!strcmp(command, "ver")) {{
     snprintf(reply, 160, "v%s (Build: %s)", ONCHIP_FIRMWARE_VERSION, __DATE__);
     return;
   }}
   if (onchip::lifecycleCommand(onchip::Role::{role.title()}, sender_timestamp, command, reply)) return;
+""" + f"""
+#if !defined(NRF52_PLATFORM)
+  if (onchip::sharedRadioReadCommand(onchip::{role}Radio(), command, reply, 160)) return;
+#endif
 """ + """
   if (onchip::clearsAdminPassword(command)) {
     strcpy(reply, "Error: administrator password must not be empty");
@@ -246,6 +263,29 @@ def generate(upstream, target):
     return;
   }
 """ + anchor)
+                    if role == "repeater":
+                        text = '#include "Clock.h"\n#include "RadioTimeProtocol.h"\n' + text
+                        gate = "type == PAYLOAD_TYPE_TXT_MSG && len > 5 && client->isAdmin()"
+                        guest_gate = """type == PAYLOAD_TYPE_TXT_MSG && len > 5 &&
+      (client->isAdmin() || onchip::publicTimeCommand(data, len))"""
+                        text = replace_once(text, gate, guest_gate)
+                        hook = """  if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) {"""
+                        public_time = """  if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ &&
+      packet->isRouteDirect() && packet->getPathHashCount() == 0 &&
+      onchip::networkTimeReply(data, len, reply_data)) {
+    static uint32_t timeReplyAt = 0;
+    static bool timeReplySent = false;
+    const uint32_t now = millis();
+    if (timeReplySent && uint32_t(now - timeReplyAt) < 10000u) return;
+    if (_mgr->getOutboundTotal() || _radio->getEstAirtimeFor(80) > radio_time::MaxAirtimeMs) return;
+    timeReplySent = true; timeReplyAt = now;
+    auto *reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret,
+                                 reply_data, radio_time::ResponseSize);
+    if (reply) sendZeroHop(reply, uint32_t(300));
+    return;
+  }
+"""
+                        text = replace_once(text, hook, public_time + hook)
                     text += f"""
 bool {cls}::onchipFlush() {{
   if (!_cli.savePrefs(_fs)) return false;

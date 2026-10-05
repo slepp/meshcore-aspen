@@ -507,6 +507,31 @@ static void testRuntimeConfig() {
   assert(command("ver").find("v1.17.1-slp-pine") == 0);
   assert(command("help").find("help bot|source|wifi") == 0);
   assert(command("help wifi").find("slp-pine has no WiFi") != std::string::npos);
+  assert(command("get bot.time.provider").find("provider=off fault=0") == 0);
+  auto provider = mesh::LocalIdentity(&rng);
+  char providerHex[65];
+  mesh::Utils::toHex(providerHex, provider.pub_key, 32);
+  assert(command(std::string("set bot.time.provider ") + providerHex, 1800000000).find("OK saved/live") == 0);
+  assert(bot.getTimeProvider() && !memcmp(bot.getTimeProvider(), provider.pub_key, 32));
+  assert(fs.files.at("/pine-time")->size() == 36);
+  bot.setTimeProvider(nullptr);
+  assert(config.begin() && bot.getTimeProvider() && !memcmp(bot.getTimeProvider(), provider.pub_key, 32));
+  const auto savedProvider = *fs.files.at("/pine-time");
+  fs.failRename = true;
+  assert(command("set bot.time.provider off").find("Error:") == 0);
+  assert(*fs.files.at("/pine-time") == savedProvider && bot.getTimeProvider());
+  fs.failRename = false;
+  fs.writeBudget = 10;
+  assert(command("set bot.time.provider off").find("Error:") == 0);
+  assert(*fs.files.at("/pine-time") == savedProvider);
+  fs.writeBudget = -1;
+  assert(command("set bot.time.provider " + std::string(64, '0')).find("Error:") == 0);
+  assert(command("set bot.time.provider off").find("OK saved/live") == 0);
+  assert(!bot.getTimeProvider());
+  fs.files.at("/pine-time")->resize(5);
+  assert(config.begin() && !bot.getTimeProvider());
+  assert(command("get bot.time.provider").find("fault=1") != std::string::npos);
+  assert(command("set bot.time.provider off").find("OK saved/live") == 0);
   assert(command("set wifi.ssid example").find("slp-pine has no WiFi") != std::string::npos);
   assert(command("bot adaptive").find("saved=0 live=0") != std::string::npos);
   assert(command("bot adaptive").find("last=allowed") != std::string::npos);
@@ -648,6 +673,83 @@ public:
     return sendMessage(bot, getRTCClock()->getCurrentTimeUnique(), 0, text, expectedAck, timeout);
   }
 };
+
+class NativeTimeProvider : public NativePeer {
+  void onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const mesh::Identity &sender,
+                      uint8_t *data, size_t length) override {
+    assert(packet->isRouteDirect() && packet->getPathHashCount() == 0);
+    assert(radio_time::request(data, length));
+    ++requests;
+    memcpy(requester, sender.pub_key, 32);
+    uint8_t reply[32];
+    radio_time::response(data, reply, 1, 1900000000, 1900000001, 0, 3600000);
+    auto *response = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply, sizeof(reply));
+    assert(response);
+    sendZeroHop(response);
+  }
+public:
+  using NativePeer::NativePeer;
+  unsigned requests = 0;
+  uint8_t requester[32]{};
+};
+
+static void testRadioTime() {
+  Clock clock;
+  RTC rtc;
+  Random rng;
+  Physical clientRadio, providerRadio;
+  SimpleMeshTables clientTables, providerTables;
+  StaticPoolPacketManager clientPool(8), providerPool(8);
+  nrfmast::CommandBot bot(clientRadio, clock, rng, rtc, clientPool, clientTables);
+  NativeTimeProvider provider(providerRadio, clock, rng, rtc, providerPool, providerTables, 1);
+  bot.self_id = mesh::LocalIdentity(&rng);
+  provider.self_id = mesh::LocalIdentity(&rng);
+  bot.begin(false);
+  provider.begin();
+  ContactInfo contact{};
+  contact.id = provider.self_id; contact.type = ADV_TYPE_REPEATER;
+  contact.out_path_len = OUT_PATH_UNKNOWN;
+  assert(bot.addContact(contact));
+  bot.setTimeProvider(provider.self_id.pub_key);
+  assert(!bot.fetchTime());
+  auto *learned = bot.lookupContactByPubKey(provider.self_id.pub_key, 32);
+  learned->out_path_len = 0;
+  clientRadio.airtime = 1001;
+  assert(!bot.fetchTime());
+  clientRadio.airtime = 40;
+  assert(bot.fetchTime() && !bot.fetchTime());
+  unsigned copied = 0;
+  for (unsigned i = 0; i < 100; ++i) {
+    clock.now += 10;
+    bot.loop(); provider.loop();
+    while (copied < clientRadio.sent.size()) providerRadio.input.push_back(clientRadio.sent[copied++]);
+  }
+  assert(provider.requests == 1 && !memcmp(provider.requester, bot.self_id.pub_key, 32));
+  assert(providerRadio.sent.size() == 1 && rtc.now == 1800000000);
+  auto corrupt = providerRadio.sent.front();
+  corrupt.back() ^= 1;
+  clientRadio.input.push_back(corrupt);
+  for (unsigned i = 0; i < 20; ++i) { clock.now += 10; bot.loop(); }
+  assert(rtc.now == 1800000000);
+  clientRadio.input.push_back(providerRadio.sent.front());
+  for (unsigned i = 0; i < 20; ++i) { clock.now += 10; bot.loop(); }
+  assert(rtc.now == 1900000000);
+  const auto packets = clientRadio.sent.size();
+  clock.now += 10000;
+  for (unsigned i = 0; i < 20; ++i) { clock.now += 10; bot.loop(); }
+  assert(clientRadio.sent.size() == packets); // no uncertain request replay
+  bot.setTimeProvider(provider.self_id.pub_key);
+  assert(bot.fetchTime() && clientPool.getOutboundTotal() == 1);
+  clock.now += radio_time::DeadlineMs;
+  bot.loop();
+  assert(clientPool.getOutboundTotal() == 0 && clientPool.getFreeCount() == 8 &&
+         clientRadio.sent.size() == packets);
+  clock.now += 10000;
+  assert(bot.fetchTime() && clientPool.getOutboundTotal() == 1);
+  bot.setTimeProvider(nullptr);
+  assert(!bot.fetchTime() && clientPool.getOutboundTotal() == 0 && clientPool.getFreeCount() == 8);
+  puts("RF time: native full-identity anonymous encryption, direct path, tampered-MAC denial, correlated UTC, airtime/deadline cap, queued cancellation and no replay");
+}
 
 class NativeRelay : public mesh::Mesh {
 protected:
@@ -1296,6 +1398,7 @@ int main() {
   testNoteWriteBudget();
   testCompanion();
   testRuntimeConfig();
+  testRadioTime();
   testSharing();
   testFormatting();
   testEncryptedBot();

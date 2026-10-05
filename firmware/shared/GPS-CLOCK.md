@@ -13,9 +13,139 @@ The node does not wait for a fix before starting its radio roles.
 | --- | --- |
 | Aspen on XIAO ESP32-S3 + WIO-SX1262 | No onboard GPS. Build-day role clocks provide offline startup; SNTP supplies trusted UTC when WiFi is available. |
 | Aspen/shared modem using a GPS-equipped upstream ESP32 board | Retains that board's GPS UART, power controls and location provider. The shared startup enables GPS and runs the sensor and board RTC loops. Valid NMEA UTC reaches Aspen's role clocks. |
-| Pine `nrfmast_fleet_lua` on XIAO nRF52840 + WIO-SX1262 | No onboard GPS in this board definition. Trusted UTC comes from paired BLE companion set-time or authenticated repeater administration. |
+| Pine `nrfmast_fleet_lua` on XIAO nRF52840 + WIO-SX1262 | No onboard GPS. Pin an Aspen time provider for encrypted LoRa UTC, or use paired BLE companion set-time or repeater administration. |
 | Pine `nrfmast_solar_lua` on SenseCAP Solar Node P1 Pro, or P1 with the GPS module installed | Uses upstream `SenseCap_Solar` GPS, battery measurement and QSPI wiring. P1 Pro includes GPS and batteries; P1 does not. GPS starts on every boot, including a boot without a paired phone. Battery readings remain available through `stats sensors` and telemetry. |
 | Birch host roles | Use the host's existing verified system-clock provider. A GPS fix on the shared modem is not transferred to or trusted by the Linux host. Keep the host clock synchronized independently. |
+| Birch ESP32 shared modem | No GPS on the XIAO/WIO board. Saved SNTP settings supply the modem's UTC; configure them through its USB console. Host role clocks remain independent. |
+
+## Configure SNTP on Aspen and the shared modem
+
+On Aspen, use the Management administrator console or local USB at 115200 baud.
+Native repeater/room administrators can read the shared settings but cannot
+change them. On the Birch ESP32 shared modem, use USB at 115200 baud:
+
+```text
+get sntp.server
+get sntp.interval
+set sntp.server ntp.example.org
+set sntp.interval 3600
+get sntp.current
+```
+
+Replace `ntp.example.org` with a reachable NTP hostname or IPv4 address.
+The initial defaults are `pool.ntp.org` and 3600 seconds; saved settings override
+build defaults. Server names allow 1–63 ASCII letters, digits, hyphens and dots;
+the interval is 60–86400 seconds. `set sntp.server off` stops SNTP.
+Changes are saved and applied immediately, and a server/interval change
+invalidates the previous SNTP sample until a new response arrives. A save/readback
+error leaves the live setting unchanged; inspect settings before retrying.
+An unreadable saved record disables SNTP until an administrator repairs it.
+The single existing lwIP SNTP client owns synchronization; no polling thread or
+second NTP client is added.
+
+`get sntp.current` returns UTC bounds and `source=sntp` or `source=gps`.
+Before synchronization, after sample expiry, or when the clock publication is
+stale, Aspen returns an explicit error. A build timestamp, native clock setting,
+contact timestamp or ESP system RTC cannot make this read succeed. A fresh GPS
+sample is preferred when a receiver is fitted; SNTP remains the fallback.
+After WiFi reconnects, allow the SNTP client time to receive its first response;
+`get sntp.current` continues to report an error until then.
+SNTP trust expires after twice the configured interval, GPS trust after one hour.
+SNTP trusts the configured server and network; it is not authenticated NTS.
+
+The native repeater's exact `get sntp.current` CLI command is guest-readable for
+an existing guest session. Other CLI commands retain their native ACL checks.
+The encrypted anonymous time request below is available without login or an ACL
+entry, including on Aspen's Management identity. Neither read path grants time
+setting, administrator login, WiFi settings or other guest access. The shared
+modem does not acquire an RF administration identity from enabling SNTP.
+
+## Give Pine a pinned LoRa time provider
+
+Choose Aspen's repeater or Management **full 64-hex-digit public key** from your
+identity inventory. On Pine's local or authenticated native repeater console:
+
+```text
+set bot.time.provider KEY64
+get bot.time.provider
+bot time.fetch
+bot time
+```
+
+The provider is off by default. The 36-byte saved pin survives a restart, but
+clock trust does not. Configure the same PHY on both radios through their
+normal operator controls; time commands never retune either radio.
+Pine must receive a signed zero-hop advert from the pinned identity, or already
+have its learned direct zero-hop path. A relayed/unknown path is refused rather
+than flooded. Pinning a key alone does not establish clock trust. The provider
+must have a fresh SNTP/GPS sample.
+
+A successful fetch reports `trusted=1 source=radio-provider` through `bot time`.
+Pine uses the provider's conservative UTC bounds, widens their upper bound by
+the measured request/reply round trip, and expires trust no later than the
+provider's remaining sample lifetime or one hour. It refreshes with a new request
+at most every 15 minutes, or sooner when half the remaining sample lifetime is
+shorter. It waits for an idle radio queue, caps each estimated request/reply
+airtime at one second, and allows one request with a five-second deadline.
+Before admission, it checks for the provider/path and idle queue every ten
+seconds without transmitting when either is unavailable.
+Timeout, radio failure and an uncertain transmission do not replay that request.
+An unsent native request is removed from its queue when its deadline expires
+or the provider is disabled/changed. Once a request has been admitted to the
+radio, its outcome is left to the existing radio/dispatcher; it is never freed
+or replaced as though it were known not to have transmitted.
+An explicit `bot time.fetch` needs a ten-second cooldown. Pending bot deadlines
+and unique message timestamps are retained; a fresh GPS fix takes precedence.
+`set bot.time.provider off` disables fetching and revokes RF-derived trust
+without erasing bot data. An unreadable pin disables the RF clock path.
+The provider also accounts for SNTP sample aging, and Pine expands its bounds
+for local clock drift. An initial response wider than 32 seconds after RTT
+adjustment is refused; shorten the SNTP interval or obtain a new GPS fix.
+
+### Encrypted time request version 1
+
+The transport is the existing MeshCore encrypted `ANON_REQ`/`RESPONSE`, not a
+plaintext clock beacon. The request includes the full requester's identity;
+MeshCore derives its identity shared secret and verifies the normal cipher MAC.
+Pine accepts a response only from the pinned full provider identity after native
+MAC verification, with the outstanding tag and random 64-bit nonce, on a direct
+zero-hop response within five seconds. A PATH-embedded or flood response cannot
+establish trust. Native message-unique clock tags remain monotonic.
+
+All integers are little-endian. The 14-byte request plaintext is
+`tag:u32, type:4:u8, version:1:u8, nonce:8 bytes`; normal encryption pads it to
+16 bytes with zeros. The 32-byte response is:
+
+| Bytes | Meaning |
+| --- | --- |
+| 0–3 | Echoed native request tag |
+| 4–5 | Type 4, version 1 |
+| 6–7 | Authority (`1=SNTP`, `2=GPS`, `0=unavailable`), result (`0=UTC`, `1=unsynchronized/expired`) |
+| 8–15 | Echoed random nonce |
+| 16–23 | Earliest and latest UTC seconds (`u32` each) |
+| 24–31 | Authority sample age in seconds and remaining validity in milliseconds (`u32` each) |
+
+The provider allows one public time reply per ten seconds across callers and
+requires an idle transmit queue. An unavailable authority returns result 1 with
+zero UTC bounds; it does not substitute an RTC or build clock. Invalid requests,
+over-limit airtime and busy/rate-limited service may receive no reply. Pine
+consumes a correlated error and revokes RF-derived trust without changing its
+unique message clock. Wrong keys, tags, nonces,
+routes, versions, expired replies and invalid bounds cannot refresh trust.
+
+### Check without radios
+
+```sh
+TMPDIR="$PWD/.tmp" make -C firmware/esp32 \
+  BUILD="$PWD/.tmp/onchip-radio-time" TEST_BUILD="$PWD/.tmp/onchip-radio-time-tests" \
+  clock-network-test radio-time-test radio-time-native-test
+TMPDIR="$PWD/.tmp" make -C firmware/nrf52840 prepare native-test
+```
+
+These checks cover saved/live settings, storage failures, guest command limits,
+SNTP/GPS expiry and preference, native encrypted time exchange, full-key/tag/nonce/
+path correlation, airtime/deadline limits and irreversibly expired trust. They
+do not open radio connections or change a node.
 
 The firmware source is pinned to MeshCore
 [`d92964352441e53b93e8667b802e04f6e072b39e`](https://github.com/meshcore-dev/MeshCore/tree/d92964352441e53b93e8667b802e04f6e072b39e).
