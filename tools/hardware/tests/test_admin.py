@@ -868,6 +868,31 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
         with patch("tools.hardware.admin.time.sleep"), self.assertRaisesRegex(ValueError, "compile failed"):
             mast_cli.install(Client(), b"not lua", lambda _: None)
 
+    def test_installer_carries_source_base_and_refuses_lost_update(self):
+        source = b"function hello() return 'ok' end"
+        digest = hashlib.sha256(source).hexdigest()
+        base = "a" * 64
+        commands = []
+
+        class Client:
+            def command(self, text):
+                commands.append(text)
+                if text.startswith("source begin "):
+                    return f"ACK {digest[:16]} next=0"
+                if text.startswith("source chunk "):
+                    return f"ACK {digest[:16]} next=1"
+                if text.startswith("source commit "):
+                    return "Error: active Lua sources changed; download and reconcile before installing"
+                raise AssertionError("Rejected source must not be treated as activated")
+
+        with self.assertRaisesRegex(ValueError, "sources changed"):
+            mast_cli.install(Client(), source, lambda _: None, expected_base_hash=base)
+        self.assertEqual(commands[-1], f"source commit {digest[:16]} {base}")
+        commands.clear()
+        with self.assertRaisesRegex(ValueError, "SHA256"):
+            mast_cli.install(Client(), source, expected_base_hash="not-a-hash")
+        self.assertEqual(commands, [])
+
 
 if __name__ == "__main__":
     unittest.main()

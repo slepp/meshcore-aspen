@@ -30,6 +30,17 @@ BOT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder 
 	-ffunction-sections -fdata-sections -Wl,--gc-sections -pthread \
 	-DMESHCORE_ONCHIP_BOT=1 -DONCHIP_BOT_WASM=$(ONCHIP_BOT_WASM) $(BOT_WAMR_INCLUDES) $(TEST_FLAGS)
 .PHONY: bot-adaptive-test bot-adaptive-native-test bot-adaptive-admin-test bot-source-api-test
+.PHONY: bot-repeater-test
+bot-repeater-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --repeater-test
+.PHONY: bot-repeater-storage-test
+bot-repeater-storage-test: bot-prepare-phy
+	@mkdir -p "$(BOT_BUILD)"
+	$(CXX) $(BOT_FLAGS) -I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(NATIVE) -I$(CRYPTO) \
+		tests/bot_repeater_storage.cpp ../runtime/BotSettings.cpp ../runtime/BotTypes.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o -o $(BOT_BUILD)/bot-repeater-storage
+	"$(BOT_BUILD)/bot-repeater-storage"
 bot-adaptive-test:
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Werror $(TEST_FLAGS) -I. \

@@ -220,7 +220,7 @@ void integer(lua_State *s, const char *key, lua_Integer value) {
 }
 void pushEvent(lua_State *s, const onchip::BotEvent &e) {
   lua_createtable(s, 0, 7);
-  const char *kinds[] = {"command", "startup", "connectivity", "message", "node_status"};
+  const char *kinds[] = {"command", "startup", "connectivity", "message", "node_status", "scheduled"};
   text(s, "kind", kinds[e.kind]);
   text(s, "message", e.message);
   boolean(s, "targeted", e.targeted);
@@ -343,6 +343,8 @@ struct Call {
   int eventReference = LUA_NOREF;
   int moduleReference = LUA_NOREF;
   int originalReference = LUA_NOREF;
+  int sourceOwnersReference = LUA_NOREF;
+  unsigned sourcePart = 0;
   bool buildingOriginals = false;
   bool moduleInitializing = false;
   Call *subscriptionOwner = nullptr;
@@ -371,7 +373,7 @@ int contextIndex(lua_State *s) {
 bool nativeName(const char *name) {
   for (const char *helper : {"reply", "command", "override_command", "call_original", "request_trace", "command_help",
                              "tostring", "ctx", "kv", "timer", "reminder", "sleep", "mesh", "advert", "rpc", "http", "json", "utility", "node",
-                             "module", "require", "events"})
+                             "module", "require", "events", "repeater"})
     if (!strcmp(name, helper)) return true;
   return onchip::botReservedCommand(name);
 }
@@ -382,6 +384,17 @@ int environmentWrite(lua_State *s) {
   if (name && size == strlen(name) && nativeName(name) &&
       !(call.initializing && call.bundled && onchip::botReservedCommand(name)))
     return luaL_error(s, "native command/helper name is reserved");
+  if (call.initializing && !call.bundled && call.sourcePart &&
+      call.sourceOwnersReference != LUA_NOREF) {
+    lua_rawgeti(s, LUA_REGISTRYINDEX, call.sourceOwnersReference);
+    lua_pushvalue(s, 2); lua_rawget(s, -2);
+    const unsigned owner = unsigned(lua_tointeger(s, -1));
+    lua_pop(s, 1);
+    if (owner && owner != call.sourcePart)
+      return luaL_error(s, "Lua source global collision: %s", name ? name : "(non-string)");
+    lua_pushvalue(s, 2); lua_pushinteger(s, call.sourcePart); lua_rawset(s, -3);
+    lua_pop(s, 1);
+  }
   lua_pushvalue(s, 2); lua_pushvalue(s, 3);
   lua_rawset(s, lua_upvalueindex(1));
   return 0;
@@ -782,6 +795,35 @@ void jsonApi(lua_State *s) {
 }
 int finishIo(lua_State *s, int, lua_KContext) {
   auto &call = context(s);
+  if (call.io->kind == onchip::BotIoRequest::RepeaterNext && call.completion) {
+    if (!call.completion->ok) return luaL_error(s, "%s", call.completion->error);
+    if (call.completion->found) lua_pushstring(s, call.completion->value);
+    else lua_pushnil(s);
+    return 1;
+  }
+  if ((call.io->kind == onchip::BotIoRequest::RepeaterStatus ||
+       call.io->kind == onchip::BotIoRequest::RepeaterLogin) && call.completion) {
+    const auto &r = *call.completion;
+    const auto &p = r.repeater;
+    lua_newtable(s);
+    boolean(s, "ok", r.ok); text(s, "alias", p.alias);
+    text(s, "error", r.error); text(s, "code", onchip::botRepeaterErrorName(p.error));
+    boolean(s, "queued", r.queued); boolean(s, "transmitted", r.transmitted);
+    boolean(s, "available", p.available); boolean(s, "fresh", p.fresh);
+    integer(s, "age_seconds", p.ageSeconds);
+    integer(s, "permissions", r.repeaterPermissions);
+    if (r.ok && call.io->kind == onchip::BotIoRequest::RepeaterStatus) {
+      const auto &v = p.stats;
+      if (v.batteryMv) number(s, "battery_volts", double(v.batteryMv) / 1000);
+      integer(s, "queued_packets", v.queued); integer(s, "uptime_seconds", v.uptimeSeconds);
+      integer(s, "rx_packets_total", v.received); integer(s, "tx_packets_total", v.sent);
+      integer(s, "tx_airtime_seconds_total", v.txSeconds);
+      integer(s, "error_flags", v.errors);
+      integer(s, "noise_dbm", v.noise); integer(s, "rssi_dbm", v.rssi);
+      number(s, "snr_db", double(v.snrQuarterDb) / 4);
+    }
+    freeze(s); return 1;
+  }
   if ((call.io->kind == onchip::BotIoRequest::Cas || call.io->kind == onchip::BotIoRequest::Transaction) &&
       call.completion) {
     const auto &result = *call.completion;
@@ -957,6 +999,9 @@ onchip::BotIoRequest &prepareIo(lua_State *s, onchip::BotIoRequest::Kind kind) {
       kind != onchip::BotIoRequest::Put && kind != onchip::BotIoRequest::Delete &&
       kind != onchip::BotIoRequest::List && kind != onchip::BotIoRequest::Cas &&
       kind != onchip::BotIoRequest::Transaction &&
+      kind != onchip::BotIoRequest::RepeaterNext &&
+      kind != onchip::BotIoRequest::RepeaterStatus &&
+      kind != onchip::BotIoRequest::RepeaterLogin &&
       !(kind >= onchip::BotIoRequest::TimerSet && kind <= onchip::BotIoRequest::TimerWait))
     luaL_error(s, "Subscriptions have no radio reply, forwarding, reminder or private RPC authority");
   *call.io = {};
@@ -970,6 +1015,12 @@ int sleepFor(lua_State *s) {
   if (ms < 1 || ms > 30000) return luaL_error(s, "sleep requires 1..30000 milliseconds");
   auto &request = prepareIo(s, onchip::BotIoRequest::Sleep);
   request.delayMs = uint32_t(ms);
+  return lua_yieldk(s, 0, 0, finishIo);
+}
+int repeaterNext(lua_State *s) {
+  if (lua_gettop(s)) return luaL_error(s, "repeater.next accepts no arguments");
+  auto &request = prepareIo(s, onchip::BotIoRequest::RepeaterNext);
+  request.delayMs = 1000;
   return lua_yieldk(s, 0, 0, finishIo);
 }
 void boundedString(lua_State *s, int index, char *output, size_t capacity) {
@@ -1054,19 +1105,34 @@ void initializeModules(lua_State *s) {
 }
 int eventIndex(lua_State *s) {
   char name[24]; boundedString(s, 1, name, sizeof(name));
-  const char *names[] = {"startup", "connectivity", "message", "node_status"};
-  for (unsigned i = 0; i < 4; ++i) if (!strcmp(name, names[i])) return int(i);
-  return luaL_error(s, "Event requires startup, connectivity, message or node_status");
+  const char *names[] = {"startup", "connectivity", "message", "node_status", "scheduled"};
+  for (unsigned i = 0; i < 5; ++i) if (!strcmp(name, names[i])) return int(i);
+  return luaL_error(s, "Event requires startup, connectivity, message, node_status or scheduled");
 }
 int subscribeEvent(lua_State *s) {
   auto &call = context(s);
   if (!call.initializing || lua_gettop(s) != 2)
     return luaL_error(s, "events.on requires a declared name and function name during source initialization");
   const unsigned index = unsigned(eventIndex(s));
+  if (index == 4) return luaL_error(s, "Scheduled events require events.every(seconds, function_name)");
   char name[onchip::BotNameLimit + 1]; boundedString(s, 2, name, sizeof(name));
   if (!onchip::botIdentifier(name) || nativeName(name) || call.manifest->events[index][0])
     return luaL_error(s, "Event export invalid/native or event already subscribed");
   strcpy(call.manifest->events[index], name); call.manifest->eventMask |= uint8_t(1u << index);
+  return 0;
+}
+int recurringEvent(lua_State *s) {
+  auto &call = context(s);
+  if (!call.initializing || lua_gettop(s) != 2)
+    return luaL_error(s, "events.every requires seconds and function name during source initialization");
+  const auto seconds = luaL_checkinteger(s, 1);
+  char name[onchip::BotNameLimit + 1]; boundedString(s, 2, name, sizeof(name));
+  if (seconds < 15 || seconds > 86400 || !onchip::botIdentifier(name) ||
+      nativeName(name) || call.manifest->events[4][0])
+    return luaL_error(s, "Recurring event requires 15..86400 seconds, a non-native function and one declaration");
+  strcpy(call.manifest->events[4], name);
+  call.manifest->scheduleSeconds = uint32_t(seconds);
+  call.manifest->eventMask |= 16;
   return 0;
 }
 int unsubscribeEvent(lua_State *s) {
@@ -1092,6 +1158,7 @@ void eventApi(lua_State *s) {
   lua_newtable(s);
   lua_pushcfunction(s, subscribeEvent); lua_setfield(s, -2, "on");
   lua_pushcfunction(s, unsubscribeEvent); lua_setfield(s, -2, "off");
+  lua_pushcfunction(s, recurringEvent); lua_setfield(s, -2, "every");
   freeze(s); lua_setglobal(s, "events");
 }
 void validateEvents(lua_State *s, const Call &call) {
@@ -1109,6 +1176,22 @@ void validateEvents(lua_State *s, const Call &call) {
     lua_pop(s, 1);
     if (!valid) luaL_error(s, "Event export is not a Lua function");
   }
+}
+int repeaterRequest(lua_State *s) {
+  if (lua_gettop(s) != 1) return luaL_error(s, "Repeater request requires one owner-configured alias");
+  char alias[17]; boundedString(s, 1, alias, sizeof(alias));
+  const auto kind = lua_toboolean(s, lua_upvalueindex(1)) ?
+      onchip::BotIoRequest::RepeaterLogin : onchip::BotIoRequest::RepeaterStatus;
+  auto &request = prepareIo(s, kind);
+  strcpy(request.key, alias); request.delayMs = 30000;
+  return lua_yieldk(s, 0, 0, finishIo);
+}
+void repeaterApi(lua_State *s) {
+  lua_newtable(s);
+  lua_pushcfunction(s, repeaterNext); lua_setfield(s, -2, "next");
+  lua_pushboolean(s, false); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "status");
+  lua_pushboolean(s, true); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "login");
+  freeze(s); lua_setglobal(s, "repeater");
 }
 void networkAuthority(lua_State *s, onchip::BotIoRequest &request) {
 #if ONCHIP_BOT_COMPACT_PROFILE
@@ -2175,6 +2258,7 @@ int execute(lua_State *s) {
   nodeApi(s);
   moduleApi(s);
   eventApi(s);
+  repeaterApi(s);
   jsonApi(s);
   networkApi(s);
   if (luaL_loadbufferx(s, call.source, call.size, "registered-commands", "t") != LUA_OK)
@@ -2241,7 +2325,7 @@ int execute(lua_State *s) {
   return 0;
 }
 bool validEvent(const onchip::BotEvent &event) {
-  if (event.kind > onchip::BotEvent::NodeStatus ||
+  if (event.kind > onchip::BotEvent::Scheduled ||
       !memchr(event.message, 0, sizeof(event.message)) ||
       !memchr(event.name, 0, sizeof(event.name)) ||
       !memchr(event.arguments, 0, sizeof(event.arguments)) ||
@@ -2336,6 +2420,12 @@ extern "C" void onchip_lua_parser_step(lua_State *s) {
 namespace onchip {
 bool BotVm::validate(const char *source, size_t size, BotVmStats &stats,
                      char *error, size_t errorSize, BotVmLimits limits, BotManifest *manifest) {
+  if (source && size >= 21 && !memcmp(source, "--@meshcore-sources/1\n", 21)) {
+    BotSession vm;
+    const bool ok = vm.load(source, size, 1, stats, error, errorSize, limits);
+    if (manifest) { if (ok) *manifest = vm.manifest(); else manifest->clear(); }
+    return ok;
+  }
 #if !ONCHIP_BOT_WASM
   if (botSourceIsWasm(source, size)) {
     stats = {}; if (manifest) manifest->clear();
@@ -2358,6 +2448,18 @@ bool BotVm::validate(const char *source, size_t size, BotVmStats &stats,
 bool BotVm::invoke(const char *source, size_t size, const BotEvent &event,
                    BotAction &action, BotVmStats &stats, char *error,
                    size_t errorSize, BotVmLimits limits, const BotManifest *installed) {
+  if (source && size >= 21 && !memcmp(source, "--@meshcore-sources/1\n", 21)) {
+    BotSession vm;
+    if (!vm.load(source, size, 1, stats, error, errorSize, limits) ||
+        !vm.start(1, event, error, errorSize)) return false;
+    BotSession::Result result;
+    if (!vm.poll(result)) {
+      snprintf(error, errorSize, "Async source invocation requires retained BotSession"); return false;
+    }
+    action = result.action;
+    if (!result.ok) snprintf(error, errorSize, "%s", result.error);
+    return result.ok;
+  }
 #if !ONCHIP_BOT_WASM
   if (botSourceIsWasm(source, size)) {
     action = {}; stats = {};
@@ -2410,6 +2512,8 @@ struct BotSession::Impl {
 #endif
   Budget heap{};
   Call loader{};
+  BotSourcePart sourceParts[BotSourcePartLimit]{};
+  char sourceError[128]{};
   lua_State *state = nullptr;
   int environment = LUA_NOREF;
   uint32_t generation = 0;
@@ -2443,6 +2547,7 @@ struct BotSession::Impl {
     nodeApi(s);
     moduleApi(s);
     eventApi(s);
+    repeaterApi(s);
     jsonApi(s);
     networkApi(s);
     lua_newtable(s);
@@ -2488,6 +2593,7 @@ struct BotSession::Impl {
     lua_pushboolean(s, false); lua_setfield(s, -2, "__metatable");
     lua_setmetatable(s, -2);
     self.environment = luaL_ref(s, LUA_REGISTRYINDEX);
+    lua_newtable(s); call.sourceOwnersReference = luaL_ref(s, LUA_REGISTRYINDEX);
     const char *source = call.source;
     const size_t size = call.size;
     const bool bundled = bundledSource(source, size);
@@ -2499,14 +2605,30 @@ struct BotSession::Impl {
       call.manifest->clear();
 #endif
       call.bundled = phase == 0;
-      self.heap.transition(Budget::Load);
-      if (luaL_loadbufferx(s, phase ? source : BotDefaultSource,
-                          phase ? size : strlen(BotDefaultSource), "bot-commands", "t") != LUA_OK)
-        return lua_error(s);
-      lua_rawgeti(s, LUA_REGISTRYINDEX, self.environment);
-      lua_setupvalue(s, -2, 1);
-      self.heap.transition(Budget::Init);
-      lua_call(s, 0, 0);
+      auto &parts = self.sourceParts;
+      for (auto &part : parts) part = {};
+      unsigned count = 1;
+      auto &error = self.sourceError;
+      error[0] = 0;
+      if (phase) {
+        if (!splitBotSources(source, size, parts, count, error, sizeof(error)))
+          return luaL_error(s, "%s", error);
+      } else {
+        strcpy(parts[0].name, "bundled");
+        parts[0].text = BotDefaultSource; parts[0].size = strlen(BotDefaultSource);
+      }
+      for (unsigned i = 0; i < count; ++i) {
+        if (phase && (parts[i].builtin || bundledSource(parts[i].text, parts[i].size))) continue;
+        call.sourcePart = phase ? i + 1 : 0;
+        self.heap.transition(Budget::Load);
+        const char *chunk = !phase || parts[i].text == source ? "bot-commands" : parts[i].name;
+        if (luaL_loadbufferx(s, parts[i].text, parts[i].size, chunk, "t") != LUA_OK)
+          return lua_error(s);
+        lua_rawgeti(s, LUA_REGISTRYINDEX, self.environment);
+        lua_setupvalue(s, -2, 1);
+        self.heap.transition(Budget::Init);
+        lua_call(s, 0, 0);
+      }
       if (!phase) for (const char *extra : {BotUtilitySource, BotNetworkSource, BotBoardSource, BotDiagnosticSource}) {
 #if ONCHIP_BOT_COMPACT_PROFILE
         lua_gc(s, LUA_GCCOLLECT);
@@ -2523,7 +2645,9 @@ struct BotSession::Impl {
       validateEvents(s, call);
       validateNetworkApi(s);
       inspectDeclarations(s, call);
-      if (!call.manifest->count && !call.manifest->eventMask) return luaL_error(s, "source must declare exported command functions or events");
+      const bool builtinOnly = phase && count == 1 && parts[0].builtin;
+      if (!call.manifest->count && !call.manifest->eventMask && !builtinOnly)
+        return luaL_error(s, "source must declare exported command functions or events");
       for (unsigned i = 0; i < call.manifest->count; ++i) {
         lua_getglobal(s, call.manifest->commands[i].function);
         const bool valid = lua_isfunction(s, -1) && !lua_iscfunction(s, -1);

@@ -804,7 +804,27 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     return;
   }
   if (!strcmp(input, "api events")) {
-    respond("Events startup,connectivity,message,node_status grant=bot-events default=off active=1 rate=1/s reply=none private=denied scope=bot,channel");
+    respond(wasmRuntime_ ?
+        "Events startup,connectivity,message,node_status grant=bot-events default=off recurring=unsupported" :
+        "Events startup,connectivity,message,node_status; every(seconds,function) recurring=16 min=15s grant=bot-events restart=source skip-missed=1");
+    return;
+  }
+  if (!strcmp(input, "api sources")) {
+    if (wasmRuntime_) { respond("Error: Named Lua sources require the Lua runtime"); return; }
+    respond("Sources format=meshcore-sources/1 count=8 envelope=4096 namespace=shared collisions=reject commit-base=sha256 atomic=1");
+    return;
+  }
+  if (!strcmp(input, "api bundled")) {
+    if (wasmRuntime_) { respond("Error: Bundled commands require Lua"); return; }
+    uint8_t hash[32]{};
+    mesh::Utils::sha256(hash, sizeof(hash), reinterpret_cast<const uint8_t *>(BotDefaultSource), strlen(BotDefaultSource));
+    snprintf(reply, capacity, "SHA256 ");
+    for (unsigned i = 0; i < 32; ++i) snprintf(reply + 7 + 2 * i, capacity - 7 - 2 * i, "%02x", hash[i]);
+    return;
+  }
+  if (!strcmp(input, "api repeaters")) {
+    if (wasmRuntime_) { respond("Error: Repeater monitoring requires Lua"); return; }
+    snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s global-min=30s flood-min=3600s", BotRepeaterLimit);
     return;
   }
   if (!strcmp(input, "api mesh")) {
@@ -1020,8 +1040,21 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   uint8_t candidate = Bundled;
   removing_ = false;
   if (!strncmp(input, "commit ", 7)) {
-    if (!upload_.size || strcmp(input + 7, upload_.id) || upload_.received != upload_.size) {
+    char id[17]{}, base[65]{};
+    const int fields = sscanf(input + 7, "%16s %64s %c", id, base, &extra);
+    if ((fields != 1 && fields != 2) || !upload_.size ||
+        strcmp(id, upload_.id) || upload_.received != upload_.size) {
       respond("Error: upload incomplete or wrong ID"); return;
+    }
+    if (fields == 2) {
+      uint8_t expected[32]{}, actual[32]{};
+      if (!decode(base, expected, 32)) { respond("Error: source commit base requires SHA256"); return; }
+      if (deployed_.active == Bundled)
+        mesh::Utils::sha256(actual, sizeof(actual), reinterpret_cast<const uint8_t *>(BotDefaultSource), bundledSize());
+      else memcpy(actual, deployed_.hashes[deployed_.active], sizeof(actual));
+      if (memcmp(expected, actual, sizeof(actual))) {
+        respond("Error: active Lua sources changed; download and reconcile before installing"); return;
+      }
     }
     for (candidate = 0; candidate < 3; ++candidate)
       if (candidate != deployed_.active && candidate != deployed_.previous) break;

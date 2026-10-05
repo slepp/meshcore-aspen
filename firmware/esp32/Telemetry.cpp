@@ -127,6 +127,28 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
   out.measurement("meshcore_publisher", device);
   out.append(" attempts_total=%" PRIu64 "i,successes_total=%" PRIu64 "i,failures_total=%" PRIu64
              "i,dropped_total=%" PRIu64 "i\n", status.attempts, status.successes, status.failures, status.dropped);
+  for (const auto &peer : s.repeaters) if (peer.configured) {
+    out.measurement("meshcore_repeater", device);
+    out.append(",peer=");
+    out.tag(peer.alias, 16);
+    out.append(" available=%ui,fresh=%ui,error_code=%ui,attempts_total=%ui,failures_total=%ui",
+               unsigned(peer.available), unsigned(peer.fresh), unsigned(peer.error), peer.attempts, peer.failures);
+    if (peer.available) out.append(",sample_age_seconds=%ui", peer.ageSeconds);
+    if (peer.available && peer.fresh) {
+      const auto &v = peer.stats;
+      if (v.batteryMv) out.append(",battery_volts=%.3f", double(v.batteryMv) / 1000);
+      out.append(",queued_packets=%ui,uptime_seconds=%ui,rx_packets_total=%ui,tx_packets_total=%ui,"
+                 "tx_airtime_seconds_total=%ui,rx_airtime_seconds_total=%ui,"
+                 "tx_flood_total=%ui,tx_direct_total=%ui,rx_flood_total=%ui,rx_direct_total=%ui,"
+                 "error_flags=%ui,direct_duplicates_total=%ui,flood_duplicates_total=%ui,rx_errors_total=%ui,"
+                 "noise_dbm=%di,last_rssi_dbm=%di,last_snr_db=%.2f",
+                 unsigned(v.queued), v.uptimeSeconds, v.received, v.sent, v.txSeconds, v.rxSeconds,
+                 v.sentFlood, v.sentDirect, v.receivedFlood, v.receivedDirect, unsigned(v.errors),
+                 unsigned(v.directDuplicates), unsigned(v.floodDuplicates), v.receiveErrors,
+                 int(v.noise), int(v.rssi), double(v.snrQuarterDb) / 4);
+    }
+    out.append("\n");
+  }
   return out.finish();
 }
 void TelemetryPublisher::configure(const TelemetryConfig &config, uint64_t now) {

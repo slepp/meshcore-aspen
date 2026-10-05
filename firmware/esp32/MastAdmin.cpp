@@ -1004,6 +1004,8 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     commandBotService().diagnosticStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot discovery") || !strncmp(command, "bot discovery ", 14)) {
     commandBotService().discoveryCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
+  } else if (!strcmp(command, "bot repeaters") || !strncmp(command, "bot repeaters ", 14)) {
+    commandBotService().repeaterCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot help")) {
     strcpy(reply.text, "bot status|stats|log|diagnostics|admission|policy|mesh|discovery|name|destination|channel-wait|shared|home|reminders|events|cancel; role help; source status; reboot");
   } else if (!strcmp(command, "bot cancel")) {
@@ -1114,8 +1116,8 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
              stats.eventsCompleted, stats.eventsFailed);
   } else if (!strncmp(command, "bot events ", 11)) {
     uint32_t mask = 0;
-    if (!number(command + 11, mask) || mask > 15) {
-      strcpy(reply.text, "Error: bot events MASK 0..15; 1 startup, 2 connectivity, 4 message, 8 node_status"); return;
+    if (!number(command + 11, mask) || mask > 31) {
+      strcpy(reply.text, "Error: bot events MASK 0..31; 1 startup, 2 connectivity, 4 message, 8 node_status, 16 recurring"); return;
     }
     strcpy(reply.text, commandBotService().setEventAccess(uint8_t(mask)) ?
            "Saved event grants; inspect bot events for applied subscriptions" :

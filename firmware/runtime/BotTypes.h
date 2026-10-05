@@ -29,6 +29,7 @@
 #include <MeshCore.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "RepeaterMetrics.h"
 
 namespace onchip {
 constexpr size_t BotSourceLimit = 4096;
@@ -63,6 +64,20 @@ constexpr unsigned BotTransactionLimit = 2;
 constexpr unsigned BotTransactionLimit = 4;
 #endif
 constexpr unsigned BotReceiveLimit = 4, BotReceiveDedupLimit = 16;
+constexpr unsigned BotRepeaterLimit = ONCHIP_BOT_COMPACT_PROFILE ? 4 : 12;
+constexpr unsigned BotSourcePartLimit = 8;
+
+struct BotSourcePart {
+  char name[BotNameLimit + 1]{};
+  const char *text = nullptr;
+  size_t size = 0;
+  bool builtin = false;
+};
+bool splitBotSources(const char *source, size_t size, BotSourcePart *parts,
+                     unsigned &count, char *error, size_t capacity);
+
+bool decodeBotRepeaterStats(const uint8_t *bytes, size_t size, BotRepeaterStats &stats);
+const char *botRepeaterErrorName(BotRepeaterError error);
 
 struct BotPath {
   uint8_t width = 1, count = 0;
@@ -94,7 +109,7 @@ struct BotAirSnapshot {
 };
 
 struct BotEvent {
-  enum Kind : uint8_t { Command, Startup, Connectivity, Message, NodeStatus } kind = Command;
+  enum Kind : uint8_t { Command, Startup, Connectivity, Message, NodeStatus, Scheduled } kind = Command;
   uint32_t eventEpoch = 0;
   char message[BotTextLimit + 1]{};
   char name[BotNameLimit + 1]{}, arguments[BotArgumentsLimit + 1]{};
@@ -136,7 +151,8 @@ struct BotIoRequest {
   enum Kind : uint8_t { Sleep, Get, Put, Delete, Send, Wait, Trace, Advert, Rpc,
                         TimerSet, TimerGet, TimerCancel, TimerWait, Forward,
                         ReminderSet, ReminderList, ReminderCancel, List, Cas, Transaction,
-                        Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility } kind = Sleep;
+                        Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility,
+                        RepeaterNext, RepeaterStatus, RepeaterLogin } kind = Sleep;
   enum Scope : uint8_t { Caller, Conversation, Bot, Channel } scope = Caller;
   BotIoToken token{};
   uint8_t principal[32]{};
@@ -211,6 +227,8 @@ struct BotIoResult {
   BotPacketInfo packet{};
   BotTraceInfo trace{};
   BotKeyList keys{};
+  BotRepeaterSnapshot repeater{};
+  uint8_t repeaterPermissions = 0;
 };
 void resetBotIoResult(BotIoResult &result);
 

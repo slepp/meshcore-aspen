@@ -108,6 +108,29 @@ static void encoding() {
   assert(strstr(body, "last_vm_invoke_seconds=0.012000,last_vm_cleanup_seconds=0.001000,"));
   printf("PASS line protocol, sensor absence, escaping, whitelist, full-role body %zu/%zu bytes\n",
          strlen(body), TelemetryBodyLimit);
+  for (auto &peer : s.repeaters) {
+    peer.configured = peer.available = peer.fresh = true;
+    strcpy(peer.alias, "abcdefghijklmnop");
+    peer.ageSeconds = peer.attempts = peer.failures = UINT32_MAX;
+    auto &v = peer.stats;
+    v.batteryMv = v.queued = v.errors = v.directDuplicates = v.floodDuplicates = UINT16_MAX;
+    v.noise = v.rssi = v.snrQuarterDb = INT16_MIN;
+    v.received = v.sent = v.txSeconds = v.uptimeSeconds = v.sentFlood = v.sentDirect =
+        v.receivedFlood = v.receivedDirect = v.rxSeconds = v.receiveErrors = UINT32_MAX;
+  }
+  assert(encodeTelemetry(s, "esp32-aabbccddeeff", "1234567890123456789012345678901", {}, body, sizeof(body)));
+  assert(strstr(body, "meshcore_repeater,device=esp32-aabbccddeeff,peer=abcdefghijklmnop"));
+  assert(strstr(body, "battery_volts=65.535") && strstr(body, "error_flags=65535i"));
+  assert(!strstr(body, "battery_percent") && !strstr(body, "public_key"));
+  printf("PASS worst-case local and three remote samples %zu/%zu bytes\n", strlen(body), TelemetryBodyLimit);
+  s = sample();
+  auto &peer = s.repeaters[0];
+  peer.configured = peer.available = true; peer.fresh = false;
+  strcpy(peer.alias, "offline"); peer.ageSeconds = 700;
+  peer.error = BotRepeaterError::Timeout; peer.stats.batteryMv = 3811;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+  assert(strstr(body, "available=1i,fresh=0i,error_code=7i"));
+  assert(strstr(body, "sample_age_seconds=700i") && !strstr(body, "battery_volts"));
 }
 static void settings() {
   identity_test::durable.clear();

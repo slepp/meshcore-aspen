@@ -1320,6 +1320,94 @@ static void packageModules() {
   assert(vm.start(1, event("!late"), error, sizeof(error)) && vm.poll(result) && !result.ok);
   puts("PASS package modules: declared native resolution/cache, shared environment, nested dependencies/yields, reload, cycles, binary/path/native denial and eager bounded side-effect-free initialization");
 }
+static void namedSourcesAndRepeaterVm() {
+  const auto set = [](const std::string &a, const std::string &b) {
+    return std::string("--@meshcore-sources/1\n--@source main ") + std::to_string(a.size()) +
+        "\n" + a + "\n--@source monitor " + std::to_string(b.size()) + "\n" + b + "\n";
+  };
+  const std::string main =
+      "function shared_value() return 'shared' end function custom() return shared_value() end "
+      "command('custom','','Shared procedure')";
+  const std::string monitor =
+      "function fleet_poll() local peer=repeater.next() if peer then "
+      "local r=repeater.status(peer) if r.ok and r.battery_volts~=3.811 then error('voltage') end "
+      "if not r.ok and r.code~='timeout' then error('failure') end end end "
+      "events.every(15,'fleet_poll')";
+  BotSession vm; BotVmStats stats; char error[128]{};
+  auto source = set(main, monitor);
+  assert(vm.load(source.data(), source.size(), 17, stats, error, sizeof(error)));
+  assert(vm.manifest().scheduleSeconds == 15 && vm.subscriptions() == 16);
+  BotSession::Result result;
+  assert(vm.start(1, event("!custom"), error, sizeof(error)) && vm.poll(result) &&
+         result.ok && !strcmp(result.action.text, "shared"));
+  std::atomic<uint32_t> epoch{7}; vm.setEventEpoch(&epoch);
+  BotEvent scheduled; scheduled.kind = BotEvent::Scheduled; scheduled.eventEpoch = 7;
+  BotIoRequest request;
+  for (bool success : {true, false}) {
+    assert(vm.start(2, scheduled, error, sizeof(error)) && vm.nextIo(request) &&
+           request.kind == BotIoRequest::RepeaterNext && request.eventEpoch == 7);
+    BotIoResult done; done.token = request.token; done.ok = done.found = true;
+    strcpy(done.value, "pilot");
+    assert(vm.complete(done) && vm.nextIo(request) &&
+           request.kind == BotIoRequest::RepeaterStatus && !strcmp(request.key, "pilot"));
+    done = {}; done.token = request.token; done.ok = success;
+    done.repeater.available = done.repeater.fresh = success; done.repeater.stats.batteryMv = 3811;
+    done.repeater.error = success ? BotRepeaterError::None : BotRepeaterError::Timeout;
+    strcpy(done.error, success ? "" : "Repeater response timed out");
+    assert(vm.complete(done) && vm.poll(result) && result.ok && result.action.kind == BotAction::None);
+  }
+  for (const std::string &other : {
+         std::string("function shared_value() return 'collision' end command('other','','Collision','shared_value')"),
+         std::string("function other() end command('custom','','Duplicate','other')"),
+         std::string("function other() end events.every(30,'other') events.every(15,'other')")}) {
+    source = set(main, other);
+    assert(!vm.load(source.data(), source.size(), 18, stats, error, sizeof(error)));
+    assert(strstr(error, "collision") || strstr(error, "Duplicate") || strstr(error, "duplicate") ||
+           strstr(error, "one declaration"));
+  }
+  source = set(BotDefaultSource,
+      "function fleet_poll() local p=repeater.next() if p then repeater.status(p) end end events.every(15,'fleet_poll')");
+  assert(source.size() <= BotSourceLimit);
+  assert(vm.load(source.data(), source.size(), 19, stats, error, sizeof(error)));
+  assert(vm.start(3, event("!ping"), error, sizeof(error)) && vm.poll(result) &&
+         result.ok && !strcmp(result.action.text, "Pong"));
+  source = std::string("--@meshcore-sources/1\n--@builtin main\n--@source monitor ") +
+      std::to_string(monitor.size()) + "\n" + monitor + "\n";
+  assert(vm.load(source.data(), source.size(), 20, stats, error, sizeof(error)));
+  assert(vm.manifest().scheduleSeconds == 15 && vm.subscriptions() == 16);
+  assert(vm.start(4, event("!ping"), error, sizeof(error)) && vm.poll(result) &&
+         result.ok && !strcmp(result.action.text, "Pong"));
+  source = "--@meshcore-sources/1\n--@builtin main\n";
+  assert(vm.load(source.data(), source.size(), 21, stats, error, sizeof(error)));
+  assert(!vm.subscriptions() && !vm.manifest().scheduleSeconds);
+  assert(vm.start(5, event("!ping"), error, sizeof(error)) && vm.poll(result) &&
+         result.ok && !strcmp(result.action.text, "Pong"));
+  for (const char *bad : {"events.every(0,'work')", "events.every(86401,'work')",
+                         "events.every(15,'missing')", "events.every(15,'ping')",
+                         "events.on('scheduled','work')"}) {
+    const std::string text = std::string("function work() end ") + bad;
+    assert(!vm.load(text.data(), text.size(), 20, stats, error, sizeof(error)));
+  }
+  source = "function stop() events.off('scheduled') return 'stopped' end "
+           "function poll() end events.every(15,'poll')";
+  assert(vm.load(source.data(), source.size(), 22, stats, error, sizeof(error)));
+  assert(vm.start(6, event("!stop"), error, sizeof(error)) && vm.poll(result) &&
+         result.ok && !strcmp(result.action.text, "stopped") && !vm.subscriptions());
+  BotSourcePart parts[BotSourcePartLimit]{}; unsigned count = 0;
+  for (const char *bad : {"--@meshcore-sources/2\n", "--@meshcore-sources/1\n",
+                         "--@meshcore-sources/1\n--@source a 9\nshort\n",
+                         "--@meshcore-sources/1\n--@source a 1\nx\n--@source a 1\ny\n"}) {
+    assert(!splitBotSources(bad, strlen(bad), parts, count, error, sizeof(error)));
+  }
+  uint8_t bytes[56]{};
+  bytes[0] = 0xe3; bytes[1] = 0x0e; bytes[4] = 0x9c; bytes[5] = 0xff;
+  bytes[42] = 0xf9; bytes[43] = 0xff; bytes[52] = 42;
+  BotRepeaterStats decoded;
+  assert(decodeBotRepeaterStats(bytes, sizeof(bytes), decoded) && decoded.batteryMv == 3811 &&
+         decoded.noise == -100 && decoded.snrQuarterDb == -7 && decoded.receiveErrors == 42);
+  assert(!decodeBotRepeaterStats(bytes, 48, decoded) && !decoded.batteryMv);
+  puts("PASS named Lua sources: shared procedures, collision rejection, preserved bundled commands, recurring declarations, typed repeater success/failure and native status decoding");
+}
 static void subscriptionVm() {
   BotSession vm; BotVmStats stats; char error[128]{};
   const char *source =
@@ -1607,6 +1695,7 @@ static void networkVm() {
 #endif
 #ifndef ONCHIP_BOT_VM_LIBRARY_TEST
 int main() {
+  namedSourcesAndRepeaterVm();
   commandOverrides();
   commandDiscoveryAndMeshGrants();
   boundedJson();

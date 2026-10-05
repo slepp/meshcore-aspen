@@ -2071,6 +2071,30 @@ static void native_source_api_capacities() {
   const std::string overrides = f.administer("source api overrides");
   assert(overrides == "Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=8");
   assert(overrides.size() < 146);
+  for (const char *query : {"source api sources", "source api repeaters", "source api bundled",
+                           "source api events"}) {
+    const auto response = f.administer(query);
+    assert(response.find("Error:") != 0 && response.size() < 146);
+  }
+  const auto base = f.administer("source hash");
+  const char *candidate = "function fresh() return 'new' end";
+  uint8_t digest[32]{};
+  char hash[65]{}, upload[160]{};
+  mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(candidate), strlen(candidate));
+  for (unsigned i = 0; i < 32; ++i) snprintf(hash + i * 2, 3, "%02x", digest[i]);
+  snprintf(upload, sizeof(upload), "source begin %.16s %u %s", hash, unsigned(strlen(candidate)), hash);
+  assert(f.administer(upload).find("ACK ") == 0);
+  std::string encoded;
+  for (const char *p = candidate; *p; ++p) {
+    char byte[3]; snprintf(byte, sizeof(byte), "%02x", unsigned(uint8_t(*p)));
+    encoded += byte;
+  }
+  snprintf(upload, sizeof(upload), "source chunk %.16s 0 %s", hash, encoded.c_str());
+  assert(f.administer(upload).find("ACK ") == 0);
+  snprintf(upload, sizeof(upload), "source commit %.16s %064u", hash, 0u);
+  assert(f.administer(upload).find("Error: active Lua sources changed") == 0 &&
+         f.administer("source hash") == base);
+  assert(f.administer("source cancel") == "Upload cancelled; active source retained");
   printf("PASS source API capacities: jobs=%u transaction=%u, native reply lengths=%zu/%zu\n",
          BotJobLimit, BotTransactionLimit, api.size(), atomic.size());
 }
@@ -2207,6 +2231,163 @@ static void native_board() {
   puts("PASS native board: verified channel-key/nickname sharing, distinct secrets, private notes/DM denial, source/reboot, widths1/2/3, dedup/zero cooldown, malformed crypto and failed durable grant revoke");
 }
 
+static void native_repeater_monitor() {
+  assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy({}) &&
+         saveBotRepeaterPolicy({}));
+  Fixture f; f.start();
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  uint32_t earliest = 0, latest = 0;
+  assert(trustedNetworkTime(earliest, latest));
+  Peer peer, stranger;
+  char key[65]{}, command[160]{}, reply[192]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", peer.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  f.bot.repeaterCommand("on", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  const char *source =
+      "function fleet_poll() local p=repeater.next() if p then repeater.status(p) end end "
+      "events.every(15,'fleet_poll')";
+  BotWorker::Result staged;
+  assert(f.bot.stageSource(source, strlen(source))); f.step();
+  assert(f.bot.pollSourceResult(staged) && staged.ok);
+  assert(f.bot.activateStaged()); f.step();
+  assert(f.bot.pollSourceResult(staged) && staged.ok);
+  assert(f.bot.setEventAccess(16)); f.step();
+  f.radio.sent.clear(); timeMs += 16000; f.step();
+  uint32_t tag = 0;
+  unsigned requests = 0;
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet packet;
+    assert(packet.readFrom(raw.data(), raw.size()));
+    if (packet.getPayloadType() != PAYLOAD_TYPE_REQ) continue;
+    assert(packet.isRouteDirect() && packet.getPathHashSize() == 3);
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    const int size = mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2);
+    assert(size == 16 && plain[4] == 1);
+    tag = queued_tx::get32(plain); ++requests;
+  }
+  assert(requests == 1 && tag);
+  const auto response = [&](Peer &sender, uint32_t echoed, bool path, bool malformed = false) {
+    uint8_t secret[32]{}, plain[64]{};
+    sender.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    queued_tx::put32(plain, echoed);
+    plain[4] = 0xe3; plain[5] = 0x0e;
+    queued_tx::put32(plain + 24, 12345);
+    if (malformed) plain[60] = 1;
+    mesh::Packet *packet = path ?
+        sender.createPathReturn(mesh::Identity(f.bot.publicKey()), secret, plain, 0x80,
+                                PAYLOAD_TYPE_RESPONSE, plain, malformed ? 61 : 60) :
+        sender.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret,
+                              plain, malformed ? 61 : 60);
+    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    return sender.wire(packet);
+  };
+  BotRepeaterSnapshot snapshots[BotRepeaterLimit]{};
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && !snapshots[0].available);
+  f.deliver(response(stranger, tag, false)); f.step();
+  f.deliver(response(peer, tag - 1, false)); f.step();
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && !snapshots[0].available);
+  f.deliver(response(peer, tag, true)); f.step();
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && snapshots[0].fresh &&
+         snapshots[0].stats.batteryMv == 3811 && snapshots[0].stats.uptimeSeconds == 12345);
+  assert(f.bot.counters().eventsCompleted && !f.bot.jobsInUse());
+  const auto before = f.radio.sent.size();
+  timeMs += 16000; f.step();
+  assert(f.radio.sent.size() == before);
+  timeMs += 310000; receiveNetworkTime(1800000400); f.step();
+  assert(f.bot.jobsInUse());
+  timeMs += 31000; f.step();
+  assert(!f.bot.jobsInUse());
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].available && !snapshots[0].fresh &&
+         snapshots[0].error == BotRepeaterError::Timeout && snapshots[0].failures == 1);
+  const auto attempts = snapshots[0].attempts;
+  timeMs += 31000; f.step();
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && snapshots[0].attempts == attempts);
+  timeMs += 610000; receiveNetworkTime(1800001000); f.step();
+  assert(f.bot.jobsInUse());
+  const auto activeAttempts = snapshots[0].attempts;
+  const auto latestTag = [&]() {
+    uint32_t latestTag = 0;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet packet;
+      assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() != PAYLOAD_TYPE_REQ) continue;
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2,
+                                        packet.payload_len - 2) == 16);
+      latestTag = queued_tx::get32(plain);
+    }
+    assert(latestTag);
+    return latestTag;
+  };
+  const auto revokedTag = latestTag();
+  assert(f.bot.setEventAccess(0)); f.step();
+  f.deliver(response(peer, revokedTag, false)); f.step();
+  assert(!f.bot.jobsInUse());
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         !snapshots[0].fresh && snapshots[0].attempts > activeAttempts);
+  assert(f.bot.setEventAccess(16)); f.step();
+  timeMs += 1210000; receiveNetworkTime(1800002600); f.step();
+  assert(f.bot.jobsInUse());
+  f.deliver(response(peer, latestTag(), false, true)); f.step();
+  assert(!f.bot.jobsInUse() && f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].error == BotRepeaterError::Malformed && !snapshots[0].fresh);
+  snprintf(command, sizeof(command), "add pilot %s 910525000 3:", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  assert(f.bot.setEventAccess(16)); f.step();
+  const auto beforeFrequency = f.radio.sent.size();
+  timeMs += 310000; f.step();
+  assert(f.radio.sent.size() == beforeFrequency && !f.bot.jobsInUse());
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].error == BotRepeaterError::Frequency && !snapshots[0].fresh);
+  f.bot.repeaterCommand("off", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  assert(f.bot.setEventAccess(0) && saveBotRepeaterPolicy({}));
+  puts("PASS native repeater monitor: autonomous scheduled RF, owner policy, full-key/tag correlation, PATH response, battery/status cache, no burst/retry and timeout backoff");
+
+  f.bot.stop();
+  uint32_t floodUtc = 0;
+  for (unsigned boot = 0; boot < 2; ++boot) {
+    assert(saveBotEventAccess(0));
+    Fixture restart; restart.start();
+    beginNetworkClock(true); receiveNetworkTime(1800003000 + boot * 100); restart.step();
+    if (!boot) {
+      snprintf(command, sizeof(command), "add pilot %s 912525000", key);
+      restart.bot.repeaterCommand(command, reply, sizeof(reply));
+      assert(!strncmp(reply, "Saved/applied", 13));
+      restart.bot.repeaterCommand("on", reply, sizeof(reply));
+      assert(!strncmp(reply, "Saved/applied", 13));
+    }
+    assert(restart.bot.stageSource(source, strlen(source))); restart.step();
+    assert(restart.bot.pollSourceResult(staged) && staged.ok);
+    assert(restart.bot.activateStaged()); restart.step();
+    assert(restart.bot.pollSourceResult(staged) && staged.ok);
+    assert(restart.bot.setEventAccess(16)); restart.step();
+    restart.radio.sent.clear(); timeMs += 16000; restart.step();
+    unsigned floods = 0;
+    for (const auto &raw : restart.radio.sent) {
+      mesh::Packet packet;
+      assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() == PAYLOAD_TYPE_REQ) {
+        assert(packet.isRouteFlood()); ++floods;
+      }
+    }
+    assert(floods == (boot ? 0u : 1u));
+    BotRepeaterPolicy persisted;
+    assert(loadBotRepeaterPolicy(persisted) && persisted.targets[0].lastFloodUtc);
+    if (!boot) floodUtc = persisted.targets[0].lastFloodUtc;
+    else assert(persisted.targets[0].lastFloodUtc == floodUtc && !restart.bot.jobsInUse());
+    assert(restart.bot.setEventAccess(0)); restart.step();
+  }
+  assert(saveBotRepeaterPolicy({}));
+  puts("PASS native repeater flood: first unknown-route request and durable hourly cooldown across restart without replay");
+}
 static void event_collector_capacity() {
   for (unsigned mode = 0; mode < 3; ++mode) {
     assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy({}));
@@ -3685,6 +3866,10 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {
+    native_repeater_monitor();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--adaptive-test")) {
     native_adaptive_admission();
     return 0;
@@ -3865,6 +4050,10 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {
+    native_repeater_monitor();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--adaptive-test")) {
     native_adaptive_admission();
     return 0;

@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "BotSettings.h"
+#include "BotJournal.h"
+#include "RoleStorage.h"
 #include "Config.h"
 #include <Arduino.h>
+#include <SPIFFS.h>
+#include <Utils.h>
 #include <nvs.h>
 #include <string.h>
+#include <memory>
 #ifndef ONCHIP_COMMAND_BOT_DEFAULT_ENABLED
 #define ONCHIP_COMMAND_BOT_DEFAULT_ENABLED 0
 #endif
@@ -88,12 +93,12 @@ bool loadBotEventAccess(uint8_t &mask) {
   uint8_t record[5]{}; size_t size = sizeof(record);
   result = nvs_get_blob(handle, "bot-events", record, &size); nvs_close(handle);
   if (result == ESP_ERR_NVS_NOT_FOUND) return true;
-  if (result != ESP_OK || size != sizeof(record) || memcmp(record, "BEG\1", 4) || record[4] > 15)
+  if (result != ESP_OK || size != sizeof(record) || memcmp(record, "BEG\1", 4) || record[4] > 31)
     return failed("event grant read/shape", ESP_ERR_INVALID_STATE);
   mask = record[4]; return true;
 }
 bool saveBotEventAccess(uint8_t mask) {
-  if (mask > 15) return failed("event grant mask", ESP_ERR_INVALID_ARG);
+  if (mask > 31) return failed("event grant mask", ESP_ERR_INVALID_ARG);
   nvs_handle_t handle;
   auto result = nvs_open("mc-onchip", NVS_READWRITE, &handle);
   if (result != ESP_OK) return failed("event grant open", result);
@@ -111,6 +116,134 @@ bool saveBotReminderAccess(bool enabled) {
   bool actual = false;
   return (loadBotReminderAccess(actual) && actual == enabled) ||
          failed("reminder grant readback", ESP_ERR_INVALID_STATE);
+}
+bool BotRepeaterPolicy::valid() const {
+  if (intervalSeconds < 60 || intervalSeconds > 86400) return false;
+  for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
+    const auto &target = targets[i];
+    if (!target.used) continue;
+    const size_t length = strnlen(target.alias, sizeof(target.alias));
+    if (!length || length == sizeof(target.alias) ||
+        (target.path.known && !target.path.valid()) ||
+        (target.frequencyHz && (target.frequencyHz < 150000000 || target.frequencyHz > 2500000000u)))
+      return false;
+    for (size_t j = 0; j < length; ++j)
+      if (!((target.alias[j] >= 'a' && target.alias[j] <= 'z') ||
+            (j && target.alias[j] >= '0' && target.alias[j] <= '9') ||
+            (j && (target.alias[j] == '-' || target.alias[j] == '_')))) return false;
+    bool key = false;
+    for (auto byte : target.key) key = key || byte;
+    if (!key) return false;
+    for (unsigned j = 0; j < i; ++j)
+      if (targets[j].used && (!strcmp(targets[j].alias, target.alias) ||
+                             !memcmp(targets[j].key, target.key, 32))) return false;
+  }
+  return true;
+}
+namespace {
+constexpr const char *RepeaterSlots[] = {"/repeaters-a.bin", "/repeaters-b.bin"};
+struct RepeaterReference {
+  uint8_t magic[4]{'B', 'R', 'F', 1}, slot = 0, digest[32]{};
+  bool valid() const { return !memcmp(magic, "BRF\1", 4) && slot < 2; }
+};
+struct RepeaterRecord {
+  char magic[4]{'B', 'R', 'M', 1};
+  BotRepeaterPolicy policy;
+};
+struct RepeaterWorkspace { RepeaterRecord record, check; };
+struct RepeaterWorkspaceDeleter {
+  void operator()(RepeaterWorkspace *workspace) const { releaseRoleStorage(workspace); }
+};
+using RepeaterStorage = std::unique_ptr<RepeaterWorkspace, RepeaterWorkspaceDeleter>;
+static_assert(sizeof(RepeaterReference) == 37, "Keep repeater NVS authority bounded");
+bool readRepeaterReference(RepeaterReference &reference, bool &present) {
+  present = false;
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-onchip", NVS_READONLY, &handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK) return failed("repeater monitor open", result);
+  size_t size = sizeof(reference);
+  result = nvs_get_blob(handle, "bot-repeaters", &reference, &size);
+  nvs_close(handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK || size != sizeof(reference) || !reference.valid())
+    return failed("repeater monitor authority", ESP_ERR_INVALID_STATE);
+  present = true;
+  return true;
+}
+void repeaterDigest(const RepeaterRecord &record, uint8_t digest[32]) {
+  mesh::Utils::sha256(digest, 32, reinterpret_cast<const uint8_t *>(&record), sizeof(record));
+}
+bool readRepeaterFile(const RepeaterReference &reference, RepeaterRecord &record) {
+  auto file = SPIFFS.open(RepeaterSlots[reference.slot], "r");
+  if (!file) return failed("repeater monitor file open", ESP_ERR_INVALID_STATE);
+  const bool complete = file.size() == sizeof(record) &&
+      file.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) == sizeof(record) &&
+      file.size() == sizeof(record);
+  file.close();
+  uint8_t digest[32];
+  if (!complete) return failed("repeater monitor file read", ESP_ERR_INVALID_STATE);
+  repeaterDigest(record, digest);
+  if (memcmp(digest, reference.digest, sizeof(digest)) ||
+      memcmp(record.magic, "BRM\1", 4) || !record.policy.valid())
+    return failed("repeater monitor file validation", ESP_ERR_INVALID_STATE);
+  return true;
+}
+}
+bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy) {
+  policy = {};
+  RepeaterReference reference;
+  bool present;
+  if (!readRepeaterReference(reference, present)) return false;
+  if (!present) return true;
+  RepeaterStorage storage(allocateRoleStorage<RepeaterWorkspace>("repeater monitor read"));
+  if (!storage) return failed("repeater monitor read workspace unavailable", ESP_FAIL);
+  if (!readRepeaterFile(reference, storage->record)) return false;
+  policy = storage->record.policy;
+  return true;
+}
+bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy) {
+  if (!policy.valid()) return failed("repeater monitor validation", ESP_ERR_INVALID_ARG);
+  RepeaterReference previous, next;
+  bool present;
+  if (!readRepeaterReference(previous, present)) return false;
+  nvs_stats_t stats{};
+  auto result = nvs_get_stats(nullptr, &stats);
+  if (result != ESP_OK) return failed("repeater monitor headroom read", result);
+  // A new four-entry reference must leave the existing public KV floor intact.
+  if (stats.free_entries < BotCoreNvsReserveEntries + BotNvsMutationEntries +
+                           (present ? 0u : 5u))
+    return failed("repeater monitor NVS headroom; existing Lua data reserve required",
+                  ESP_ERR_NVS_NOT_ENOUGH_SPACE);
+  RepeaterStorage storage(allocateRoleStorage<RepeaterWorkspace>("repeater monitor save"));
+  if (!storage) return failed("repeater monitor save workspace unavailable", ESP_FAIL);
+  auto &record = storage->record, &check = storage->check;
+  if (present && !readRepeaterFile(previous, check)) return false;
+  record.policy = policy;
+  next.slot = present ? 1 - previous.slot : 0;
+  repeaterDigest(record, next.digest);
+  auto file = SPIFFS.open(RepeaterSlots[next.slot], "w");
+  if (!file) return failed("repeater monitor inactive file open", ESP_ERR_INVALID_STATE);
+  const bool complete = file.write(reinterpret_cast<const uint8_t *>(&record), sizeof(record)) ==
+                        sizeof(record);
+  file.flush();
+  file.close();
+  if (!complete || !readRepeaterFile(next, check) || memcmp(&record, &check, sizeof(record)))
+    return failed("repeater monitor inactive file readback", ESP_ERR_INVALID_STATE);
+  nvs_handle_t handle;
+  result = nvs_open("mc-onchip", NVS_READWRITE, &handle);
+  if (result != ESP_OK) return failed("repeater monitor open", result);
+  result = nvs_set_blob(handle, "bot-repeaters", &next, sizeof(next));
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK) return failed("repeater monitor commit; outcome unknown", result);
+  RepeaterReference observed;
+  if (!readRepeaterReference(observed, present) || !present ||
+      memcmp(&observed, &next, sizeof(next)))
+    return failed("repeater monitor authority readback; outcome unknown", ESP_ERR_INVALID_STATE);
+  if (!readRepeaterFile(observed, check) || memcmp(&record, &check, sizeof(record)))
+    return failed("repeater monitor readback; outcome unknown", ESP_ERR_INVALID_STATE);
+  return true;
 }
 bool BotForwardPolicy::enabled() const {
   for (auto byte : from) if (byte) return true;

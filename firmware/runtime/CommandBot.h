@@ -129,6 +129,8 @@ public:
   bool homeAccess() const;
   bool setDiscovery(bool enabled);
   void discoveryCommand(const char *command, char *reply, size_t capacity);
+  void repeaterCommand(const char *command, char *reply, size_t capacity);
+  unsigned repeaterSnapshots(BotRepeaterSnapshot *snapshots, unsigned capacity) const;
 #if ONCHIP_BOT_HTTPS
   bool ensureNativeHttps() { return worker_.ensureNativeHttps(); }
   bool submitTelemetry(const char *body, size_t size) { return worker_.submitTelemetry(body, size); }

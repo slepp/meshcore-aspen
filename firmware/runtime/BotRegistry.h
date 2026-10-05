@@ -20,8 +20,9 @@ struct BotManifestView {
   uint8_t count = 0;
   char modules[BotModuleLimit][BotNameLimit + 1]{};
   uint8_t moduleCount = 0;
-  char events[4][BotNameLimit + 1]{};
+  char events[5][BotNameLimit + 1]{};
   uint8_t eventMask = 0;
+  uint32_t scheduleSeconds = 0;
   constexpr BotManifestView(const BotCommand *entries, unsigned limit, unsigned used = 0)
       : commands(entries), capacity(limit), count(used) {}
   const BotCommand *find(const char *name) const;
@@ -32,7 +33,7 @@ struct BotManifestView {
   BotCommand *writable() { return const_cast<BotCommand *>(commands); }
   void clear() {
     for (unsigned i = 0; i < capacity; ++i) writable()[i] = {};
-    count = moduleCount = eventMask = 0;
+    count = moduleCount = eventMask = 0; scheduleSeconds = 0;
     memset(modules, 0, sizeof(modules)); memset(events, 0, sizeof(events));
   }
 };
@@ -49,6 +50,7 @@ template <unsigned Capacity> struct BotManifestStorage : BotManifestView {
       if (other.count) memcpy(storage, other.commands, other.count * sizeof(BotCommand));
     }
     count = other.count; moduleCount = other.moduleCount; eventMask = other.eventMask;
+    scheduleSeconds = other.scheduleSeconds;
     memcpy(modules, other.modules, sizeof(modules)); memcpy(events, other.events, sizeof(events));
     return *this;
   }

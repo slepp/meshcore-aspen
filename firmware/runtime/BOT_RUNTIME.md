@@ -17,6 +17,8 @@ The dashboard labels this role **command-bot** and the modem service **KISS**.
 
 Wasm can be compiled alongside Lua on ESP32-S3 and the native host.
 See [portable Wasm packages and build flags](WASM_RUNTIME.md).
+For channel-independent recurring Lua jobs, native read-only repeater polls
+and additive named sources, see [remote repeater monitoring](REMOTE_REPEATERS.md).
 
 ## Try the bot
 
@@ -217,6 +219,7 @@ within one second share an ACK.
 | `module(name, loader)` | Declares a package-local loader returning a table | Initialization only; eight modules within the same 4096-byte source |
 | `require(name)` | Cached module table, shared within the source generation | Declared modules only; no filesystem/library search; cycles or loader I/O reject staging |
 | `events.on(kind, function_name)` | Registers one named handler for each supported kind | Initialization; `startup`, `connectivity`, `message`, `node_status`; owner event-mask grant |
+| `events.every(seconds, function_name)` | Registers one channel-independent recurring handler | Initialization; 15..86400 seconds; owner event bit 16; skipped missed ticks |
 | `events.off(kind)` | `true` if previously subscribed, otherwise `false`; unsubscribes and fences pending events | Invocation only; until reload; does not change saved owner grant or replay events |
 
 See [declaration/schema syntax](#restricted-handler-api),
@@ -1189,7 +1192,10 @@ events.on('connectivity', '_online')
 
 The owner must grant event types through the existing authenticated RF/web
 backend: `bot events MASK`, with bits **1 startup, 2 connectivity, 4 message,
-8 node_status**; `0` disables all. Missing policy defaults to off. The example
+8 node_status, 16 scheduled**; `0` disables all. Declare scheduled handlers
+with `events.every`, not `events.on`. See the [monitor guide](REMOTE_REPEATERS.md)
+for recurring cadence and its separate native RF permission. Missing policy
+defaults to off. The example
 also needs the separate existing `bot shared on` grant to write bot-global KV.
 `bot events` reports saved/effectively subscribed masks and queued/dropped/
 completed/failed counters. No new authentication scheme is involved.
@@ -1214,7 +1220,9 @@ Event metadata is **not private-user authority or a reply route**. Only explicit
 granted bot-global KV/timers (non-channel events) or verified channel KV/timers
 (channel messages) are available. Caller/conversation state, RF send/reply/
 forward/TRACE/advert/waits, personal reminders and private-user HTTPS RPC reject
-explicitly. Sleep and allowed storage/timer operations use the existing yielding
+explicitly. Granted scheduled handlers can use the separate native
+`repeater.next/status/login` API; that permission does not enable general RF
+send/reply operations. Sleep and allowed storage/timer operations use the existing yielding
 I/O model. Returned strings do not transmit packets; a handler may finish without
 a reply. Node snapshots remain read-only.
 

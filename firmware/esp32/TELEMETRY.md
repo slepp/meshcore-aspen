@@ -13,6 +13,9 @@ and inspect `telemetry counts` after one configured interval. Expect `ok` to
 increase for a completed 2xx response; admission alone is not delivery.
 The [network guide](../runtime/NETWORK_API.md) covers bot HTTP/RPC; telemetry has its own
 enable setting and does not borrow the bot's grant.
+To collect remote status and battery voltage without a channel, configure
+the [Lua remote-repeater monitor](../runtime/REMOTE_REPEATERS.md). Its samples
+join this existing publisher; no additional MQTT or HTTPS service is needed.
 
 ## Configure and check
 
@@ -116,7 +119,12 @@ is unknown. Inspect the setting again after repairing storage.
 
 The publisher uses the existing in-process RadioDashboard totals and native
 hardware/role/Lua statistics, not HTTP scraping or a second packet observer.
-It emits one bounded batch (at most 6144 bytes) per period. There is no flash
+It emits one bounded batch (at most 6144 bytes) per period. Up to three configured remote peers rotate
+through each batch as `meshcore_repeater` lines, alongside local metrics.
+Only fresh successful remote samples include numeric stats and battery voltage;
+failures emit availability/freshness/error fields instead. See the
+[remote field contract](../runtime/REMOTE_REPEATERS.md#receiver-fields).
+There is no flash
 history, unbounded queue or replay of failed samples. If WiFi, clock, endpoint
 or admission is unavailable, that sample is dropped; the next period captures
 current values. Counter differences still describe activity during a gap.

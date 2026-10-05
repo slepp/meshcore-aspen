@@ -2,9 +2,11 @@
 #pragma once
 #include "RadioDashboard.h"
 #include "BotHttpsDiagnostics.h"
+#include "RepeaterMetrics.h"
 
 namespace onchip {
 constexpr size_t TelemetryBodyLimit = 6144;
+constexpr unsigned TelemetryRepeaterLimit = 3;
 
 struct TelemetryConfig {
   bool enabled = false;
@@ -40,6 +42,7 @@ struct TelemetrySample {
     uint64_t elapsedUs = 0;
     uint64_t loadUs = 0, initUs = 0, invokeUs = 0, cleanupUs = 0;
   } lua;
+  BotRepeaterSnapshot repeaters[TelemetryRepeaterLimit]{};
   TelemetrySample();
 };
 

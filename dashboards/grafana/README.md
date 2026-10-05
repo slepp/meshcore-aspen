@@ -5,6 +5,13 @@ physical RF traffic, on-device Lua activity, companion-bot health and returned
 relay status. Configure a telemetry publisher or bot status poll to supply the
 data. The dashboard reads it from VictoriaMetrics.
 
+Import [`meshcore-repeaters.json`](meshcore-repeaters.json) for repeaters polled
+over RF by an on-device Lua monitor. Select **Monitor device / Remote repeater**
+to see battery voltage, RF sample age, monitor errors, uptime, queues, signal,
+packet counters, duplicates, receive errors and airtime. Configure the
+[remote repeater monitor](../../firmware/runtime/REMOTE_REPEATERS.md) first.
+The fleet dashboard links to this focused view.
+
 ## Import and select a node
 
 1. In Grafana, add a **Prometheus** datasource pointing at your authorized
@@ -43,7 +50,8 @@ tags, leave these filters at All (`.*` also matches absent labels).
 | --- | --- | --- |
 | ESP32 native HTTPS publisher | Hardware, heap/DMA/PSRAM, physical radio, seven role slots, service-wide Lua counters and latest completed VM sample | Enable publishing in an HTTPS image; see [device telemetry](../../firmware/esp32/TELEMETRY.md). |
 | Python `meshcore-bot` | Passive traffic, database/runtime state, exporter and RF scheduler health | Configure `Mesh_Metrics_Service` and passive collection. |
-| Python bot status polls | Returned repeater status, neighbour reports, LPP sensors and probes | Configure reachable poll targets and jobs in the bot. Use this feed for a Pine repeater. |
+| On-device Lua repeater monitor | Native returned status and supported battery voltage in the remote-repeater dashboard | Save read-only ACL entries and same-PHY targets; enable the scheduled program and native HTTPS publisher. A Pine repeater can be a remote target. |
+| Python bot status polls | Returned repeater status, neighbour reports, LPP sensors and probes | Configure reachable poll targets and jobs in the bot. This is a separate feed from the on-device monitor. |
 
 Native Lua panels show aggregate service counters, occupied job slots and
 the latest worker stack sample. Python panels show the bot's database/WAL
@@ -114,6 +122,48 @@ denote field alternatives, not literal metric names.
 | Returned node status | `meshcore_node_{uptime,bat,tx_queue_len}`: gauges (`bat / 1000` yields volts); `meshcore_node_{nb_recv,nb_sent,recv_errors,direct_dups,flood_dups,airtime,rx_airtime}`: **unsuffixed monotonic counters**, rates. | `mesh`, `site`, `node`; `role` retained in legends |
 | Poll/probe | `meshcore_poll_ok`, `meshcore_probe_ok`: outcome gauges; `meshcore_link_snr`: directed link gauge. | Poll `node`, `kind`; probe/link `route`; links `src`, `dst`; all have `mesh`, `site` |
 
+### On-device remote-repeater dashboard
+
+The native monitor uses `device` (monitor hardware ID) and `peer` (saved alias),
+not the Python feed's `node`, `mesh` or `site`. Each HTTPS report includes up to
+three peers in rotation. With 12 targets and a 60-second publisher interval,
+each peer reports at least every 240 seconds. Polling remains independently
+limited to the configured interval, normally 300 seconds per remote repeater.
+
+| Panels | `meshcore_repeater_` fields |
+| --- | --- |
+| Report age / RF sample age / status | `available`, `fresh`, `sample_age_seconds`, `error_code` |
+| Battery / uptime / queue | `battery_volts`, `uptime_seconds`, `queued_packets` |
+| Signal / noise | `last_rssi_dbm`, `noise_dbm`, `last_snr_db` |
+| Packets and rates | `{rx_packets,tx_packets,rx_flood,rx_direct,tx_flood,tx_direct}_total` |
+| Duplicates and errors | `{direct_duplicates,flood_duplicates,rx_errors}_total`, `error_flags` |
+| Airtime and fractions | `{tx,rx}_airtime_seconds_total` |
+| Monitor attempts / failures and rates | `{attempts,failures}_total` |
+
+These are the native 56-byte status fields returned by the configured
+MeshCore 1.17.1 repeaters. Their last RSSI/SNR describe the remote radio's last
+received packet, not the monitor-to-repeater link. Additional sensors,
+neighbour discovery and firmware-version discovery are not requested.
+Future firmware-specific fields need an explicit target capability contract.
+
+RF sample age adds elapsed receiver time to the cached age in the last report.
+Report age separately shows whether the monitor is still publishing. Live
+status and voltage suppress reports older than 360 seconds; adjust that limit
+and the age thresholds if publishing less often. Voltage also requires the
+native `fresh` flag. Unsupported voltage is absent, never zero or an estimated
+percentage. History graphs preserve past values and gaps.
+
+Error code `12` means **frequency mismatch**: no request is sent and the shared
+modem is not retuned. On the current Aspen setup, four 910.525 MHz targets
+remain fenced while Aspen stays on 912.525 MHz. The dashboard does not make
+those repeaters appear online. The monitor-result panel maps every native
+error code; remote `error_flags` are a separate raw firmware field.
+
+Rate targets use a five-minute minimum step, allowing a window of at least
+four normal polls. Repeated publication of a cached sample is not additional
+RF traffic. Rates of the narrow duplicate counters can be affected by wraps
+as well as reboots.
+
 ### Other emitted fields inspected
 
 Not every raw series gets a panel. The native complete schema is maintained in
@@ -156,6 +206,7 @@ Check the JSON and native formatter locally:
 
 ```sh
 python -m json.tool dashboards/grafana/meshcore-fleet.json >/dev/null
+python -m json.tool dashboards/grafana/meshcore-repeaters.json >/dev/null
 make -C firmware/esp32 telemetry-test
 ```
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "BotTypes.h"
 #include <stdint.h>
 
 namespace onchip {
@@ -19,6 +20,21 @@ bool loadBotReminderAccess(bool &enabled);
 bool saveBotReminderAccess(bool enabled);
 bool loadBotEventAccess(uint8_t &mask);
 bool saveBotEventAccess(uint8_t mask);
+struct BotRepeaterPolicy {
+  struct Target {
+    char alias[17]{};
+    uint8_t key[32]{};
+    BotPath path{};
+    uint32_t frequencyHz = 0;
+    uint32_t lastFloodUtc = 0;
+    bool used = false;
+  } targets[BotRepeaterLimit];
+  uint32_t intervalSeconds = 300;
+  bool enabled = false;
+  bool valid() const;
+};
+bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy);
+bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy);
 struct BotForwardPolicy {
   uint8_t from[32]{}, to[32]{};
   bool enabled() const;

@@ -53,7 +53,15 @@
   "annotations": {
     "list": []
   },
-  "links": [],
+  "links": [
+    {
+      "title": "Remote repeater batteries and RF status",
+      "type": "link",
+      "url": "/d/meshcore-repeaters-vm",
+      "keepTime": true,
+      "includeVars": true
+    }
+  ],
   "panels": [
     {
       "id": 1,

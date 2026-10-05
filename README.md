@@ -44,6 +44,8 @@ guide. See [Birch UART wiring](HOST_GUIDE.md#connect-the-public-birch-uart-modem
 ESP32 network calls need the HTTPS profile and approved service configuration.
 The ESP32 and native host bot can compile Wasm alongside Lua; see the
 [Wasm runtime and build flags](firmware/runtime/WASM_RUNTIME.md).
+For autonomous fleet status and battery voltage through Aspen's existing
+metrics receiver, [install a remote-repeater Lua monitor](firmware/runtime/REMOTE_REPEATERS.md).
 For MQTT packet collection, choose the host or on-device
 [observer output contract](firmware/esp32/OBSERVER.md).
 Additional role instances can run on a host, but each enabled built-in ESP32
@@ -237,6 +239,7 @@ own targets, use `make -C DIRECTORY` as shown in its guide.
 | [`cmd`](cmd), [`internal`](internal) | Host commands and libraries; Python chat in [`cmd/meshcore-chat`](cmd/meshcore-chat/README.md) |
 | [Willow: `experiments/hew-roles`](experiments/hew-roles/README.md) | Experimental Hew host services, migration and native runtime contracts |
 | [`tools/hardware/admin.py`](tools/hardware/admin.py) | Node administration and Lua/Wasm package operations |
+| [Directed MeshCore link](tools/meshcore_link/GUIDE.md) | Persistent Base-feed DM send, inbox and session notifications |
 | [`meshcore_kiss_monitor.py`](meshcore_kiss_monitor.py), [`meshcore_kiss_broker.py`](meshcore_kiss_broker.py) | Standalone packet monitor and optional KISS broker |
 
 Configuration files such as `firmware/platformio.local.ini` and

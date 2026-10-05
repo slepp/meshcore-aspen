@@ -165,10 +165,12 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
   } else if (!strcmp(text, "bot reminders on") || !strcmp(text, "bot reminders off")) {
     say(bot.setReminderAccess(!strcmp(text, "bot reminders on")) ? "Saved/applied reminder grant" : "Error: reminder grant persistence failed");
   } else if (!strcmp(text, "bot events")) {
-    snprintf(reply.text, sizeof(reply.text), "Events granted=%u subscribed=%u; 1 startup,2 connectivity,4 message,8 node_status", bot.eventAccess(), bot.eventMask());
+    snprintf(reply.text, sizeof(reply.text), "Events granted=%u subscribed=%u; 1 startup,2 connectivity,4 message,8 node_status,16 recurring", bot.eventAccess(), bot.eventMask());
   } else if (!strncmp(text, "bot events ", 11)) {
     uint32_t mask;
-    say(number(text + 11, mask, 15) && bot.setEventAccess(mask) ? "Saved/applied event grants" : "Error: bot events MASK 0..15");
+    say(number(text + 11, mask, 31) && bot.setEventAccess(mask) ? "Saved/applied event grants" : "Error: bot events MASK 0..31");
+  } else if (!strcmp(text, "bot repeaters") || !strncmp(text, "bot repeaters ", 14)) {
+    bot.repeaterCommand(text[13] ? text + 14 : "", reply.text, sizeof(reply.text));
   } else if (!strncmp(text, "bot discovery", 13)) {
     bot.discoveryCommand(text + 13 + (text[13] == ' '), reply.text, sizeof(reply.text));
   } else if (!strcmp(text, "bot mesh")) {

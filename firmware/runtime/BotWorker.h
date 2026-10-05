@@ -55,6 +55,8 @@ public:
   // Owner-applied mask, independent of subscriptions and busy state.
   uint8_t eventAccess() const;
   uint8_t eventMask() const;
+  uint32_t scheduleSeconds() const;
+  uint32_t eventEpoch() const;
   void setReminderReady(bool ready);
   bool inspectReminder(BotReminderDispatch &dispatch);
   void approveReminder(bool approved);

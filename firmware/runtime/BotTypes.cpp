@@ -19,6 +19,126 @@ int hex(char c) {
 }
 } // namespace
 
+bool splitBotSources(const char *source, size_t size, BotSourcePart *parts,
+                     unsigned &count, char *error, size_t capacity) {
+  count = 0;
+  constexpr char prefix[] = "--@meshcore-sources/1\n";
+  if (!source || !size || size > BotSourceLimit || memchr(source, 0, size))
+    return fail(error, capacity, "Lua sources require bounded nonempty text");
+  if (size < sizeof(prefix) - 1 || memcmp(source, prefix, sizeof(prefix) - 1)) {
+    constexpr char marker[] = "--@meshcore-sources";
+    if (size >= sizeof(marker) - 1 && !memcmp(source, marker, sizeof(marker) - 1))
+      return fail(error, capacity, "Unsupported Lua source-set version");
+    strcpy(parts[0].name, "main");
+    parts[0].text = source; parts[0].size = size; count = 1;
+    return true;
+  }
+  size_t at = sizeof(prefix) - 1;
+  while (at < size) {
+    if (count == BotSourcePartLimit)
+      return fail(error, capacity, "Lua sources exceed eight-source limit");
+    const char *end = static_cast<const char *>(memchr(source + at, '\n', size - at));
+    if (!end || size_t(end - source - at) > 64)
+      return fail(error, capacity, "Lua source header missing or too long");
+    const size_t length = size_t(end - source - at);
+    if (length >= 12 && !memcmp(source + at, "--@builtin ", 11)) {
+      auto &part = parts[count];
+      part = {};
+      const size_t nameSize = length - 11;
+      if (!nameSize || nameSize > BotNameLimit)
+        return fail(error, capacity, "Invalid builtin source name");
+      for (size_t i = 0; i < nameSize; ++i) {
+        const char c = source[at + 11 + i];
+        if (!((c >= 'a' && c <= 'z') || (i && c >= '0' && c <= '9') ||
+              (i && (c == '_' || c == '-'))))
+          return fail(error, capacity, "Invalid builtin source name");
+        part.name[i] = c;
+      }
+      for (unsigned i = 0; i < count; ++i)
+        if (parts[i].builtin || !strcmp(parts[i].name, part.name))
+          return fail(error, capacity, "Duplicate builtin or Lua source name");
+      part.builtin = true;
+      ++count; at = size_t(end - source) + 1;
+      continue;
+    }
+    if (length < 13 || memcmp(source + at, "--@source ", 10))
+      return fail(error, capacity, "Expected Lua source name and byte length");
+    auto &part = parts[count];
+    part = {};
+    size_t cursor = at + 10, nameSize = 0;
+    while (cursor < size_t(end - source) && source[cursor] != ' ') {
+      const char c = source[cursor++];
+      if (nameSize == BotNameLimit ||
+          !((c >= 'a' && c <= 'z') || (nameSize && c >= '0' && c <= '9') ||
+            (nameSize && (c == '_' || c == '-'))))
+        return fail(error, capacity, "Invalid Lua source name");
+      part.name[nameSize++] = c;
+    }
+    if (!nameSize || cursor >= size_t(end - source))
+      return fail(error, capacity, "Lua source header requires a length");
+    ++cursor;
+    const size_t start = cursor;
+    size_t bytes = 0;
+    while (cursor < size_t(end - source)) {
+      const char c = source[cursor++];
+      if (c < '0' || c > '9' || bytes > BotSourceLimit / 10)
+        return fail(error, capacity, "Invalid Lua source byte length");
+      bytes = bytes * 10 + unsigned(c - '0');
+    }
+    at = size_t(end - source) + 1;
+    if (cursor == start || !bytes || bytes > size - at ||
+        bytes == size - at || source[at + bytes] != '\n')
+      return fail(error, capacity, "Lua source length or separator mismatch");
+    for (unsigned i = 0; i < count; ++i)
+      if (!strcmp(part.name, parts[i].name))
+        return fail(error, capacity, "Duplicate Lua source name");
+    part.text = source + at; part.size = bytes;
+    if (static_cast<unsigned char>(part.text[0]) == 27)
+      return fail(error, capacity, "Lua bytecode is not a source");
+    ++count; at += bytes + 1;
+  }
+  return count != 0 || fail(error, capacity, "Lua source set is empty");
+}
+
+bool decodeBotRepeaterStats(const uint8_t *bytes, size_t size, BotRepeaterStats &stats) {
+  stats = {};
+  if (!bytes || size != 56) return false;
+  const auto u16 = [&](size_t at) { return uint16_t(bytes[at] | uint16_t(bytes[at + 1]) << 8); };
+  const auto u32 = [&](size_t at) {
+    return uint32_t(bytes[at]) | uint32_t(bytes[at + 1]) << 8 |
+           uint32_t(bytes[at + 2]) << 16 | uint32_t(bytes[at + 3]) << 24;
+  };
+  stats.batteryMv = u16(0); stats.queued = u16(2);
+  stats.noise = int16_t(u16(4)); stats.rssi = int16_t(u16(6));
+  stats.received = u32(8); stats.sent = u32(12); stats.txSeconds = u32(16);
+  stats.uptimeSeconds = u32(20); stats.sentFlood = u32(24); stats.sentDirect = u32(28);
+  stats.receivedFlood = u32(32); stats.receivedDirect = u32(36);
+  stats.errors = u16(40); stats.snrQuarterDb = int16_t(u16(42));
+  stats.directDuplicates = u16(44); stats.floodDuplicates = u16(46);
+  if (size >= 52) stats.rxSeconds = u32(48);
+  if (size >= 56) stats.receiveErrors = u32(52);
+  return true;
+}
+
+const char *botRepeaterErrorName(BotRepeaterError error) {
+  switch (error) {
+  case BotRepeaterError::None: return "none";
+  case BotRepeaterError::Unavailable: return "unavailable";
+  case BotRepeaterError::Disabled: return "disabled";
+  case BotRepeaterError::NotDue: return "not_due";
+  case BotRepeaterError::Busy: return "busy";
+  case BotRepeaterError::Clock: return "clock";
+  case BotRepeaterError::Capacity: return "capacity";
+  case BotRepeaterError::Timeout: return "timeout";
+  case BotRepeaterError::Malformed: return "malformed";
+  case BotRepeaterError::Cancelled: return "cancelled";
+  case BotRepeaterError::Permission: return "permission";
+  case BotRepeaterError::Transmission: return "transmission";
+  case BotRepeaterError::Frequency: return "frequency";
+  }
+  return "invalid";
+}
+
 void resetBotIoResult(BotIoResult &result) {
   static_assert(std::is_trivially_copyable<BotIoResult>::value, "Bot I/O result must remain copied data");
   static const BotIoResult Empty{};

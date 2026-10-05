@@ -232,7 +232,7 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
   if (!std::strcmp(command, "help")) {
     std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; channel; path; airtime; adaptive; advert.zerohop; key bot (Go owner). Grants: help grants");
   } else if (!std::strcmp(command, "help grants")) {
-    std::strcpy(reply, "shared/reminders [status|on|off]; events [status|MASK 0..15] (1 startup,2 connectivity,4 message,8 node_status); policy reads saved/applied; cancel stops commands/events, not reminders. Defaults off; package capabilities never authorize scripts.");
+    std::strcpy(reply, "shared/reminders [status|on|off]; events [status|MASK 0..31] (1 startup,2 connectivity,4 message,8 node_status,16 scheduled); repeaters help; policy reads saved/applied; cancel stops commands/events, not reminders. Defaults off; packages never authorize scripts.");
   } else if (!std::strcmp(command, "status")) {
     const auto &stats = bot.counters();
     std::snprintf(reply, sizeof(reply),
@@ -283,6 +283,8 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
           "Saved/applied reminder grant; off suspends pending reminders; inspect reminders status" :
           "Error: reminder grant save/apply failed; live access disabled; inspect reminders status");
     } else std::strcpy(reply, "Error: reminders [status|on|off]; exact on/off required; policy unchanged");
+  } else if (!std::strcmp(command, "repeaters") || !std::strncmp(command, "repeaters ", 10)) {
+    bot.repeaterCommand(command[9] ? command + 10 : "", reply, sizeof(reply));
   } else if (!std::strcmp(command, "events") || !std::strncmp(command, "events ", 7)) {
     const char *argument = command[6] ? command + 7 : "";
     if (!std::strcmp(command, "events") || !std::strcmp(argument, "status")) {
@@ -292,11 +294,11 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
                         saved, bot.eventAccess(), bot.eventMask());
     } else if (*argument && std::strlen(argument) <= 2 &&
                std::strspn(argument, "0123456789") == std::strlen(argument) &&
-               std::strtoul(argument, nullptr, 10) <= 15) {
+               std::strtoul(argument, nullptr, 10) <= 31) {
       std::strcpy(reply, bot.setEventAccess(uint8_t(std::strtoul(argument, nullptr, 10))) ?
           "Saved/applied event grant; inspect events status for source subscriptions" :
           "Error: event grant save/apply failed; live events disabled; inspect events status");
-    } else std::strcpy(reply, "Error: events [status|MASK 0..15]; 1 startup,2 connectivity,4 message,8 node_status; policy unchanged");
+    } else std::strcpy(reply, "Error: events [status|MASK 0..31]; 1 startup,2 connectivity,4 message,8 node_status,16 recurring; policy unchanged");
   } else if (!std::strcmp(command, "cancel")) {
     bot.cancelJobs();
     std::strcpy(reply, "Cancelled running bot commands/events; admitted RF/storage effects may be unknown; personal reminders unchanged");

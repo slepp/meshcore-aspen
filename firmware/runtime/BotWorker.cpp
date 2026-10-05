@@ -34,6 +34,7 @@ struct BotWorker::Control {
   BotSignal<State> jobs[BotJobLimit], io[BotJobLimit], radio[BotJobLimit];
   BotSignal<State> data{Idle};
   BotSignal<uint8_t> eventAccess{0}, subscriptions{0};
+  BotSignal<uint32_t> scheduleSeconds{0};
   BotSignal<uint32_t> eventEpoch{1};
   BotSignal<uint32_t> cancelExcept{0};
   BotSignal<bool> cancelRequested{false};
@@ -311,7 +312,7 @@ bool BotWorker::setReminderAccess(bool enabled) {
 }
 bool BotWorker::reminderAccess() const { return control_ && control_->reminderAccess.load(); }
 bool BotWorker::setEventAccess(uint8_t mask) {
-  if (!control_ || mask > 15) return false;
+  if (!control_ || mask > 31) return false;
   control_->eventAccess = 0;
   if (!control_->eventEpoch.load() || control_->eventEpoch == UINT32_MAX) {
     Serial.println("Bot event epoch exhausted; disabled until reboot"); return false;
@@ -320,6 +321,12 @@ bool BotWorker::setEventAccess(uint8_t mask) {
 }
 uint8_t BotWorker::eventAccess() const {
   return control_ && control_->eventEpoch.load() ? control_->eventAccess.load() : 0;
+}
+uint32_t BotWorker::scheduleSeconds() const {
+  return control_ && (eventMask() & 16) ? control_->scheduleSeconds.load() : 0;
+}
+uint32_t BotWorker::eventEpoch() const {
+  return control_ ? control_->eventEpoch.load() : 0;
 }
 uint8_t BotWorker::eventMask() const {
   return control_ && control_->eventEpoch.load() && control_->state.load() == Idle ?
@@ -521,7 +528,7 @@ bool BotWorker::canInvoke(const BotEvent &event, unsigned collecting, unsigned c
   }
   if (used >= BotJobLimit) return false;
   if ((subscription || !botReservedCommand(event.name)) && custom >= BotJobLimit - 1) return false;
-  if (subscription && (event.kind > BotEvent::NodeStatus ||
+  if (subscription && (event.kind > BotEvent::Scheduled ||
       !(eventMask() & (1u << (unsigned(event.kind) - 1))))) return false;
   return true;
 }
@@ -1295,6 +1302,7 @@ void BotWorker::pumpJobs() {
       if (timer.used && timer.eventEpoch && timer.eventEpoch != s.lastEventEpoch) timer = {};
   }
   control_->subscriptions = s.subscriptions();
+  control_->scheduleSeconds = s.active.manifest().scheduleSeconds;
   for (auto &job : s.jobs) if (job.state->load() == Pending) {
     *job.state = Running;
     const auto *installed = s.active.manifest().find(job.event.name);
@@ -1440,7 +1448,9 @@ void BotWorker::pumpJobs() {
     } else if (request.kind == BotIoRequest::Send || request.kind == BotIoRequest::Forward ||
                request.kind == BotIoRequest::Wait ||
                request.kind == BotIoRequest::Trace || request.kind == BotIoRequest::Advert ||
-               request.kind == BotIoRequest::Inspect || request.kind == BotIoRequest::Admin) {
+               request.kind == BotIoRequest::Inspect || request.kind == BotIoRequest::Admin ||
+               request.kind == BotIoRequest::RepeaterNext || request.kind == BotIoRequest::RepeaterStatus ||
+               request.kind == BotIoRequest::RepeaterLogin) {
       for (auto &io : s.radio) if (io.state->load() == Idle) {
         io.request = request; io.result = {};
         *io.state = Pending; admitted = true; break;

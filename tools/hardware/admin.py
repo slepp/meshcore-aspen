@@ -472,7 +472,9 @@ def download(client):
     return bytes(source)
 
 
-def install(client, source, progress=print):
+def install(client, source, progress=print, expected_base_hash=None):
+    if expected_base_hash is not None and not re.fullmatch(r"[0-9a-f]{64}", expected_base_hash):
+        raise ValueError("Source commit base requires a complete lowercase SHA256")
     wasm = source.startswith(b"\0asm\1\0\0\0")
     if wasm:
         client = runtime_client(client, bot_packages.WASM_RUNTIME)
@@ -510,7 +512,8 @@ def install(client, source, progress=print):
         if response != f"ACK {identifier} next={index + 1}":
             raise ValueError("Chunk not durably acknowledged")
         progress(f"Durable chunk {index + 1}/{(len(source) + CHUNK - 1) // CHUNK}")
-    progress(checked(client, f"source commit {identifier}"))
+    base = " " + expected_base_hash if expected_base_hash else ""
+    progress(checked(client, f"source commit {identifier}{base}"))
     for _ in range(20):
         time.sleep(.5)
         status = checked(client, "source status")
@@ -745,6 +748,12 @@ def main():
                                help="0600 file containing 1..15 printable ASCII bytes, without newline; separate from Management --password-file")
     sub.add_parser("install").add_argument("source", type=Path)
     sub.add_parser("download").add_argument("destination", type=Path)
+    named_install = sub.add_parser("source-install", help="add/update one named Lua source; retain other sources and reject namespace collisions atomically")
+    named_install.add_argument("name")
+    named_install.add_argument("source", type=Path)
+    named_remove = sub.add_parser("source-remove", help="remove one named Lua source; retain the rest")
+    named_remove.add_argument("name")
+    sub.add_parser("source-list", help="list separately installed Lua sources and their byte lengths")
     for action in ("package-install", "update"):
         package_install_parser = sub.add_parser(action, help="validate and atomically install a source package")
         package_install_parser.add_argument("source", type=Path)
@@ -873,6 +882,37 @@ def main():
         elif args.action == "install":
             source = read_file(args.source, SOURCE_LIMIT)
             install(client, source)
+        elif args.action in ("source-install", "source-remove", "source-list"):
+            from tools.hardware import lua_sources
+            if args.runtime != "lua":
+                raise ValueError("Named sources require the Lua runtime")
+            capability = checked(client, "source api sources")
+            if "format=meshcore-sources/1" not in capability or "commit-base=sha256" not in capability:
+                raise ValueError("Device firmware does not support atomic named Lua sources")
+            current = download(client)
+            base_hash = hashlib.sha256(current).hexdigest()
+            parts = lua_sources.decode(current)
+            if args.action == "source-install" and tuple(parts) == ("main",):
+                bundled = checked(client, "source api bundled")
+                if bundled == "SHA256 " + base_hash:
+                    parts["main"] = None
+            if args.action == "source-list":
+                for name, text in parts.items():
+                    print(f"{name}: bundled commands" if text is None else f"{name}: {len(text)} bytes")
+            else:
+                if not lua_sources.NAME.fullmatch(args.name):
+                    raise ValueError("Lua source name requires 1..24 lowercase identifier bytes")
+                if args.action == "source-install":
+                    parts[args.name] = read_file(args.source, SOURCE_LIMIT)
+                    source = lua_sources.encode(parts)
+                else:
+                    if args.name not in parts:
+                        raise ValueError("Lua source name is not installed")
+                    del parts[args.name]
+                    if not parts:
+                        raise ValueError("Cannot remove the last source; use remove to restore bundled commands")
+                    source = parts["main"] if tuple(parts) == ("main",) and parts["main"] is not None else lua_sources.encode(parts)
+                install(client, source, expected_base_hash=base_hash)
         elif args.action in ("package-install", "update"):
             source = read_file(args.source, SOURCE_LIMIT)
             signature = read_file(args.signature, 1024) if args.signature else None

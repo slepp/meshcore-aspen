@@ -266,7 +266,7 @@ telemetry-test:
 	@mkdir -p $(TEST_BUILD)
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
 		-DMESHCORE_ONCHIP=1 -DMESHCORE_ONCHIP_BOT=1 -DKISS_MAX_TCP_CLIENTS=3 \
-		-I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I. -I../runtime -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
 		tests/telemetry.cpp Telemetry.cpp TelemetrySettings.cpp TelemetryAdmin.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp \
 		-o $(TEST_BUILD)/telemetry
 	$(TEST_BUILD)/telemetry
