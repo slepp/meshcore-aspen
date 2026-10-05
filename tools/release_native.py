@@ -101,9 +101,14 @@ def build_native(image, stem, env, command):
     def inside(args, network="none"):
         command(container_command(image, source, go_root, args, network=network, epoch=env["SOURCE_DATE_EPOCH"]))
 
-    # Fetch only the public, go.sum-verified graph into a new empty module cache.
+    # Fetch public, go.sum-verified sources and the complete module metadata
+    # into a new empty cache. Unused graph nodes need .info for the inventory.
     # Compilation and worker qualification can subsequently run without network.
     inside(["go", "mod", "download"], network="bridge")
+    inside(["go", "list", "-m", "-json", "all"], network="bridge")
+    for name in ("go.mod", "go.sum"):
+        if (source / name).read_bytes() != (ROOT / name).read_bytes():
+            raise ValueError("Native dependency fetch changed the selected public " + name)
     inside(["make", "host-build"])
     inside(["make", "-C", "firmware/esp32", "bot-native-worker",
             "BOT_BUILD=/src/.tmp/onchip-native-worker", "BUILD=/src/.tmp/onchip-native-source",
@@ -126,7 +131,10 @@ def inspect_build(output):
             "toolchain": {"go": run(["go", "version"]), "cxx": run(["c++", "--version"]).splitlines()[0],
                           "native_cxx_sha256": sha256(Path(shutil.which("c++"))),
                           "readelf": run(["readelf", "--version"]).splitlines()[0],
-                          "readelf_sha256": sha256(Path(shutil.which("readelf")))},
+                          "readelf_sha256": sha256(Path(shutil.which("readelf"))),
+                          "cmake": run(["cmake", "--version"]).splitlines()[0],
+                          "cmake_sha256": sha256(Path(shutil.which("cmake")))},
+            "packages": run(["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n"]),
             "native_linked_libraries": native_libraries(worker, env),
             "native_abi": {name: native_abi(path, env) for name, path in sorted(binaries.items())},
             "go_modules": json_stream(run(["go", "list", "-m", "-json", "all"]))}
