@@ -148,6 +148,10 @@ bool BotStore::publish(uint8_t changed, BotIoResult::Outcome &outcome, char *err
     return storageError(error, capacity, message);
   };
   if (!validateRecords(error, capacity)) return false;
+  if (!files_->present && budgetMs == 2000) {
+    started = millis();
+    budgetMs = BotKvRecoveryBudgetMs;
+  }
   if (!files_->initialized) {
     // Establish a durable "no file bank published yet" state before creating
     // any files. Missing authority alongside files can then fail closed, rather

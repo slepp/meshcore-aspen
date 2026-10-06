@@ -565,6 +565,8 @@ empty-store scan runs before the first KV operation's two-second window.
 KV export and restore also start their two-second operation window after
 recovery; keep polling `data status` while it reports `PENDING`. Requests
 against initialized KV data retain their existing two-second deadline.
+The first write creates all KV file banks with a separate ten-second
+initialization window; later writes retain the two-second window.
 The family-tagged version-1 formats are `BKD`, `BTD` and `BRD`; each checks the
 full bot identity, scope/principal, sorted unique records, unused padding and
 SHA256. Timer/reminder payloads retain checked native v1 records (including

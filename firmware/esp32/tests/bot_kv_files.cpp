@@ -585,6 +585,30 @@ static void slowEmptyMedia() {
   }
   puts("PASS slow empty-media preflight: first read/write/CAS/transaction/export/restore succeed; recovery remains bounded without weakening write deadlines");
 }
+static void initialBankDeadlines() {
+  for (unsigned cost : {600u, 2000u}) {
+    reset();
+    filesystem_test::readDelayMs = cost;
+    Client fresh;
+    fresh.put("first", "retained");
+    const bool committed = cost == 600;
+    assert(fresh.result.ok == committed && now == cost * 5);
+    assert(fresh.result.outcome == (committed ? BotIoResult::Committed : BotIoResult::Rejected));
+    if (!committed) assert(strstr(fresh.result.error, "deadline"));
+    faultsOff();
+    fresh.get("first");
+    assert(fresh.result.ok && fresh.result.found == committed);
+    if (committed) {
+      assert(!strcmp(fresh.result.value, "retained"));
+      filesystem_test::afterFlush = [] { now += 2000; };
+      fresh.put("first", "unpublished");
+      assert(!fresh.result.ok && fresh.result.outcome == BotIoResult::Rejected);
+      faultsOff();
+      fresh.get("first"); assert(fresh.result.ok && !strcmp(fresh.result.value, "retained"));
+    }
+  }
+  puts("PASS initial five-bank creation: 3s succeeds, 10s rejects before authority; ordinary writes retain 2s deadline");
+}
 static void migrationDeadlines() {
   for (bool withRedo : {false, true}) {
     reset();
@@ -712,7 +736,7 @@ static void cancellationAndWear() {
 int main() {
   atomicCuts(); legacyMigration(); restoreCuts(); restoreCancellation(); physicalMigration();
   initializationBudget(); corruptMigration(); ioFailures(); uncertainRetry(); cancellationAndWear();
-  cachedRecovery(); cachedCorruption(); repeatedEmptyRecords(); interruptedEmptyInitialization(); slowEmptyMedia(); migrationDeadlines();
+  cachedRecovery(); cachedCorruption(); repeatedEmptyRecords(); interruptedEmptyInitialization(); slowEmptyMedia(); initialBankDeadlines(); migrationDeadlines();
   reset();
   assert(psram_test::allocations.empty());
 }
