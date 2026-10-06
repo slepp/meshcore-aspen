@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import copy
+import configparser
 import hashlib
 import io
 import json
@@ -63,11 +64,11 @@ class VersionTests(unittest.TestCase):
     def test_independent_versions_preserve_wire_contracts(self):
         data = versions.load()
         changed = copy.deepcopy(data)
-        changed["products"]["aspen"]["version"] = "0.1.1"
+        changed["products"]["aspen"]["version"] = "0.1.2"
         before, after = versions.generated(data), versions.generated(changed)
         self.assertEqual(before["internal/buildinfo/identity.go"], after["internal/buildinfo/identity.go"])
         self.assertEqual(before["release/versions.mk"], after["release/versions.mk"])
-        self.assertIn('"aspen-0.1.1"', after["firmware/esp32/FirmwareIdentity.h"])
+        self.assertIn('"aspen-0.1.2"', after["firmware/esp32/FirmwareIdentity.h"])
         changed = copy.deepcopy(data)
         changed["products"]["birch"]["version"] = "0.1.1"
         self.assertIn('HostVersion = "birch-0.1.1"', versions.generated(changed)["internal/buildinfo/identity.go"])
@@ -87,6 +88,16 @@ class VersionTests(unittest.TestCase):
     def test_generated_identities_are_current(self):
         for path, text in versions.generated(versions.load()).items():
             self.assertEqual((ROOT / path).read_text(), text, path)
+
+    def test_public_aspen_includes_unconfigured_native_https(self):
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(ROOT / "firmware/esp32/platformio.public.ini.example")
+        flags = {line.strip() for line in config["env:public_aspen"]["build_flags"].splitlines()}
+        self.assertIn("-D ONCHIP_BOT_HTTPS=1", flags)
+        self.assertIn("-D MESHCORE_PUBLIC_PROVISIONING=1", flags)
+        for name in ("ONCHIP_OPERATOR_HEADER", "ONCHIP_BOT_HOME_ADDRESS", "ONCHIP_BOT_HOME_TOKEN",
+                     "ONCHIP_BOT_HOME_CA", "ONCHIP_MQTT_URI"):
+            self.assertFalse(any(name in flag for flag in flags), name)
 
 
 class CandidateTests(unittest.TestCase):

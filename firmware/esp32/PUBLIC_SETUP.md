@@ -158,6 +158,15 @@ create the private backup. Do not use this as an update or password-change
 procedure. Use existing authenticated role/Management commands for ordinary
 setting changes.
 
+## Optional telemetry and HTTPS
+
+The Aspen 0.1.1 public application includes native HTTPS and telemetry, with
+no configured endpoint, CA or token. It sends no telemetry until an
+administrator configures the collector and enables publishing. Use
+[telemetry setup](TELEMETRY.md) through authenticated Management RF to stage
+credentials, then read `telemetry status` and `telemetry counts`.
+Use `help syslog` for independent UDP logging; it needs no HTTPS collector.
+
 ## Later updates: application only
 
 The two application slots remain app0=`0x10000`, app1=`0x340000`, each
