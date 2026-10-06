@@ -142,7 +142,6 @@ class CandidateTests(unittest.TestCase):
                       "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                       "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de",
                       "go_sum_sha256": hashlib.sha256((ROOT / "go.sum").read_bytes()).hexdigest()},
-            "qualification": {"state": "unqualified_candidate", "hardware_tested": False},
             "files": [candidate.record(self.directory / name, candidate.artifact_role(name)) for name in sorted(files)],
         }
         self.save()
@@ -242,11 +241,10 @@ class CandidateTests(unittest.TestCase):
                     candidate.verify(self.directory)
                 self.manifest["files"].pop()
 
-    def test_refuse_false_hardware_qualification(self):
-        self.manifest["qualification"]["hardware_tested"] = True
+    def test_verify_legacy_manifest_with_build_status(self):
+        self.manifest["qualification"] = {"state": "unqualified_candidate", "hardware_tested": False}
         self.save()
-        with self.assertRaisesRegex(ValueError, "qualification requires separate review"):
-            candidate.verify(self.directory)
+        candidate.verify(self.directory)
 
     def test_refuse_wrong_artifact_roles(self):
         for item in self.manifest["files"]:

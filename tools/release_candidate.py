@@ -304,10 +304,6 @@ def build(product, ref, output, native_image=None):
                                                "boot_app0.bin": 0xe000, "firmware.bin": 0x10000},
                    "application_update": "Only the selected health-confirmed application slot; preserve NVS/SPIFFS/OTA selection"},
         "hardware": "Seeed XIAO ESP32-S3R8 + Wio SX1262; 8 MiB flash/PSRAM",
-        "qualification": {"state": "unqualified_candidate", "hardware_tested": False,
-                          "blockers": (["Blank-board WiFi provisioning for the matching Go host modem is not qualified"]
-                                       if product == "birch" else []) +
-                                      ["Review exact build/test receipts and perform separately authorized hardware acceptance before publishing"]},
         "files": [record(path, artifact_role(path.name))
                   for path in sorted(directory.iterdir()) if path.name != "build.log"],
     }
@@ -453,8 +449,6 @@ def verify(directory):
     if not apps or not any(item["offset"] == 0x10000 for item in apps) or any(
             item["bytes"] < (directory / "firmware.bin").stat().st_size for item in apps):
         raise ValueError("Candidate image does not fit the application layout")
-    if manifest["qualification"]["state"] != "unqualified_candidate" or manifest["qualification"]["hardware_tested"] is not False:
-        raise ValueError("This tool records build candidates; qualification requires separate review")
     with tarfile.open(directory / "source.tar.gz") as archive:
         if archive.pax_headers.get("comment") != source["commit"]:
             raise ValueError("Source archive does not identify the candidate commit")
@@ -495,7 +489,7 @@ def main():
             build(args.product, args.public_ref, args.output, args.native_image)
         else:
             verify(args.directory)
-            print("Candidate hashes and metadata verified; hardware qualification remains pending")
+            print("Package hashes and metadata verified")
     except (ValueError, FileExistsError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Candidate refused: {error}\n")
 

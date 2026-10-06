@@ -58,10 +58,10 @@ guide and state any remaining qualification gaps in the release description.
 
 ## Create the release
 
-For Aspen and Birch, satisfy the product-specific acceptance and publication
-gates in [the candidate guide](release/README.md), including Birch's modem
-provisioning requirement. Obtain approval for the product, tag, source commit
-and exact candidate hashes before creating or publishing its release.
+For Aspen and Birch, follow [the product release procedure](release/README.md),
+including Birch's modem provisioning requirement. Obtain the operator's
+publication approval before creating the release. Keep test logs internal;
+publish the package, factual build manifest, checksums and installation guide.
 
 Tag the selected source commit and push the tag. Aspen and Birch require signed
 product tags as specified in their candidate guide. Create a GitHub draft

@@ -36,3 +36,36 @@ protocol contracts and validation procedures in their focused guides.
 These guidelines apply to README text, firmware and host guides, command help,
 errors, status messages and dashboard copy. Protocol reference material still
 needs exact wire formats, limits and failure behavior.
+
+# Practical engineering and releases
+
+Aspen is a practical mesh-node suite, not a certification program. Spend time
+on working behavior, usable setup and recovery, and bugs that affect operators.
+
+- Test changed behavior and its directly affected interfaces. Reuse established
+  results for unchanged code; do not restart broad validation after a tooling or
+  documentation edit. Repeat a check only when new evidence or a relevant change
+  makes its result uncertain.
+- Preserve identities, settings and useful data during maintenance. Back up
+  valuable state, not whole flash by default. Keep credentials and private node
+  backups out of public source and release assets.
+- Keep release manifests factual: source revision, supported hardware,
+  dependencies, layout, versions and file hashes. Do not add qualification
+  labels, certification language, evidence dossiers or public test receipts.
+  Keep test logs internal unless the operator asks to publish them.
+- Build, test, tag and publish through a short, practical release procedure.
+  Obtain necessary publication approval without repeated approval gates or
+  asking the operator to approve a list of hashes. Checksums identify files;
+  they are not an approval ceremony.
+- State real limitations and destructive-operation warnings directly. Do not
+  label tested releases as "unqualified" or perpetually "pending" merely because
+  the build tool cannot know the outcome of later tests.
+- Do not promote old plans, checkpoints, test matrices or speculative risks
+  into new requirements. The operator's current scope controls the work.
+  Unrelated products, future features and unsupported hardware do not block an
+  Aspen release.
+- Prefer the simplest change that fixes the problem. Before adding a gate,
+  check, artifact or abstraction, identify the concrete operator outcome it
+  protects. If it adds ceremony without useful coverage, leave it out.
+- Stop when the requested outcome works and is saved. Do not invent further
+  qualification work after the relevant checks pass.

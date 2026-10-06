@@ -79,10 +79,9 @@ The bundle name is `aspen-v0.1.1-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
 separate initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
-tag/full SHA and public source full SHA. Hashes identify exact output bytes;
-this workflow does not claim byte-for-byte reproducible builds. The manifest
-always records an **unqualified candidate**. A successful build is one release
-gate, not hardware acceptance.
+tag/full SHA and public source full SHA. Hashes identify the packaged files.
+The manifest records build information, not test status. Run the relevant
+software and device checks before publishing; keep test logs internal.
 
 Linux x86_64 identifies the architecture, not support for every distribution.
 Each Birch manifest records the ELF interpreter, required SONAMEs and minimum
@@ -133,24 +132,19 @@ private provisioning path before distributing an installable Birch RC; never
 put station passwords into a public image. No new provisioning behavior is
 introduced by this release change.
 
-## RC publication gates
+## Publish a release
 
-1. Review and merge the version/tooling change. Select a clean, signed public
-   source commit and rebuild the candidate at that exact commit.
-2. Pass `make check`, firmware identity/staging checks and the relevant public
-   provisioning/update tests. Review build logs, resolved dependencies, image
-   layout and licensing/relink material. Verify every manifest and checksum.
-3. Obtain separately authorized hardware acceptance for the selected board and
-   application-update path, including retained identities/settings, companion
-   information and compatible host/modem/worker operation. Disposition Birch's
-   provisioning blocker before its RC.
-4. Obtain publication approval for the named product, tag, exact source commit
-   and candidate hashes. Create a signed component tag and draft release from
-   that commit; verify GitHub's resolved tag and asset hashes before publishing.
+1. Build from the selected clean, signed public source commit. Check package
+   hashes, image layout, installation instructions and licensing/relink files.
+2. Test changed behavior and the relevant install/update path, including retained
+   identities, settings and programs. Reuse established results for unchanged
+   code. Birch needs a working modem provisioning path before publication.
+3. With the operator's publication approval, create a signed product tag and
+   GitHub release. Attach the package, manifest and checksums; check downloaded
+   assets against the local files. Do not publish private backups or test logs.
 
-Adopting this pattern does not publish a release or create/move tags. Changing
-a candidate to a final version is a source change and requires a fresh build,
-since the embedded product identity changes.
+Changing an RC to a final version changes the embedded product identity and
+requires a new build.
 
 ## Aspen 0.1.1
 
