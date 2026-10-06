@@ -18,12 +18,14 @@ struct TestMQTT {
   void (*event)(void *, esp_event_base_t, int32_t, void *) = nullptr;
   void *context = nullptr;
   std::string username, password, certificate;
+  int willQos = 0;
 };
 using esp_mqtt_client_handle_t = TestMQTT *;
 namespace mqtt_test {
 struct Message {
   std::string topic, data;
   bool retained;
+  int qos = 0;
 };
 inline std::vector<Message> messages;
 inline bool failPublish = false;
@@ -35,6 +37,7 @@ inline TestMQTT *esp_mqtt_client_init(const esp_mqtt_client_config_t *c) {
   result->username = c->username ? c->username : "";
   result->password = c->password ? c->password : "";
   result->certificate = c->cert_pem ? c->cert_pem : "";
+  result->willQos = c->lwt_qos;
   return result;
 }
 inline int esp_mqtt_client_register_event(
@@ -52,9 +55,9 @@ inline int esp_mqtt_client_publish(TestMQTT *client, const char *topic,
                                    int retain) {
   if (mqtt_test::failPublish)
     return -1;
-  if (qos != 0)
+  if (qos < 0 || qos > 1)
     std::abort();
-  mqtt_test::messages.push_back({topic, std::string(data, size), bool(retain)});
+  mqtt_test::messages.push_back({topic, std::string(data, size), bool(retain), qos});
   if (mqtt_test::reconnectDuringPublish) {
     mqtt_test::reconnectDuringPublish = false;
     client->event(client->context, nullptr, MQTT_EVENT_DISCONNECTED, nullptr);

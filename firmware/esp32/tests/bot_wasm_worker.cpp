@@ -191,6 +191,123 @@ int main(int argc, char **argv) {
   check("!marker", "marker");
   check("!help marker", "!marker : Override marker");
   check("!wseen", "seen");
+  {
+    const auto suspension = module("c-suspension");
+    const char *lua = "function la() sleep(300) return 'Lua A' end "
+                      "function lb() sleep(300) return 'Lua B' end";
+    stage(lua);
+    stage(suspension);
+    const uint32_t luaEpoch = worker.runtimeGeneration(BotWorker::Lua);
+    const uint32_t wasmEpoch = worker.runtimeGeneration(BotWorker::Wasm);
+    const uint32_t diagnosticEpoch = worker.runtimeGeneration(BotWorker::Diagnostics);
+    assert(worker.invoke(event("!la"), 101) && worker.invoke(event("!lb"), 102) &&
+           worker.invoke(event("!wwait"), 103) && worker.invoke(event("!neighbors"), 104));
+    BotIoRequest heldWasm{}, heldDiagnostic{};
+    const auto hold = [&](uint32_t id) {
+      for (unsigned i = 0; i < 1000; ++i) {
+        BotIoRequest request;
+        if (worker.pollRadio(request)) {
+          assert(request.token.job == 103 || request.token.job == 104);
+          if (request.token.job == 103) heldWasm = request;
+          else heldDiagnostic = request;
+        }
+        if (id == 103 ? heldWasm.token.operation != 0 : heldDiagnostic.token.operation != 0) return;
+        delay(1);
+      }
+      assert(false && "Suspended runtime did not submit radio I/O");
+    };
+    hold(103); hold(104);
+    stage(lua);
+    assert(worker.runtimeGeneration(BotWorker::Lua) != luaEpoch &&
+           worker.runtimeGeneration(BotWorker::Wasm) == wasmEpoch &&
+           worker.runtimeGeneration(BotWorker::Diagnostics) == diagnosticEpoch);
+    assert(worker.ioCurrent(heldWasm.token) && worker.ioCurrent(heldDiagnostic.token));
+    for (unsigned i = 0; i < 2; ++i) {
+      auto cancelled = poll(worker);
+      assert((cancelled.job == 101 || cancelled.job == 102) &&
+             !cancelled.ok && !worker.resultCurrent(cancelled));
+    }
+    BotIoResult completion{};
+    completion.ok = true; completion.token = heldWasm.token;
+    assert(worker.completeRadio(completion));
+    auto completed = poll(worker);
+    assert(completed.job == 103 && completed.ok && worker.resultCurrent(completed) &&
+           !strcmp(completed.action.text, "Wasm completed"));
+    completion.token = heldDiagnostic.token; strcpy(completion.value, "Native inspection completed");
+    assert(worker.completeRadio(completion));
+    completed = poll(worker);
+    assert(completed.job == 104 && completed.ok && worker.resultCurrent(completed));
+    assert(worker.invoke(event("!la"), 201) && worker.invoke(event("!lb"), 202) &&
+           worker.invoke(event("!wwait"), 103));
+    heldWasm = {}; hold(103);
+    const auto oldWasm = heldWasm.token;
+    stage(suspension);
+    assert(worker.runtimeGeneration(BotWorker::Lua) != luaEpoch &&
+           worker.runtimeGeneration(BotWorker::Wasm) != wasmEpoch &&
+           !worker.ioCurrent(oldWasm));
+    auto cancelled = poll(worker);
+    assert(cancelled.job == 103 && !cancelled.ok && !worker.resultCurrent(cancelled));
+    completion = {}; completion.ok = true; completion.token = oldWasm;
+    assert(worker.completeRadio(completion));
+    delay(5);
+    assert(worker.invoke(event("!wwait"), 103));
+    heldWasm = {}; hold(103);
+    assert(heldWasm.token.generation != oldWasm.generation);
+    assert(!worker.completeRadio(completion));
+    BotWorker::Result unexpected;
+    assert(!worker.poll(unexpected));
+    completion.token = heldWasm.token;
+    assert(worker.completeRadio(completion));
+    completed = poll(worker);
+    assert(completed.job == 103 && completed.ok && worker.resultCurrent(completed));
+    for (unsigned i = 0; i < 2; ++i) {
+      completed = poll(worker);
+      assert((completed.job == 201 || completed.job == 202) &&
+             completed.ok && worker.resultCurrent(completed));
+    }
+    assert(worker.invoke(event("!la"), 301) && worker.invoke(event("!wsleep"), 302));
+    delay(5);
+    assert(worker.removeWasm() && poll(worker, "RemoveWasm").ok);
+    cancelled = poll(worker);
+    assert(cancelled.job == 302 && !cancelled.ok && !worker.resultCurrent(cancelled));
+    completed = poll(worker);
+    assert(completed.job == 301 && completed.ok && worker.resultCurrent(completed));
+    stage(suspension);
+    assert(worker.invoke(event("!wsleep"), 303));
+    delay(5);
+    stage(lua);
+    completed = poll(worker);
+    assert(completed.job == 303 && completed.ok && worker.resultCurrent(completed));
+    puts("PASS Lua A/B and Wasm C suspension; runtime-local activation/removal, timers, native diagnostics and stale own callback discard");
+  }
+  {
+    BotWorker isolated; assert(isolated.begin(identity));
+    const char *badLua = "missing_boot_initializer()";
+    assert(isolated.stage(badLua, strlen(badLua)) && !poll(isolated).ok);
+    isolated.setRuntimeDeploymentBlocked(false, true);
+    const auto wasm = module("c-suspension");
+    assert(isolated.stage(wasm.data(), wasm.size()) && poll(isolated).ok &&
+           isolated.activate() && poll(isolated).ok);
+    assert(!isolated.canInvoke(event("!lua_unavailable")) && isolated.canInvoke(event("!wsleep")) &&
+           isolated.canInvoke(event("!ping")));
+    assert(isolated.invoke(event("!wsleep"), 401));
+    assert(poll(isolated).ok);
+    assert(isolated.invoke(event("!ping"), 402));
+    assert(poll(isolated).ok);
+    isolated.setRuntimeDeploymentBlocked(false, false);
+    const char *healthyLua = "function healthy() return 'Lua healthy' end";
+    assert(isolated.stage(healthyLua, strlen(healthyLua)) && poll(isolated).ok &&
+           isolated.activate() && poll(isolated).ok);
+    const auto badWasm = module("fault-9");
+    assert(isolated.stage(badWasm.data(), badWasm.size()) && !poll(isolated).ok);
+    isolated.setRuntimeDeploymentBlocked(true, true);
+    assert(!isolated.canInvoke(event("!wsleep")) && isolated.canInvoke(event("!healthy")) &&
+           isolated.canInvoke(event("!ping")));
+    assert(isolated.invoke(event("!healthy"), 403) && poll(isolated).ok);
+    assert(isolated.invoke(event("!ping"), 404) && poll(isolated).ok);
+    isolated.stop();
+    puts("PASS failed Lua/Wasm initialization isolates command admission and leaves native diagnostics available");
+  }
   worker.stop(); native_spiffs_shutdown(); native_nvs_shutdown();
   std::filesystem::remove_all(directory);
   puts("PASS native Wasm utility/atomic outcomes, runaway recovery and independent Lua lifecycle");

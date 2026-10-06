@@ -70,12 +70,16 @@ BOT_NATIVE_MESH_SOURCES := $(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROO
 BOT_HOST_WORKER_SOURCES := $(filter-out $(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp,$(BOT_NATIVE_MESH_SOURCES))
 BOT_NATIVE_OBJECTS = $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(wildcard $(PHY_BUILD)/crypto/*.o) \
 	$(wildcard $(PHY_BUILD)/ed/*.o) $(BOT_LUA_OBJECTS)
-BOT_REPLAY_RUNTIME_SOURCES = Runtime.cpp Management.cpp MastAdmin.cpp ../runtime/MastSource.cpp MastWeb.cpp \
+BOT_REPLAY_RUNTIME_SOURCES = Runtime.cpp Syslog.cpp Management.cpp MastAdmin.cpp ../runtime/MastSource.cpp MastWeb.cpp \
 	Lifecycle.cpp CompanionSessions.cpp Observer.cpp ObserverWire.cpp \
 	$(NATIVE)/Repeater.cpp $(NATIVE)/Room.cpp $(NATIVE)/Companion.cpp
 BOT_REPLAY_HELPERS = $(filter-out $(BOT_NATIVE_MESH_SOURCES),$(addprefix $(BUILD)/src/helpers/,$(addsuffix .cpp,$(NATIVE_HELPERS))))
 
-.PHONY: bot-lua bot-vm-test bot-test bot-runtime-test bot-prepare bot-firmware bot-build-test
+.PHONY: bot-lua bot-vm-test bot-source-capacity-test bot-test bot-runtime-test bot-prepare bot-firmware bot-build-test
+.PHONY: bot-source-set-test
+bot-source-set-test:
+	$(MAKE) lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 \
+		TEST_FLAGS='$(TEST_FLAGS) -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1 -DONCHIP_SOURCE_SET_JOURNAL_TEST=1 -DONCHIP_BOT_HEAP_MODEL=1'
 .PHONY: beta-test beta-build beta-client-test mast-cli mast-admin-ui-test mast-admin-browser-test
 .PHONY: beta-lab-fixtures beta-lab-check beta-lab-backup beta-lab-build beta-lab-rebuild beta-lab-flash beta-lab-boot
 .PHONY: beta-lab-rf-test
@@ -206,11 +210,11 @@ ifeq ($(BOT_INTEGRATION),1)
 BOT_LIFECYCLE_SOURCES += $(BOT_LUA_OBJECTS)
 endif
 bot-lua: $(BOT_LUA_OBJECTS)
-bot-vm-test: bot-lua
+bot-vm-test bot-source-capacity-test: bot-lua
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I. -I$(UPSTREAM)/src -I$(BOT_LUA_NATIVE) \
 		tests/bot_vm.cpp ../runtime/BotVm.cpp $(BOT_WASM_SOURCE) ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp $(BOT_LUA_OBJECTS) \
 		-lm -o $(BOT_BUILD)/bot-vm
-	$(BOT_BUILD)/bot-vm
+	$(BOT_BUILD)/bot-vm $(if $(filter bot-source-capacity-test,$@),--source-capacity-test)
 .PHONY: bot-wasm-test bot-wasm-examples bot-wasm-platform-test
 bot-wasm-platform-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_wasm_platform.py' -v
@@ -238,6 +242,10 @@ bot-wasm-integration-test: bot-host-runner bot-wasm-examples
 	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "bot-wasm-integration-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
 	PYTHONDONTWRITEBYTECODE=1 BOT_HOST_RUNNER="$(BOT_HOST_RUNNER)" \
 		python3 -m unittest discover -s tests -p 'test_wasm_*.py' -v
+.PHONY: bot-runtime-isolation-test
+bot-runtime-isolation-test: bot-host-runner bot-wasm-examples
+	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "bot-runtime-isolation-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
+	"$(BOT_HOST_RUNNER)" --runtime-isolation-test "$(ROOT)/.tmp/wasm-examples"
 .PHONY: bot-wasm-worker-test
 bot-wasm-worker-test: bot-native-worker bot-wasm-examples
 	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "bot-wasm-worker-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }

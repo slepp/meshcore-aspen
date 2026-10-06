@@ -62,6 +62,7 @@ th, td { padding: 11px 10px; border-bottom: 1px solid var(--border); }
 th:first-child, td:first-child { padding-left: 0; }
 tr:last-child td { border-bottom: 0; }
 code { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
+.packet-detail { white-space: normal; min-width: 22em; max-width: 42em; }
 .role-key { white-space: normal; overflow-wrap: anywhere; max-width: 38em; display: block; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
 .wide { margin-bottom: 16px; }
@@ -154,9 +155,11 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <label class="muted">Show <select id="filter"><option value="all">All events</option><option value="rx">RX only</option><option value="tx">TX only</option></select></label>
     </div>
     <div class="scroll" tabindex="0" aria-label="Recent packet events">
-      <table><thead><tr><th>Age</th><th>Result</th><th>Size / source</th><th>Queue wait</th><th>Airtime</th><th>RSSI / SNR</th><th>Packet bytes (hex)</th></tr></thead><tbody id="events"></tbody></table>
+      <table><thead><tr><th>Age</th><th>Result</th><th>Size / source</th><th>Queue wait</th><th>Airtime</th><th>RSSI / SNR</th><th>Packet / route</th><th>Packet bytes (hex)</th></tr></thead><tbody id="events"></tbody></table>
     </div>
     <p id="events-empty" class="empty">No matching events yet.</p>
+    <p id="contact-detail" class="muted chart-note">Contact names unavailable; prefix matches use on-device identities only.</p>
+    <p class="muted chart-note">RX is received over RF. Local reflections are not recorded here. Prefix matches do not authenticate a sender or exclude collisions elsewhere on the mesh. Only the first 16 packet bytes are available. Encrypted content stays encrypted.</p>
   </section>
   <footer><span id="updated">Connecting...</span><span id="firmware-version"></span></footer>
 </main>
@@ -175,6 +178,121 @@ function duration(ms) {
   const hours = Math.floor(seconds / 3600) % 24;
   const minutes = Math.floor(seconds / 60) % 60;
   return (days ? days + 'd ' : '') + hours + 'h ' + minutes + 'm';
+}
+function activityAge(ms) {
+  if (!Number.isFinite(ms)) return '-';
+  const seconds = Math.floor(Math.max(0, ms) / 1000);
+  if (seconds < 60) return seconds + 's';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+  return Math.floor(seconds / 86400) + 'd';
+}
+const packetTypes = ['Request', 'Response', 'Private text', 'ACK', 'Advert',
+  'Group text', 'Group data', 'Anonymous request', 'Returned path', 'Trace',
+  'Multipart', 'Control'];
+const packetRoutes = ['Transport flood', 'Flood', 'Direct', 'Transport direct'];
+const contactTypes = {1: 'Chat', 2: 'Repeater', 3: 'Room', 4: 'Sensor'};
+function knownIdentities(data) {
+  const identities = new Map();
+  const contacts = data.contacts;
+  const items = contacts && Array.isArray(contacts.items) ? contacts.items : [];
+  identities.incomplete = !!contacts && (contacts.truncated !== false || contacts.total !== items.length);
+  for (const contact of items) {
+    if (!contact || typeof contact.public_key !== 'string' || !/^[0-9a-f]{64}$/i.test(contact.public_key)) {
+      identities.incomplete = true;
+      continue;
+    }
+    const key = contact.public_key.toLowerCase();
+    if (!identities.has(key)) identities.set(key, new Set());
+    if (typeof contact.name === 'string' && contact.name)
+      identities.get(key).add(contact.name + (contactTypes[contact.type] ? ' [' + contactTypes[contact.type] + ']' : ''));
+  }
+  for (const role of data.roles || []) {
+    if (typeof role.public_key !== 'string' || !/^[0-9a-f]{64}$/i.test(role.public_key)) continue;
+    const key = role.public_key.toLowerCase();
+    const name = typeof role.name === 'string' && role.name ? role.name : roleNames[role.role] || 'On-device role';
+    if (items.some(c => c && typeof c.public_key === 'string' && c.public_key.toLowerCase() === key)) continue;
+    if (!identities.has(key)) identities.set(key, new Set());
+    identities.get(key).add(name);
+  }
+  return identities;
+}
+function prefixLabel(prefix, identities) {
+  if (!/^(?:[0-9a-f]{2})+$/i.test(prefix)) return prefix;
+  prefix = prefix.toLowerCase();
+  const matches = [...identities].filter(([key]) => key.startsWith(prefix));
+  if (matches.length > 1) return prefix + ' (ambiguous: ' + matches.length + ' known identities' +
+    (identities.incomplete ? '; contact list incomplete' : '') + ')';
+  if (identities.incomplete && prefix.length < 64) {
+    const candidate = matches.length === 1 && matches[0][1].size === 1 ? [...matches[0][1]][0] : '';
+    return prefix + ' (' + (candidate ? 'candidate ' + candidate + '; prefix match; ' : '') + 'contact list incomplete)';
+  }
+  if (matches.length === 1 && matches[0][1].size === 1)
+    return prefix + ' (matches ' + [...matches[0][1]][0] + ')';
+  return prefix;
+}
+function decodePacket(event, identities) {
+  const hex = event.preview_hex;
+  const length = event.length;
+  if (typeof hex !== 'string' || hex.length > 32 || !/^(?:[0-9a-f]{2})*$/i.test(hex) ||
+      !Number.isInteger(length) || length < 0 || length > 255 || hex.length / 2 > length)
+    return 'Malformed packet preview';
+  if (!hex.length) return length ? 'Packet preview unavailable' : 'No packet bytes';
+  const raw = (hex.match(/../g) || []).map(byte => parseInt(byte, 16));
+  const asHex = (start, count) => hex.slice(start * 2, (start + count) * 2).toLowerCase();
+  const route = raw[0] & 3, type = raw[0] >> 2 & 15, version = raw[0] >> 6;
+  const parts = [packetTypes[type] || (type === 15 ? 'Custom' : 'Unknown type ' + type), packetRoutes[route], 'v' + version];
+  const finish = message => [...parts, message].filter(Boolean).join(' / ');
+  if (version !== 0) return finish('Unsupported payload version');
+  const available = end => end <= raw.length;
+  const missing = field => finish((raw.length < length ? 'Preview ends before ' : 'Malformed packet: missing ') + field);
+  let offset = route === 0 || route === 3 ? 5 : 1;
+  if (length < offset + 1) return finish('Malformed packet: missing route header');
+  if (!available(offset + 1)) return missing('route header');
+  if (offset === 5) {
+    const code = at => (raw[at] | raw[at + 1] << 8).toString(16).padStart(4, '0');
+    parts.push('transport codes 0x' + code(1) + ', 0x' + code(3));
+  }
+  const packed = raw[offset++], width = (packed >> 6) + 1, count = packed & 63;
+  const pathBytes = width * count, payloadAt = offset + pathBytes;
+  if (width === 4 || pathBytes > 64) return finish('Malformed packet: invalid path width/count');
+  if (payloadAt >= length || length - payloadAt > 184) return finish('Malformed packet: invalid path/payload length');
+  const trace = type === 9 && (route === 2 || route === 3);
+  parts.push(trace ? 'trace signal bytes ' + pathBytes :
+    (route === 0 || route === 1 ? 'traversed path' : 'remaining route') +
+    ' ' + count + ' hop' + (count === 1 ? '' : 's') + ' × ' + width + ' B');
+  const hops = [];
+  for (let i = 0; i < count && available(offset + (i + 1) * width); i++)
+    hops.push(trace ? asHex(offset + i * width, width) : prefixLabel(asHex(offset + i * width, width), identities));
+  if (hops.length) parts.push(hops.join(' → '));
+  if (!available(payloadAt)) return missing('end of path');
+  const payloadLength = length - payloadAt;
+  const prefix = at => prefixLabel(asHex(at, 1), identities);
+  if ([0, 1, 2, 8].includes(type)) {
+    if (payloadLength < 4) return finish('Malformed packet: short private envelope');
+    if (!available(payloadAt + 2)) return missing('source/destination prefixes');
+    parts.push('src ' + prefix(payloadAt + 1) + ' → dst ' + prefix(payloadAt), 'encrypted');
+  } else if (type === 7) {
+    if (payloadLength < 35) return finish('Malformed packet: short anonymous envelope');
+    if (!available(payloadAt + 1)) return missing('destination prefix');
+    parts.push('dst ' + prefix(payloadAt), 'anonymous source / encrypted');
+  } else if (type === 4) {
+    if (payloadLength < 100) return finish('Malformed packet: short advert');
+    if (!available(payloadAt + 1)) return missing('advert source prefix');
+    const visible = Math.min(32, raw.length - payloadAt);
+    parts.push('advert key prefix ' + prefixLabel(asHex(payloadAt, visible), identities));
+  } else if (type === 5 || type === 6) {
+    if (payloadLength < 3) return finish('Malformed packet: short group envelope');
+    if (!available(payloadAt + 1)) return missing('channel hash');
+    parts.push('channel hash ' + asHex(payloadAt, 1), 'encrypted');
+  } else if (type === 3) {
+    if (payloadLength !== 4) return finish('Malformed packet: ACK needs 4 bytes');
+    if (!available(payloadAt + 4)) return missing('ACK reference');
+    parts.push('ACK reference ' + asHex(payloadAt, 4));
+  } else if (type === 9 && payloadLength < 9) {
+    return finish('Malformed packet: short trace');
+  }
+  return finish(raw.length < length ? 'partial preview' : '');
 }
 function cell(row, value, className = '') {
   const td = document.createElement('td');
@@ -243,28 +361,50 @@ function chart(id, bins, fields, airtime) {
       bins.reduce((n, b) => n + b.tx_packets, 0) + ' completed RF transmit attempts.');
 }
 
+let eventSignature = null, eventAges = [];
 function renderEvents(data) {
   const filter = byId('filter').value;
+  const signature = JSON.stringify([filter, data.history.events, (data.roles || []).map(r =>
+    [r.role, r.name, r.public_key, r.source_slot, r.source_generation]), data.kiss.capacity, data.contacts || null]);
+  if (signature === eventSignature) {
+    for (const [td, at] of eventAges) {
+      const age = activityAge(data.uptime_ms - at);
+      if (td.textContent !== age) td.textContent = age;
+    }
+    return;
+  }
+  const identities = knownIdentities(data);
+  const contacts = data.contacts;
+  text('contact-detail', contacts ? 'Companion contacts: ' + (Array.isArray(contacts.items) ? contacts.items.length : 0) + ' of ' + contacts.total +
+    (identities.incomplete ? '. Candidate prefix names are uncertain; omitted contacts may collide.' : '. Prefix names use companion contacts and on-device identities.') :
+    'Contact names unavailable; prefix matches use on-device identities only.');
   const rows = [];
+  eventAges = [];
   for (const e of data.history.events) {
     if (filter !== 'all' && e.direction !== filter) continue;
     const row = document.createElement('tr');
-    cell(row, number(Math.max(0, data.uptime_ms - e.at_ms) / 1000) + ' s');
-    const label = e.direction === 'rx' ? 'Received' : (states[e.state] || 'Other') +
+    eventAges.push([cell(row, activityAge(data.uptime_ms - e.at_ms)), e.at_ms]);
+    const label = e.direction === 'rx' ? 'Received over RF' : e.direction === 'local' ? 'Local reflection' :
+      e.direction !== 'tx' ? 'Unknown direction' : (states[e.state] || 'Other') +
       (e.reason ? ' / ' + (reasons[e.reason] || 'reason ' + e.reason) : '');
     cell(row, label, e.direction === 'rx' ? '' : e.state === 2 ? 'good' : 'warning');
     cell(row, e.length + ' B' + (e.direction === 'tx' ? ' / ' + sourceLabel(data, e.source_slot, e.source_generation) + ' #' + e.source_generation : ''));
     cell(row, e.direction === 'rx' ? '-' : duration(e.queue_ms));
     cell(row, e.direction === 'rx' ? 'est. ' + duration(e.estimated_ms) : duration(e.rf_ms));
-    cell(row, e.rssi_dbm === null ? '-' : number(e.rssi_dbm) + ' dBm / ' + number(e.snr_db) + ' dB');
+    const signal = e.direction === 'rx' && Number.isFinite(e.rssi_dbm) && Number.isFinite(e.snr_db) &&
+      !(e.rssi_dbm === 127 && e.snr_db === -32);
+    cell(row, signal ? number(e.rssi_dbm) + ' dBm / ' + number(e.snr_db) + ' dB' : '-');
+    cell(row, decodePacket(e, identities), 'packet-detail');
     const preview = document.createElement('code');
-    preview.textContent = (e.preview_hex.match(/.{1,2}/g) || []).join(' ') +
+    const hex = typeof e.preview_hex === 'string' ? e.preview_hex.slice(0, 32) : '';
+    preview.textContent = (hex.match(/.{1,2}/g) || []).join(' ') +
       (e.preview_truncated ? ' ...' : '') || '(no packet bytes)';
     const td = document.createElement('td'); td.appendChild(preview); row.appendChild(td);
     rows.push(row);
   }
   byId('events').replaceChildren(...rows);
   byId('events-empty').hidden = rows.length !== 0;
+  eventSignature = signature;
 }
 
 function render(data) {

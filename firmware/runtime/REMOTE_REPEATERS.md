@@ -62,6 +62,7 @@ Inspect:
 ```text
 bot repeaters status
 bot repeaters status ridge
+bot repeaters route ridge
 bot events
 telemetry status
 telemetry counts
@@ -72,6 +73,12 @@ uptime and a battery voltage if its hardware supplies one. `available=1`
 alone means there is a last-good sample, which may be stale. The status
 display retains that sample for diagnosis; use `fresh` before treating its
 voltage as current. Battery percentage is not inferred from voltage.
+`route ridge` reads the current outbound path without sending a packet:
+`route=unknown` needs flood discovery, while `route=3:cc268a` uses that
+three-byte hop. Routes learned from authenticated status/PATH responses
+replace the previous path automatically. `repair=1` means three consecutive
+failures require flood discovery on the next eligible poll; the saved hourly
+flood limit still applies. Learned routes are rebuilt after a restart.
 See [Aspen telemetry setup](../esp32/TELEMETRY.md) if publishing is not already
 configured. HTTP 2xx confirms receiver acceptance; query the receiver to
 check ingestion.

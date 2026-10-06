@@ -21,6 +21,9 @@ constexpr size_t RadioDashboard::HISTORY;
 constexpr size_t RadioDashboard::TRAFFIC_SECONDS;
 constexpr size_t RadioDashboard::PREVIEW_BYTES;
 constexpr size_t RadioDashboard::JSON_CAPACITY;
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+constexpr size_t RadioDashboard::CONTACT_CAPACITY;
+#endif
 constexpr size_t RadioDashboard::LIVE_CLIENTS;
 constexpr size_t RadioDashboard::LIVE_FRAGMENT;
 constexpr size_t RadioDashboard::ROLE_CAPACITY;
@@ -298,6 +301,23 @@ size_t RadioDashboard::formatJSON(const Snapshot &s, const char *name,
              r.stream.negotiated ? "true" : "false",
              r.stream.fault ? "true" : "false", r.stream.output_overflows);
   }
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+  if (r.contacts_available) {
+    const unsigned count = std::min<size_t>(r.contact_count, CONTACT_CAPACITY);
+    j.append(",\"contacts\":{\"capacity\":%u,\"total\":%u,\"truncated\":%s,\"items\":[",
+             unsigned(CONTACT_CAPACITY), r.contact_total,
+             r.contact_total > count ? "true" : "false");
+    for (unsigned i = 0; i < count; ++i) {
+      const auto &contact = r.contacts[i];
+      j.append("%s{\"public_key\":\"", i ? "," : "");
+      for (const auto byte : contact.public_key) j.append("%02x", byte);
+      j.append("\",\"name\":");
+      j.string(contact.name);
+      j.append(",\"type\":%u}", contact.type);
+    }
+    j.append("]}");
+  }
+#endif
 #ifdef MESHCORE_ONCHIP
   if (r.role_count) {
     j.append(",\"roles\":[");

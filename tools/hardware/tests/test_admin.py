@@ -27,6 +27,40 @@ class MastClientTests(unittest.TestCase):
     def setUp(self):
         configure_inventory(self)
 
+    def test_named_source_export_is_read_only_and_preserves_exact_bytes(self):
+        from tools.hardware import lua_sources
+        source = lua_sources.encode({"main": None, "config": b"settings={interval=300}\n",
+                                     "monitor": b"function poll() return settings.interval end\n"})
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            destination = Path(directory) / "monitor.lua"
+            client = MagicMock()
+            client.command.return_value = "Sources format=meshcore-sources/1 commit-base=sha256 atomic=1"
+            arguments = ["mast_cli.py", "--unix-socket", str(Path(directory) / "owner.sock"),
+                         "source-export", "monitor", str(destination)]
+            with patch.object(sys, "argv", arguments), patch.object(mast_cli, "UnixClient", return_value=client), \
+                    patch.object(mast_cli, "download", return_value=source), \
+                    patch.object(mast_cli, "install") as install, patch("sys.stdout", new_callable=io.StringIO):
+                mast_cli.main()
+            self.assertEqual(destination.read_bytes(), lua_sources.decode(source)["monitor"])
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            client.command.assert_called_once_with("source api sources")
+            client.close.assert_called_once()
+            install.assert_not_called()
+            for name, message in (("main", "bundled commands"), ("absent", "not installed"),
+                                  ("../file", "identifier")):
+                with patch.object(sys, "argv", arguments[:-2] + [name, str(destination)]), \
+                        patch.object(mast_cli, "UnixClient", return_value=MagicMock(command=MagicMock(
+                            return_value="Sources format=meshcore-sources/1 commit-base=sha256 atomic=1"))), \
+                        patch.object(mast_cli, "download", return_value=source), \
+                        patch.object(mast_cli, "install") as install, \
+                        patch("sys.stderr", new_callable=io.StringIO) as error:
+                    with self.assertRaises(SystemExit) as exited:
+                        mast_cli.main()
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn(message, error.getvalue())
+                    install.assert_not_called()
+                self.assertEqual(destination.read_bytes(), lua_sources.decode(source)["monitor"])
+
     def test_native_single_send_leaves_timeout_unknown_without_replay(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
             client = mast_cli.NativeClient.__new__(mast_cli.NativeClient)

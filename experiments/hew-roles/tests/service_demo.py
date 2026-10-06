@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import hmac
+from itertools import count
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from build_worker import verify as verify_worker
 PROFILE = struct.pack("<IIBBBfBh", 912525000, 250000, 7, 5, 2, 1.0, 0, 0)
 CHANNEL = bytes(range(16))
 WORKER = Path(os.environ.get("BOT_NATIVE_WORKER", ROOT/"build/native-worker"))
+STATE_SEQUENCE = count()
 WORKER_SPEC = verify_worker(WORKER)
 def scope_code(key,raw):
     kind,_,_,_,payload=parse(raw)
@@ -222,7 +224,8 @@ class Emulator:
 
 class RunningService:
     def __init__(self,native=True,malformed=False,wasm=False,bot_home=b"",bot_default=b"",extra_config="",root=None):
-        self.root=root or ROOT/"build"/f"s-{os.getpid()}-{time.monotonic_ns():x}"
+        # Keep absolute owner/admin UDS fixture paths short in isolated worktrees.
+        self.root=root or ROOT.parents[1]/f".s-{os.getpid()}-{next(STATE_SEQUENCE)}"
         self.root.mkdir(mode=0o700)
         if wasm:
             try:

@@ -59,7 +59,7 @@ class Observer final : public KissPacketObserver {
   void service();
   void enqueue(const Event &);
   uint32_t observationEpoch(uint32_t at, bool current = false) const;
-  bool publish(const char *, const char *, int, bool retain);
+  bool publish(const char *, const char *, int, bool retain, int qos = 0);
   bool fail(const char *);
   bool startClient(uint32_t epoch);
   void publishPacket(const Event &);

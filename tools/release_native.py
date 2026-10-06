@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import tarfile
 
-from product_versions import ROOT, load
+from product_versions import ROOT
+from release_inputs import prepared_inventory, stage_source
 
 PROFILE = "debian12-linux-x86_64"
 DOCKERFILE = "release/Dockerfile.debian12"
@@ -59,30 +60,10 @@ def container_command(image, source, go_root, command, *, network="none", epoch=
 def build_native(image, stem, env, command):
     receipt = image_receipt(image, env)
     source = ROOT / ".tmp" / ("onchip-release-debian12-" + stem)
-    source.mkdir()  # Refuse stale source, compiled objects or candidate reuse.
-    archive = source / "public-source.tar"
-    command(["git", "archive", "--format=tar", "--output=" + str(archive), "HEAD"])
-    with tarfile.open(archive) as package:
-        package.extractall(source, filter="data")
-    archive.unlink()
+    inputs = stage_source(ROOT, source, command, run)
     scratch = source / ".tmp"
-    scratch.mkdir()
     (scratch / "native-home").mkdir()
-    # Only the pinned public upstream and selected source dependencies are staged.
-    upstream = ROOT / ".tmp/onchip-upstream"
-    if run(["git", "rev-parse", "HEAD"], cwd=upstream) != load()["upstream"]["commit"]:
-        raise ValueError("Native source upstream differs from the release pin")
-    for name in ("onchip-upstream", "MeshCore", "parity-upstream"):
-        command(["git", "clone", "--no-hardlinks", str(upstream), str(scratch / name)])
-    libs = Path(".tmp/MeshCore/.pio/libdeps/Xiao_S3_WIO_kiss_wifi")
-    for dependency in (libs / "Crypto", libs / "CayenneLPP", Path(".tmp/native-test-deps/base64")):
-        shutil.copytree(ROOT / dependency, source / dependency)
-    lua = Path(".tmp/onchip-lua/lua-5.5.1.tar.gz")
-    (source / lua).parent.mkdir(parents=True)
-    shutil.copy2(ROOT / lua, source / lua)
     wamr = source / ".cache/meshcore-wamr"
-    wamr.mkdir(parents=True)
-    shutil.copy2(ROOT / ".cache/meshcore-wamr/wamr.tar.gz", wamr / "wamr.tar.gz")
     # Extract using host Python 3.13's data filter. Debian's Python 3.11 then
     # patches/configures this fresh pinned source, never a newer-glibc object.
     from importlib.util import spec_from_file_location, module_from_spec
@@ -113,6 +94,8 @@ def build_native(image, stem, env, command):
     inside(["make", "-C", "firmware/esp32", "bot-native-worker",
             "BOT_BUILD=/src/.tmp/onchip-native-worker", "BUILD=/src/.tmp/onchip-native-source",
             "CONFIG=/src/firmware/esp32/platformio.public.ini.example", "BOT_JSON_INCLUDE=/usr/include/cjson"])
+    inputs["prepared"] = prepared_inventory(source, ".tmp/onchip-native-worker/lib/OnchipLua")
+    receipt["source_inputs"] = inputs
     inside(["python3", "tools/release_native.py", "inspect", "--output", ".tmp/native-receipt.json"])
     receipt.update(json.loads((scratch / "native-receipt.json").read_text()))
     (scratch / "native-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

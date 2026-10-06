@@ -246,6 +246,20 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "owner-only"):
             load_config(path)
 
+    async def test_native_radio_names_with_spaces_and_punctuation(self):
+        path = self.root / "config.json"
+        for name in ("slepp (base)", "SLP Room", "node.1", "x" * 64):
+            config = {"target": TARGET, "default_feed": name,
+                      "feeds": [dict(self.config, name=name)]}
+            path.write_text(json.dumps(config))
+            path.chmod(0o600)
+            self.assertEqual(load_config(path), config)
+        for name in ("", "x" * 65, "base\n", "base\t", "base\x00", "base\x7f", "baseé"):
+            path.write_text(json.dumps(
+                {"target": TARGET, "feeds": [dict(self.config, name=name)]}))
+            with self.assertRaisesRegex(ValueError, "printable ASCII"):
+                load_config(path)
+
     async def test_inbox_validation_and_send_size(self):
         for cursor, limit in [(-1, 1), (0, 101), (True, 50)]:
             with self.assertRaises(ValueError):

@@ -180,6 +180,19 @@ PING response while another client remains responsive. Hew-only groups
 check private-config failures. Pure compiled checks cover UTF-8, filters,
 integer/field/property ranges and expiry arithmetic.
 
+Endpoint shutdown must finish within 10 seconds, including after all 128
+client slots are filled, one is released and a replacement is admitted.
+The Go host and oracle close listener clients from one registry snapshot
+before stopping Mochi. This avoids the recursive registry read lock in
+Mochi v2.7.9's shutdown lookup
+([upstream issue #488](https://github.com/mochi-mqtt/server/issues/488)).
+The dependency version, client bounds and MQTT shutdown DISCONNECT remain
+unchanged. Run the production broker's concurrent shutdown regressions with:
+
+```sh
+make -C ../.. host-test HOST_TEST_PACKAGES=./internal/observer
+```
+
 `make broker-symbols` builds `build/hew-broker-symbols` with
 `-g --opt-level 2` and the same native boundary. It does not run a profiler.
 Profile only after the combined feature-complete system is running without

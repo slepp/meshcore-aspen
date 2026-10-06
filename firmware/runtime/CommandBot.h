@@ -35,7 +35,7 @@ class CommandBot {
 
 public:
   static const size_t StorageBytes;
-#if ONCHIP_BOT_SINGLE_SESSION
+#if ONCHIP_BOT_SINGLE_SESSION || defined(ONCHIP_SOURCE_SET_JOURNAL_TEST)
   BotWorker &sourceWorker() { return worker_; }
 #endif
 #ifdef NRF52_PLATFORM
@@ -120,9 +120,11 @@ public:
   bool advertise(bool zeroHop = false);
   bool sourceReady() const;
   bool sourceDeploymentReady() const { return selectedSourcesReady_; }
-  void setSourceDeploymentState(bool ready, bool startupBlocked, const char *fault);
+  void setSourceDeploymentState(bool luaReady, bool luaBlocked, bool wasmReady, bool wasmBlocked,
+                                const char *fault);
   bool retrySourceInitialization();
   void setCommandAdmission(bool enabled);
+  void setRuntimeAdmission(bool wasm, bool enabled) { worker_.setRuntimeAdmission(wasm, enabled); }
   bool setSharedState(bool enabled);
   bool sharedState() const;
   bool setHomeAccess(bool enabled);

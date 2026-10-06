@@ -181,7 +181,7 @@ pub actor RF {
         airtime = table;
     }
     receive fn set_spreading(sf: i64) {
-        assert(sf >= 7 && sf <= 12);
+        assert(sf >= 5 && sf <= 12);
         spreading = sf;
     }
     receive fn transmitted(raw: bytes) {

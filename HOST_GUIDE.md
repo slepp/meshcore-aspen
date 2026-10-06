@@ -121,9 +121,7 @@ settings affect every role, and incompatible requests fail explicitly.
 
 For an ESP32 running a role away from the radio, the
 [remote-radio adapter](#esp32-roles-with-a-remote-modem) connects over WiFi TCP.
-The [optional Python broker](#optional-role-isolating-broker)
-provides separate KISS identities for applications that need them. The
-standalone image runs the roles on the ESP32 itself.
+The standalone image runs the roles on the ESP32 itself.
 
 ## Configure the Go host
 
@@ -1153,58 +1151,6 @@ make test-live-reception RADIO_HOST=RADIO_IP LIVE_TEST_SECONDS=120
 
 This requires the same packet and adjacent RSSI/SNR metadata on two concurrent
 connections. Local-loopback markers are excluded; a quiet RF channel times out.
-
-## Optional role-isolating broker
-
-The radio supports concurrent direct clients. Use the host broker when
-applications require stable, separate modem-side identities
-and crypto state for each role, or when an observer must be forcibly read-only.
-Independent job IDs and configuration leases cannot be multiplexed
-through its one upstream connection, so queued extensions are rejected.
-Use direct connections or `meshcore-host` for native queued scheduling.
-Install the host dependencies and start it with:
-
-```bash
-python3 -m pip install -r requirements.txt
-python3 meshcore_kiss_broker.py --upstream tcp://meshcore-radio.local:8001
-```
-
-Each role gets a stable, independent KISS endpoint:
-
-| Role | Default endpoint | Behaviour |
-|---|---|---|
-| Router/repeater | `tcp://127.0.0.1:8101` | Highest broker-local priority, not native PHY priority |
-| Room server | `tcp://127.0.0.1:8102` | Independent identity and crypto |
-| Client/base | `tcp://127.0.0.1:8103` | Independent identity and crypto |
-| Observer | `tcp://127.0.0.1:8104` | Receives everything; TX and shared PHY mutations are rejected |
-
-Bind only to localhost unless another host genuinely needs the virtual modem. To
-change an endpoint, repeat `--listen`:
-
-```bash
-python3 meshcore_kiss_broker.py \
-  --upstream tcp://meshcore-radio.local:8001 \
-  --listen router=127.0.0.1:8201 \
-  --listen room=127.0.0.1:8202
-```
-
-The broker parses complete KISS frames rather than forwarding arbitrary TCP
-chunks. It queues one physical transmission at a time, waits for `TxDone`, and
-returns command responses only to the requesting role. Received data and its
-following `RxMeta` signal report are delivered in order to every role. Signal
-report enable/disable is virtual per client, while the physical modem remains
-enabled.
-
-KISS identity, signing, key exchange, hashing, and encryption commands are
-implemented locally with a persistent identity for each role. Seeds are stored
-with mode 0600 under `${XDG_STATE_HOME:-~/.local/state}/meshcore-kiss/identities`.
-This prevents the router, room, and client from accidentally appearing as one
-MeshCore node merely because they share a radio. Set `--state-dir` to relocate
-that state.
-
-Radio configuration and telemetry remain physical/global. Conflicting role
-configuration is therefore operationally invalid: configure every role with the
-same frequency, bandwidth, spreading factor, coding rate, and transmit power.
 
 ## ESP32 roles with a remote modem
 

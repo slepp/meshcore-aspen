@@ -61,6 +61,15 @@ int main(int argc, char **argv) {
   std::ofstream(std::string(argv[1]) + "/capture.json") << output << "\n";
   const uint8_t direct[] = {0x16, 0x82, 0xaa, 0xbb, 0xcc, 0x12, 0x34, 0x56, 1};
   assert(packet(direct, sizeof(direct), "test", key, epoch, -90, 4.25,
+                0xffff, output, sizeof(output)));
+  assert(std::string(output).find("\"path\":[\"aabbcc\",\"123456\"]") != std::string::npos);
+  const uint8_t flood[] = {0x15, 0x82, 0xaa, 0xbb, 0xcc, 0x12, 0x34, 0x56, 1};
+  assert(packet(flood, sizeof(flood), "test", key, epoch, -90, 4.25,
+                0xffff, output, sizeof(output)));
+  assert(std::string(output).find("\"route\":\"F\"") != std::string::npos);
+  assert(std::string(output).find("\"path\"") == std::string::npos);
+  std::ofstream(std::string(argv[1]) + "/flood.json") << output << "\n";
+  assert(packet(direct, sizeof(direct), "test", key, epoch, -90, 4.25,
                 0xffff, output, sizeof(output), true));
   assert(std::string(output).find("\"path\":\"aabbcc,123456\"") != std::string::npos);
   std::ofstream(std::string(argv[1]) + "/capture-direct.json") << output << "\n";
@@ -73,6 +82,7 @@ int main(int argc, char **argv) {
   const uint8_t trace[] = {0x25, 0x81, 0xaa, 0xbb, 0xcc, 0x01, 0x02};
   assert(packet(trace, sizeof(trace), "test", key, epoch, -90, 4.5, 0xffff,
                 output, sizeof(output)));
+  assert(std::string(output).find("\"path\"") == std::string::npos);
   std::ofstream(std::string(argv[1]) + "/trace.json") << output << "\n";
   assert(status("offline", "test", key, "host test", "test", "unknown",
                 epoch, output, sizeof(output)));

@@ -29,11 +29,15 @@ struct BotWorker::Control {
   BotSignal<bool> reminderAccess{false}, reminderReady{false};
   BotSignal<uint32_t> reminderGrant{1};
   BotSignal<ReminderPhase> reminderPhase{NoReminder};
+  // Publication status/reservations stay global; live I/O uses its runtime incarnation.
   BotSignal<uint32_t> generation{1}, homeGrant{1}, sharedGrant{1};
+  BotSignal<uint32_t> incarnations[RuntimeCount], nativeGeneration{1};
+  BotSignal<bool> admission[2], deploymentBlocked[2];
   BotSignal<uint32_t> publication{0}, publicationGeneration{0};
   BotSignal<State> jobs[BotJobLimit], io[BotJobLimit], radio[BotJobLimit];
   BotSignal<State> data{Idle};
-  BotSignal<uint8_t> eventAccess{0}, subscriptions{0};
+  BotSignal<uint8_t> eventAccess{0};
+  BotSignal<uint8_t> runtimeSubscriptions[2];
   BotSignal<uint32_t> scheduleSeconds{0};
   BotSignal<uint32_t> eventEpoch{1};
   BotSignal<uint32_t> cancelExcept{0};
@@ -51,6 +55,10 @@ struct BotWorker::Control {
   BotSignal<bool> ownerFetchCancelled{false}, ownerFetchDelivered{false};
 #endif
   Control() {
+    for (auto &incarnation : incarnations) incarnation = 0;
+    for (auto &enabled : admission) enabled = true;
+    for (auto &blocked : deploymentBlocked) blocked = false;
+    for (auto &subscriptions : runtimeSubscriptions) subscriptions = 0;
     for (unsigned i = 0; i < BotJobLimit; ++i) jobs[i] = io[i] = radio[i] = Idle;
 #if ONCHIP_BOT_HTTPS
     for (auto &state : network) state = Idle;
@@ -93,12 +101,27 @@ struct BotWorker::Storage {
 #endif
     };
   }
-  uint8_t subscriptions() {
-    uint8_t mask = active.subscriptions();
+  Runtime runtimeOf(const BotSession *vm) const {
+    if (vm == &active) return Lua;
 #if ONCHIP_BOT_WASM
-    mask |= wasmActive.subscriptions();
+    if (vm == &wasmActive) return Wasm;
 #endif
-    return mask;
+#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
+    if (vm == &diagnostics) return Diagnostics;
+#endif
+    return RuntimeCount;
+  }
+  BotSession *session(Runtime runtime) {
+    switch (runtime) {
+      case Lua: return &active;
+#if ONCHIP_BOT_WASM
+      case Wasm: return &wasmActive;
+#endif
+#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
+      case Diagnostics: return &diagnostics;
+#endif
+      default: return nullptr;
+    }
   }
   bool eventWasmFirst = false;
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
@@ -121,6 +144,7 @@ struct BotWorker::Storage {
     uint32_t pollAt = 0;
     uint32_t startedAt = 0, untrustedAt = 0;
     bool suspended = false;
+    Runtime runtime = Lua;
   } io[BotJobLimit], radio[BotJobLimit];
 #if ONCHIP_BOT_HTTPS
   Io network[BotJobLimit];
@@ -142,6 +166,7 @@ struct BotWorker::Storage {
     bool used = false;
     BotIoToken token{};
     uint32_t due = 0, eventEpoch = 0;
+    Runtime runtime = Lua;
   } timers[BotJobLimit];
   Result result{};
   BotReminderDispatch reminder{};
@@ -261,6 +286,8 @@ void BotWorker::stop() {
   if (!storage_) return;
   control_->stopping = true;
   ++control_->generation;
+  control_->nativeGeneration = 0;
+  for (auto &incarnation : control_->incarnations) incarnation = 0;
 #if !defined(ARDUINO_ARCH_ESP32) && !defined(NRF52_PLATFORM)
   if (task_.joinable()) task_.join();
   if (ioTask_.joinable()) ioTask_.join();
@@ -280,6 +307,33 @@ void BotWorker::stop() {
   control_ = nullptr;
 }
 uint32_t BotWorker::generation() const { return control_ ? control_->generation.load() : 0; }
+uint32_t BotWorker::runtimeGeneration(Runtime runtime) const {
+  return control_ && runtime < RuntimeCount ? control_->incarnations[runtime].load() : 0;
+}
+bool BotWorker::ioCurrent(const BotIoToken &token) const {
+  if (!control_ || control_->stopping || !token.generation) return false;
+  for (const auto &incarnation : control_->incarnations)
+    if (token.generation == incarnation.load()) return true;
+  return false;
+}
+bool BotWorker::resultCurrent(const Result &result) const {
+  if (!control_ || control_->stopping || !result.runtimes) return false;
+  for (unsigned runtime = 0; runtime < RuntimeCount; ++runtime)
+    if ((result.runtimes & (1u << runtime)) &&
+        (!result.incarnations[runtime] ||
+         result.incarnations[runtime] != control_->incarnations[runtime].load())) return false;
+  return true;
+}
+void BotWorker::setRuntimeAdmission(bool wasm, bool enabled) {
+  if (control_) control_->admission[wasm ? Wasm : Lua] = enabled;
+}
+bool BotWorker::runtimeAdmissionEnabled(bool wasm) const {
+  const Runtime runtime = wasm ? Wasm : Lua;
+  return control_ && control_->admission[runtime].load() && !control_->deploymentBlocked[runtime].load();
+}
+void BotWorker::setRuntimeDeploymentBlocked(bool wasm, bool blocked) {
+  if (control_) control_->deploymentBlocked[wasm ? Wasm : Lua] = blocked;
+}
 uint32_t BotWorker::sourceGeneration() const {
 #if ONCHIP_BOT_SINGLE_SESSION
   return control_ ? control_->sourceGeneration.load() : 0;
@@ -332,14 +386,19 @@ uint8_t BotWorker::eventAccess() const {
   return control_ && control_->eventEpoch.load() ? control_->eventAccess.load() : 0;
 }
 uint32_t BotWorker::scheduleSeconds() const {
-  return control_ && (eventMask() & 16) ? control_->scheduleSeconds.load() : 0;
+  return control_ && (eventMask(Lua) & 16) ? control_->scheduleSeconds.load() : 0;
 }
 uint32_t BotWorker::eventEpoch() const {
   return control_ ? control_->eventEpoch.load() : 0;
 }
 uint8_t BotWorker::eventMask() const {
-  return control_ && control_->eventEpoch.load() && control_->state.load() == Idle ?
-      control_->eventAccess.load() & control_->subscriptions.load() : 0;
+  return eventMask(Lua) | eventMask(Wasm);
+}
+uint8_t BotWorker::eventMask(Runtime runtime) const {
+  if (!control_ || runtime > Wasm || !control_->eventEpoch.load() ||
+      control_->state.load() != Idle || !control_->admission[runtime].load() ||
+      control_->deploymentBlocked[runtime].load() || !runtimeGeneration(runtime)) return 0;
+  return control_->eventAccess.load() & control_->runtimeSubscriptions[runtime].load();
 }
 void BotWorker::setReminderReady(bool ready) {
   if (control_) control_->reminderReady = ready && control_->state.load() == Idle;
@@ -525,7 +584,68 @@ void BotWorker::dataCommand(const char *command, char *reply, size_t capacity) {
   } else error("unknown data command; use data help");
 }
 bool BotWorker::canInvoke(const BotEvent &event, unsigned collecting, unsigned customCollecting) const {
-  if (!canInvoke() || collecting >= BotJobLimit || customCollecting > collecting) return false;
+  if (!control_ || control_->stopping) return false;
+  State idle = Idle;
+  if (!control_->state.compare_exchange_strong(idle, Expiring)) return false;
+  const bool allowed = invocationCapacity(event, collecting, customCollecting);
+  control_->state = Idle;
+  return allowed;
+}
+uint8_t BotWorker::invocationRuntimes(const BotEvent &event) const {
+  uint8_t runtimes = 0;
+  if (event.kind != BotEvent::Command) {
+    if (event.kind > BotEvent::Scheduled) return 0;
+    const unsigned bit = 1u << (unsigned(event.kind) - 1);
+    if (!(control_->eventAccess.load() & bit)) return 0;
+    if (storage_->active.subscriptions() & bit) runtimes |= 1u << Lua;
+#if ONCHIP_BOT_WASM
+    if (storage_->wasmActive.subscriptions() & bit) runtimes |= 1u << Wasm;
+#endif
+    if (event.runtimeMask) runtimes &= event.runtimeMask;
+  } else {
+    const auto *installed = storage_->active.manifest().find(event.name);
+#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
+    if (botReservedCommand(event.name) && (!installed || botReservedCommand(installed->function)))
+      return runtimeGeneration(Diagnostics) ? 1u << Diagnostics : 0;
+#else
+    if (botReservedCommand(event.name) && runtimeGeneration(Lua) &&
+        (!installed || botReservedCommand(installed->function))) {
+#if ONCHIP_BOT_SINGLE_SESSION
+      if (control_->sourceSuspended) return 0;
+#endif
+      return 1u << Lua;
+    }
+#endif
+#if ONCHIP_BOT_WASM
+    if (storage_->wasmActive.manifest().find(event.name)) runtimes = 1u << Wasm;
+    else
+#endif
+      runtimes = 1u << Lua;
+  }
+  for (unsigned runtime = Lua; runtime <= Wasm; ++runtime)
+    if (!control_->admission[runtime].load() || control_->deploymentBlocked[runtime].load() ||
+        !control_->incarnations[runtime].load()) runtimes &= ~(1u << runtime);
+#if ONCHIP_BOT_SINGLE_SESSION
+  if (control_->sourceSuspended) runtimes &= ~(1u << Lua);
+#endif
+  return runtimes;
+}
+const char *BotWorker::admissionError(const BotEvent &event) const {
+  if (!control_ || control_->stopping) return "Command worker unavailable";
+  State idle = Idle;
+  if (!control_->state.compare_exchange_strong(idle, Expiring)) return nullptr;
+  const bool available = invocationRuntimes(event) != 0;
+  bool wasm = false;
+#if ONCHIP_BOT_WASM
+  wasm = event.kind == BotEvent::Command && storage_->wasmActive.manifest().find(event.name) != nullptr;
+#endif
+  control_->state = Idle;
+  return available ? nullptr : wasm ?
+      "Wasm command source unavailable; use native source wasm status/retry" :
+      "Lua command source unavailable; use native source status/retry";
+}
+bool BotWorker::invocationCapacity(const BotEvent &event, unsigned collecting, unsigned customCollecting) const {
+  if (collecting >= BotJobLimit || customCollecting > collecting || !invocationRuntimes(event)) return false;
   const bool subscription = event.kind != BotEvent::Command;
   unsigned used = collecting, custom = customCollecting;
   for (const auto &job : storage_->jobs) if (job.state->load() != Idle) {
@@ -537,12 +657,13 @@ bool BotWorker::canInvoke(const BotEvent &event, unsigned collecting, unsigned c
   }
   if (used >= BotJobLimit) return false;
   if ((subscription || !botReservedCommand(event.name)) && custom >= BotJobLimit - 1) return false;
-  if (subscription && (event.kind > BotEvent::Scheduled ||
-      !(eventMask() & (1u << (unsigned(event.kind) - 1))))) return false;
   return true;
 }
 bool BotWorker::invoke(const BotEvent &event, uint32_t id) {
-  if (!canInvoke(event)) return false;
+  if (!control_ || control_->stopping) return false;
+  State idle = Idle;
+  if (!control_->state.compare_exchange_strong(idle, Expiring)) return false;
+  if (!invocationCapacity(event, 0, 0)) { control_->state = Idle; return false; }
   const bool subscription = event.kind != BotEvent::Command;
   for (auto &job : storage_->jobs) if (job.state->load() == Idle) {
     job.event = event;
@@ -557,9 +678,14 @@ bool BotWorker::invoke(const BotEvent &event, uint32_t id) {
     job.result = {};
     job.result.operation = subscription ? Operation::Event : Operation::Invoke;
     job.result.job = id; job.result.generation = control_->generation;
+    job.result.runtimes = invocationRuntimes(event);
+    for (unsigned runtime = 0; runtime < RuntimeCount; ++runtime)
+      job.result.incarnations[runtime] = control_->incarnations[runtime].load();
     *job.state = Pending;
+    control_->state = Idle;
     return true;
   }
+  control_->state = Idle;
   return false;
 }
 bool BotWorker::sourceMutationAllowed(uint32_t publication) const {
@@ -797,7 +923,7 @@ bool BotWorker::requestOwnerFetch(const char *endpoint) {
   io.request = {};
   io.result = {};
   io.request.kind = BotIoRequest::HttpGet;
-  io.request.token = {control_->generation.load(), 1, ++storage_->ownerFetchSequence};
+  io.request.token = {control_->nativeGeneration.load(), 1, ++storage_->ownerFetchSequence};
   io.request.grant = control_->homeGrant.load();
   io.request.networkEpoch = botNetworkEpoch();
   io.request.deadline = millis() + BotHttpsDeadlineMs;
@@ -838,7 +964,7 @@ bool BotWorker::pollOwnerFetch(BotIoResult &result) {
   if (io.state->load() != Done) return false;
   result = io.result;
   if (control_->stopping.load() ||
-      io.request.token.generation != control_->generation.load()) {
+      io.request.token.generation != control_->nativeGeneration.load()) {
     result.ok = false; result.json[0] = 0;
     strcpy(result.rpcCode, "cancelled");
     strcpy(result.error, "Owner HTTPS fetch cancelled; remote outcome unknown");
@@ -878,7 +1004,7 @@ bool BotWorker::fetchPackage(const BotHttpsFetchRequest &request) {
   auto &io = storage_->ownerFetch;
   io.request = {}; io.result = {};
   io.request.kind = BotIoRequest::PackageGet;
-  io.request.token = {control_->generation.load(), 1, ++storage_->ownerFetchSequence};
+  io.request.token = {control_->nativeGeneration.load(), 1, ++storage_->ownerFetchSequence};
   io.request.grant = control_->homeGrant.load();
   io.request.networkEpoch = botNetworkEpoch();
   io.request.deadline = millis() + BotHttpsDeadlineMs;
@@ -924,7 +1050,7 @@ bool BotWorker::pollPackageFetch(BotHttpsFetchResult &result) {
   result.httpStatus = io.result.httpStatus;
   result.networkSubmitted = io.result.networkSubmitted;
   if (control_->ownerFetchCancelled.load() || control_->stopping.load() ||
-      io.request.token.generation != control_->generation.load()) {
+      io.request.token.generation != control_->nativeGeneration.load()) {
     result.state = result.networkSubmitted ? BotHttpsFetchResult::Unknown :
                                             BotHttpsFetchResult::Failed;
     strcpy(result.rpcCode, "cancelled");
@@ -1027,7 +1153,7 @@ void BotWorker::runNet() {
             strcpy(io.result.rpcCode, "permission_denied");
             strcpy(io.result.error, "Configured HTTPS endpoint or RPC mapping not granted");
           } else {
-            provider->perform(io.request, io.result, control_->generation, control_->homeGrant,
+            provider->perform(io.request, io.result, control_->incarnations[io.runtime], control_->homeGrant,
                               control_->homeAccess, control_->stopping,
                               bundled && !configuredHome ? nullptr : &route);
           }
@@ -1080,7 +1206,7 @@ void BotWorker::runNet() {
           strcpy(fetch.result.rpcCode, "permission_denied");
           strcpy(fetch.result.error, "Owner HTTPS endpoint is not an approved GET");
         } else if (provider) {
-          provider->perform(fetch.request, fetch.result, control_->generation,
+          provider->perform(fetch.request, fetch.result, control_->nativeGeneration,
                             control_->homeGrant, control_->homeAccess,
                             control_->ownerFetchCancelled, &route,
                             fetch.request.kind == BotIoRequest::PackageGet ?
@@ -1197,7 +1323,7 @@ void BotWorker::runIo() {
       }
       for (auto &io : storage_->io) if (io.state->load() == Pending) {
         if (io.pollAt && int32_t(millis() - io.pollAt) < 0 &&
-            io.request.token.generation == control_->generation &&
+            io.request.token.generation == control_->incarnations[io.runtime] &&
             botEventCurrent(io.request, &control_->eventEpoch) &&
             (!io.request.sharedScope() ||
              (control_->sharedState && io.request.grant == control_->sharedGrant.load()))) continue;
@@ -1217,8 +1343,8 @@ void BotWorker::runIo() {
           resetBotIoResult(io.result); io.result.token = io.request.token;
           if (io.request.kind == BotIoRequest::Utility) {
             BotUtilityResult utility;
-            if (io.request.token.generation != control_->generation.load())
-              strcpy(utility.error, "Utility source generation revoked");
+            if (io.request.token.generation != control_->incarnations[io.runtime].load())
+              strcpy(utility.error, "Utility runtime incarnation revoked");
             else io.result.ok = io.request.delaySeconds == 0 ? botCalculate(io.request.value, utility) :
                 io.request.delaySeconds == 1 ? botConvert(io.request.value, io.request.key, io.request.endpoint, utility) :
                 io.request.delaySeconds == 2 ? botRoll(io.request.value[0] ? io.request.value : nullptr, utility) :
@@ -1228,14 +1354,14 @@ void BotWorker::runIo() {
               !store.recover(io.result.error, sizeof(io.result.error))) {
             Serial.printf("On-chip scheduler blocked by KV recovery: %s\n", io.result.error);
           } else if (io.request.reminder())
-            reminders.perform(storage_->botKey, io.request, io.result, control_->generation,
+            reminders.perform(storage_->botKey, io.request, io.result, control_->incarnations[io.runtime],
                               control_->reminderAccess, control_->reminderGrant, control_->stopping,
                               control_->reminderPhase.load() == NoReminder ? 0 : storage_->reminder.id);
           else if (io.request.durableTimer())
-            timers.perform(storage_->botKey, io.request, io.result, control_->generation,
+            timers.perform(storage_->botKey, io.request, io.result, control_->incarnations[io.runtime],
                            control_->sharedState, control_->sharedGrant, &control_->eventEpoch);
           else
-            store.perform(storage_->botKey, io.request, io.result, control_->generation,
+            store.perform(storage_->botKey, io.request, io.result, control_->incarnations[io.runtime],
                           control_->sharedState, control_->sharedGrant, &control_->eventEpoch);
         } else {
           resetBotIoResult(io.result); io.result.token = io.request.token;
@@ -1319,44 +1445,31 @@ void BotWorker::pumpJobs() {
     for (auto &timer : s.timers)
       if (timer.used && timer.eventEpoch && timer.eventEpoch != s.lastEventEpoch) timer = {};
   }
-  control_->subscriptions = s.subscriptions();
+  control_->runtimeSubscriptions[Lua] = s.active.subscriptions();
+#if ONCHIP_BOT_WASM
+  control_->runtimeSubscriptions[Wasm] = s.wasmActive.subscriptions();
+#endif
   control_->scheduleSeconds = s.active.manifest().scheduleSeconds;
   for (auto &job : s.jobs) if (job.state->load() == Pending) {
     *job.state = Running;
-    const auto *installed = s.active.manifest().find(job.event.name);
-    const bool diagnostic = job.event.kind == BotEvent::Command &&
-        botReservedCommand(job.event.name) &&
-        (!installed || botReservedCommand(installed->function));
-    bool wasm = false;
-#if ONCHIP_BOT_WASM
-    wasm = job.event.kind == BotEvent::Command ?
-        s.wasmActive.manifest().find(job.event.name) != nullptr :
-        !(s.active.subscriptions() & (1u << (unsigned(job.event.kind) - 1)));
-    auto &vm = diagnostic ? s.diagnostics : wasm ? s.wasmActive : s.active;
-#else
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-    auto &vm = diagnostic ? s.diagnostics : s.active;
-#else
-    auto &vm = s.active;
-#endif
-#endif
-#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-    if (diagnostic) {
+    if (job.result.runtimes & (1u << Diagnostics)) {
       s.combinedHelp = s.active.manifest();
 #if ONCHIP_BOT_WASM
       if (s.wasmActive.manifest().count && s.combinedHelp.isBundled()) s.combinedHelp.clear();
       for (unsigned i = 0; i < s.wasmActive.manifest().count && s.combinedHelp.count < BotBuiltinCommandLimit; ++i)
         s.combinedHelp.writable()[s.combinedHelp.count++] = s.wasmActive.manifest().commands[i];
 #endif
-      vm.setHelp(s.combinedHelp);
+      s.diagnostics.setHelp(s.combinedHelp);
     }
 #endif
     if (job.event.kind != BotEvent::Command) {
       job.runningRuntimes = 0;
       job.result.ok = true;
-      auto startEvent = [&](BotSession &runtime, uint8_t bit) {
-        if (!(runtime.subscriptions() & (1u << (unsigned(job.event.kind) - 1)))) return;
-        if (job.result.generation != control_->generation ||
+      auto startEvent = [&](BotSession &runtime, Runtime owner) {
+        const uint8_t bit = 1u << owner;
+        if (!(job.result.runtimes & bit)) return;
+        if (job.result.incarnations[owner] != control_->incarnations[owner].load() ||
             job.event.eventEpoch != control_->eventEpoch.load() ||
             !runtime.start(job.result.job, job.event, job.result.error, sizeof(job.result.error))) {
           job.result.ok = false;
@@ -1365,20 +1478,23 @@ void BotWorker::pumpJobs() {
       };
 #if ONCHIP_BOT_WASM
       s.eventWasmFirst = !s.eventWasmFirst;
-      if (s.eventWasmFirst) startEvent(s.wasmActive, 2);
+      if (s.eventWasmFirst) startEvent(s.wasmActive, Wasm);
 #endif
-      startEvent(s.active, 1);
+      startEvent(s.active, Lua);
 #if ONCHIP_BOT_WASM
-      if (!s.eventWasmFirst) startEvent(s.wasmActive, 2);
+      if (!s.eventWasmFirst) startEvent(s.wasmActive, Wasm);
 #endif
       if (!job.runningRuntimes) *job.state = Done;
       continue;
     }
-    job.runningRuntimes = diagnostic && ONCHIP_BOT_SEPARATE_DIAGNOSTICS ? 4 : wasm ? 2 : 1;
-    if (job.result.generation != control_->generation ||
+    job.runningRuntimes = job.result.runtimes;
+    const Runtime runtime = job.result.runtimes == (1u << Diagnostics) ? Diagnostics :
+        job.result.runtimes == (1u << Wasm) ? Wasm : Lua;
+    auto *vm = s.session(runtime);
+    if (!resultCurrent(job.result) || !vm ||
         (job.event.eventEpoch && job.event.eventEpoch != control_->eventEpoch.load()) ||
-        !vm.start(job.result.job, job.event, job.result.error, sizeof(job.result.error))) {
-      if (!job.result.error[0]) strcpy(job.result.error, "Command generation changed before admission");
+        !vm->start(job.result.job, job.event, job.result.error, sizeof(job.result.error))) {
+      if (!job.result.error[0]) strcpy(job.result.error, "Command runtime incarnation changed before admission");
       *job.state = Done;
     }
   }
@@ -1387,7 +1503,7 @@ void BotWorker::pumpJobs() {
     result.token = timer.token;
     result.ok = uint32_t(millis() - timer.due) < 1000;
     if (!result.ok) strcpy(result.error, "Timer completion too late");
-    for (auto *vm : s.sessions()) vm->complete(result);
+    if (auto *vm = s.session(timer.runtime)) vm->complete(result);
     timer = {};
   }
   for (auto &io : s.io) if (io.state->load() == Done) {
@@ -1410,11 +1526,11 @@ void BotWorker::pumpJobs() {
       io.result.ok = false;
       Serial.printf("On-chip bot timer: %s\n", io.result.error);
     }
-    for (auto *vm : s.sessions()) vm->complete(io.result);
+    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
     *io.state = Idle;
   }
   for (auto &io : s.radio) if (io.state->load() == Done) {
-    for (auto *vm : s.sessions()) vm->complete(io.result);
+    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
     *io.state = Idle;
   }
 #if ONCHIP_BOT_HTTPS
@@ -1441,7 +1557,7 @@ void BotWorker::pumpJobs() {
           "HTTPS grant/configuration revoked after submission; remote outcome unknown" :
           "HTTPS grant/configuration revoked before submission");
     }
-    for (auto *vm : s.sessions()) vm->complete(io.result);
+    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
     *io.state = Idle;
   }
 #endif
@@ -1452,7 +1568,13 @@ void BotWorker::pumpJobs() {
 #endif
   for (unsigned round = 0; round < BotJobLimit; ++round)
   for (BotSession *vm : providers) if (vm->nextIo(request)) {
+    const Runtime runtime = s.runtimeOf(vm);
     bool admitted = false;
+    if (runtime == RuntimeCount || request.token.generation != control_->incarnations[runtime].load()) {
+      BotIoResult failed{}; failed.token = request.token;
+      strcpy(failed.error, "Runtime incarnation revoked before I/O admission");
+      vm->complete(failed); continue;
+    }
     if (!botEventCurrent(request, &control_->eventEpoch)) {
       BotIoResult failed{}; failed.token = request.token;
       strcpy(failed.error, "Event epoch revoked before I/O admission");
@@ -1460,7 +1582,7 @@ void BotWorker::pumpJobs() {
     }
     if (request.kind == BotIoRequest::Sleep) {
       for (auto &timer : s.timers) if (!timer.used) {
-        timer = {true, request.token, uint32_t(millis() + request.delayMs), request.eventEpoch};
+        timer = {true, request.token, uint32_t(millis() + request.delayMs), request.eventEpoch, runtime};
         admitted = true; break;
       }
     } else if (request.kind == BotIoRequest::Send || request.kind == BotIoRequest::Forward ||
@@ -1470,7 +1592,7 @@ void BotWorker::pumpJobs() {
                request.kind == BotIoRequest::RepeaterNext || request.kind == BotIoRequest::RepeaterStatus ||
                request.kind == BotIoRequest::RepeaterLogin) {
       for (auto &io : s.radio) if (io.state->load() == Idle) {
-        io.request = request; io.result = {};
+        io.request = request; io.result = {}; io.runtime = runtime;
         *io.state = Pending; admitted = true; break;
       }
     } else if (request.kind == BotIoRequest::Rpc ||
@@ -1480,7 +1602,8 @@ void BotWorker::pumpJobs() {
       request.networkEpoch = 0;
       for (const auto &job : s.jobs)
         if (job.state->load() == Running && job.result.job == request.token.job &&
-            job.result.generation == request.token.generation) {
+            (job.result.runtimes & (1u << runtime)) &&
+            job.result.incarnations[runtime] == request.token.generation) {
           request.networkEpoch = job.event.networkEpoch;
           break;
         }
@@ -1493,14 +1616,14 @@ void BotWorker::pumpJobs() {
         }
         for (auto &io : s.network) if (io.state->load() == Idle) {
           request.deadline = millis() + BotHttpsDeadlineMs;
-          io.request = request; io.result = {};
+          io.request = request; io.result = {}; io.runtime = runtime;
           *io.state = Pending; admitted = true; break;
         }
       }
 #endif
     } else if (s.hasIdentity) {
       for (auto &io : s.io) if (io.state->load() == Idle) {
-        io.request = request; io.result = {}; io.pollAt = 0;
+        io.request = request; io.result = {}; io.runtime = runtime; io.pollAt = 0;
         io.startedAt = millis(); io.suspended = false;
         *io.state = Pending;
         admitted = true; break;
@@ -1699,17 +1822,24 @@ void BotWorker::run() {
           if (s.active.manifest().commands) {
             s.active.clear();
             control_->generation = ++s.nextGeneration;
-            for (auto &timer : s.timers) timer = {};
+            control_->incarnations[Lua] = control_->generation.load();
+            for (auto &timer : s.timers) if (timer.runtime == Lua) timer = {};
           }
-          control_->subscriptions = 0;
+          control_->runtimeSubscriptions[Lua] = 0;
         }
       }
 #endif
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-      if (r.ok && s.hasIdentity && !s.diagnosticsReady) {
+      if (s.hasIdentity && !s.diagnosticsReady) {
+        BotVmStats diagnosticStats;
+        char diagnosticError[128]{};
         s.diagnosticsReady = s.diagnostics.load(BotDefaultSource, strlen(BotDefaultSource), 1,
-                                               r.stats, r.error, sizeof(r.error));
-        r.ok = s.diagnosticsReady;
+                                               diagnosticStats, diagnosticError, sizeof(diagnosticError));
+        if (s.diagnosticsReady) control_->incarnations[Diagnostics] = 1;
+        else {
+          r.ok = false;
+          snprintf(r.error, sizeof(r.error), "Native diagnostics initialization failed: %.79s", diagnosticError);
+        }
       }
 #endif
       if (r.ok) {
@@ -1740,10 +1870,10 @@ void BotWorker::run() {
         if (control_->sourceSuspended && s.retainedSize) {
           BotVmStats recovered;
           char error[96]{};
-          if (s.active.load(s.retainedText(), s.retainedSize, control_->generation,
+          if (s.active.load(s.retainedText(), s.retainedSize, control_->incarnations[Lua],
                             recovered, error, sizeof(error))) {
             s.active.setEventEpoch(&control_->eventEpoch);
-            control_->subscriptions = s.subscriptions();
+            control_->runtimeSubscriptions[Lua] = s.active.subscriptions();
             control_->sourceSuspended = false;
           } else {
             snprintf(r.error, sizeof(r.error), "Rejected source; prior Lua reload failed: %.79s", error);
@@ -1768,13 +1898,14 @@ void BotWorker::run() {
           strcpy(r.error, "Lua runtime epoch exhausted; reboot before recovering source");
         } else {
           control_->generation = ++s.nextGeneration;
-          for (auto &timer : s.timers) timer = {};
-          r.ok = s.active.load(s.retainedText(), s.retainedSize, control_->generation,
+          control_->incarnations[Lua] = control_->generation.load();
+          for (auto &timer : s.timers) if (timer.runtime == Lua) timer = {};
+          r.ok = s.active.load(s.retainedText(), s.retainedSize, control_->incarnations[Lua],
                                r.stats, r.error, sizeof(r.error));
         }
         if (r.ok) {
           s.active.setEventEpoch(&control_->eventEpoch);
-          control_->subscriptions = s.subscriptions();
+          control_->runtimeSubscriptions[Lua] = s.active.subscriptions();
           control_->sourceSuspended = false;
         }
       }
@@ -1785,12 +1916,14 @@ void BotWorker::run() {
       r.ok = (removingWasm || s.stagedSize != 0) && s.nextGeneration != UINT32_MAX;
       if (r.ok) {
         control_->generation = removingWasm ? ++s.nextGeneration : s.candidateGeneration;
+        const Runtime runtime = removingWasm || s.candidate.isWasm() ? Wasm : Lua;
+        control_->incarnations[runtime] = control_->generation.load();
 #if ONCHIP_BOT_SINGLE_SESSION
         control_->sourceGeneration = control_->generation.load();
 #endif
-        for (auto *vm : s.sessions()) vm->cancel();
+        if (auto *vm = s.session(runtime)) vm->cancel();
+        for (auto &timer : s.timers) if (timer.runtime == runtime) timer = {};
         pumpJobs();
-        for (auto &timer : s.timers) timer = {};
 #if ONCHIP_BOT_WASM
         if (removingWasm) s.wasmActive.clear();
         else if (s.candidate.isWasm()) s.wasmActive.swap(s.candidate);
@@ -1811,15 +1944,11 @@ void BotWorker::run() {
 #if ONCHIP_BOT_WASM
         s.wasmActive.setEventEpoch(&control_->eventEpoch);
 #endif
-        control_->subscriptions = s.subscriptions();
-        s.candidate.clear();
-        s.active.setGeneration(control_->generation);
+        control_->runtimeSubscriptions[Lua] = s.active.subscriptions();
 #if ONCHIP_BOT_WASM
-        s.wasmActive.setGeneration(control_->generation);
+        control_->runtimeSubscriptions[Wasm] = s.wasmActive.subscriptions();
 #endif
-#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-        s.diagnostics.setGeneration(control_->generation);
-#endif
+        s.candidate.clear();
         s.stagedSize = 0;
       } else {
         strcpy(r.error, "No validated command source is staged");

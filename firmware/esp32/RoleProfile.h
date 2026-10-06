@@ -47,4 +47,8 @@ bool saveRoleProfile(const RoleProfile &profile);
 bool commitProfileJournal(const ProfileJournal &journal);
 bool loadOriginPathWidth(uint8_t &width);
 bool saveOriginPathWidth(uint8_t width);
+bool loadAutomaticAdverts(bool &enabled);
+bool reloadAutomaticAdverts();
+bool automaticAdvertsEnabled();
+bool saveAutomaticAdverts(bool enabled);
 } // namespace onchip

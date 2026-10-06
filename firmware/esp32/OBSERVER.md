@@ -68,7 +68,8 @@ Each packet has string fields `origin`, `origin_id`, `timestamp`, `type`,
   Signals are real RF values. Observer SNR uses one decimal place; capture
   retains the RF quarter-dB precision.
   Missing/non-finite signals, invalid envelopes and unavailable UTC are dropped.
-- Observer `path`, when nonempty, is an array of lowercase hop hashes.
+- Observer `path`, when nonempty and direct-route, is an array of lowercase hop hashes.
+  Flood receptions omit this direct-route field.
   Capture includes a comma-separated lowercase path only for route `D`.
   Packed path
   modes support one-, two- and three-byte hashes; mode four is rejected.
@@ -101,8 +102,9 @@ packets/status contract, without internal role metadata.
 The build profile may set `ONCHIP_MQTT_MODEL` and
 `ONCHIP_MQTT_FIRMWARE_VERSION`; an unspecified version is `unknown`.
 
-On-device packets and status use QoS 0, the existing bounded eight-event queue,
-and no replay after disconnect. Host packets/status use QoS 1 and its existing
+On-device public status and LWT use QoS 1 and remain retained; packets use
+QoS 0, the existing bounded eight-event queue, and no application replay after
+disconnect. Legacy internal packets/status remain QoS 0. Host packets/status use QoS 1 and its existing
 bounded queue. Public records do not have the internal `event_id`; consumers
 must allow MQTT redelivery rather than treating the packet hash as a unique
 reception identifier.

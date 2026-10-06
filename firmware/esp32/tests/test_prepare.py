@@ -138,6 +138,12 @@ class BuildIsolation(unittest.TestCase):
                     (native / f"{unit}.cpp").read_bytes(),
                     (ROOT / f"firmware/runtime/{unit}.cpp").read_bytes(),
                 )
+            for unit in ("MastAdmin", "Management"):
+                for suffix in ("h", "cpp"):
+                    self.assertEqual(
+                        (native / f"{unit}.{suffix}").read_bytes(),
+                        (ONCHIP / f"{unit}.{suffix}").read_bytes(),
+                    )
             for role in ("repeater", "room", "companion"):
                 text = (native / role / f"Onchip{role.title()}.cpp").read_text()
                 self.assertIn("getTotalAirTimeSeconds()", text)
@@ -148,6 +154,10 @@ class BuildIsolation(unittest.TestCase):
                 if role != "companion":
                     self.assertIn("tryGetTotalAirTime(tx_air_time_ms)", text)
                     self.assertIn("getReceiveAirTime(), tx_air_time_valid)", text)
+                    for timer in ("next_local_advert", "next_flood_advert"):
+                        self.assertIn(f"if (onchip::automaticAdvertsEnabled() && {timer}", text)
+                    wrapper = (native / f"{role.title()}.cpp").read_text()
+                    self.assertIn("if (automaticAdvertsEnabled()) mesh.sendSelfAdvertisement(16000, false);", wrapper)
             obsolete = native / "OnchipStatsFormatHelper.h"
             obsolete.write_text("stale generated header\n")
             prepare.generate(ROOT / ".tmp/onchip-upstream", build)

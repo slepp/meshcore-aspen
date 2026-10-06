@@ -6,12 +6,18 @@
 #include "Observer.h"
 #include "Management.h"
 #include "ServiceName.h"
+#include "Syslog.h"
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "CommandBot.h"
 #endif
 #include <atomic>
+#include <algorithm>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_heap_caps.h>
+#include <esp_system.h>
+#endif
 
 namespace onchip {
 static_assert(CompanionSessions::MaxClients == ONCHIP_COMPANION_MAX_CLIENTS,
@@ -19,13 +25,22 @@ static_assert(CompanionSessions::MaxClients == ONCHIP_COMPANION_MAX_CLIENTS,
 struct Diagnostic {
   char message[160];
   bool companion;
+  bool remote;
 };
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 static_assert(sizeof(Diagnostic::message) >= CommandBot::DiagnosticCapacity,
               "Command diagnostic must fit without truncation");
 #endif
-static QueueHandle_t diagnosticQueue;
+static_assert(sizeof(Diagnostic) == 162, "Diagnostics queue record budget changed");
+static std::atomic<QueueHandle_t> diagnosticQueue{nullptr};
 static std::atomic<uint32_t> droppedDiagnostics{0};
+static std::atomic<uint32_t> usbDropped{0}, completedDiagnostics{0};
+#ifdef ARDUINO_ARCH_ESP32
+static StaticQueue_t diagnosticQueueControl;
+static uint8_t *diagnosticQueueStorage;
+static TaskHandle_t diagnosticTask;
+static uint32_t loopPeakUs = 0, loopGapPeakUs = 0, previousLoopStart = 0;
+#endif
 static Observer observer;
 static Management management;
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
@@ -196,45 +211,115 @@ static bool refreshRolePresence() {
   return true;
 }
 
-static bool queueDiagnostic(const char *message, bool companion) {
+static bool queueDiagnostic(const char *message, bool companion, bool remote = false) {
   Diagnostic entry{};
-  snprintf(entry.message, sizeof(entry.message), "%s", message);
+  const int size = message ? snprintf(entry.message, sizeof(entry.message), "%s", message) : -1;
+  if (size <= 0 || size_t(size) >= sizeof(entry.message)) {
+    ++droppedDiagnostics;
+    return false;
+  }
   entry.companion = companion;
-  if (!diagnosticQueue || xQueueSend(diagnosticQueue, &entry, 0) != pdTRUE) {
+  entry.remote = remote;
+  const auto queue = diagnosticQueue.load();
+  if (!queue || xQueueSend(queue, &entry, 0) != pdTRUE) {
     droppedDiagnostics.fetch_add(1);
     return false;
   }
   return true;
 }
 static void companionDiagnostic(const char *message) {
-  queueDiagnostic(message, true);
+  queueDiagnostic(message, true, true);
+}
+bool diagnosticEvent(const char *message) {
+#if defined(ARDUINO_ARCH_ESP32) && (!defined(MESHCORE_MAST_ADMIN) || !MESHCORE_MAST_ADMIN)
+  if (!diagnosticQueue && message && *message) {
+    Serial.println(message);
+    return true;
+  }
+#endif
+  return queueDiagnostic(message, false, true);
+}
+void diagnosticLoopSample(uint32_t started, uint32_t finished) {
+#ifdef ARDUINO_ARCH_ESP32
+  loopPeakUs = std::max(loopPeakUs, uint32_t(finished - started));
+  if (previousLoopStart) loopGapPeakUs = std::max(loopGapPeakUs, uint32_t(started - previousLoopStart));
+  previousLoopStart = started;
+#endif
+}
+bool diagnosticsCommand(const char *command, char *reply, size_t capacity) {
+  if (!strcmp(command, "get diagnostics")) {
+    snprintf(reply, capacity, "Diagnostics completed=%u dropped=%u USB-dropped=%u; since boot",
+             completedDiagnostics.load(), droppedDiagnostics.load(), usbDropped.load());
+  } else if (!strcmp(command, "stats system")) {
+#ifdef ARDUINO_ARCH_ESP32
+    snprintf(reply, capacity, "reset=%u loop_peak_us=%u loop_gap_peak_us=%u diag_stack_free_bytes=%u queue_psram=%u",
+             unsigned(esp_reset_reason()), loopPeakUs, loopGapPeakUs,
+             diagnosticTask ? unsigned(uxTaskGetStackHighWaterMark(diagnosticTask)) : 0,
+             diagnosticQueueStorage != nullptr);
+#else
+    snprintf(reply, capacity, "Error: device task measurements unavailable");
+#endif
+  } else return false;
+  return true;
 }
 
-static void diagnosticWorker(void *) {
+static void diagnosticWorker(void *argument) {
+  const auto queue = static_cast<QueueHandle_t>(argument);
   Diagnostic entry;
   for (;;) {
-    if (xQueueReceive(diagnosticQueue, &entry, portMAX_DELAY) != pdTRUE)
+    if (xQueueReceive(queue, &entry, portMAX_DELAY) != pdTRUE)
       continue;
-    if (entry.companion) Serial.printf("Companion: %s\n", entry.message);
-    else Serial.write(reinterpret_cast<const uint8_t *>(entry.message), strlen(entry.message));
-    const uint32_t dropped = droppedDiagnostics.exchange(0);
-    if (dropped)
-      Serial.printf("On-chip diagnostics dropped under backpressure: %u\n",
-                    dropped);
+    char line[176];
+    const int size = snprintf(line, sizeof(line), "%s%s%s",
+                              entry.companion ? "Companion: " : "", entry.message,
+                              entry.message[0] && entry.message[strlen(entry.message) - 1] == '\n' ? "" : "\n");
+#ifdef ARDUINO_ARCH_ESP32
+    if (size > 0 && size_t(size) < sizeof(line) && Serial && Serial.availableForWrite() >= size)
+      Serial.write(reinterpret_cast<const uint8_t *>(line), size);
+    else ++usbDropped;
+#else
+    if (size > 0 && size_t(size) < sizeof(line))
+      Serial.write(reinterpret_cast<const uint8_t *>(line), size);
+#endif
+    if (entry.remote) sendSyslog(entry.message);
+    ++completedDiagnostics;
   }
 }
 
-static bool beginDiagnostics() {
+bool beginDiagnostics() {
   if (diagnosticQueue) return true;
-  diagnosticQueue = xQueueCreate(8, sizeof(Diagnostic));
-  if (!diagnosticQueue)
+  QueueHandle_t queue = nullptr;
+#ifdef ARDUINO_ARCH_ESP32
+  diagnosticQueueStorage = static_cast<uint8_t *>(heap_caps_malloc(
+      8 * sizeof(Diagnostic), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (diagnosticQueueStorage)
+    queue = xQueueCreateStatic(8, sizeof(Diagnostic), diagnosticQueueStorage, &diagnosticQueueControl);
+  else Serial.println("Diagnostics PSRAM unavailable; using internal queue storage");
+  if (!queue && diagnosticQueueStorage) {
+    heap_caps_free(diagnosticQueueStorage);
+    diagnosticQueueStorage = nullptr;
+    Serial.println("Diagnostics PSRAM queue creation failed; using internal queue storage");
+  }
+#endif
+  if (!queue) queue = xQueueCreate(8, sizeof(Diagnostic));
+  if (!queue)
     return false;
-  if (xTaskCreate(diagnosticWorker, "mesh-diagnostics", 4096, nullptr, 1,
-                  nullptr) != pdPASS) {
-    vQueueDelete(diagnosticQueue);
-    diagnosticQueue = nullptr;
+  beginSyslog();
+  if (xTaskCreate(diagnosticWorker, "mesh-diagnostics", 4096, queue, 1,
+#ifdef ARDUINO_ARCH_ESP32
+                  &diagnosticTask
+#else
+                  nullptr
+#endif
+                  ) != pdPASS) {
+    vQueueDelete(queue);
+#ifdef ARDUINO_ARCH_ESP32
+    heap_caps_free(diagnosticQueueStorage);
+    diagnosticQueueStorage = nullptr;
+#endif
     return false;
   }
+  diagnosticQueue.store(queue);
   return true;
 }
 CompanionSessions &companionSessions() {
@@ -256,6 +341,7 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
 #if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
   if (!initializePublicRuntimePreferences()) return false;
 #endif
+  reloadAutomaticAdverts();
   if (!loadServiceName(NamedService::Kiss, botStatus.name)) return false;
   if (!loadRoleProfile(bootProfile)) {
     Serial.println("On-chip role profile unavailable; refusing role startup");
@@ -269,6 +355,9 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
   if (!management.begin(mux, operatorPublicKey()))
     return false;
   bool needDiagnostics = bootProfile.has(Role::Companion);
+#if defined(ARDUINO_ARCH_ESP32) && defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
+  needDiagnostics = true;
+#endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   bool commandEnabled = false;
   if (loadBotEnabled(commandEnabled)) needDiagnostics |= commandEnabled;
@@ -308,7 +397,13 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   static_assert(KISS_LOCAL_SOURCES >= 5, "Command bot needs a fifth local radio source");
   if (diagnosticQueue)
-    commandBot.setDiagnosticSink([](const char *text) { return queueDiagnostic(text, false); });
+    commandBot.setDiagnosticSink([](const char *text) {
+      const bool metrics = !strncmp(text, "Command VM: ", 12) ||
+          !strncmp(text, "Command phases: ", 16) || !strncmp(text, "Command task: ", 14) ||
+          !strncmp(text, "Wasm pool=", 10) || !strncmp(text, "Command LittleFS source read: ", 29) ||
+          !strncmp(text, "Command SPIFFS source read: ", 27);
+      return queueDiagnostic(text, false, metrics);
+    });
   if (!commandBot.begin(mux)) {
     Serial.println("On-chip command bot failed; existing services remain available");
   } else if (commandBot.publicKey() &&
@@ -341,6 +436,12 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
       "On-chip role lifecycle service started; companion TCP %u, clients %u; "
       "free heap %u\n",
       ONCHIP_COMPANION_PORT, CompanionSessions::MaxClients, ESP.getFreeHeap());
+#ifdef ARDUINO_ARCH_ESP32
+  char boot[96];
+  snprintf(boot, sizeof(boot), "Boot roles=%u reset=%u heap_free=%u heap_min=%u",
+           bootProfile.enabled, unsigned(esp_reset_reason()), ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  diagnosticEvent(boot);
+#endif
   return true;
 }
 bool localTransmitSource(uint8_t slot, uint32_t generation,
@@ -397,6 +498,7 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   else if (!kiss_listening)
     strcpy(bot.fault, "KISS listener unavailable");
   management.dashboardStatus(status.roles[5]);
+  companionDashboardContacts(status);
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   static_assert(RadioDashboard::ROLE_CAPACITY >= 7, "Command bot needs a dashboard identity slot");
   commandBot.dashboardStatus(status.roles[6]);
@@ -406,6 +508,20 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
 }
 void loop() {
   loopClocks();
+#ifdef ARDUINO_ARCH_ESP32
+  static uint32_t lastClockCheck = 0;
+  static bool clockKnown = false, clockTrusted = false;
+  if (uint32_t(millis() - lastClockCheck) >= 1000) {
+    lastClockCheck = millis();
+    uint32_t lower = 0, upper = 0;
+    const bool trusted = trustedNetworkTime(lower, upper);
+    if (!clockKnown || trusted != clockTrusted) {
+      diagnosticEvent(trusted ? "UTC synchronized" : "UTC unavailable; inspect get sntp.current");
+      clockKnown = true;
+      clockTrusted = trusted;
+    }
+  }
+#endif
   management.loop();
   loopLifecycles();
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT

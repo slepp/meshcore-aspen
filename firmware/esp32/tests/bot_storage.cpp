@@ -791,11 +791,28 @@ static void workerBoard() {
       while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   };
-  a = event("!board put race cancelled", true); a.channelId[31] = 1;
-  const unsigned cancelledJob = ++job;
-  assert(worker.invoke(a, cancelledJob));
+  a = event("!board put race retained", true); a.channelId[31] = 1;
+  const unsigned retainedJob = ++job;
+  assert(worker.invoke(a, retainedJob));
   const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
   while (!entered && std::chrono::steady_clock::now() < until)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  assert(entered);
+  assert(worker.stage(source, strlen(source)) && poll(worker).ok);
+  assert(worker.activate());
+  result = poll(worker);
+  assert(result.ok && result.operation == BotWorker::Operation::Activate && worker.jobsInUse() == 1);
+  release = true;
+  result = poll(worker);
+  assert(result.job == retainedJob && result.ok && worker.resultCurrent(result));
+  result = run("!board get race");
+  assert(result.ok && !strcmp(result.action.text, "retained"));
+  entered = release = false;
+  a = event("!rawput own cancelled", true); a.channelId[31] = 1;
+  const unsigned cancelledJob = ++job;
+  assert(worker.invoke(a, cancelledJob));
+  const auto cancellationUntil = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (!entered && std::chrono::steady_clock::now() < cancellationUntil)
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   assert(entered);
   assert(worker.stage(source, strlen(source)) && poll(worker).ok);
@@ -807,10 +824,10 @@ static void workerBoard() {
     else cancelled = result.job == cancelledJob && !result.ok;
   }
   assert(activated && cancelled); release = true;
-  result = run("!board get race");
-  assert(result.ok && strcmp(result.action.text, "cancelled"));
+  result = run("!rawget own");
+  assert(result.ok && !strcmp(result.action.text, "raw absent"));
   worker.stop(); identity_test::readHook = nullptr;
-  puts("PASS durable board worker: namespace/DM/full-channel isolation, concurrent serialized writers, reboot/source, quota/reuse, before/after-commit grant revoke, unknown deletion and cancelled in-flight write");
+  puts("PASS durable board worker: namespace/DM/full-channel isolation, serialized writers, reboot/source, quota/reuse, grant revoke, unknown deletion, native write survives Lua replacement and own Lua write is cancelled");
 }
 static void boardSlots() {
   reset();

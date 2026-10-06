@@ -230,7 +230,7 @@ bool Observer::startClient(uint32_t epoch) {
       tokenExpires = epoch + observerWire::TOKEN_LIFETIME;
     }
   }
-  config.lwt_qos = 0;
+  config.lwt_qos = ONCHIP_MQTT_FORMAT ? 1 : 0;
   config.lwt_retain = true;
   config.buffer_size = 3072;
   config.network_timeout_ms = 1000;
@@ -421,8 +421,8 @@ void Observer::transmitted(const uint8_t *raw, uint16_t length, uint8_t state,
   enqueue(e);
 }
 bool Observer::publish(const char *topic, const char *json, int size,
-                       bool retain) {
-  if (esp_mqtt_client_publish(client, topic, json, size, 0, retain) >= 0)
+                       bool retain, int qos) {
+  if (esp_mqtt_client_publish(client, topic, json, size, qos, retain) >= 0)
     return true;
   publicationErrors.fetch_add(1);
   Serial.println("Observer MQTT publication failed");
@@ -458,7 +458,7 @@ void Observer::service() {
             "offline", identity.name, identityHex, ONCHIP_MQTT_MODEL,
             ONCHIP_MQTT_FIRMWARE_VERSION, radio, lastReadyEpoch,
             json, sizeof(json));
-        if (size) publish(statusTopic, json, size, true);
+        if (size) publish(statusTopic, json, size, true, 1);
       }
       connected.store(false);
       announcedSession.store(0);
@@ -486,7 +486,8 @@ void Observer::service() {
           ONCHIP_MQTT_MODEL, ONCHIP_MQTT_FIRMWARE_VERSION, radio, epoch,
           json, sizeof(json)) : 6;
     if (!length || !publish(statusTopic, ONCHIP_MQTT_FORMAT ?
-                           json : "online", length, true)) {
+                           json : "online", length, true,
+                           ONCHIP_MQTT_FORMAT ? 1 : 0)) {
       if (received)
         dropped.fetch_add(1);
       return;

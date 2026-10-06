@@ -206,19 +206,22 @@ static void bundledWorker() {
   assert(worker.invoke(event("!weather Fixture City", 3), 13));
   wait([&] { return transport.writes.load() >= 6; });
   const char *replacement = "function hello() return 'replacement' end";
+  const auto diagnosticIncarnation = worker.runtimeGeneration(BotWorker::Diagnostics);
   assert(worker.stage(replacement, strlen(replacement)));
   assert(poll(worker).operation == BotWorker::Operation::Stage);
   assert(worker.activate());
-  bool activated = false, cancelled = false;
-  for (unsigned i = 0; i < 2; ++i) {
-    result = poll(worker);
-    if (result.operation == BotWorker::Operation::Activate) activated = result.ok;
-    else cancelled = result.job == 13 && !result.ok;
-  }
-  assert(activated && cancelled);
-  wait([&] { return transport.closes.load() == 3; });
+  result = poll(worker);
+  assert(result.operation == BotWorker::Operation::Activate && result.ok &&
+         worker.runtimeGeneration(BotWorker::Diagnostics) == diagnosticIncarnation &&
+         worker.jobsInUse() == 1);
   local("!hello", "replacement");
   local("!recall location", "private note");
+  transport.blocked = false;
+  result = poll(worker);
+  assert(result.ok && result.job == 13 && worker.resultCurrent(result) &&
+         !strcmp(result.action.text, "Weather Fixture City: 12.5 C; code 3; age 900s"));
+  wait([&] { return transport.closes.load() == 3; });
+  transport.blocked = true;
   assert(worker.invoke(event("!service weather Fixture City", 4), 14));
   wait([&] { return transport.writes.load() >= 8; });
   transport.clockAdvance = BotHttpsDeadlineMs + 1;
@@ -226,7 +229,7 @@ static void bundledWorker() {
   assert(result.ok && result.job == 14 && strstr(result.action.text, "timeout"));
   wait([&] { return transport.closes.load() == 4; });
   worker.stop();
-  puts("PASS bundled RPC worker: pending weather alongside local ping/utilities/notes/reminders, returned source data, grant revoke, source replacement and timeout");
+  puts("PASS bundled RPC worker: concurrent local commands, returned source data, grant revoke, Lua replacement preserves native weather, and timeout");
 }
 static void serviceTxHandoff() {
   Transport transport;

@@ -21,6 +21,26 @@ var mastSettings = PHYSettings{
 	TxPower: 20, Profile: PHYProfile{AirtimeFactor: 1},
 }
 
+func TestReportedPHYSpreadingAndPowerBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		sf, power uint8
+		valid     bool
+	}{
+		{5, 22, true}, {6, 23, true}, {7, 20, true}, {12, 30, true},
+		{4, 22, false}, {13, 22, false}, {7, 31, false},
+	} {
+		settings := mastSettings
+		settings.Radio.SF, settings.TxPower = tc.sf, tc.power
+		if err := settings.Validate(); (err == nil) != tc.valid {
+			t.Fatalf("reported SF%d TX%d: %v, valid=%t", tc.sf, tc.power, err, tc.valid)
+		}
+		decoded, err := parsePHYSettings(settings.wire())
+		if (err == nil) != tc.valid || tc.valid && decoded != settings {
+			t.Fatalf("reported SF%d TX%d readback: %+v %v", tc.sf, tc.power, decoded, err)
+		}
+	}
+}
+
 func TestNativeNarrowBandwidthsSurviveVerifiedPHYReadback(t *testing.T) {
 	for _, bandwidth := range []uint32{7810, 10420, 15630, 20830} {
 		settings := mastSettings

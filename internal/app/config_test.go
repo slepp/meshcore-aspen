@@ -113,6 +113,25 @@ func TestHostAcceptsMainlineMastNarrowBandwidthReadback(t *testing.T) {
 	}
 }
 
+func TestConfiguredPHYSpreadingAndPowerBoundaries(t *testing.T) {
+	if DefaultConfig().Radio.SF != 7 {
+		t.Fatal("default spreading factor changed")
+	}
+	for _, tc := range []struct {
+		sf, power uint8
+		valid     bool
+	}{
+		{5, 22, true}, {6, 22, true}, {7, 22, true}, {12, 22, true},
+		{4, 22, false}, {13, 22, false}, {7, 23, false}, {7, 30, false},
+	} {
+		cfg := DefaultConfig()
+		cfg.Radio.SF, cfg.TxPower = tc.sf, tc.power
+		if err := cfg.Validate(); (err == nil) != tc.valid {
+			t.Fatalf("requested SF%d TX%d: %v, valid=%t", tc.sf, tc.power, err, tc.valid)
+		}
+	}
+}
+
 func TestLoadConfigRejectsInvalidInputRatherThanUsingRadioDefaults(t *testing.T) {
 	for _, input := range []string{
 		`null`, `[]`, `""`, ``, `{} {}`,

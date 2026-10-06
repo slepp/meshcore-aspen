@@ -349,6 +349,74 @@ only for the verified selected channel with its explicit shared-state grant.
 The `"bot"` scope is shared across users and also grant-gated. Source identity
 and nicknames never substitute for the native full-key principal.
 
+## Update one installed Lua file
+
+Use the existing authenticated owner connection to manage files in one shared
+Lua environment. For example, on a host role's private owner socket:
+
+```sh
+python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-list
+python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-install config config.lua
+python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-install monitor monitor.lua
+python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-export monitor saved-monitor.lua
+python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-remove monitor
+```
+
+For an on-device role, use its authenticated web or encrypted Management
+connection instead of `--unix-socket`. `source-install` replaces only the
+named file, preserving the other file bytes. The installer commits the entire
+set against the hash it downloaded; another operator's intervening change
+rejects the commit. Validation rejects conflicting definitions before
+activation. Successful activation rebuilds the shared Lua environment and
+cancels its current Lua jobs; durable data and the separate Wasm runtime remain.
+
+The source-set limit is **eight entries and 4,096 bytes total**, including
+names, lengths and separators. A bundled-command reference consumes one entry,
+leaving seven custom files; it does not copy the bundled program into the
+envelope. Lua configuration tables can live in a named file, but JSON and
+arbitrary filesystem imports are not Lua sources. The entry order controls
+initialization, so install shared configuration before its consumers.
+`source-export` reads one installed file unchanged and creates a new private
+output file; it does not activate or replace anything. A symbolic bundled
+reference has no installed file to export. `download` reads the entire set.
+
+`source rollback` selects the previous complete source set, not an independent
+version of one file. To restore one file while retaining the others, use
+`source-install` with the operator's known-good copy. The same source limits
+apply on the host, ESP32 and compact Pine profile; Lua allocator limits and job
+slots are profile-specific.
+
+If the selected file is missing or its stored size changed, the role refuses
+whole-set rollback because it cannot read the active schema contract. Native
+Management remains available: inspect `source status`, wait for any bounded live
+retries to finish, use `source remove`, wait for bundled handlers to become
+active, then install your known-good files.
+Removing source does not erase durable data. Do not load an older schema unless
+it can read that data.
+
+Developers can check the exact envelope and runtime boundary without radio
+traffic:
+
+```sh
+make -C firmware/esp32 bot-source-capacity-test ONCHIP_BOT_WASM=0
+make -C firmware/esp32 bot-source-capacity-test ONCHIP_BOT_WASM=0 \
+  TEST_VARIANT=source-capacity-compact \
+  TEST_FLAGS='-DONCHIP_BOT_COMPACT_PROFILE=1 -DONCHIP_BOT_JOB_LIMIT=2'
+make -C firmware/esp32 bot-source-set-test ONCHIP_BOT_WASM=0
+make -C firmware/esp32 bot-source-set-test ONCHIP_BOT_WASM=1
+python3 -m unittest tools.hardware.tests.test_lua_sources tools.hardware.tests.test_admin
+```
+
+These host-native checks report their own allocator peak, not a device's
+available heap or a firmware-installation result.
+The source-set fixture measures Lua allocator and requested workspace peaks,
+source-file bytes and serialized journal blobs across staging, activation and
+native recovery. Filesystem/NVS overhead and non-Lua host allocations are not
+included; these values are not an MCU free-heap measurement. Its restart checks
+recreate the native fixture before and after journal selection, not a physical
+power cut. Pine's single-session installer currently cancels Lua jobs before
+candidate verification, rather than waiting for activation.
+
 ## Package metadata and schema rules
 
 The first line records the package ID and version, exact Lua runtime and

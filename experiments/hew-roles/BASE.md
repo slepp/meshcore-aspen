@@ -75,6 +75,21 @@ every 15 seconds. A malformed reply, unexpected hardware error, query timeout or
 changed profile retires that source connection. The saved name, location,
 channels and preferences remain authoritative.
 
+`required_profile` is exactly 18 bytes encoded as 36 hexadecimal characters.
+The Base checks it before opening the modem or loading role state: frequency
+150–960 MHz, a supported LoRa bandwidth, SF5–12, CR5–8, reported TX power
+0–30 dBm, a finite nonnegative binary32 airtime factor and CAD flag 0 or 1.
+The final signed 16-bit interference threshold retains its wire meaning.
+An invalid field prints `BASE_CONFIG_ERROR required_profile: ...` on stdout and
+exits with status 1; correct the JSON profile before restarting. Reported power
+is readback, not permission to change the hardware; the Go operator
+configuration still limits requested TX power to 22 dBm.
+
+SF5 and SF6 use receive score zero. With `rxdelay` enabled, the Base calculates
+the same score-zero delay as the Go companion: values below 50 ms do not hold a
+packet, and holds are capped at 32000 ms. The SF7 default and scoring thresholds
+for SF7–12 are unchanged.
+
 ```sh
 build/hew-base-release /path/to/private/base.json
 curl --fail http://127.0.0.1:9081/readyz
@@ -211,15 +226,29 @@ service switch.
 
 ```sh
 make base-local-test base-service-test
+make native-worker
+BOT_NATIVE_WORKER="$PWD/build/native-worker" \
+  python3 -B ../../internal/nativebot/worker_test.py \
+  WorkerProcessTest.test_hello_spreading_and_reported_power_boundaries
 make base-symbols
 MESHCORE_HEW_BASE_SERVICE="$PWD/build/hew-base-symbols" \
   python3 -B tests/base_service.py
 ```
 
+`make test-release` uses `MESHCORE_NATIVE_TEST_STATE_ROOT` for short private
+native fixture directories under the source root; Go `TMPDIR` stays in
+`build/`. For direct Go native-worker tests, set the fixture root separately
+so the complete `bot/native/admin.sock` pathname is at most 107 bytes on Linux.
+
 The local Go differential compares native command responses, independent
 reader/signing behavior, production-sized state, durable capacity/refusal,
 restart, private-message semantics, channel wire packets and raw TX priority.
 It also compares admission/validation responses for command numbers 1–65.
+Receive-policy cases compare SF5/6 score-zero delay with Go at three airtimes,
+including the minimum-hold gate and maximum-hold clamp. Service fixtures boot
+SF5, SF6, SF7 and SF12 without modem configuration writes, and reject invalid
+required profiles before any modem connection. The worker HELLO fixture checks
+those spreading boundaries and the reported-power limit without RF.
 The RF differential compares login, status, telemetry, binary, anonymous and
 path-discovery request payloads and requester-owned replies, direct raw data
 and channel datagrams with all ordinary path widths, flood and maximum-sized

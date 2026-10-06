@@ -12,6 +12,7 @@ constexpr char Key[] = "role-profile";
 constexpr uint8_t Magic[] = {'M', 'C', 'R', 'P'};
 constexpr uint8_t Version = 1, JournalVersion = 2;
 constexpr size_t RecordSize = 12, JournalSize = 28;
+bool advertsLoaded = false, advertsEnabled = false;
 
 uint32_t checksum(const uint8_t *bytes, size_t length) {
   uint32_t value = 2166136261u;
@@ -175,5 +176,55 @@ bool saveOriginPathWidth(uint8_t width) {
   uint8_t readback;
   return (loadOriginPathWidth(readback) && readback == width) ||
          failure("origin path readback", ESP_ERR_INVALID_STATE);
+}
+
+bool loadAutomaticAdverts(bool &enabled) {
+  enabled = false;
+  nvs_handle_t handle;
+  auto result = nvs_open(Namespace, NVS_READONLY, &handle);
+  uint8_t record[5]{};
+  size_t size = sizeof(record);
+  if (result == ESP_OK) {
+    result = nvs_get_blob(handle, "auto-advert", record, &size);
+    nvs_close(handle);
+  }
+  if (result == ESP_ERR_NVS_NOT_FOUND) {
+    enabled = true;
+    return true;
+  }
+  if (result != ESP_OK) return failure("automatic adverts read", result);
+  if (size != sizeof(record) || memcmp(record, "MCA\1", 4) || record[4] > 1)
+    return failure("automatic adverts validation", ESP_ERR_INVALID_STATE);
+  enabled = record[4] != 0;
+  return true;
+}
+
+bool reloadAutomaticAdverts() {
+  const bool ok = loadAutomaticAdverts(advertsEnabled);
+  advertsLoaded = true;
+  if (!ok) Serial.println("Automatic adverts disabled: saved setting unavailable; inspect get autoadvert");
+  return ok;
+}
+
+bool automaticAdvertsEnabled() {
+  if (!advertsLoaded) reloadAutomaticAdverts();
+  return advertsEnabled;
+}
+
+bool saveAutomaticAdverts(bool enabled) {
+  const uint8_t record[] = {'M', 'C', 'A', 1, uint8_t(enabled)};
+  nvs_handle_t handle;
+  auto result = nvs_open(Namespace, NVS_READWRITE, &handle);
+  if (result != ESP_OK) return failure("automatic adverts open", result);
+  result = nvs_set_blob(handle, "auto-advert", record, sizeof(record));
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK) return failure("automatic adverts commit", result);
+  bool actual;
+  if (!loadAutomaticAdverts(actual) || actual != enabled)
+    return failure("automatic adverts readback", ESP_ERR_INVALID_STATE);
+  advertsEnabled = enabled;
+  advertsLoaded = true;
+  return true;
 }
 } // namespace onchip

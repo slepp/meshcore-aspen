@@ -123,10 +123,11 @@ void secure_random(uint8_t *data, size_t size) {
   }
 }
 bool valid_profile(const RadioConfig &profile, int noise, const uint32_t airtime[256]) {
+  // HELLO reports the modem profile; this worker does not set hardware TX power.
   if (profile.freq_hz < 150000000 || profile.freq_hz > 960000000 ||
       profile.bw_hz < 7800 || profile.bw_hz > 500000 ||
-      profile.sf < 7 || profile.sf > 12 || profile.cr < 5 || profile.cr > 8 ||
-      profile.tx_power > 22 || noise < -150 || noise > 0) return false;
+      profile.sf < 5 || profile.sf > 12 || profile.cr < 5 || profile.cr > 8 ||
+      profile.tx_power > 30 || noise < -150 || noise > 0) return false;
   for (unsigned n = 1; n < 256; ++n)
     if (!airtime[n] || airtime[n] > 3600000 ||
         (n > 1 && airtime[n] < airtime[n - 1])) return false;
@@ -737,6 +738,7 @@ int main(int argc, char **argv) {
       bot.loop();
       source.loop();
       if (dormant) bot.setCommandAdmission(false);
+      else if (bot.sourceReady()) bot.setCommandAdmission(true);
       if (!ready_sent && !source.recoveryRequired() && Clock::now() > ready_deadline) {
         return fail(7, "durable CommandBot source did not become ready");
       }

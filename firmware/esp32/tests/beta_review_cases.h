@@ -140,10 +140,11 @@ static void replay_capacity_and_cancellation() {
   const mesh::LocalIdentity compiledOwner(&seed);
   {
     BetaFixture f;
-    Peer peers[5];
-    for (unsigned i = 0; i < 4; ++i)
+    Peer peers[MastAdmin::SessionSlots];
+    constexpr unsigned last = MastAdmin::SessionSlots - 1;
+    for (unsigned i = 0; i < last; ++i)
       assert(!f.send(peers[i], "mast-pass-12", true, true, 1, false).empty());
-    assert(f.send(peers[4], "mast-pass-12", true).empty());
+    assert(f.send(peers[last], "mast-pass-12", true).empty());
     assert(f.management.admin().compiledTrusted(compiledOwner.pub_key));
     Peer owner;
     owner.self_id = compiledOwner;
@@ -154,14 +155,14 @@ static void replay_capacity_and_cancellation() {
     const auto forget = "auth forget " + encode(peers[0].self_id.pub_key, 32);
     assert(f.action(forget.c_str()).find("Forgot") == 0);
     assert(f.send(peers[0], "status", false).empty());
-    assert(!f.send(peers[4], "mast-pass-12", true).empty());
+    assert(!f.send(peers[last], "mast-pass-12", true).empty());
     assert(f.action(("auth forget " + encode(compiledOwner.pub_key, 32)).c_str()).find("Error:") == 0);
     f.radio.rejectTx = true;
-    assert(f.send(peers[4], "a2|radio 912525000 250000 8 5 2", false).empty());
+    assert(f.send(peers[last], "a2|radio 912525000 250000 8 5 2", false).empty());
     f.step();
     f.radio.rejectTx = false;
-    --peers[4].timestamp;
-    const auto repeated = f.send(peers[4], "a2|radio 912525000 250000 8 5 2", false);
+    --peers[last].timestamp;
+    const auto repeated = f.send(peers[last], "a2|radio 912525000 250000 8 5 2", false);
     assert(repeated.size() > 8 && !memcmp(repeated.data() + 5, "a2|Error:", 9));
     assert(f.mux.currentConfiguration().sf == 7);
     MastAdmin::Reply reply;
@@ -176,7 +177,7 @@ static void replay_capacity_and_cancellation() {
     assert(f.management.admin().lastTimestamp(compiledOwner.pub_key) == 1800000010);
   }
   identity_test::durable = baseline;
-  puts("PASS replay: four guests preserve compiled owner across reboot, authenticated forget, failed TX/retry cache and timeout cancellation");
+  puts("PASS replay: six ordinary sessions preserve compiled owner across reboot, authenticated forget, failed TX/retry cache and timeout cancellation");
 }
 static void invalid_rf_logins_do_not_throttle_owner() {
   const auto baseline = identity_test::durable;

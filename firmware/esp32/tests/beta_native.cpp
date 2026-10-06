@@ -9,6 +9,18 @@
 #include "bot_parser_cases.h"
 #include <functional>
 #include <limits>
+#include <arpa/inet.h>
+
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+static std::atomic<size_t> sourceSetLuaLive{0}, sourceSetLuaPeak{0};
+void onchipBotVmHeapModel(size_t oldSize, size_t newSize) {
+  const size_t live = newSize >= oldSize
+      ? sourceSetLuaLive.fetch_add(newSize - oldSize) + newSize - oldSize
+      : sourceSetLuaLive.fetch_sub(oldSize - newSize) - oldSize + newSize;
+  size_t peak = sourceSetLuaPeak.load();
+  while (live > peak && !sourceSetLuaPeak.compare_exchange_weak(peak, live)) {}
+}
+#endif
 
 struct DashboardStreamTest {
   static void maximumCounters(RadioDashboard &dashboard) {
@@ -30,6 +42,7 @@ struct BetaFixture {
   CommandBot &bot = commandBotService();
   bool rolesActive = false;
   BetaFixture(bool nativeRoles = false) {
+    reloadAutomaticAdverts();
     mux.observeWith(dashboard);
     mux.attachRadio(radio, rng, [](float, float, uint8_t, uint8_t) {}, [](uint8_t) {});
     assert(mux.setInitialConfiguration({912525000, 250000, 7, 5, 2}, true));
@@ -199,8 +212,8 @@ static void management_cli_compatibility() {
       assert(response.size() > 5 && response[4] == 4);
       return std::string(response.begin() + 5, std::find(response.begin() + 5, response.end(), 0));
     };
-    for (const char *topic : {"wifi", "radio", "tempradio", "role", "roles", "key",
-                             "source", "bot", "auth", "trust", "data", "room", "companion", "get", "set"}) {
+    for (const char *topic : {"wifi", "radio", "tempradio", "role", "key",
+                             "source", "bot", "auth", "setperm", "trust", "data", "room", "companion", "get", "set"}) {
       const auto before = identity_test::durable;
       const auto bare = rf(topic);
       assert(bare.find("Error: usage: ") == 0);
@@ -213,6 +226,7 @@ static void management_cli_compatibility() {
           assert(identity_test::durable.at(record.first) == record.second);
     }
     assert(rf("wifi help") == rf("help wifi"));
+    assert(rf("help get 2").find("get acl") == 0);
     assert(rf("stats help") == rf("help stats"));
     assert(rf("stats") == rf("get stats"));
     assert(rf("stats radio").find("schema=1 scope=modem rx_packets=") == 0);
@@ -390,6 +404,289 @@ static void management_cli_compatibility() {
   identity_test::durable = durable; filesystem_test::files = files;
   puts("PASS Management CLI help/profile/native preferences, encrypted-only WiFi aliases, persistence and response-gated WiFi, native owner-info over routed crypto");
 }
+static void management_cli_core() {
+  static_assert(MastAdmin::TextLimit == 162 && sizeof(MastAdmin::Reply{}.text) == 163,
+                "Keep native text and NUL storage limits");
+  const auto durable = identity_test::durable;
+  const auto files = filesystem_test::files;
+  {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    BetaFixture f;
+    Peer owner, outsider;
+    assert(f.action("help syslog").find("set syslog IP[:PORT]|off") != std::string::npos);
+    assert(f.action("get diagnostics").find("Diagnostics completed=") == 0);
+    assert(f.action("stats system") == "Error: device task measurements unavailable");
+    assert(!f.send(owner, "mast-pass-12", true).empty());
+    const std::string tag = "0123456789abcdef|";
+    const auto rf = [&](const std::string &command) {
+      const auto response = f.send(owner, command.c_str(), false, true, 1, command.size() < 162);
+      assert(response.size() > 5 && response[4] == 4);
+      unsigned texts = 0;
+      for (const auto &wire : f.radio.sent) {
+        mesh::Packet packet;
+        assert(packet.readFrom(wire.data(), wire.size()));
+        if (packet.getPayloadType() == PAYLOAD_TYPE_TXT_MSG) ++texts;
+      }
+      assert(texts == 1);
+      const std::string text(response.begin() + 5,
+                             std::find(response.begin() + 5, response.end(), 0));
+      assert(text.size() <= 162);
+      for (unsigned char byte : text) assert(byte >= 32 && byte <= 126);
+      if (command.find(tag) == 0) assert(text.find(tag) == 0);
+      return text;
+    };
+    const auto rejectedWire = [&](const std::string &command) {
+      // Exercise receiver limits beyond createDatagram's conservative padding reservation.
+      uint8_t secret[32];
+      owner.self_id.calcSharedSecret(secret, f.management.publicKey());
+      Bytes data(5);
+      queued_tx::put32(data.data(), ++owner.timestamp);
+      data[4] = 4;
+      data.insert(data.end(), command.begin(), command.end());
+      data.push_back(0);
+      assert(data.size() <= 176);
+      auto *packet = owner.packets.allocNew();
+      assert(packet);
+      packet->header = (PAYLOAD_TYPE_TXT_MSG << PH_TYPE_SHIFT) | ROUTE_TYPE_FLOOD;
+      packet->path_len = 0;
+      packet->payload[0] = f.management.publicKey()[0];
+      packet->payload[1] = owner.self_id.pub_key[0];
+      packet->payload_len = 2 + mesh::Utils::encryptThenMAC(secret, packet->payload + 2,
+                                                         data.data(), data.size());
+      assert(packet->payload_len <= 184);
+      const auto wire = owner.wire(packet);
+      const auto before = identity_test::durable;
+      f.radio.sent.clear();
+      f.mux.received(wire.data(), wire.size(), -90, 5);
+      f.step();
+      for (const auto &raw : f.radio.sent) {
+        mesh::Packet response;
+        assert(response.readFrom(raw.data(), raw.size()));
+        assert(response.getPayloadType() != PAYLOAD_TYPE_TXT_MSG);
+      }
+      assert(identity_test::durable == before);
+    };
+    const auto readOnly = [&](const char *command) {
+      const auto before = identity_test::durable;
+      const auto storage = filesystem_test::files;
+      const auto phy = f.mux.currentConfiguration();
+      const auto transmitted = f.radio.sent;
+      RadioDashboard::RadioStatus radioBefore, radioAfter;
+      f.mux.dashboardStatus(radioBefore);
+      MastAdmin::Reply reply;
+      f.management.admin().execute(command, reply);
+      f.mux.dashboardStatus(radioAfter);
+      assert(!reply.ticket && before == identity_test::durable && storage == filesystem_test::files);
+      assert(transmitted == f.radio.sent && radioBefore.queued == radioAfter.queued);
+      assert(phy.freq_hz == f.mux.currentConfiguration().freq_hz &&
+             phy.bw_hz == f.mux.currentConfiguration().bw_hz);
+      assert(strlen(reply.text) <= 145);
+      return std::string(reply.text);
+    };
+    std::string index;
+    for (unsigned page = 1; page <= 3; ++page) {
+      const std::string command = "help " + std::to_string(page);
+      const auto content = readOnly(command.c_str());
+      assert(content.find("help " + std::to_string(page) + "/3:") == 0);
+      assert(rf(tag + command) == tag + content);
+      index += content;
+    }
+    assert(readOnly("help") == readOnly("help 1"));
+    for (const char *topic : {"wifi", "radio", "tempradio", "cad", "radio-controls", "sntp",
+                             "role", "roles", "key", "password", "source", "bot", "auth",
+                             "setperm", "trust", "data", "telemetry", "room", "companion", "stats", "get", "set"}) {
+      assert(index.find(topic) != std::string::npos);
+      const std::string command = "help " + std::string(topic);
+      const auto content = readOnly(command.c_str());
+      assert(content.find("Error:") != 0);
+      assert(rf(tag + command) == tag + content);
+      assert(readOnly((command + " 1").c_str()) == content);
+    }
+    for (const char *command : {"help 0", "help 4", "help 4294967296", "help 2 extra",
+                               "help missing", "help wifi 0", "help wifi 5", "help wifi -1",
+                               "help role 2", "help wifi two", "help wifi 2 extra"}) {
+      assert(readOnly(command).find("Error:") == 0);
+      assert(rf(tag + command).find(tag + "Error:") == 0);
+    }
+    assert(readOnly("help    wifi   2  ") == readOnly("help wifi 2"));
+    assert(readOnly("wifi help") == readOnly("help wifi"));
+    assert(readOnly("bot help") == readOnly("help bot"));
+    assert(readOnly("source help") == readOnly("help source"));
+    for (unsigned page = 2; page <= 4; ++page) {
+      const std::string suffix = std::to_string(page);
+      const auto content = readOnly(("help wifi " + suffix).c_str());
+      assert(content.find("wifi " + suffix + "/4:") == 0);
+      assert(readOnly(("wifi help " + suffix).c_str()) == content);
+      assert(rf(tag + "help wifi " + suffix) == tag + content);
+    }
+    assert(readOnly("bot help 2") == readOnly("help bot 2"));
+    assert(rf(tag + "help source 2") == tag + readOnly("help source 2"));
+    assert(rf(tag + "help source 3") == tag + readOnly("help source 3"));
+    assert(readOnly("help wifi 3").find("use separate forms") != std::string::npos);
+    assert(readOnly("help wifi 4").find("146 bytes") != std::string::npos);
+    assert(readOnly("help wifi 2").size() == 145);
+    assert(rf(tag + "help wifi 2").size() == 162);
+    assert(rf("a2|help wifi 2") == "a2|" + readOnly("help wifi 2"));
+    assert(rf("zz|help").find("Error: unknown mast command") == 0);
+    assert(rf("0123456789abcdeg|help").find("Error: unknown mast command") == 0);
+    for (size_t size : {145, 146, 147, 162}) {
+      const std::string command = "help" + std::string(size - 4, ' ');
+      assert(rf(command) == readOnly("help"));
+      if (size == 145) assert(rf(tag + command) == tag + readOnly("help"));
+      else if (size <= 147) rejectedWire(tag + command);
+    }
+    const std::string shortTagged = "a2|help" + std::string(155, ' ');
+    assert(shortTagged.size() == 162 && rf(shortTagged) == "a2|" + readOnly("help"));
+    rejectedWire(shortTagged + " ");
+    const std::string over = "help" + std::string(159, ' ');
+    assert(f.action(over.c_str()) == "Error: CLI text exceeds 162 bytes");
+    rejectedWire(over);
+    for (const char *command : {"help\twifi", "help\nwifi", "set wifi.ssid \x1b", "set wifi.ssid caf\xc3\xa9"}) {
+      assert(f.action(command) == "Error: printable CLI text required");
+      assert(rf(tag + command) == tag + "Error: printable CLI text required");
+    }
+    assert(readOnly("roles") ==
+           "roles 1/2: applied/saved repeater=0/0 room=0/0 companion=0/0 observer=0/0; next: roles list 2");
+    assert(readOnly("roles") == readOnly("roles list") && readOnly("roles") == readOnly("roles list 1"));
+    assert(readOnly("roles list 2") ==
+           "roles 2/2: Management=available bot applied=1 saved=1; KISS=shared modem service (no mask bit); apply reboots");
+    assert(rf(tag + "roles") == tag + readOnly("roles"));
+    for (const char *command : {"roles list 0", "roles list 3", "roles list extra", "roles list 1 extra"})
+      assert(readOnly(command).find("Error:") == 0);
+    assert(f.action("roles 15").find("Saved roles") == 0);
+    assert(readOnly("roles").find("repeater=0/1 room=0/1 companion=0/1 observer=0/1") != std::string::npos);
+    assert(f.action("status").find("roles applied=0 saved=15") == 0);
+    assert(f.action("bot off").find("Saved bot selection") == 0);
+    assert(readOnly("roles list 2").find("bot applied=1 saved=0") != std::string::npos);
+    assert(f.action("roles 0").find("Saved roles") == 0);
+
+    const auto credentials = [&]() {
+      return identity_test::durable.find({"mc-mast-admin", "settings"}) == identity_test::durable.end()
+          ? Bytes{} : identity_test::durable.at({"mc-mast-admin", "settings"});
+    };
+    for (const std::string value : std::vector<std::string>{"a", std::string(32, 's'), " lead middle tail ", "'quote'\\back|pipe",
+                                                          "hex", "4142", "-"}) {
+      assert(rf(tag + "set wifi.ssid " + value).find("OK - saved") != std::string::npos);
+      assert(rf(tag + "get wifi.ssid") == tag + "> " + value);
+    }
+    for (const std::string value : std::vector<std::string>{"", std::string(33, 's')}) {
+      const auto before = credentials();
+      assert(rf(tag + "set wifi.ssid " + value).find("Error: wifi.ssid") != std::string::npos);
+      assert(credentials() == before);
+    }
+    for (const std::string value : std::vector<std::string>{"", "eight888", std::string(63, 'p'), std::string(64, 'a'),
+                                                          " lead middle tail ", "'quote'\\back|pipe", "hex 4142 -",
+                                                          "        "}) {
+      assert(rf(tag + "set wifi.pwd " + value).find("OK - saved") != std::string::npos);
+      assert(rf(tag + "get wifi.pwd") == tag + "> " + value);
+    }
+    for (const std::string value : std::vector<std::string>{"short77", std::string(64, 'g'), std::string(65, 'a')}) {
+      const auto before = credentials();
+      assert(rf(tag + "set wifi.pwd " + value).find("Error: wifi.pwd") != std::string::npos);
+      assert(credentials() == before);
+    }
+    for (size_t size = 1; size <= 7; ++size) {
+      const auto before = credentials();
+      assert(rf(tag + "set wifi.pwd " + std::string(size, 'p')).find("Error: wifi.pwd") != std::string::npos);
+      assert(credentials() == before);
+    }
+    assert(rf(tag + "set wifi.pwd ") == tag + "OK - saved WiFi field; use wifi apply");
+    for (const char *hexValue : {"6162", "CAFEBABE", "636166c3a9", "ff1b0a7f", "01",
+                                "4142", "20206c69746572616c2020"}) {
+      assert(rf(tag + "wifi ssid " + hexValue).find("Saved WiFi field") != std::string::npos);
+      const auto legacy = rf(tag + "get wifi.ssid");
+      assert(rf(tag + "wifi ssid hex " + hexValue).find("Saved WiFi field") != std::string::npos);
+      assert(rf(tag + "get wifi.ssid") == legacy);
+    }
+    assert(rf(tag + "wifi ssid 636166c3a9").find("Saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> hex 636166c3a9");
+    std::string utf8Hex;
+    for (unsigned i = 0; i < 16; ++i) utf8Hex += "c3a9";
+    assert(rf(tag + "wifi ssid hex " + utf8Hex).find("Saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> hex " + utf8Hex);
+    const auto beforeUtf8 = credentials();
+    assert(rf(tag + "wifi ssid hex " + utf8Hex + "c3").find("Error:") != std::string::npos);
+    assert(credentials() == beforeUtf8);
+    assert(rf(tag + "wifi ssid ff1b0a7f").find("Saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> hex ff1b0a7f");
+    const std::string ssidHex(64, 'f');
+    assert(rf(tag + "wifi ssid hex " + ssidHex).find("Saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> hex " + ssidHex);
+    for (const char *value : {"", "0", "gg", "00", "610062", "c3a"}) {
+      const auto before = credentials();
+      assert(rf(tag + "wifi ssid hex " + value).find("Error:") != std::string::npos);
+      assert(credentials() == before);
+    }
+    assert(rf(tag + "wifi ssid 6162").find("Saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> ab");
+    for (size_t count : {8, 63, 64}) {
+      const std::string password(count, 'a');
+      const std::string encoded = encode(reinterpret_cast<const uint8_t *>(password.data()), password.size());
+      assert(rf(tag + "wifi password " + encoded).find("Saved") != std::string::npos);
+      assert(rf(tag + "get wifi.pwd") == tag + "> " + password);
+      const std::string longAlias = "wifi password hex " + encoded;
+      if (count < 64) {
+        assert(rf(tag + longAlias).find("Saved") != std::string::npos);
+      } else {
+        assert(longAlias.size() == 146);
+        const auto before = credentials();
+        rejectedWire(tag + longAlias);
+        assert(credentials() == before);
+        assert(rf(longAlias).find("Saved") == 0);
+      }
+    }
+    for (const char *value : {"0", "xyz", "00", "61626364656667", "6162006364656667"}) {
+      const auto before = credentials();
+      assert(rf(tag + "wifi password " + value).find("Error:") != std::string::npos);
+      assert(credentials() == before);
+    }
+    for (const std::string value : {std::string(128, '7'), std::string(130, '6')}) {
+      const auto before = credentials();
+      assert(rf(tag + "wifi password " + value).find("Error:") != std::string::npos);
+      assert(credentials() == before);
+    }
+    const auto beforeCombined = credentials();
+    const std::string combined = "wifi " + ssidHex + " " + std::string(126, 'a');
+    assert(combined.size() == 196 && f.action(combined.c_str()) == "Error: CLI text exceeds 162 bytes");
+    assert(f.action((combined + "aa").c_str()) == "Error: CLI text exceeds 162 bytes");
+    assert(credentials() == beforeCombined);
+    assert(rf(tag + "wifi 6162 6162636465666768").find("Saved WiFi credentials") != std::string::npos);
+    assert(rf(tag + "get wifi.pwd") == tag + "> abcdefgh");
+    assert(rf(tag + "wifi password -").find("Saved WiFi field") != std::string::npos);
+    assert(rf(tag + "get wifi.pwd") == tag + "> ");
+    for (const char *command : {"get wifi.pwd", "set wifi.ssid private", "set wifi.pwd private pass",
+                               "wifi ssid hex 6162", "wifi password hex 6162636465666768"}) {
+      const auto before = credentials();
+      assert(f.action(command).find("encrypted Management RF") != std::string::npos);
+      MastAdmin::Reply reply;
+      f.management.admin().execute(command, reply, 1, MastAdmin::Transport::NativeEncrypted);
+      assert(strstr(reply.text, "web/Lua denied") && !reply.ticket && credentials() == before);
+      assert(f.send(outsider, command, false).empty());
+    }
+    assert(rf(tag + "set wifi.ssid stable").find("OK - saved") != std::string::npos);
+  }
+  {
+    BetaFixture restarted;
+    assert(restarted.action("get wifi.ssid") == "> stable");
+    assert(restarted.action("get wifi.pwd").find("encrypted Management RF") != std::string::npos);
+  }
+  {
+    ProfileJournal selected;
+    assert(loadProfileJournal(selected));
+    assert(commitProfileJournal({RoleProfile(7), selected.generation + 1, selected.nonce + 1}) &&
+           saveBotEnabled(true));
+    BetaFixture active(true);
+    const auto before = identity_test::durable;
+    const auto stored = filesystem_test::files;
+    const auto sent = active.radio.sent;
+    assert(active.action("roles").find("repeater=1/1 room=1/1 companion=1/1 observer=0/0") != std::string::npos);
+    assert(active.action("roles list 2").find("Management=available bot applied=1 saved=1") != std::string::npos);
+    assert(identity_test::durable == before && filesystem_test::files == stored && active.radio.sent == sent);
+  }
+  identity_test::durable = durable;
+  filesystem_test::files = files;
+  puts("PASS Management bounded help pages, named read-only roles, literal/hex WiFi, safe SSID, private password and 145/146 tagged limits");
+}
 static std::string encode(const uint8_t *bytes, size_t size) {
   std::string text(size * 2, '0');
   const char *digits = "0123456789abcdef";
@@ -514,7 +811,8 @@ static void source_copy_limits() {
   puts("PASS source copy worker: exact 4 KiB, restricted paths, short write and deadline failure");
 }
 static void upload(BetaFixture &f, const std::string &source, bool enabled = true, bool wait = true,
-                   const std::function<std::string(const char *)> &transport = {}) {
+                   const std::function<std::string(const char *)> &transport = {},
+                   const std::string &baseHash = {}, const char *commitError = nullptr) {
   const auto action = [&](const char *text) { return transport ? transport(text) : f.action(text); };
   uint8_t digest[32];
   mesh::Utils::sha256(digest, 32, reinterpret_cast<const uint8_t *>(source.data()), source.size());
@@ -531,7 +829,9 @@ static void upload(BetaFixture &f, const std::string &source, bool enabled = tru
     assert(action(chunk.c_str()).find("ACK ") == 0);
     assert(action(chunk.c_str()).find("ACK ") == 0);
   }
-  assert(action(("source commit " + id).c_str()).find("Accepted") == 0);
+  const auto committed = action(("source commit " + id + (baseHash.empty() ? "" : " " + baseHash)).c_str());
+  if (commitError) { assert(committed.find(commitError) == 0); return; }
+  assert(committed.find("Accepted") == 0);
   if (!wait) return;
   f.step(300);
   const auto status = action("source status");
@@ -539,6 +839,211 @@ static void upload(BetaFixture &f, const std::string &source, bool enabled = tru
   if (status.find(expected) == std::string::npos) fprintf(stderr, "%s\n", status.c_str());
   assert(status.find(expected) != std::string::npos);
 }
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+static void sourceSetJournalLifecycle() {
+  const auto baseline = identity_test::durable;
+  const auto baselineFiles = filesystem_test::files;
+  const auto sourceSet = [](const char *value) {
+    std::vector<std::pair<std::string, std::string>> files{
+      {"config", std::string("settings={value='") + value + "'}\n"},
+      {"helpers", "module('shared',function() return {value=settings.value} end)\n"},
+      {"handlers",
+       "function installed() local v=kv.get('kept') return require('shared').value..':'..(v or 'none') end "
+       "command('installed','','Installed') "
+       "function keep() kv.put('kept','durable') return 'kept' end command('keep','','Keep') "
+       "function pending() sleep(30000) return 'old pending' end command('pending','','Pending')\n"},
+      {"spare0", "-- spare\n"}, {"spare1", "-- spare\n"},
+      {"spare2", "-- spare\n"}, {"spare3", "-- spare\n"}};
+    for (size_t padding = 0; padding < BotSourceLimit; ++padding) {
+      files.back().second = "--" + std::string(padding, 'x') + "\n";
+      std::string source = "--@meshcore-sources/1\n--@builtin main\n";
+      for (const auto &file : files)
+        source += "--@source " + file.first + " " + std::to_string(file.second.size()) +
+                  "\n" + file.second + "\n";
+      if (source.size() == BotSourceLimit) return source;
+      assert(source.size() < BotSourceLimit);
+    }
+    assert(false); return std::string{};
+  };
+  const auto one = sourceSet("one"), two = sourceSet("two"), three = sourceSet("new");
+  const auto digest = [](const std::string &source) {
+    uint8_t hash[32]{};
+    mesh::Utils::sha256(hash, sizeof(hash), reinterpret_cast<const uint8_t *>(source.data()), source.size());
+    return encode(hash, sizeof(hash));
+  };
+  const auto readback = [](BetaFixture &f) {
+    std::string source;
+    for (unsigned i = 0; i <= 85; ++i) {
+      const auto reply = f.action(("source read " + std::to_string(i)).c_str());
+      if (reply == "EOF") break;
+      assert(reply.find("DATA ") == 0);
+      for (size_t j = 5; j < reply.size(); j += 2)
+        source.push_back(char(strtoul(reply.substr(j, 2).c_str(), nullptr, 16)));
+    }
+    return source;
+  };
+  Peer peer;
+  const auto ask = [&](BetaFixture &f, const char *text) {
+    timeMs += 61000;
+    const auto advert = peer.advert();
+    f.mux.received(advert.data(), advert.size(), -90, 5); f.step();
+    const auto packet = peer.command(f.bot.publicKey(), text);
+    f.radio.sent.clear();
+    f.mux.received(packet.data(), packet.size(), -90, 5); f.step(200);
+    return peer.replies(f.bot.publicKey(), f.radio);
+  };
+  size_t flashPeak = 0, journalPeak = 0;
+  const auto measure = [&]() {
+    size_t flash = 0, journal = 0;
+    for (const auto &file : filesystem_test::files)
+      if (file.first.size() >= 4 && file.first.substr(file.first.size() - 4) == ".lua")
+        flash += file.second.size();
+    for (const auto &record : identity_test::durable)
+      if (record.first.first == "mc-mast-admin" &&
+          (record.first.second == "source" || record.first.second == "wasm-source"))
+        journal += record.second.size();
+    flashPeak = std::max(flashPeak, flash); journalPeak = std::max(journalPeak, journal);
+  };
+  std::string wasmHash, selectedPath;
+  {
+    BetaFixture f;
+#if ONCHIP_BOT_WASM
+    const char *path = getenv("BOT_WASM_CREDENTIAL_MODULE");
+    assert(path);
+    std::ifstream module(path, std::ios::binary);
+    const std::string wasm{std::istreambuf_iterator<char>(module), std::istreambuf_iterator<char>()};
+    assert(wasm.size() > 8 && wasm.size() <= BotSourceLimit);
+    upload(f, wasm, true, true, [&](const char *command) {
+      return f.action((std::string("source wasm ") + (command + 7)).c_str());
+    });
+    wasmHash = f.action("source wasm hash");
+    const auto wasmGeneration = f.bot.sourceWorker().runtimeGeneration(BotWorker::Runtime::Wasm);
+#endif
+    upload(f, one);
+    assert(readback(f) == one);
+    assert(ask(f, "!keep") == std::vector<std::string>{"kept"});
+    assert(ask(f, "!installed") == std::vector<std::string>{"one:durable"});
+    assert(ask(f, "!pending").empty() && f.bot.jobsInUse());
+    upload(f, two, true, false, {}, digest(one));
+    assert(f.bot.jobsInUse());
+    bool sawValidation = false, survivedVerification = false;
+    for (unsigned i = 0; i < 500; ++i) {
+      f.step(1);
+      const auto status = f.action("source status");
+      sawValidation |= status.find("verifying source; activation not committed") != std::string::npos;
+      if (sawValidation && status.find("copying bounded source; activation not committed") != std::string::npos) {
+        assert(f.bot.jobsInUse());
+        survivedVerification = true;
+      }
+      if (status.find("durably saved and active") != std::string::npos) break;
+    }
+    assert(survivedVerification);
+    assert(f.action("source status").find("durably saved and active") != std::string::npos);
+    f.step();
+    const auto activated = readback(f);
+    if (activated != two || f.bot.jobsInUse())
+      fprintf(stderr, "Source-set activation readback=%u jobs=%u status=%s\n",
+              activated == two, f.bot.jobsInUse(), f.action("source status").c_str());
+    assert(activated == two && !f.bot.jobsInUse());
+    timeMs += 31000; f.step();
+    const auto replies = peer.replies(f.bot.publicKey(), f.radio);
+    assert(std::find(replies.begin(), replies.end(), "old pending") == replies.end());
+    assert(ask(f, "!installed") == std::vector<std::string>{"two:durable"});
+    const auto selected = f.action("source hash");
+    upload(f, three, true, false, {}, digest(one), "Error: active Lua sources changed");
+    assert(f.action("source hash") == selected && readback(f) == two);
+    assert(f.action("source cancel").find("Upload cancelled") == 0);
+    assert(f.action("source rollback").find("Accepted") == 0); f.step(300);
+    assert(readback(f) == one && ask(f, "!installed") == std::vector<std::string>{"one:durable"});
+    assert(f.action("source rollback").find("Accepted") == 0); f.step(300);
+    assert(readback(f) == two && ask(f, "!installed") == std::vector<std::string>{"two:durable"});
+#if ONCHIP_BOT_WASM
+    assert(f.action("source wasm hash") == wasmHash &&
+           f.bot.sourceWorker().runtimeGeneration(BotWorker::Runtime::Wasm) == wasmGeneration);
+#endif
+    const auto status = f.action("source status");
+    const auto slot = status[status.find("active=") + 7];
+    assert(slot >= '0' && slot <= '2');
+    selectedPath = std::string("/command-bot/") + char('a' + slot - '0') + ".lua";
+    measure();
+  }
+  const auto selectedRecords = identity_test::durable;
+  const auto selectedFiles = filesystem_test::files;
+  for (bool afterJournal : {false, true}) {
+    identity_test::durable = selectedRecords;
+    filesystem_test::files = selectedFiles;
+    {
+      BetaFixture f; f.step(300);
+      assert(readback(f) == two);
+      upload(f, three, true, false, {}, digest(two));
+      if (afterJournal) {
+        for (unsigned i = 0; i < 500 && f.action("source hash").find(digest(three)) == std::string::npos; ++i)
+          f.step(1);
+        assert(f.action("source hash").find(digest(three)) != std::string::npos);
+      } else assert(f.action("source hash").find(digest(two)) != std::string::npos);
+    }
+    {
+      BetaFixture restart; restart.step(400);
+      const auto actual = readback(restart);
+      assert(actual == (afterJournal ? three : two));
+      assert(ask(restart, "!installed") ==
+             std::vector<std::string>{afterJournal ? "new:durable" : "two:durable"});
+#if ONCHIP_BOT_WASM
+      assert(restart.action("source wasm hash") == wasmHash);
+#endif
+      measure();
+    }
+  }
+  identity_test::durable = selectedRecords;
+  filesystem_test::files = selectedFiles;
+  filesystem_test::files[selectedPath].pop_back();
+  {
+    BetaFixture f;
+    const auto pending = f.action("source status");
+    assert(pending.find("live retry pending") != std::string::npos &&
+           pending.find("use source remove") == std::string::npos);
+    const auto metadata = f.action("source metadata");
+    assert(metadata.find("expected=4096 actual=4095") != std::string::npos &&
+           metadata.find("wait for retries") != std::string::npos);
+    f.step(1200);
+    const auto blocked = f.action("source status");
+    const auto recovery = f.action("source metadata");
+    assert(!f.bot.sourceDeploymentReady() &&
+           blocked.find("use source retry") != std::string::npos &&
+           recovery.find("use source remove") != std::string::npos &&
+           recovery.find("wait for retries") == std::string::npos);
+  }
+  identity_test::durable = selectedRecords;
+  filesystem_test::files = selectedFiles;
+  filesystem_test::files.erase(selectedPath);
+  {
+    BetaFixture f; f.step(1200);
+    assert(!f.bot.sourceDeploymentReady() && ask(f, "!installed").empty());
+    const auto login = f.send(peer, "mast-pass-12", true);
+    assert(login.size() >= 13 && login[4] == 0 && login[7] == 3);
+    const auto refused = f.action("source rollback");
+    assert(refused.find("Error:") == 0 && refused.find(selectedPath) != std::string::npos &&
+           refused.find("unavailable") != std::string::npos &&
+           refused.find("source remove") != std::string::npos);
+    const auto removed = f.send(peer, "source remove", false);
+    assert(removed.size() > 5 && std::string(removed.begin() + 5, removed.end()).find("Accepted") == 0);
+    f.step(400);
+    assert(f.bot.sourceDeploymentReady() && f.action("source metadata") == "BUNDLED schema=none");
+    upload(f, two);
+    assert(readback(f) == two && ask(f, "!installed") == std::vector<std::string>{"two:durable"});
+#if ONCHIP_BOT_WASM
+    assert(f.action("source wasm hash") == wasmHash);
+#endif
+    measure();
+  }
+  assert(sourceSetLuaLive.load() == 0);
+  assert(psram_test::requestedLive.load() == 0);
+  identity_test::durable = baseline;
+  filesystem_test::files = baselineFiles;
+  printf("PASS source-set journal: eight entries/4096B, config/module rebuild, exact readback, CAS conflict, activation-only Lua cancellation, durable KV, manual rollback, two restart boundaries, corrupt-file fail-closed and encrypted native recovery; wasm=%u source_file_peak=%zu journal_blob_peak=%zu workspace_request_peak=%zu lua_allocator_peak=%zu (host proxies)\n",
+         ONCHIP_BOT_WASM, flashPeak, journalPeak, psram_test::requestedPeak.load(), sourceSetLuaPeak.load());
+}
+#endif
 static std::string packageSource(const char *version, const char *schema, const char *rollback,
                                  const char *reply, const char *capabilities = "none") {
   return std::string("--@meshcore-bot/1;name=release-test;version=") + version +
@@ -1137,6 +1642,117 @@ static void service_names_without_app_roles() {
   identity_test::durable = records;
   filesystem_test::files = files;
   puts("PASS service names: live/readback/reboot, 31-byte bound, denied/failed writes, unchanged keys/policies/data/PHY; management advert without WiFi/app roles; no KISS/observer advert");
+}
+static void automatic_adverts() {
+  const auto records = identity_test::durable;
+  const auto files = filesystem_test::files;
+  bool enabled = false;
+  identity_test::durable.erase({"mc-onchip", "auto-advert"});
+  assert(loadAutomaticAdverts(enabled) && enabled && reloadAutomaticAdverts() && automaticAdvertsEnabled());
+  assert(saveAutomaticAdverts(false) && !automaticAdvertsEnabled());
+  const auto quiet = identity_test::durable;
+  for (unsigned malformed = 0; malformed < 3; ++malformed) {
+    auto &record = identity_test::durable[{"mc-onchip", "auto-advert"}];
+    record = quiet.at({"mc-onchip", "auto-advert"});
+    if (malformed == 0) record[3] = 2;
+    else if (malformed == 1) record[4] = 2;
+    else record.pop_back();
+    assert(!loadAutomaticAdverts(enabled) && !enabled);
+    assert(!reloadAutomaticAdverts() && !automaticAdvertsEnabled());
+  }
+  identity_test::durable = quiet;
+  for (unsigned cut = 0; cut < 3; ++cut) {
+    identity_test::failWrite = cut == 0;
+    identity_test::failCommit = cut == 1;
+    identity_test::afterCommit = cut == 2 ? +[] { identity_test::failRead = true; } : nullptr;
+    assert(!saveAutomaticAdverts(true) && !automaticAdvertsEnabled());
+    identity_test::failWrite = identity_test::failCommit = identity_test::failRead = false;
+    identity_test::afterCommit = nullptr;
+    identity_test::durable = quiet;
+  }
+  assert(saveRoleProfile({7}) && saveBotEnabled(true));
+  beginClocks(RoleProfile(7));
+  for (unsigned boot = 0; boot < 2; ++boot) {
+    BetaFixture f(true);
+    const auto noAdverts = [&] {
+      for (const auto &wire : f.radio.sent) {
+        mesh::Packet packet;
+        assert(packet.readFrom(wire.data(), wire.size()));
+        assert(packet.getPayloadType() != PAYLOAD_TYPE_ADVERT);
+      }
+    };
+    assert(f.action("get autoadvert").find("saved=off live=off") != std::string::npos);
+    assert(f.action("help autoadvert").find("manual app/admin adverts unchanged") != std::string::npos);
+    assert(f.action("set autoadvert maybe").find("Error:") == 0);
+    Peer outsider;
+    assert(f.send(outsider, "set autoadvert on", false).empty());
+    timeMs += 20000; f.step(300); noAdverts();
+    timeMs += 48u * 60 * 60 * 1000; f.step(300); noAdverts();
+    for (const char *role : {"repeater", "room", "companion", "bot", "management"}) {
+      f.radio.sent.clear();
+      assert(f.action(("role advert " + std::string(role) + " zerohop").c_str()).find("Queued zero-hop") == 0);
+      f.step(300);
+      uint8_t key[32];
+      assert(identityPublicKey(!strcmp(role, "bot") ? "command-bot" : role, key));
+      bool found = false;
+      for (const auto &wire : f.radio.sent) {
+        mesh::Packet packet;
+        assert(packet.readFrom(wire.data(), wire.size()));
+        if (packet.getPayloadType() == PAYLOAD_TYPE_ADVERT) {
+          assert(packet.isRouteDirect() && packet.getPathHashCount() == 0 && !memcmp(packet.payload, key, 32));
+          found = true;
+        }
+      }
+      assert(found);
+    }
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(fd >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(companionSessions().port());
+    assert(connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+    const auto appCommand = [&](const Bytes &data, uint8_t expected) {
+      Bytes request{'<', uint8_t(data.size()), 0};
+      request.insert(request.end(), data.begin(), data.end());
+      assert(send(fd, request.data(), request.size(), MSG_NOSIGNAL) == ssize_t(request.size()));
+      Bytes response;
+      for (unsigned tick = 0; tick < 100 && (response.size() < 3 ||
+           response.size() < size_t(3 + response[1] + (unsigned(response[2]) << 8))); ++tick) {
+        f.step(10);
+        uint8_t buffer[512];
+        const auto size = recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+        if (size > 0) response.insert(response.end(), buffer, buffer + size);
+        else assert(size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+      }
+      assert(response.size() >= 4 && response[0] == '>' && response[3] == expected);
+    };
+    appCommand({22, 3}, 13);
+    appCommand({1, 0, 0, 0, 0, 0, 0, 0}, 5);
+    f.radio.sent.clear();
+    appCommand({7, 0}, 0);
+    f.step(300);
+    char companionName[32];
+    assert(nativeRoleName(Role::Companion, companionName));
+    uint8_t companionKey[32]; assert(identityPublicKey("companion", companionKey));
+    assert_zero_hop_advert(f.radio, companionKey, companionName, ADV_TYPE_CHAT);
+    close(fd);
+    f.radio.sent.clear(); f.step(300); noAdverts();
+    if (boot == 1) {
+      assert(f.action("set autoadvert on").find("Saved and applied") == 0);
+      assert(automaticAdvertsEnabled());
+      f.step(300);
+      bool automatic = false;
+      for (const auto &wire : f.radio.sent) {
+        mesh::Packet packet; assert(packet.readFrom(wire.data(), wire.size()));
+        automatic |= packet.getPayloadType() == PAYLOAD_TYPE_ADVERT;
+      }
+      assert(automatic && saveAutomaticAdverts(false));
+    }
+  }
+  identity_test::durable = records;
+  filesystem_test::files = files;
+  assert(reloadAutomaticAdverts());
+  puts("PASS automatic adverts: saved quiet boot/restart and 48-hour timers, fail-closed corrupt records, write failures, unauthenticated denial, five manual roles and companion app Advert, live re-enable");
 }
 static void renamed_role_adverts() {
   const auto records = identity_test::durable;
@@ -1868,6 +2484,275 @@ static void bot_facing_owner_admin() {
   assert(f.action("trust none").find("Saved") == 0);
   puts("PASS native bot administration: existing owner trust/replay backend, policy/name/destinations, denied public/credential operations, cancellation and TX-gated reboot");
 }
+static void management_native_acl() {
+  const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
+  for (const char *key : {"settings", "replay", "replay-extra", "owner-replay", "acl"})
+    identity_test::durable.erase({"mc-mast-admin", key});
+  Peer owners[5], legacy, oldPeers[4], outsider, compiled;
+  struct FixtureSeed : mesh::RNG {
+    void random(uint8_t *bytes, size_t size) override {
+      for (size_t i = 0; i < size; ++i) bytes[i] = uint8_t(i);
+    }
+  } seed;
+  compiled.self_id = mesh::LocalIdentity(&seed);
+  struct LegacySettings {
+    uint32_t version = 1;
+    MastAdmin::WifiCredentials wifi;
+    uint8_t wifiSet = 1, trustedSet = 1, reserved[2]{};
+    uint8_t trustedKey[32]{};
+  } settings;
+  strcpy(settings.wifi.ssid, "legacy-fixture");
+  strcpy(settings.wifi.password, "legacy-password");
+  memcpy(settings.trustedKey, legacy.self_id.pub_key, 32);
+  struct LegacyReplay {
+    uint32_t version = 1;
+    struct PeerRecord { uint8_t key[32]{}; uint32_t timestamp = 0; } peers[4];
+  } replay;
+  struct LegacyOwnerReplay {
+    uint32_t version = 1;
+    LegacyReplay::PeerRecord peer;
+  } ownerReplay;
+  for (unsigned i = 0; i < 4; ++i) {
+    memcpy(replay.peers[i].key, oldPeers[i].self_id.pub_key, 32);
+    replay.peers[i].timestamp = oldPeers[i].timestamp;
+  }
+  memcpy(ownerReplay.peer.key, compiled.self_id.pub_key, 32);
+  ownerReplay.peer.timestamp = compiled.timestamp;
+  const auto store = [&](const char *key, const auto &record) {
+    const auto *bytes = reinterpret_cast<const uint8_t *>(&record);
+    identity_test::durable[{"mc-mast-admin", key}] = Bytes(bytes, bytes + sizeof(record));
+  };
+  store("settings", settings); store("replay", replay); store("owner-replay", ownerReplay);
+  const auto migrated = identity_test::durable;
+  const auto key = [&](Peer &peer) { return encode(peer.self_id.pub_key, 32); };
+  const auto permission = [&](BetaFixture &f, Peer &peer, unsigned value) {
+    return f.action(("setperm " + key(peer) + " " + std::to_string(value)).c_str());
+  };
+  const auto botCommand = [&](BetaFixture &f, Peer &peer, const char *command) {
+    timeMs += 61000;
+    const auto advert = peer.advert();
+    f.mux.received(advert.data(), advert.size(), -91, 6); f.step(15);
+    f.radio.sent.clear();
+    const auto wire = peer.command(f.bot.publicKey(), command, 3, {0x31, 0x32, 0x33});
+    f.mux.received(wire.data(), wire.size(), -91, 6); f.step();
+    const auto replies = peer.replies(f.bot.publicKey(), f.radio);
+    assert(replies.size() == 1); return replies[0];
+  };
+  Bytes managementKey, botKey;
+  {
+    BetaFixture f;
+    managementKey.assign(f.management.publicKey(), f.management.publicKey() + 32);
+    botKey.assign(f.bot.publicKey(), f.bot.publicKey() + 32);
+    assert(identity_test::durable.at({"mc-mast-admin", "settings"}) == migrated.at({"mc-mast-admin", "settings"}));
+    assert(identity_test::durable.at({"mc-mast-admin", "replay"}) == migrated.at({"mc-mast-admin", "replay"}));
+    assert(f.management.admin().trusted(legacy.self_id.pub_key));
+    assert(f.management.admin().compiledTrusted(compiled.self_id.pub_key));
+    for (unsigned i = 0; i < 4; ++i)
+      assert(f.management.admin().lastTimestamp(oldPeers[i].self_id.pub_key) == replay.peers[i].timestamp);
+    assert(f.management.admin().lastTimestamp(compiled.self_id.pub_key) == ownerReplay.peer.timestamp);
+    assert(!f.send(legacy, "", true).empty());
+    const auto beforeUnauthorized = identity_test::durable;
+    assert(f.send(outsider, ("setperm " + key(outsider) + " 3").c_str(), false).empty());
+    assert(identity_test::durable == beforeUnauthorized);
+    for (unsigned i = 0; i < 5; ++i) {
+      for (unsigned j = 0; j < i; ++j) assert(!owners[i].self_id.matches(owners[j].self_id));
+      const auto command = "0123456789abcdef|setperm " + key(owners[i]) + " 3";
+      const auto response = f.send(legacy, command.c_str(), false, true, 3);
+      assert(response.size() > 5 && response.size() <= 5 + MastAdmin::TextLimit &&
+             std::string(response.begin() + 5, response.end()).find("0123456789abcdef|OK - saved") == 0);
+      assert(f.management.admin().trusted(owners[i].self_id.pub_key));
+    }
+    assert(f.action("get acl").find("ACL=5/5") != std::string::npos);
+    TestHTTPServer server;
+    assert(registerMastWeb(&server) == ESP_OK);
+    const auto web = [&](const char *path, const std::string &body, const std::string &token = "") {
+      httpd_req_t request;
+      request.body = body; request.content_len = body.size();
+      request.headers["Host"] = "mast.test";
+      if (!token.empty()) request.headers["X-Mast-Session"] = token;
+      std::atomic<bool> done{false};
+      std::thread http([&] {
+        assert(server.routes.at(path).handler(&request) == ESP_OK);
+        done = true;
+      });
+      while (!done) f.step(1);
+      http.join();
+      return request;
+    };
+    const auto setperm = "setperm " + key(owners[0]) + " 3";
+    assert(web("/admin/command", setperm).status == "403 Forbidden");
+    const auto login = web("/admin/login", "mast-pass-12");
+    assert(login.status == "200 OK");
+    assert(web("/admin/command", setperm, login.response).response.find("OK - saved") == 0);
+    assert(web("/admin/command", "get acl " + key(owners[0]), login.response).response.find("permissions=3 admin=1") != std::string::npos);
+    assert(permission(f, outsider, 3).find("ACL full") != std::string::npos);
+    assert(f.send(outsider, "", true).empty());
+    for (unsigned i = 0; i < 5; ++i) {
+      assert(!f.send(owners[i], "", true, true, 3).empty());
+      const auto response = f.send(owners[i], "status", false, true, 3);
+      assert(response.size() > 5 &&
+             std::string(response.begin() + 5, response.end()).find("roles applied=") == 0);
+      const auto inspection = f.action(("get acl " + std::to_string(i + 1)).c_str());
+      assert(inspection.find(key(owners[i])) != std::string::npos &&
+             inspection.find("permissions=3 admin=1") != std::string::npos &&
+             inspection.size() <= MastAdmin::TextLimit - 17);
+    }
+    assert(f.send(outsider, "mast-pass-12", true).empty());
+    assert(!f.send(compiled, "", true).empty());
+    assert(!f.send(compiled, "status", false).empty());
+    assert(f.action("auth status").find("RF peers=10/10") == 0);
+    for (unsigned slot = 1; slot <= MastAdmin::ReplaySlots; ++slot)
+      assert(f.action(("auth peer " + std::to_string(slot)).c_str()).size() <= MastAdmin::TextLimit - 17);
+    for (auto &owner : owners)
+      assert(botCommand(f, owner, "!admin bot status").find("bot applied=1") == 0);
+    assert(botCommand(f, outsider, "!admin bot status").find("not granted") != std::string::npos);
+    assert(botCommand(f, legacy, "!admin bot status").find("bot applied=1") == 0);
+    assert(botCommand(f, compiled, "!admin bot status").find("bot applied=1") == 0);
+    auto &fifth = owners[4];
+    fifth.timestamp = f.management.admin().lastTimestamp(fifth.self_id.pub_key) - 1;
+    assert(f.send(fifth, "", true).empty());
+    fifth.timestamp = f.management.admin().lastTimestamp(fifth.self_id.pub_key);
+    assert(!f.send(fifth, "status", false).empty());
+    assert(permission(f, legacy, 0).find("trust none") != std::string::npos);
+    assert(permission(f, compiled, 0).find("cannot be revoked") != std::string::npos);
+    assert(permission(f, fifth, 0).find("OK - saved") == 0);
+    const auto timestamp = f.management.admin().lastTimestamp(fifth.self_id.pub_key);
+    assert(!f.management.admin().trusted(fifth.self_id.pub_key));
+    assert(f.send(fifth, "", true).empty());
+    assert(!f.send(fifth, "status", false).empty()); // Existing authenticated session is unchanged.
+    assert(botCommand(f, fifth, "!admin bot status").find("not granted") != std::string::npos);
+    assert(f.management.admin().lastTimestamp(fifth.self_id.pub_key) >= timestamp);
+    for (unsigned value : {1u, 2u, 4u, 5u, 6u}) {
+      const auto response = permission(f, fifth, value);
+      assert(response.find("OK - saved") == 0);
+      assert(!f.management.admin().trusted(fifth.self_id.pub_key));
+      assert(f.send(fifth, "", true).empty());
+      assert(botCommand(f, fifth, "!admin bot status").find("not granted") != std::string::npos);
+    }
+    assert(permission(f, fifth, 7).find("OK - saved") == 0);
+    assert(f.management.admin().trusted(fifth.self_id.pub_key));
+    assert(botCommand(f, fifth, "!admin bot status").find("bot applied=1") == 0);
+    for (const char *argument : {"", "bad 3", "00 3", "11 -1"})
+      assert(f.action((std::string("setperm ") + argument).c_str()).find("Error:") == 0);
+    assert(permission(f, fifth, 256).find("Error:") == 0);
+    assert(f.action("get acl 0").find("Error:") == 0);
+    assert(f.action("get acl 6").find("Error:") == 0);
+    assert(identity_test::durable.at({"mc-mast-admin", "settings"}) == migrated.at({"mc-mast-admin", "settings"}));
+    assert(identity_test::durable.at({"mc-mast-admin", "replay"}) == migrated.at({"mc-mast-admin", "replay"}));
+  }
+  const auto persisted = identity_test::durable;
+  uint32_t persistedTimestamps[5];
+  for (unsigned i = 0; i < 5; ++i) persistedTimestamps[i] = owners[i].timestamp;
+  for (unsigned value : {0u, 1u, 2u}) {
+    identity_test::durable = persisted;
+    {
+      BetaFixture f;
+      assert(permission(f, owners[4], value).find("OK - saved") == 0);
+    }
+    BetaFixture restarted;
+    assert(!restarted.management.admin().trusted(owners[4].self_id.pub_key));
+    assert(restarted.send(owners[4], "", true).empty());
+    assert(botCommand(restarted, owners[4], "!admin bot status").find("not granted") != std::string::npos);
+    assert(restarted.management.admin().lastTimestamp(owners[4].self_id.pub_key) == persistedTimestamps[4]);
+  }
+  identity_test::durable = persisted;
+  {
+    BetaFixture restarted;
+    assert(!memcmp(restarted.management.publicKey(), managementKey.data(), 32) &&
+           !memcmp(restarted.bot.publicKey(), botKey.data(), 32));
+    for (auto &owner : owners) {
+      assert(restarted.management.admin().trusted(owner.self_id.pub_key));
+      const unsigned index = &owner - owners;
+      assert(restarted.management.admin().lastTimestamp(owner.self_id.pub_key) == persistedTimestamps[index]);
+      owner.timestamp = persistedTimestamps[index];
+      --owner.timestamp;
+      assert(restarted.send(owner, "", true).empty());
+      assert(!restarted.send(owner, "", true).empty());
+    }
+    assert(!restarted.send(legacy, "", true).empty());
+    assert(!restarted.send(compiled, "", true).empty());
+    assert(botCommand(restarted, owners[4], "!admin bot status").find("bot applied=1") == 0);
+    assert(restarted.action("trust none").find("Saved") == 0);
+    assert(!restarted.management.admin().trusted(legacy.self_id.pub_key));
+    for (auto &owner : owners) assert(restarted.management.admin().trusted(owner.self_id.pub_key));
+    assert(restarted.action(("trust " + key(legacy)).c_str()).find("Saved") == 0);
+    timeMs += 900001; restarted.step(1);
+    assert(restarted.send(outsider, "mast-pass-12", true).empty()); // Replay, not session capacity.
+    assert(restarted.action(("auth forget " + key(oldPeers[0])).c_str()).find("Forgot") == 0);
+    assert(!restarted.send(outsider, "mast-pass-12", true).empty());
+  }
+  for (unsigned value : {0u, 3u}) for (unsigned failure = 0; failure < 5; ++failure) {
+    identity_test::durable = persisted;
+    {
+      BetaFixture f;
+      if (value == 3) assert(permission(f, owners[4], 0).find("OK - saved") == 0);
+      identity_test::failWrite = failure == 0;
+      identity_test::failCommit = failure == 1 || failure == 2;
+      identity_test::eagerWrites = failure == 2;
+      identity_test::afterCommit = failure == 3 ? +[] { identity_test::failRead = true; } :
+          failure == 4 ? +[] { identity_test::durable.at({"mc-mast-admin", "acl"})[8] ^= 1; } : nullptr;
+      assert(permission(f, owners[4], value).find("commit/readback unknown") != std::string::npos);
+      assert(!f.management.admin().trusted(owners[4].self_id.pub_key));
+      assert(f.management.admin().trusted(legacy.self_id.pub_key) &&
+             f.management.admin().trusted(compiled.self_id.pub_key));
+      identity_test::failWrite = identity_test::failCommit = identity_test::failRead = false;
+      identity_test::eagerWrites = false; identity_test::afterCommit = nullptr;
+      assert(f.action("get acl").find("ACL unavailable") != std::string::npos);
+    }
+    BetaFixture restarted;
+    const bool granted = failure == 4 ? false : failure >= 2 ? value == 3 : value == 0;
+    assert(restarted.management.admin().trusted(owners[4].self_id.pub_key) == granted);
+    assert(restarted.management.admin().lastTimestamp(owners[4].self_id.pub_key) == persistedTimestamps[4]);
+  }
+  for (unsigned corruption = 0; corruption < 3; ++corruption) {
+    identity_test::durable = persisted;
+    auto &record = identity_test::durable.at({"mc-mast-admin", "acl"});
+    if (corruption == 0) record[8] ^= 1;
+    else if (corruption == 1) record[0] = 2;
+    else record.pop_back();
+    BetaFixture f;
+    for (auto &owner : owners) assert(!f.management.admin().trusted(owner.self_id.pub_key));
+    assert(f.management.admin().trusted(legacy.self_id.pub_key) &&
+           f.management.admin().trusted(compiled.self_id.pub_key));
+    assert(f.action("get acl").find("ACL unavailable") != std::string::npos);
+    assert(permission(f, owners[0], 3).find("ACL unavailable") != std::string::npos);
+  }
+  for (unsigned failure = 0; failure < 4; ++failure) {
+    identity_test::durable = persisted;
+    BetaFixture f;
+    identity_test::failWrite = failure == 0;
+    identity_test::failCommit = failure == 1;
+    identity_test::afterCommit = failure == 2 ? +[] { identity_test::failRead = true; } :
+        failure == 3 ? +[] { identity_test::durable.at({"mc-mast-admin", "settings"})[0] ^= 1; } : nullptr;
+    assert(f.action(("trust " + key(outsider)).c_str()).find("commit/readback unknown") != std::string::npos);
+    assert(!f.management.admin().trusted(outsider.self_id.pub_key));
+    assert(f.management.admin().trusted(legacy.self_id.pub_key));
+    identity_test::failWrite = identity_test::failCommit = identity_test::failRead = false;
+    identity_test::afterCommit = nullptr;
+  }
+  for (unsigned failure = 0; failure < 3; ++failure) {
+    identity_test::durable = persisted;
+    const uint32_t timestamp = owners[4].timestamp + 100;
+    {
+      BetaFixture f;
+      identity_test::failCommit = failure == 0;
+      identity_test::afterCommit = failure == 1 ? +[] { identity_test::failRead = true; } :
+          failure == 2 ? +[] { identity_test::durable.at({"mc-mast-admin", "replay-extra"})[40] ^= 1; } : nullptr;
+      assert(!f.management.admin().rememberTimestamp(owners[4].self_id.pub_key, timestamp));
+      assert(!f.management.admin().ready());
+      identity_test::failCommit = identity_test::failRead = false; identity_test::afterCommit = nullptr;
+    }
+    BetaFixture restarted;
+    assert(restarted.management.admin().ready() == (failure != 2));
+    if (failure != 2)
+      assert(restarted.management.admin().lastTimestamp(owners[4].self_id.pub_key) ==
+             (failure == 1 ? timestamp : persistedTimestamps[4]));
+  }
+  identity_test::durable = baseline;
+  filesystem_test::files = files;
+  puts("PASS native Management setperm ACL: five owners incl fifth RF/bot, admin-mask denial, retained singleton/compiled recovery, v1 four-peer migration, checked storage, revoke, replay/session capacity and reboot");
+}
 static void cross_runtime_source_credentials() {
   const auto durable = identity_test::durable;
   const auto files = filesystem_test::files;
@@ -2005,6 +2890,11 @@ static void adaptive_policy_admin() {
 
 int main(int argc, char **argv) {
   setbuf(stdout, nullptr);
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+  assert(saveRoleProfile({0}) && saveBotEnabled(true) && saveBotEventAccess(0));
+  sourceSetJournalLifecycle();
+  return 0;
+#endif
   if (argc == 2 && !strcmp(argv[1], "--radio-time-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     public_time_guest();
@@ -2027,9 +2917,24 @@ int main(int argc, char **argv) {
     adaptive_policy_admin();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--admin-cli-core-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    management_cli_compatibility();
+    management_cli_core();
+    management_native_acl();
+    replay_capacity_and_cancellation();
+    corrupt_replay_keeps_services();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--role-password-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     runtime_role_passwords();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--automatic-adverts-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    automatic_adverts();
+    renamed_role_adverts();
     return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--native-discovery-test")) {
@@ -2044,14 +2949,17 @@ int main(int argc, char **argv) {
   source_copy_limits();
   assert(saveRoleProfile({0}) && saveBotEnabled(true));
   service_names_without_app_roles();
+  automatic_adverts();
   renamed_role_adverts();
   runtime_role_configuration();
   supplied_identity_keys();
   runtime_role_passwords();
   runtime_management_password();
   management_cli_compatibility();
+  management_cli_core();
   native_role_profile_owner_info();
   bot_facing_owner_admin();
+  management_native_acl();
   cross_runtime_source_credentials();
   packageMetadataLifecycle();
   origin_path_policy();
@@ -2081,8 +2989,8 @@ int main(int argc, char **argv) {
     const auto tagged = f.send(peer, "a2|status", false);
     assert(tagged.size() > 8 && !memcmp(tagged.data() + 5, "a2|", 3));
     const auto taggedLong = f.send(peer, "0123456789abcdef|help", false);
-    assert(taggedLong.size() > 22 && !memcmp(taggedLong.data() + 5, "0123456789abcdef|status;", 24));
-    assert(f.action("help").find("bot https") != std::string::npos);
+    assert(taggedLong.size() > 22 && !memcmp(taggedLong.data() + 5, "0123456789abcdef|help 1/3:", 26));
+    assert(f.action("help bot").find("https") != std::string::npos);
     assert(f.action("bot https").find("ca/token NAME HEX <=128") != std::string::npos);
     assert(f.action("bot https status") == "Error: HTTPS not built into this profile");
     const std::string staging = "bot https token demo " + std::string(128, 'a');
@@ -2117,7 +3025,7 @@ int main(int argc, char **argv) {
     assert(foundPeer && f.action(authCommand.c_str()) == authBefore);
     assert(f.action("auth status bad").find("Error:") == 0);
     assert(f.action("auth peer 0").find("Error:") == 0);
-    assert(f.action("auth peer 5").find("Error:") == 0);
+    assert(f.action("auth peer 11").find("Error:") == 0);
     assert(f.action("auth peer -1").find("Error:") == 0);
     timeMs += 1100;
     assert(!f.send(peer, "", true).empty());

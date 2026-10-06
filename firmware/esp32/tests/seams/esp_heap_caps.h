@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <map>
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+#include <atomic>
+#endif
 
 constexpr unsigned MALLOC_CAP_SPIRAM = 1 << 10;
 constexpr unsigned MALLOC_CAP_8BIT = 1 << 2;
@@ -11,6 +14,9 @@ inline std::map<void *, size_t> allocations;
 inline int failAfter = -1;
 inline unsigned attempts = 0, released = 0;
 inline bool (*freeOther)(void *) = nullptr;
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+inline std::atomic<size_t> requestedLive{0}, requestedPeak{0};
+#endif
 inline bool contains(const void *address) {
   const uintptr_t target = reinterpret_cast<uintptr_t>(address);
   for (const auto &entry : allocations) {
@@ -31,6 +37,11 @@ inline void *heap_caps_calloc(size_t count, size_t size, unsigned capabilities) 
   void *memory = std::calloc(count, size);
   assert(memory);
   psram_test::allocations.emplace(memory, count * size);
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+  const size_t live = psram_test::requestedLive.fetch_add(count * size) + count * size;
+  size_t peak = psram_test::requestedPeak.load();
+  while (live > peak && !psram_test::requestedPeak.compare_exchange_weak(peak, live)) {}
+#endif
   return memory;
 }
 inline void heap_caps_free(void *memory) {
@@ -40,6 +51,9 @@ inline void heap_caps_free(void *memory) {
   auto bytes = static_cast<const uint8_t *>(memory);
   for (size_t i = 0; i < entry->second; ++i)
     assert(bytes[i] == 0 && "Role secrets and packets must be scrubbed before free");
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+  psram_test::requestedLive.fetch_sub(entry->second);
+#endif
   psram_test::allocations.erase(entry);
   ++psram_test::released;
   std::free(memory);

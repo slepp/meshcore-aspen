@@ -16,7 +16,17 @@ public:
   static constexpr size_t HISTORY = 32;
   static constexpr size_t TRAFFIC_SECONDS = 60;
   static constexpr size_t PREVIEW_BYTES = 16;
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+  static constexpr size_t JSON_CAPACITY = 40960;
+  static constexpr size_t CONTACT_CAPACITY = 32;
+  struct ContactStatus {
+    uint8_t public_key[32]{};
+    char name[32]{};
+    uint8_t type = 0;
+  };
+#else
   static constexpr size_t JSON_CAPACITY = 24576;
+#endif
   static constexpr size_t HTTP_INTERNAL_SOCKETS = 3;
   static constexpr size_t HTTP_CLIENTS = 3;
   static constexpr size_t LIVE_CLIENTS = 2;
@@ -84,6 +94,11 @@ public:
     char device_name[32]{};
     uint8_t role_count = 0;
     RoleStatus roles[ROLE_CAPACITY]{};
+#if defined(ESP32) && !defined(NRF52_PLATFORM)
+    bool contacts_available = false;
+    uint16_t contact_count = 0, contact_total = 0;
+    ContactStatus contacts[CONTACT_CAPACITY]{};
+#endif
 #endif
   };
 

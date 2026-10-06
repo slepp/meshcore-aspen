@@ -1936,7 +1936,7 @@ They preserve nested Lua call stacks and free the VM/radio workers for other
 jobs. Each invocation admits at most eight I/O operations; timer completion
 over one second late fails visibly. These sleep timers are transient, not
 durable reminders; the distinct named deadline API follows below.
-Source generation + invocation + operation tokens fence completions, including
+Runtime incarnation + invocation + operation tokens fence completions, including
 cancelled/recycled slots. Source replacement cannot publish old successful
 replies, but a storage mutation already in progress may have committed and is
 not blindly retried or erased.
@@ -2211,7 +2211,8 @@ and no `from` key. It cannot forward a received channel packet as an authenticat
 DM. Both mesh grants default off, are copied into immutable `ctx.grants`, and
 are rechecked at native admission/completion. Revocation fences pending epochs
 even if persistence fails; regrant does not revive them.
-Whole-source activation cancels the old generation's invocations and I/O.
+Whole-Lua-set activation cancels the prior Lua incarnation's invocations and I/O;
+it does not cancel Wasm or the independent native diagnostics session.
 The saved owner mesh policy is node-wide and remains configured; fresh
 invocations in the new generation take a new context and revalidate that
 policy. This is not an independent permission/rollback boundary per export.
@@ -2668,8 +2669,11 @@ loss during admission.
 
 The [API tables](#lua-api-by-capability) describe available functions.
 The [roadmap](../../ROADMAP.md#next-directions) describes potential additions.
-Source generation is the unit of installation,
-cancellation and quarantine. An uncertain send is never automatically replayed.
+The enabled Lua set is published atomically into one shared environment.
+Replacing it cancels pending Lua work, while Wasm and independent native
+diagnostics retain their own incarnation fences. Pine uses its compact,
+single-session Lua staging/recovery path and has no Wasm interpreter.
+An uncertain send is never automatically replayed.
 
 Installation uses the authenticated management backend below, independently
 of repeater selection. Network and filesystem operations run on native workers

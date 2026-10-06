@@ -38,7 +38,9 @@ private, untracked configuration file with mode `0600`:
 Configure only companion services, not a KISS shared-modem endpoint. Pin each
 Base's **actual** advertised name and full public key using device information
 from a read-only SDK connection and the operator inventory. A hostname or service
-label is not necessarily the radio's name. Up to eight feeds are supported;
+label is not necessarily the radio's name. Spaces and punctuation are supported,
+including `slepp (base)`; names must contain 1–64 printable ASCII characters.
+Up to eight feeds are supported;
 names and endpoints must be distinct. A partially invalid configuration fails
 before opening connections. A valid unavailable feed retries independently.
 There is no automatic subnet scan or unsolicited extension startup in this repo.

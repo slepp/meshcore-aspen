@@ -37,7 +37,7 @@ help:
 	@printf '%s\n' \
 		'Contributor checks (no radio, credentials or PlatformIO required):' \
 		'  make check              Python tests, Go race tests, host build and native smoke tests' \
-		'  make test-python        Python monitor and broker tests' \
+		'  make test-python        Python monitor tests' \
 		'  make host-test          Go race tests (live tests require explicit environment opt-ins)' \
 		'  make test-native-smoke  Local C++ firmware and storage tests' \
 		'  make host-build         Build the host and check commands into bin/' \
@@ -238,16 +238,13 @@ firmware-restore:
 	@test -n "$(FIRMWARE_BACKUP)" -a -f "$(FIRMWARE_BACKUP)" || { echo "Set FIRMWARE_BACKUP to the matching original flash image." >&2; exit 2; }
 	python3 "$(ESPTOOL)" --chip esp32s3 --port "$(UPLOAD_PORT)" --baud "$(FLASH_BAUD)" --after hard_reset write_flash 0 "$(FIRMWARE_BACKUP)"
 
-.PHONY: run run-tcp run-broker test test-python test-live-multiclient test-live-dashboard test-live-reception firmware-check firmware-config firmware-prepare firmware firmware-upload firmware-clean phyless-config phyless-prepare phyless-firmware phyless-upload
+.PHONY: run run-tcp test test-python test-live-multiclient test-live-dashboard test-live-reception firmware-check firmware-config firmware-prepare firmware firmware-upload firmware-clean phyless-config phyless-prepare phyless-firmware phyless-upload
 
 run:
 	python3 meshcore_kiss_monitor.py
 
 run-tcp:
 	python3 meshcore_kiss_monitor.py --tcp $(RADIO_HOST)
-
-run-broker:
-	python3 meshcore_kiss_broker.py --upstream tcp://$(RADIO_HOST):8001
 
 test: test-python firmware-check host-test
 

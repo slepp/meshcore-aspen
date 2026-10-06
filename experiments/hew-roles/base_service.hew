@@ -15,6 +15,8 @@ import meshproto.companion_framing as framing;
 
 import meshproto.companion_status as accounting;
 
+import meshproto.radio;
+
 import hostlib.listener;
 
 import hostlib.supervised_io as duplex;
@@ -77,6 +79,32 @@ type Control {
     client: i64;
     expected: bytes;
     deadline: i64;
+}
+
+fn required_profile(cfg: json.Value) -> bytes {
+    let text = state.text(cfg, "required_profile");
+    var error = "";
+    if text.len() != 36 {
+        error = "must contain exactly 36 hexadecimal characters (18 bytes)";
+    } else {
+        for digit in text.to_bytes() {
+            if !((digit >= 48 && digit <= 57) || (digit >= 65 && digit <= 70) || (digit >= 97 && digit <= 102)) {
+                error = "contains a non-hexadecimal character";
+                break;
+            }
+        }
+    }
+    if error.is_empty() {
+        let profile = hex.decode(text);
+        match radio.validate_profile(profile) {
+            .Ok(_) => return profile,
+            .Err(reason) => { error = reason; }
+        }
+    }
+    println(f"BASE_CONFIG_ERROR required_profile: {error}; correct the profile in the Base JSON configuration");
+    // Hew exit drains the queued diagnostic before terminating.
+    exit(1);
+    bytes.new()
 }
 
 fn address(text: string) -> (string, i64) {
@@ -284,6 +312,7 @@ fn serve_status(owner: listener.Listener, var clients: Vec<StatusClient>, group:
 
 pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port: i64) -> (i64, i64) {
     let cfg = json.parse(listener.config(config_path).expect("private Base configuration")).expect("Base JSON configuration");
+    let profile = required_profile(cfg);
     let status_role = if state.text(cfg, "status_role").is_empty() {
         "companion"
     } else {
@@ -308,8 +337,6 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
     base.identity_callbacks(state.boolean(cfg, "enable_key_export"), state.boolean(cfg, "enable_key_import")).expect("identity callbacks");
     let restart = state.field(cfg, "enable_restart");
     base.lifecycle_callbacks(restart.type_of() == json.Kind.Null || state.boolean(cfg, "enable_restart"), status_role == "companion" && state.boolean(cfg, "enable_factory_reset")).expect("independent lifecycle admission");
-    let profile = hex.decode(state.text(cfg, "required_profile"));
-    assert(profile.len() == 18);
     base.phy(profile).expect("reported shared PHY");
     let (radio_host, radio_port) = address(state.text(cfg, "radio_address"));
     let configured_endpoint = if state.text(cfg, "companion_listen").is_empty() {
@@ -831,6 +858,7 @@ fn main() {
     assert(args.len() == 2);
     let config_path = args[1];
     let cfg = json.parse(listener.config(config_path).expect("private Base configuration")).expect("Base JSON configuration");
+    let _ = required_profile(cfg);
     let root = state.text(cfg, "state_dir");
     assert(!root.is_empty());
     let lock = StateLock { fd: storage.lock(root + "/base-service") };

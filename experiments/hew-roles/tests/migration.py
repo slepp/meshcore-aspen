@@ -59,7 +59,7 @@ def snapshot_history(raw):
 class Migration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.root=ROOT.parents[1]/f".m-{os.getpid()}-{time.monotonic_ns():x}"
+        cls.root=ROOT.parents[1]/f".m-{os.getpid()}"
         cls.root.mkdir(mode=0o700)
         cls.addClassCleanup(shutil.rmtree,cls.root)
         cls.source=cls.root/"go-source"
@@ -277,7 +277,7 @@ class Migration(unittest.TestCase):
         finally: service.close()
 
     def test_initialized_import_quarantines_missing_room_snapshot(self):
-        destination=self.root/"initialized-missing-room"
+        destination=self.root/"missing"
         service=RunningService.__new__(RunningService)
         service.root=destination
         service.emulator=Emulator(); service.emulator.identity_root=destination
@@ -483,7 +483,7 @@ class Migration(unittest.TestCase):
             state.update(DefaultRegion=2,ManagedDefaultRegion=True)
             path.write_text(json.dumps(state))
         (source/"bot/native/scopes").write_bytes(b"SCP1"+home+default)
-        destination=self.root/"scoped-running"
+        destination=self.root/"scoped"
         service=RunningService.__new__(RunningService)
         service.root=destination
         service.emulator=Emulator(); service.emulator.identity_root=destination

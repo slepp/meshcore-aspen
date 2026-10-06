@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -389,7 +390,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	reply := admin("source status")
 	metadata, outcome, found := strings.Cut(reply, "; ")
 	if !found || !strings.HasPrefix(metadata, "gen=") || !strings.Contains(metadata, " active=0 ") ||
-		!strings.HasPrefix(outcome, "Error: package source file unavailable or size changed; ") {
+		!strings.HasPrefix(outcome, "Error: /command-bot/a.lua: source file unavailable; ") {
 		t.Fatalf("missing native source slot did not retain its selected journal and report the source error: %s", reply)
 	}
 	// A valid journal with a missing file exhausts its bounded retries before
@@ -397,7 +398,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	waitAuthority(t, func() bool {
 		metadata, outcome, found := strings.Cut(admin("source status"), "; ")
 		return found && strings.Contains(metadata, " active=0 ") &&
-			outcome == "Error: package source file unavailable or size changed; use source retry; startup blocked"
+			outcome == "Error: /command-bot/a.lua: source file unavailable; use source retry or source remove; startup blocked"
 	})
 	if code, check := readReady(); code != http.StatusServiceUnavailable || check.Ready || check.NotReady["bot"] == "" {
 		t.Fatalf("missing native source slot was treated as ready: HTTP %d %+v", code, check)
@@ -594,9 +595,24 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 func nativeBotStateDir(t *testing.T) string {
 	t.Helper()
 	// Keep the private Unix socket below sockaddr_un's limit in nested worktrees.
-	directory, err := os.MkdirTemp(os.TempDir(), ".n-")
-	if err != nil {
-		t.Fatal(err)
+	root := os.Getenv("MESHCORE_NATIVE_TEST_STATE_ROOT")
+	if root == "" {
+		root = os.TempDir()
+	}
+	var directory string
+	for attempt := 0; attempt < 32; attempt++ {
+		var nonce [3]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			t.Fatal(err)
+		}
+		directory = filepath.Join(root, ".n"+hex.EncodeToString(nonce[:]))
+		err := os.Mkdir(directory, 0700)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) || attempt == 31 {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() {
 		if err := os.RemoveAll(directory); err != nil {

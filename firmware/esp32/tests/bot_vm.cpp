@@ -1320,6 +1320,54 @@ static void packageModules() {
   assert(vm.start(1, event("!late"), error, sizeof(error)) && vm.poll(result) && !result.ok);
   puts("PASS package modules: declared native resolution/cache, shared environment, nested dependencies/yields, reload, cycles, binary/path/native denial and eager bounded side-effect-free initialization");
 }
+static void namedSourceCapacity() {
+  std::string files[BotSourcePartLimit];
+  const auto envelope = [&]() {
+    std::string source = "--@meshcore-sources/1\n";
+    for (unsigned i = 0; i < BotSourcePartLimit; ++i)
+      source += "--@source file" + std::to_string(i) + " " + std::to_string(files[i].size()) +
+                "\n" + files[i] + "\n";
+    return source;
+  };
+  for (unsigned i = 0; i < BotSourcePartLimit; ++i) {
+    const auto number = std::to_string(i), name = "file" + number;
+    files[i] = "function " + name + "() return settings.value..':" + number +
+               "' end command('" + name + "','','File " + number + "')\n";
+  }
+  files[0] = "settings={value='configured'}\n" + files[0];
+  const auto last = files[BotSourcePartLimit - 1];
+  std::string source;
+  for (size_t padding = 0; padding < BotSourceLimit; ++padding) {
+    files[BotSourcePartLimit - 1] = last + "--" + std::string(padding, 'x') + "\n";
+    source = envelope();
+    if (source.size() >= BotSourceLimit) break;
+  }
+  assert(source.size() == BotSourceLimit);
+  BotSourcePart parts[BotSourcePartLimit]{};
+  unsigned count = 0; char error[128]{};
+  assert(splitBotSources(source.data(), source.size(), parts, count, error, sizeof(error)) &&
+         count == BotSourcePartLimit);
+  BotSession vm; BotVmStats stats; BotVmLimits limits;
+  const bool loaded = vm.load(source.data(), source.size(), 1, stats, error, sizeof(error), limits);
+  if (!loaded) fprintf(stderr, "File-set capacity failed: %s (peak=%zu limit=%zu)\n",
+                       error, stats.peakBytes, limits.heapBytes);
+  assert(loaded && vm.manifest().count == BotSourcePartLimit && stats.peakBytes <= limits.heapBytes);
+  const auto peak = stats.peakBytes;
+  for (unsigned i = 0; i < BotSourcePartLimit; ++i) {
+    BotSession::Result result;
+    const auto command = "!file" + std::to_string(i);
+    assert(vm.start(i + 1, event(command.c_str()), error, sizeof(error)) && vm.poll(result) && result.ok);
+    assert(result.action.text == std::string("configured:") + std::to_string(i));
+  }
+  auto excessive = source + " ";
+  assert(!splitBotSources(excessive.data(), excessive.size(), parts, count, error, sizeof(error)));
+  files[BotSourcePartLimit - 1] = last;
+  excessive = envelope() + "--@source extra 3\n--x\n";
+  assert(!splitBotSources(excessive.data(), excessive.size(), parts, count, error, sizeof(error)) &&
+         strstr(error, "eight-source"));
+  printf("PASS named source capacity: files=%u envelope=%zu heap_limit=%zu load_peak=%zu jobs=%u; shared config/eight handlers, 4097-byte and ninth-file rejection\n",
+         BotSourcePartLimit, BotSourceLimit, limits.heapBytes, peak, BotJobLimit);
+}
 static void namedSourcesAndRepeaterVm() {
   const auto set = [](const std::string &a, const std::string &b) {
     return std::string("--@meshcore-sources/1\n--@source main ") + std::to_string(a.size()) +
@@ -1694,12 +1742,19 @@ static void networkVm() {
 }
 #endif
 #ifndef ONCHIP_BOT_VM_LIBRARY_TEST
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--source-capacity-test")) {
+    namedSourceCapacity();
+    return 0;
+  }
+  namedSourceCapacity();
   namedSourcesAndRepeaterVm();
   commandOverrides();
   commandDiscoveryAndMeshGrants();
   boundedJson();
+#if !ONCHIP_BOT_COMPACT_PROFILE
   networkVm();
+#endif
   subscriptionVm();
   packageModules();
   diagnosticCommands();

@@ -24,6 +24,7 @@ constexpr uint32_t BotSourceCopyBudgetMs = 2000;
 class BotWorker {
 public:
   static const size_t StorageBytes;
+  enum Runtime : uint8_t { Lua, Wasm, Diagnostics, RuntimeCount };
   enum class Operation : uint8_t { Invoke, Stage, Activate, StageFile, CopyFile, Event, RemoveWasm, Recover };
   struct Result {
     Operation operation = Operation::Invoke;
@@ -32,6 +33,8 @@ public:
     BotVmStats stats{};
     uint32_t sourceReadMs = 0;
     uint32_t job = 0, generation = 0;
+    uint8_t runtimes = 0;
+    uint32_t incarnations[RuntimeCount]{};
     char error[128]{};
   };
   bool begin(const uint8_t botKey[32] = nullptr, BotHttpsTransport *transport = nullptr,
@@ -47,6 +50,13 @@ public:
   bool canInvoke(const BotEvent &event, unsigned collecting = 0, unsigned customCollecting = 0) const;
   uint32_t generation() const;
   uint32_t sourceGeneration() const;
+  uint32_t runtimeGeneration(Runtime runtime) const;
+  bool ioCurrent(const BotIoToken &token) const;
+  bool resultCurrent(const Result &result) const;
+  void setRuntimeAdmission(bool wasm, bool enabled);
+  bool runtimeAdmissionEnabled(bool wasm) const;
+  void setRuntimeDeploymentBlocked(bool wasm, bool blocked);
+  const char *admissionError(const BotEvent &event) const;
   bool setSharedState(bool enabled);
   void setHomeAccess(bool enabled);
   bool setReminderAccess(bool enabled);
@@ -55,6 +65,7 @@ public:
   // Owner-applied mask, independent of subscriptions and busy state.
   uint8_t eventAccess() const;
   uint8_t eventMask() const;
+  uint8_t eventMask(Runtime runtime) const;
   uint32_t scheduleSeconds() const;
   uint32_t eventEpoch() const;
   void setReminderReady(bool ready);
@@ -128,6 +139,8 @@ private:
   bool copySourceFile();
   bool sourceMutationAllowed(uint32_t publication) const;
   bool claimSourceMutation(uint32_t publication);
+  uint8_t invocationRuntimes(const BotEvent &event) const;
+  bool invocationCapacity(const BotEvent &event, unsigned collecting, unsigned customCollecting) const;
   void run();
   void runIo();
   void runNet();

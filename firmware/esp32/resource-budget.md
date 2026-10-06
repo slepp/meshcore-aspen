@@ -47,6 +47,19 @@ endpoints likewise describe an unprovisioned public build, not a deployable
 configured service. Runtime disabling and compile-time constant elimination
 are different mechanisms.
 
+## Runtime diagnostics
+
+Use `stats memory`, `stats psram`, `stats vm` and `stats system` through
+Management to inspect the running image rather than extrapolating these
+historical build sizes. The eight-entry diagnostics queue has 1,296 bytes of
+fixed record storage in PSRAM (internal-heap fallback if PSRAM allocation
+fails), an internal FreeRTOS control block and the existing 4 KiB internal
+worker stack. Its syslog formatter uses a fixed 256-byte worker buffer.
+Raw lwIP UDP sends temporarily allocate one PCB and a packet buffer; they
+consume no BSD socket slots and create no additional task. See
+[remote logs and memory checks](MAST_ADMIN.md#remote-logs-and-memory-checks)
+for commands and counter meanings.
+
 ## Recorded ESP32 comparison
 
 Every source-size row below comes from the same historical source and

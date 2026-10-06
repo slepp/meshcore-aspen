@@ -17,6 +17,9 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cassert>
+#if !defined(NRF52_PLATFORM) && !(defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
+#include "RoleProfile.h"
+#endif
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
 #include <ctime>
 #endif
@@ -264,7 +267,7 @@ struct CommandBot::Core : mesh::Mesh {
   uint32_t initializationRetryAt = 0;
   unsigned initializationRetries = 0;
   BotWorker::Result sourceResult{};
-  uint32_t eventAt = 0, startupGeneration = 0, sampledGeneration = 0;
+  uint32_t eventAt = 0, startupGeneration[2]{}, sampledGeneration = 0;
   uint32_t scheduledGeneration = 0, scheduledAt = 0;
   bool discovery = false, discoverySent = false;
   uint32_t discoveryAt = 0;
@@ -375,20 +378,25 @@ struct CommandBot::Core : mesh::Mesh {
     BotEvent event;
     owner.nodeSnapshot(event.node);
     const auto snapshot = event.node;
-    if (scheduledGeneration != owner.worker_.sourceGeneration()) {
-      scheduledGeneration = owner.worker_.sourceGeneration(); scheduledAt = millis();
+    if (scheduledGeneration != owner.worker_.runtimeGeneration(BotWorker::Lua)) {
+      scheduledGeneration = owner.worker_.runtimeGeneration(BotWorker::Lua); scheduledAt = millis();
     }
     const uint32_t seconds = owner.worker_.scheduleSeconds();
     if (seconds && uint32_t(millis() - scheduledAt) >= seconds * 1000) {
       scheduledAt = millis(); // Never catch up missed periods after a stall.
       event.kind = BotEvent::Scheduled;
+      event.runtimeMask = 1u << BotWorker::Lua;
       emit(event);
       return;
     }
-    if ((owner.worker_.eventMask() & 1) && startupGeneration != owner.worker_.sourceGeneration()) {
-      event.kind = BotEvent::Startup;
-      if (emit(event)) startupGeneration = owner.worker_.sourceGeneration();
-      return;
+    for (auto runtime : {BotWorker::Lua, BotWorker::Wasm}) {
+      if ((owner.worker_.eventMask(runtime) & 1) &&
+          startupGeneration[runtime] != owner.worker_.runtimeGeneration(runtime)) {
+        event.kind = BotEvent::Startup;
+        event.runtimeMask = 1u << runtime;
+        if (emit(event)) startupGeneration[runtime] = owner.worker_.runtimeGeneration(runtime);
+        return;
+      }
     }
     if ((owner.worker_.eventMask() & 2) &&
         (!connectivityKnown || snapshot.wifiKnown != previousEventNode.wifiKnown ||
@@ -770,7 +778,7 @@ struct CommandBot::Core : mesh::Mesh {
       if (job.used && job.ioPending && repeaterIo(job) && job.repeaterIndex >= 0 &&
           !job.repeaterResponse && contact.id.matches(repeaterPolicy.targets[unsigned(job.repeaterIndex)].key) &&
           job.io.grant == repeaterGrant && repeaterAuthority(job) &&
-          job.io.token.generation == owner.worker_.generation() && int32_t(millis() - job.deadline) < 0) {
+          owner.worker_.ioCurrent(job.io.token) && int32_t(millis() - job.deadline) < 0) {
         auto &state = repeaters[unsigned(job.repeaterIndex)];
         uint32_t tag = 0; memcpy(&tag, data, 4);
         size_t length = 0;
@@ -950,7 +958,7 @@ struct CommandBot::Core : mesh::Mesh {
     return true;
   }
   void finishRadio(Invocation &invocation, const char *error = nullptr) {
-    if (!error && (invocation.io.token.generation != owner.worker_.generation() ||
+    if (!error && (!owner.worker_.ioCurrent(invocation.io.token) ||
                    int32_t(millis() - invocation.deadline) >= 0))
       error = "Radio completion cancelled/late; effect may already have occurred";
     if (invocation.io.kind == BotIoRequest::Forward && !forwardAllowed(invocation))
@@ -1060,7 +1068,7 @@ struct CommandBot::Core : mesh::Mesh {
       Invocation *invocation = nullptr;
       for (auto &candidate : invocations)
         if (candidate.used && !candidate.cancelled && candidate.job == request.token.job) { invocation = &candidate; break; }
-      if (!invocation || request.token.generation != owner.worker_.generation()) {
+      if (!invocation || !owner.worker_.ioCurrent(request.token)) {
         if (!owner.worker_.rejectRadio(request.token, "Radio request cancelled before admission"))
           reject("Stale radio request ownership lost");
         continue;
@@ -1272,7 +1280,7 @@ struct CommandBot::Core : mesh::Mesh {
       ++stats.replies;
     }
     for (auto &job : invocations) if (job.used && job.ioPending) {
-      if (job.io.token.generation != owner.worker_.generation()) {
+      if (!owner.worker_.ioCurrent(job.io.token)) {
         finishRadio(job, "Radio operation cancelled; outcome may be unknown");
       } else if (repeaterIo(job) && (job.io.grant != repeaterGrant || !repeaterAuthority(job))) {
         failRepeater(job, BotRepeaterError::Cancelled, "Repeater grant revoked; request outcome may be unknown");
@@ -1788,9 +1796,8 @@ struct CommandBot::Core : mesh::Mesh {
     }
     const bool readQuery = event.channel[0] && !event.targeted && botReadOnlyQuery(event.name);
     if (readQuery) event.replyLimit -= 13;
-    if (owner.sourceStartupBlocked_) {
-      reject("Selected source startup failed or pending; use native source status/retry");
-      owner.sourceLifecycleFault_ = true;
+    if (const char *error = owner.worker_.admissionError(event)) {
+      reject(error);
       return;
     }
     if (administratorBlocked && !botReservedCommand(event.name)) {
@@ -2063,7 +2070,7 @@ void CommandBot::admissionStatus(char *text, size_t capacity) const {
 #if ONCHIP_BOT_SINGLE_SESSION
   const char *pause = core_->initializing ? "initialization" :
       worker_.sourceSuspended() ? "source-unloaded" :
-      core_->administratorBlocked ? "source-publication" :
+      (core_->administratorBlocked || !worker_.runtimeAdmissionEnabled(false)) ? "source-publication" :
       core_->sourceResultReady ? "source-result" : "none";
 #endif
   snprintf(text, capacity,
@@ -2208,7 +2215,7 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
   core_->administratorBlocked = true;
 #else
-  core_->administratorBlocked = sourceStartupBlocked_;
+  core_->administratorBlocked = false;
 #endif
   mesh::LocalIdentity identity;
   if (!loadIdentity("command-bot", identity)) { stop(); fault("Command bot identity unavailable"); return false; }
@@ -2305,8 +2312,11 @@ uint32_t CommandBot::hostWaitMs() const {
   if (worker_.eventMask() & 11) {
     BotNodeSnapshot snapshot;
     nodeSnapshot(snapshot);
-    const bool pending = ((worker_.eventMask() & 1) &&
-                          core_->startupGeneration != worker_.sourceGeneration()) ||
+    const bool startupPending = ((worker_.eventMask(BotWorker::Lua) & 1) &&
+        core_->startupGeneration[BotWorker::Lua] != worker_.runtimeGeneration(BotWorker::Lua)) ||
+        ((worker_.eventMask(BotWorker::Wasm) & 1) &&
+        core_->startupGeneration[BotWorker::Wasm] != worker_.runtimeGeneration(BotWorker::Wasm));
+    const bool pending = startupPending ||
         ((worker_.eventMask() & 2) && (!core_->connectivityKnown ||
           snapshot.wifiKnown != core_->previousEventNode.wifiKnown ||
           snapshot.wifiConnected != core_->previousEventNode.wifiConnected)) ||
@@ -2384,7 +2394,7 @@ void CommandBot::loop() {
   if (worker_.poll(result)) {
     core_->stats.lastVm = result.stats;
     if (result.operation == BotWorker::Operation::Event) {
-      if (result.ok && result.generation == worker_.generation()) ++core_->stats.eventsCompleted;
+      if (result.ok && worker_.resultCurrent(result)) ++core_->stats.eventsCompleted;
       else { ++core_->stats.eventsFailed; fault(result.error[0] ? result.error : "Event source replaced"); }
       for (auto &job : core_->invocations) if (job.used && job.job == result.job) {
         if (job.ioPending) core_->finishRadio(job, "Scheduled event ended; admitted request outcome may be unknown");
@@ -2395,9 +2405,9 @@ void CommandBot::loop() {
       for (auto &invocation : core_->invocations) if (invocation.used && invocation.job == result.job) {
         if (invocation.ioPending)
           core_->finishRadio(invocation, "Invocation ended; pending radio outcome may be unknown");
-        if (result.generation != worker_.generation()) {
+        if (!worker_.resultCurrent(result)) {
           result.ok = false;
-          strcpy(result.error, "Source changed; pending operation outcome may be unknown");
+          strcpy(result.error, "Runtime code changed; pending operation outcome may be unknown");
         }
         bool submitted = false;
         if (result.ok && result.action.kind != BotAction::None) submitted = core_->act(result.action, invocation);
@@ -2447,7 +2457,11 @@ void CommandBot::loop() {
       } else {
         core_->initializing = false;
         status_.fault[0] = 0;
-        if (!core_->administratorBlocked && !sourceStartupBlocked_) advertise();
+        if (!core_->administratorBlocked && !sourceStartupBlocked_
+#if !defined(NRF52_PLATFORM) && !(defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
+            && automaticAdvertsEnabled()
+#endif
+            ) advertise();
       }
     } else {
       core_->sourceResult = result;
@@ -2530,19 +2544,19 @@ bool CommandBot::retrySourceInitialization() {
   return true;
 }
 void CommandBot::setCommandAdmission(bool enabled) {
-  if (core_) core_->administratorBlocked = !enabled || sourceStartupBlocked_;
+  if (core_) core_->administratorBlocked = !enabled;
 }
-void CommandBot::setSourceDeploymentState(bool ready, bool startupBlocked, const char *fault) {
-  const bool recovered = sourceStartupBlocked_ && !startupBlocked;
-  selectedSourcesReady_ = ready;
-  sourceStartupBlocked_ = startupBlocked;
+void CommandBot::setSourceDeploymentState(bool luaReady, bool luaBlocked, bool wasmReady,
+                                          bool wasmBlocked, const char *fault) {
+  selectedSourcesReady_ = luaReady && wasmReady;
+  sourceStartupBlocked_ = luaBlocked || wasmBlocked;
+  worker_.setRuntimeDeploymentBlocked(false, luaBlocked);
+  worker_.setRuntimeDeploymentBlocked(true, wasmBlocked);
   snprintf(sourceStartupFault_, sizeof(sourceStartupFault_), "%s", fault ? fault : "");
-  if (ready && !startupBlocked && sourceLifecycleFault_) {
+  if (selectedSourcesReady_ && !sourceStartupBlocked_ && sourceLifecycleFault_) {
     status_.fault[0] = 0;
     sourceLifecycleFault_ = false;
   }
-  if (core_ && (startupBlocked || recovered))
-    core_->administratorBlocked = startupBlocked;
 }
 bool CommandBot::setSharedState(bool enabled) {
   if (!enabled) {
@@ -2707,8 +2721,32 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     }
     return;
   }
+  if (!strcmp(action, "route")) {
+    const char *alias = strtok_r(nullptr, " ", &cursor);
+    if (!alias || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters route ALIAS"); return; }
+    for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
+      const auto &target = core_->repeaterPolicy.targets[i];
+      if (!target.used || strcmp(alias, target.alias)) continue;
+      PeerRoute route;
+      if (target.path.known)
+        route.learn(target.path.bytes, uint8_t((target.path.width - 1) << 6 | target.path.count));
+      for (const auto &contact : core_->contacts)
+        if (contact.used && contact.id.matches(target.key)) { route = contact.route; break; }
+      char path[2 * MAX_PATH_SIZE + 3] = "unknown";
+      if (route.length != 0xff) {
+        const unsigned width = (route.length >> 6) + 1;
+        snprintf(path, sizeof(path), "%u:", width);
+        const unsigned size = (route.length & 63) * width;
+        for (unsigned j = 0; j < size; ++j)
+          snprintf(path + 2 + 2 * j, sizeof(path) - 2 - 2 * j, "%02x", route.bytes[j]);
+      }
+      snprintf(reply, capacity, "%s route=%s repair=%u", alias, path, core_->repeaters[i].failures >= 3);
+      return;
+    }
+    error("repeater alias is not configured"); return;
+  }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "bot repeaters on|off|interval SECONDS|status [ALIAS]|remove ALIAS|add ALIAS KEY64 FREQ_HZ [WIDTH:HEX]; read ACL required");
+    snprintf(reply, capacity, "bot repeaters on|off|interval SECONDS|status [ALIAS]|route ALIAS|remove ALIAS|add ALIAS KEY64 FREQ_HZ [WIDTH:HEX]; read ACL required");
     return;
   }
   auto candidate = core_->repeaterPolicy;
@@ -2851,7 +2889,7 @@ bool CommandBot::advertise(bool zeroHop) {
 bool CommandBot::advertiseOwnerZeroHop() {
   if (!core_
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
-      || core_->administratorBlocked
+      || core_->administratorBlocked || !sourceDeploymentReady()
 #endif
       || !radio_.queuedReady() || radio_.hasPendingWork() ||
       core_->packets.getOutboundTotal()) {

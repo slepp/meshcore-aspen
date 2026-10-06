@@ -6,6 +6,21 @@ identity, command permissions, full-key KV scopes, I/O queues and radio
 source as Lua. Installing or removing a Wasm package does not erase Lua
 source or either runtime's durable data.
 
+Replacing the enabled Lua scripts rebuilds one shared Lua environment and
+cancels its pending commands, event handlers and sleep timers. Wasm work keeps
+running. Replacing or removing Wasm cancels only Wasm VM work; Lua and native
+diagnostics keep running. Late callbacks from replaced code cannot resume a
+new invocation.
+
+If a selected Lua or Wasm source fails at startup, its commands remain closed
+while the other runtime's commands and native `!ping` stay available. Use
+private native management's `source status` / `source wasm status`, then `retry` or
+an explicit `remove`, to recover the affected runtime. A Lua override of a
+native command belongs to Lua and is unavailable while Lua is blocked.
+Aggregate readiness remains false until both selected sources are active.
+Runtime incarnations fence live work; they are separate from package names,
+the saved deployment generations and the global source-publication sequence.
+
 The device target is ESP32-S3 with PSRAM; builds without PSRAM cannot load
 a Wasm session and report allocation failure rather than taking internal
 radio memory. The supplied native worker target is Linux x86-64. This
@@ -29,7 +44,8 @@ worker high-water readings as a WAMR native-stack guard.
 Build examples and run the host checks from the repository root:
 
 ```sh
-make -C firmware/esp32 bot-wasm-test bot-wasm-integration-test bot-wasm-worker-test
+PYTHONPATH="$PWD/firmware/runtime:$PWD/firmware/esp32:$PWD" \
+  make -C firmware/esp32 bot-wasm-test bot-wasm-integration-test bot-wasm-worker-test bot-runtime-isolation-test
 make -C firmware/esp32 bot-wasm-build-test
 ```
 
@@ -409,6 +425,13 @@ and preserves their durable data. Owner-command checks use the bound native
 owner key and deny other callers before and after restart. Run
 `bot-wasm-integration-test bot-local-test` together to check both runtime
 lifecycles and the Lua owner's native administration/network scenarios.
+
+`bot-wasm-worker-test` suspends Lua A/B and Wasm C together, updates each
+runtime, removes Wasm and submits late callbacks. It checks unaffected
+commands, sleep timers and native diagnostics. `bot-runtime-isolation-test`
+boots valid durable journals with Lua or Wasm initialization errors, sends
+encrypted commands to the healthy runtime, checks native ping and performs
+authenticated owner recovery while rejecting a non-owner's administration.
 Both runtimes share one custom-command namespace. Before changing a durable
 source selection, the deployment service checks the candidate against the
 other runtime's registered commands and reserves that namespace through

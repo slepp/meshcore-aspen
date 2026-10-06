@@ -30,9 +30,15 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity);
 void stopManagementForTest();
 #endif
 void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening);
+void companionDashboardContacts(RadioDashboard::RadioStatus &status);
 bool localTransmitSource(uint8_t slot, uint32_t generation,
                          RadioDashboard::RoleStatus &status);
 void loop();
+// Only fixed status text and numeric measurements, never caller data or secrets.
+bool diagnosticEvent(const char *message);
+bool beginDiagnostics();
+bool diagnosticsCommand(const char *command, char *reply, size_t capacity);
+void diagnosticLoopSample(uint32_t started, uint32_t finished);
 void observerStatistics(char *reply, size_t capacity);
 bool sharedRadioReadCommand(const LocalRadio &radio, const char *command, char *reply, size_t capacity);
 bool repeaterBegin(WifiKissMultiplexer &mux);

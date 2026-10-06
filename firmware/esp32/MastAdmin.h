@@ -13,6 +13,11 @@ class Management;
 class MastAdmin {
 public:
   static constexpr size_t TextLimit = 162;
+  static constexpr unsigned ACLSlots = 5;
+  static constexpr unsigned LegacyReplaySlots = 4;
+  static constexpr unsigned ExtraReplaySlots = ACLSlots + 1;
+  static constexpr unsigned ReplaySlots = LegacyReplaySlots + ExtraReplaySlots;
+  static constexpr unsigned SessionSlots = ACLSlots + 2;
   enum class Transport { Other, NativeEncrypted };
   struct Reply {
     char text[TextLimit + 1]{};
@@ -51,9 +56,24 @@ private:
   } settings_;
   struct Replay {
     uint32_t version = 1;
-    struct Peer { uint8_t key[32]{}; uint32_t timestamp = 0; } peers[4];
+    struct Peer { uint8_t key[32]{}; uint32_t timestamp = 0; } peers[LegacyReplaySlots];
   } replay_;
+  struct ExtraReplay {
+    uint32_t version = 1;
+    Replay::Peer peers[ExtraReplaySlots];
+    uint8_t digest[32]{};
+  } extraReplay_;
   struct OwnerReplay { uint32_t version = 1; Replay::Peer peer; } ownerReplay_;
+  struct ACL {
+    uint32_t version = 1;
+    struct Entry { uint8_t key[32]{}, permissions = 0; } entries[ACLSlots];
+    uint8_t reserved[3]{}, digest[32]{};
+  } acl_;
+  static_assert(sizeof(Settings) == 140 && sizeof(Replay) == 148 && sizeof(OwnerReplay) == 40,
+                "Legacy mast administration records require explicit migration");
+  static_assert(sizeof(ACL) == 204 && sizeof(ExtraReplay) == 252,
+                "Management ACL/replay record layout changed");
+  bool aclReady_ = false;
   bool ready_ = false;
   MastSource source_;
   WifiKissMultiplexer *mux_ = nullptr;
@@ -80,6 +100,11 @@ private:
   void wifiCommand(char *command, Reply &reply, Transport transport, uint32_t invokingBotJob);
   void preferenceCommand(char *command, Reply &reply, Transport transport, uint32_t invokingBotJob);
   void statsCommand(const char *topic, Reply &reply);
+  void helpCommand(const char *argument, Reply &reply);
+  void rolesCommand(const char *argument, Reply &reply);
+  bool validACL(const ACL &acl) const;
+  bool validExtraReplay(const ExtraReplay &replay) const;
+  void aclCommand(char *command, Reply &reply);
 };
 } // namespace onchip
 #endif

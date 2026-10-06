@@ -125,6 +125,25 @@ $(BUILD)/remote: $(ROOT)/firmware/shared/RemoteKissRadio.cpp $(ROOT)/firmware/sh
 		$(ROOT)/firmware/shared/RemoteKissRadio.cpp $(ROOT)/test_support/test_remote_kiss_radio.cpp -o $@
 $(BUILD)/dashboard: $(BUILD)/RadioDashboard.o $(ROOT)/test_support/phy_parity/dashboard.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Werror -pthread $^ -o $@
+$(BUILD)/dashboard-contacts-bridge.inc: $(ROOT)/firmware/esp32/prepare.py
+	@mkdir -p $(BUILD)
+	python3 -c 'import runpy; print(runpy.run_path("$(ROOT)/firmware/esp32/prepare.py")["COMPANION_DASHBOARD_BRIDGE"])' > $@
+$(BUILD)/dashboard-contacts: $(ROOT)/test_support/phy_parity/dashboard_contacts.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboard.h $(ROOT)/firmware/esp32/DashboardContacts.h $(BUILD)/dashboard-contacts-bridge.inc
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Werror -DMESHCORE_ONCHIP=1 -DESP32=1 -I$(BUILD) \
+		$(ROOT)/firmware/shared/RadioDashboard.cpp $< -o $@
+$(BUILD)/dashboard-budget-general: DASHBOARD_BUDGET_FLAGS = -UMESHCORE_ONCHIP -UESP32 -UNRF52_PLATFORM
+$(BUILD)/dashboard-budget-onchip: DASHBOARD_BUDGET_FLAGS = -DMESHCORE_ONCHIP=1 -UESP32 -UNRF52_PLATFORM
+$(BUILD)/dashboard-budget-pine: DASHBOARD_BUDGET_FLAGS = -DMESHCORE_ONCHIP=1 -DNRF52_PLATFORM=1 -UESP32
+$(BUILD)/dashboard-budget-esp32: DASHBOARD_BUDGET_FLAGS = -DMESHCORE_ONCHIP=1 -DESP32=1 -UNRF52_PLATFORM
+$(BUILD)/dashboard-budget-general $(BUILD)/dashboard-budget-onchip $(BUILD)/dashboard-budget-pine $(BUILD)/dashboard-budget-esp32: $(ROOT)/test_support/phy_parity/dashboard_budget.cpp $(ROOT)/firmware/shared/RadioDashboard.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(DASHBOARD_BUDGET_FLAGS) -Werror $< -o $@
+.PHONY: dashboard-budget-test
+dashboard-budget-test: $(BUILD)/dashboard-budget-general $(BUILD)/dashboard-budget-onchip $(BUILD)/dashboard-budget-pine $(BUILD)/dashboard-budget-esp32
+	$(BUILD)/dashboard-budget-general
+	$(BUILD)/dashboard-budget-onchip
+	$(BUILD)/dashboard-budget-pine
+	$(BUILD)/dashboard-budget-esp32
 $(BUILD)/dashboard-sample: $(BUILD)/RadioDashboard.o $(ROOT)/test_support/phy_parity/dashboard_sample.cpp $(ROOT)/firmware/esp32/wifi_kiss_main.cpp
 	sed -n '/^void publishDashboard() {/,/^void halt(/p' $(ROOT)/firmware/esp32/wifi_kiss_main.cpp | sed '$$d' > $(BUILD)/dashboard-sample.inc
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Werror -I$(BUILD) $(BUILD)/RadioDashboard.o $(ROOT)/test_support/phy_parity/dashboard_sample.cpp -o $@
@@ -151,7 +170,7 @@ $(BUILD)/queued-combined: $(OBJECTS) $(ROOT)/firmware/shared/RemoteKissRadio.cpp
 		$(ROOT)/firmware/shared/RemoteKissRadio.cpp $(ROOT)/firmware/shared/WifiKissMultiplexer.cpp \
 		$(UPSTREAM)/examples/kiss_modem/KissModem.cpp $(ROOT)/test_support/phy_parity/combined.cpp \
 		$(filter-out $(BUILD)/KissModem.o $(BUILD)/WifiKissMultiplexer.o,$(OBJECTS)) -o $@
-$(BUILD)/dashboard-http: $(ROOT)/test_support/phy_parity/dashboard_http.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboard.h $(wildcard $(ROOT)/test_support/phy_parity/seams/http/*.h $(ROOT)/test_support/phy_parity/seams/http/freertos/*.h)
+$(BUILD)/dashboard-http: $(ROOT)/test_support/phy_parity/dashboard_http.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboard.h $(ROOT)/firmware/shared/RadioDashboardPage.h $(wildcard $(ROOT)/test_support/phy_parity/seams/http/*.h $(ROOT)/test_support/phy_parity/seams/http/freertos/*.h)
 	$(CXX) -DARDUINO_ARCH_ESP32 -I$(ROOT)/test_support/phy_parity/seams/http $(CPPFLAGS) $(CXXFLAGS) -Werror -Wl,--wrap=send $< -o $@
 $(BUILD)/stream-combined: STREAM_LOCALS = 0
 $(BUILD)/stream-local-combined: STREAM_LOCALS = 3
@@ -167,12 +186,15 @@ stream-test: prepare queued-prepare
 	$(BUILD)/stream-local-combined
 .PHONY: dashboard-test
 dashboard-test: prepare
-	$(MAKE) -f $(ROOT)/test_support/phy_parity/Makefile $(BUILD)/dashboard $(BUILD)/dashboard-http $(BUILD)/dashboard-sample
+	$(MAKE) -f $(ROOT)/test_support/phy_parity/Makefile $(BUILD)/dashboard $(BUILD)/dashboard-http $(BUILD)/dashboard-sample $(BUILD)/dashboard-contacts
 	$(BUILD)/dashboard $(BUILD)/dashboard.json
 	$(BUILD)/dashboard-http
 	$(BUILD)/dashboard-sample
+	$(BUILD)/dashboard-contacts
+	$(MAKE) -f $(ROOT)/test_support/phy_parity/Makefile dashboard-budget-test
 	python3 $(ROOT)/test_support/phy_parity/dashboard_check.py $(BUILD)/dashboard.json $(ROOT)/firmware/shared/RadioDashboardPage.h
 	node $(ROOT)/test_support/phy_parity/dashboard_lifecycle.js $(ROOT)/firmware/shared/RadioDashboardPage.h $(BUILD)/dashboard.json
+	node $(ROOT)/test_support/phy_parity/dashboard_activity.js $(ROOT)/firmware/shared/RadioDashboardPage.h $(BUILD)/dashboard.json
 test: prepare network-config wifi-recovery-test queued-prepare esp32-link-test mkiss-test
 	$(MAKE) -f $(ROOT)/test_support/phy_parity/Makefile $(BUILD)/combined $(BUILD)/legacy-multiplexer $(BUILD)/remote $(BUILD)/queued-remote $(BUILD)/queued-combined $(BUILD)/stream-combined $(BUILD)/stream-local-combined
 	$(BUILD)/combined

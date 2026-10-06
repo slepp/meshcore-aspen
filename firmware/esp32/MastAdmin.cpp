@@ -8,10 +8,12 @@
 #include "CommandBot.h"
 #include "CompanionSessions.h"
 #include "Runtime.h"
+#include "Syslog.h"
 #include "Management.h"
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
 #include <Utils.h>
+#include <helpers/ClientACL.h>
 #include "TelemetryService.h"
 #include <nvs.h>
 #include <stdlib.h>
@@ -112,34 +114,78 @@ bool wifiPassword(const char *text) {
   uint8_t key[32];
   return size == 64 && hex(text, key, sizeof(key));
 }
-const char *commandUsage(const char *topic) {
-  struct Help { const char *topic, *syntax; };
-  static constexpr Help topics[] = {
+struct Help { const char *topic, *syntax; unsigned page = 1; };
+constexpr Help topics[] = {
     {"wifi", "wifi status|ssid HEX|password HEX|apply|forget; get wifi.FIELD; set wifi.ssid|pwd TEXT; set wifi.enabled 0|1; secrets: encrypted RF"},
+    {"wifi", "wifi 2/4: ASCII input only; set wifi.ssid TEXT (1..32 bytes); set wifi.pwd TEXT (0 or 8..63 bytes, or 64 hex digits); literal spaces; help wifi 3", 2},
+    {"wifi", "wifi 3/4: wifi ssid [hex] HEX; wifi password [hex] HEX|-; UTF-8/control SSID: hex; max combined hex won't fit: use separate forms; help wifi 4", 3},
+    {"wifi", "wifi 4/4: 64-byte PSK with 16-hex tag: wifi password HEX or set wifi.pwd TEXT; wifi password hex HEX is 146 bytes, over tagged limit 145", 4},
     {"radio", "radio FREQ_HZ BW_HZ SF CR TX_DBM; read: get radio|get freq|get tx; shared PHY changes after reply"},
     {"tempradio", "tempradio SECONDS FREQ_HZ BW_HZ SF CR TX_DBM; duration 1..3600; restores saved PHY"},
     {"cad", "get cad; set cad on|off; hardware channel activity detection before shared-radio TX; saved after reply"},
     {"radio-controls", "get/set cad on|off; int.thresh 0..255; agc.reset.interval 0..1020 seconds (4s units); rxboost on|off; af 0..9; saved after reply"},
+    {"autoadvert", "get autoadvert; set autoadvert on|off; saved/live device-wide startup/periodic adverts; manual app/admin adverts unchanged"},
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
+    {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
-    {"roles", "roles MASK; MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots; Management stays available"},
+    {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
     {"key", "key ROLE [pending|cancel|HEX128]; use key help; private imports: encrypted RF only"},
     {"password", "password [help|HEX]; 1..15 printable bytes encoded as hex; changes: encrypted RF only"},
     {"source", "source help; source status|hash|metadata|helptext|api; source begin|chunk|commit|rollback|remove ..."},
+    {"source", "source 2/3: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
+    {"source", "source 3/3: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it", 3},
     {"bot", "bot help; bot status|stats|radio|policy|mesh|name|discovery|adaptive|shared|reminders|events|forward|https ..."},
-    {"auth", "auth status [KEY64]; auth peer 1..4; auth forget KEY64 (not the compiled owner)"},
-    {"trust", "trust KEY64|none; one runtime trusted companion; native role ACLs unchanged"},
+    {"bot", "bot 2/2: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; reboot", 2},
+    {"auth", "auth status [KEY64]; auth peer 1..10; auth forget KEY64 (not the compiled owner)"},
+    {"trust", "trust KEY64|none; legacy singleton authority; compiled owner and Management ACL unchanged"},
+    {"setperm", "setperm KEY64 PERMISSIONS (0..255); native roles: 0=remove,1=read-only,2=read-write,3=admin; Management/bot admin only; get acl"},
     {"data", "data help; data status|export|read|begin|chunk|stage|restore|cancel ..."},
     {"telemetry", "telemetry help; telemetry status|counts|times|tls|endpoint ...; network collector settings"},
     {"room", "room access; native Room settings belong to the Room contact"},
     {"companion", "companion stats|errors|help; native contacts/channels use the companion connection"},
-    {"stats", "stats [radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion]; schema=1 key=value; counters since boot"},
-    {"get", "get name|owner.info|radio|freq|tx|cad|int.thresh|agc.reset.interval|rxboost|af|wifi.FIELD; help radio-controls; help wifi"},
-    {"set", "set name TEXT; set owner.info TEXT (| separates lines); set wifi.ssid|pwd TEXT; set wifi.enabled 0|1; set cad on|off"}
-  };
+    {"stats", "stats [radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion|system]; counters since boot; help syslog"},
+    {"get", "get name|owner.info|radio|freq|tx|cad|autoadvert|int.thresh|agc.reset.interval|rxboost|af|wifi.FIELD; help get 2"},
+    {"get", "get acl [KEY64|1..5]; checked Management ACL, independent of repeater/room; only native admin role grants passwordless Management/bot", 2},
+    {"set", "set name|owner.info TEXT; set wifi.ssid|pwd TEXT; set wifi.enabled 0|1; set cad|autoadvert on|off"}
+};
+constexpr size_t textLength(const char *text) {
+  size_t length = 0;
+  while (text[length]) ++length;
+  return length;
+}
+constexpr bool boundedHelp() {
+  for (const auto &entry : topics) {
+    size_t length = textLength(entry.syntax);
+    for (const auto &next : topics)
+      if (entry.page == 1 && next.page == 2) {
+        size_t i = 0;
+        while (entry.topic[i] && entry.topic[i] == next.topic[i]) ++i;
+        if (!entry.topic[i] && !next.topic[i]) length += 9 + i;
+      }
+    if (length > MastAdmin::TextLimit - 17) return false;
+  }
+  return true;
+}
+static_assert(boundedHelp(), "Help content must fit a 16-hex-tagged reply");
+const char *commandUsage(const char *topic, unsigned page = 1) {
   for (const auto &entry : topics)
-    if (!strcmp(topic, entry.topic)) return entry.syntax;
+    if (!strcmp(topic, entry.topic) && page == entry.page) return entry.syntax;
   return nullptr;
+}
+void ssidReply(const char *ssid, MastAdmin::Reply &reply) {
+  if (strlen(ssid) > 32) {
+    strcpy(reply.text, "Error: WiFi SSID readback exceeds 32 bytes"); return;
+  }
+  bool printable = true;
+  for (const auto *p = reinterpret_cast<const unsigned char *>(ssid); *p; ++p)
+    if (*p < 32 || *p > 126) printable = false;
+  if (printable) {
+    snprintf(reply.text, sizeof(reply.text), "> %s", ssid);
+    return;
+  }
+  strcpy(reply.text, "> hex ");
+  for (size_t i = 0; ssid[i]; ++i)
+    snprintf(reply.text + 6 + 2 * i, 3, "%02x", static_cast<unsigned char>(ssid[i]));
 }
 struct OwnerInfoRecord {
   uint32_t version = 1;
@@ -165,6 +211,71 @@ void fingerprint(const uint8_t key[16], char out[17]) {
   mesh::Utils::sha256(digest, sizeof(digest), key, 16);
   for (unsigned i = 0; i < 8; ++i) snprintf(out + 2 * i, 3, "%02x", digest[i]);
 }
+}
+void MastAdmin::helpCommand(const char *argument, Reply &reply) {
+  static constexpr const char *index[] = {
+    "help 1/3: status; stats; ver; board; help role|roles|room|companion|bot|stats; next: help 2",
+    "help 2/3: help wifi|radio|tempradio|cad|radio-controls|autoadvert|sntp|syslog|get|set; next: help 3",
+    "help 3/3: help auth|setperm|trust|password|key|source|data|telemetry; apply|reboot"
+  };
+  static_assert(textLength(index[0]) <= TextLimit - 17 &&
+                textLength(index[1]) <= TextLimit - 17 &&
+                textLength(index[2]) <= TextLimit - 17, "Help index must fit a tagged reply");
+  char input[TextLimit + 1];
+  strcpy(input, argument);
+  char *cursor = input;
+  const char *topic = word(cursor), *pageText = word(cursor);
+  uint32_t page = 1;
+  if (*cursor) {
+    strcpy(reply.text, "Error: usage: help [TOPIC] [PAGE]; use help"); return;
+  }
+  const bool indexPage = !*topic || (*topic >= '0' && *topic <= '9');
+  if (indexPage) {
+    if (*pageText || (*topic && !number(topic, page)) || page < 1 || page > 3) {
+      strcpy(reply.text, "Error: help index page requires 1..3; use help"); return;
+    }
+    strcpy(reply.text, index[page - 1]);
+  } else {
+    if (!commandUsage(topic)) {
+      strcpy(reply.text, "Error: unknown help topic; use help, help 2 or help 3"); return;
+    }
+    if ((*pageText && !number(pageText, page)) || !commandUsage(topic, page)) {
+      snprintf(reply.text, sizeof(reply.text), "Error: unknown help page; use help %s", topic); return;
+    }
+    snprintf(reply.text, sizeof(reply.text), "%s", commandUsage(topic, page));
+    if (page == 1 && commandUsage(topic, 2)) {
+      const size_t used = strlen(reply.text);
+      snprintf(reply.text + used, sizeof(reply.text) - used, "; help %s 2", topic);
+    }
+  }
+}
+void MastAdmin::rolesCommand(const char *argument, Reply &reply) {
+  uint32_t page = 1;
+  if (*argument && !number(argument, page)) {
+    strcpy(reply.text, "Error: usage: roles list [1|2]; roles MASK saves next boot"); return;
+  }
+  if (page < 1 || page > 2) {
+    strcpy(reply.text, "Error: roles list page requires 1..2"); return;
+  }
+  ProfileJournal saved;
+  bool bot;
+  if (!loadProfileJournal(saved) || !loadBotEnabled(bot)) {
+    strcpy(reply.text, "Error: saved role state unavailable"); return;
+  }
+  if (page == 1) {
+    snprintf(reply.text, sizeof(reply.text),
+             "roles 1/2: applied/saved repeater=%u/%u room=%u/%u companion=%u/%u observer=%u/%u; next: roles list 2",
+             !!(appliedMask_ & RoleProfile::Repeater), !!(saved.profile.enabled & RoleProfile::Repeater),
+             !!(appliedMask_ & RoleProfile::Room), !!(saved.profile.enabled & RoleProfile::Room),
+             !!(appliedMask_ & RoleProfile::Companion), !!(saved.profile.enabled & RoleProfile::Companion),
+             !!(appliedMask_ & RoleProfile::Observer), !!(saved.profile.enabled & RoleProfile::Observer));
+  } else {
+    RadioDashboard::RoleStatus status;
+    commandBotService().dashboardStatus(status);
+    snprintf(reply.text, sizeof(reply.text),
+             "roles 2/2: Management=available bot applied=%u saved=%u; KISS=shared modem service (no mask bit); apply reboots",
+             status.has_identity, bot);
+  }
 }
 void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
                             const uint8_t *nativeSender, uint32_t invokingBotJob) {
@@ -453,6 +564,21 @@ void MastAdmin::preferenceCommand(char *command, Reply &reply, Transport transpo
            "Error: owner.info commit/readback unknown; inspect get owner.info before retry");
   } else if (!strcmp(command, "get cad")) {
     snprintf(reply.text, sizeof(reply.text), "> %s", mux_->cadEnabled() ? "on" : "off");
+  } else if (!strcmp(command, "get autoadvert")) {
+    bool saved;
+    if (!loadAutomaticAdverts(saved)) {
+      strcpy(reply.text, "Error: saved autoadvert unavailable; automatic adverts disabled on next boot; set autoadvert off to repair");
+      return;
+    }
+    snprintf(reply.text, sizeof(reply.text), "> saved=%s live=%s; manual adverts enabled",
+             saved ? "on" : "off", automaticAdvertsEnabled() ? "on" : "off");
+  } else if (!strncmp(command, "set autoadvert", 14)) {
+    if (strcmp(command, "set autoadvert on") && strcmp(command, "set autoadvert off")) {
+      strcpy(reply.text, "Error: use set autoadvert on|off"); return;
+    }
+    strcpy(reply.text, saveAutomaticAdverts(!strcmp(command, "set autoadvert on")) ?
+           "Saved and applied autoadvert; already queued/transmitted adverts unchanged; manual adverts enabled" :
+           "Error: autoadvert persistence unknown; live unchanged; inspect get autoadvert before retuning or restarting");
   } else if (!strcmp(command, "get int.thresh")) {
     snprintf(reply.text, sizeof(reply.text), "> %d", mux_->interferenceThreshold());
   } else if (!strcmp(command, "get af")) {
@@ -576,13 +702,18 @@ void MastAdmin::wifiCommand(char *command, Reply &reply, Transport transport,
       if (!loadWifi(credentials, saved)) {
         strcpy(reply.text, "Error: saved WiFi credentials unavailable"); return;
       }
-      if (saved)
-        snprintf(reply.text, sizeof(reply.text), "> %s", password ? credentials.password : credentials.ssid);
+      if (saved) {
+        if (password) snprintf(reply.text, sizeof(reply.text), "> %s", credentials.password);
+        else ssidReply(credentials.ssid, reply);
+      }
 #ifdef ARDUINO_ARCH_ESP32
-      else if (WIFI_SSID[0])
-        snprintf(reply.text, sizeof(reply.text), "> %s", password ? WIFI_PWD : WIFI_SSID);
-      else
-        snprintf(reply.text, sizeof(reply.text), "> %s", password ? WiFi.psk().c_str() : WiFi.SSID().c_str());
+      else if (WIFI_SSID[0]) {
+        if (password) snprintf(reply.text, sizeof(reply.text), "> %s", WIFI_PWD);
+        else ssidReply(WIFI_SSID, reply);
+      } else {
+        if (password) snprintf(reply.text, sizeof(reply.text), "> %s", WiFi.psk().c_str());
+        else ssidReply(WiFi.SSID().c_str(), reply);
+      }
 #else
       else strcpy(reply.text, "Error: WiFi station credentials unavailable");
 #endif
@@ -658,10 +789,18 @@ bool MastAdmin::begin(WifiKissMultiplexer &mux, uint8_t mask, ProfileJournal &jo
   }
   ready_ = mastRecord("replay", &replay_, sizeof(replay_), false, present) &&
            replay_.version == 1 &&
+           mastRecord("replay-extra", &extraReplay_, sizeof(extraReplay_), false, present) &&
+           (!present || validExtraReplay(extraReplay_)) &&
            mastRecord("owner-replay", &ownerReplay_, sizeof(ownerReplay_), false, present) &&
            ownerReplay_.version == 1;
   if (!ready_) {
     strcpy(outcome_, "Error: mast replay storage invalid; native administration disabled");
+    Serial.println(outcome_);
+  }
+  aclReady_ = mastRecord("acl", &acl_, sizeof(acl_), false, present) &&
+              (!present || validACL(acl_));
+  if (!aclReady_) {
+    strcpy(outcome_, "Error: Management ACL storage invalid; ACL grants disabled; inspect NVS acl and restart");
     Serial.println(outcome_);
   }
   if (!source_.begin())
@@ -684,8 +823,14 @@ bool MastAdmin::passwordMatches(const char *password) {
   return difference == 0;
 }
 bool MastAdmin::trusted(const uint8_t key[32]) const {
-  return (settings_.trustedSet && !memcmp(key, settings_.trustedKey, 32)) ||
-         compiledTrusted(key);
+  if ((settings_.trustedSet && !memcmp(key, settings_.trustedKey, 32)) || compiledTrusted(key))
+    return true;
+  if (aclReady_) for (const auto &entry : acl_.entries) {
+    ClientInfo client{};
+    client.permissions = entry.permissions;
+    if (client.isAdmin() && !memcmp(key, entry.key, 32)) return true;
+  }
+  return false;
 }
 bool MastAdmin::compiledTrusted(const uint8_t key[32]) const {
   uint8_t compiled[32];
@@ -696,34 +841,167 @@ uint32_t MastAdmin::lastTimestamp(const uint8_t key[32]) const {
   uint32_t timestamp = !memcmp(ownerReplay_.peer.key, key, 32) ? ownerReplay_.peer.timestamp : 0;
   for (const auto &peer : replay_.peers)
     if (!memcmp(peer.key, key, 32) && peer.timestamp > timestamp) timestamp = peer.timestamp;
+  for (const auto &peer : extraReplay_.peers)
+    if (!memcmp(peer.key, key, 32) && peer.timestamp > timestamp) timestamp = peer.timestamp;
   return timestamp;
 }
 bool MastAdmin::rememberTimestamp(const uint8_t key[32], uint32_t timestamp) {
   if (!ready_ || !timestamp || timestamp <= lastTimestamp(key)) return false;
   if (compiledTrusted(key)) {
-    OwnerReplay next;
+    OwnerReplay next, actual;
     memcpy(next.peer.key, key, 32);
     next.peer.timestamp = timestamp;
     bool present;
-    if (!mastRecord("owner-replay", &next, sizeof(next), true, present)) return false;
+    if (!mastRecord("owner-replay", &next, sizeof(next), true, present) ||
+        !mastRecord("owner-replay", &actual, sizeof(actual), false, present) ||
+        !present || memcmp(&next, &actual, sizeof(next))) {
+      ready_ = false;
+      strcpy(outcome_, "Error: owner replay commit/readback unknown; restart before native administration");
+      Serial.println(outcome_); return false;
+    }
     ownerReplay_ = next;
     return true;
   }
   Replay next = replay_;
+  ExtraReplay extra = extraReplay_;
   Replay::Peer *slot = nullptr;
+  bool inExtra = false;
   for (auto &peer : next.peers)
     if (!memcmp(peer.key, key, 32)) { slot = &peer; break; }
     else if (!peer.timestamp && !slot) slot = &peer;
+  for (auto &peer : extra.peers)
+    if (!memcmp(peer.key, key, 32)) { slot = &peer; inExtra = true; break; }
+    else if (!peer.timestamp && !slot) { slot = &peer; inExtra = true; }
   if (!slot) {
-    Serial.println("Mast authenticated principal capacity exhausted");
+    Serial.println("Mast replay capacity exhausted (10); inspect auth peer and auth forget obsolete KEY");
     return false;
   }
   memcpy(slot->key, key, 32);
   slot->timestamp = timestamp;
   bool present;
-  if (!mastRecord("replay", &next, sizeof(next), true, present)) return false;
+  Replay actual;
+  ExtraReplay actualExtra;
+  if (inExtra)
+    mesh::Utils::sha256(extra.digest, sizeof(extra.digest), reinterpret_cast<const uint8_t *>(&extra),
+                        offsetof(ExtraReplay, digest));
+  const bool saved = inExtra
+      ? mastRecord("replay-extra", &extra, sizeof(extra), true, present) &&
+        mastRecord("replay-extra", &actualExtra, sizeof(actualExtra), false, present) &&
+        present && !memcmp(&extra, &actualExtra, sizeof(extra))
+      : mastRecord("replay", &next, sizeof(next), true, present) &&
+        mastRecord("replay", &actual, sizeof(actual), false, present) &&
+        present && !memcmp(&next, &actual, sizeof(next));
+  if (!saved) {
+    ready_ = false;
+    strcpy(outcome_, "Error: replay commit/readback unknown; restart before native administration");
+    Serial.println(outcome_); return false;
+  }
   replay_ = next;
+  extraReplay_ = extra;
   return true;
+}
+bool MastAdmin::validExtraReplay(const ExtraReplay &replay) const {
+  uint8_t digest[32];
+  mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&replay),
+                      offsetof(ExtraReplay, digest));
+  return replay.version == 1 && !memcmp(digest, replay.digest, sizeof(digest));
+}
+bool MastAdmin::validACL(const ACL &acl) const {
+  uint8_t digest[32];
+  mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&acl),
+                      offsetof(ACL, digest));
+  if (acl.version != 1 || memcmp(digest, acl.digest, sizeof(digest))) return false;
+  for (unsigned i = 0; i < ACLSlots; ++i) {
+    const auto &entry = acl.entries[i];
+    if (entry.permissions && (entry.permissions & PERM_ACL_ROLE_MASK) == PERM_ACL_GUEST)
+      return false;
+    for (unsigned j = 0; entry.permissions && j < i; ++j)
+      if (acl.entries[j].permissions && !memcmp(entry.key, acl.entries[j].key, 32))
+        return false;
+  }
+  return true;
+}
+void MastAdmin::aclCommand(char *command, Reply &reply) {
+  if (!aclReady_) {
+    strcpy(reply.text, "Error: Management ACL unavailable; ACL grants disabled; inspect NVS acl and restart");
+    return;
+  }
+  if (!strncmp(command, "setperm ", 8)) {
+    char *argument = command + 8;
+    char *space = strchr(argument, ' ');
+    uint8_t key[32];
+    uint32_t permissions;
+    if (!space) {
+      strcpy(reply.text, "Error: setperm requires KEY64 PERMISSIONS (0..255)"); return;
+    }
+    *space++ = 0;
+    if (!hex(argument, key, 32) || !number(space, permissions) || permissions > 255) {
+      strcpy(reply.text, "Error: setperm requires KEY64 PERMISSIONS (0..255)"); return;
+    }
+    if ((permissions & PERM_ACL_ROLE_MASK) != PERM_ACL_ADMIN) {
+      if (compiledTrusted(key)) {
+        strcpy(reply.text, "Error: compiled owner recovery authority cannot be revoked"); return;
+      }
+      if (settings_.trustedSet && !memcmp(key, settings_.trustedKey, 32)) {
+        strcpy(reply.text, "Error: key retains legacy trust; use trust none before setperm downgrade/remove"); return;
+      }
+    }
+    ACL next = acl_, actual;
+    ACL::Entry *slot = nullptr;
+    for (auto &entry : next.entries)
+      if (entry.permissions && !memcmp(entry.key, key, 32)) { slot = &entry; break; }
+    const bool remove = (permissions & PERM_ACL_ROLE_MASK) == PERM_ACL_GUEST;
+    if (!slot && !remove)
+      for (auto &entry : next.entries) if (!entry.permissions) { slot = &entry; break; }
+    if (!slot) {
+      strcpy(reply.text, remove ? "Error: Management ACL key absent" :
+             "Error: Management ACL full (5); inspect get acl 1..5 and remove an obsolete key"); return;
+    }
+    if (remove) *slot = {};
+    else { memcpy(slot->key, key, 32); slot->permissions = permissions; }
+    mesh::Utils::sha256(next.digest, sizeof(next.digest), reinterpret_cast<const uint8_t *>(&next),
+                        offsetof(ACL, digest));
+    bool present;
+    if (!mastRecord("acl", &next, sizeof(next), true, present) ||
+        !mastRecord("acl", &actual, sizeof(actual), false, present) ||
+        !present || !validACL(actual) || memcmp(&next, &actual, sizeof(next))) {
+      aclReady_ = false;
+      strcpy(reply.text, "Error: Management ACL commit/readback unknown; ACL grants disabled; inspect NVS acl and restart");
+      return;
+    }
+    acl_ = next;
+    strcpy(reply.text, "OK - saved Management/bot permission; new logins/jobs apply now; existing sessions expire normally");
+    return;
+  }
+  unsigned used = 0;
+  for (const auto &entry : acl_.entries) if (entry.permissions) ++used;
+  if (!command[7]) {
+    snprintf(reply.text, sizeof(reply.text),
+             "Management ACL=%u/5; get acl KEY64|1..5; setperm KEY64 3=admin,0=remove; legacy/compiled trust retained", used);
+    return;
+  }
+  const char *argument = command + 8;
+  uint32_t slot;
+  uint8_t key[32];
+  unsigned permissions = 0;
+  if (number(argument, slot) && slot >= 1 && slot <= ACLSlots) {
+    const auto &entry = acl_.entries[slot - 1];
+    if (!entry.permissions) {
+      snprintf(reply.text, sizeof(reply.text), "Management ACL slot %u empty", unsigned(slot)); return;
+    }
+    memcpy(key, entry.key, 32);
+    permissions = entry.permissions;
+  } else if (hex(argument, key, 32)) {
+    for (const auto &entry : acl_.entries)
+      if (entry.permissions && !memcmp(entry.key, key, 32)) permissions = entry.permissions;
+  } else {
+    strcpy(reply.text, "Error: get acl requires KEY64 or slot 1..5"); return;
+  }
+  char encoded[65];
+  for (unsigned i = 0; i < 32; ++i) snprintf(encoded + 2 * i, 3, "%02x", key[i]);
+  snprintf(reply.text, sizeof(reply.text), "key=%s permissions=%u admin=%u legacy=%u compiled=%u",
+           encoded, permissions, trusted(key),
+           settings_.trustedSet && !memcmp(settings_.trustedKey, key, 32), compiledTrusted(key));
 }
 bool MastAdmin::reserve(Effect effect, Reply &reply) {
 #ifdef ARDUINO_ARCH_ESP32
@@ -958,19 +1236,28 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     if (*p < 32 || *p > 126) {
       strcpy(reply.text, "Error: printable CLI text required"); return;
     }
-  if (networkClockCommand(input, reply.text, sizeof(reply.text), true)) return;
+  if (networkClockCommand(input, reply.text, sizeof(reply.text), true) ||
+      syslogCommand(input, reply.text, sizeof(reply.text)) ||
+      diagnosticsCommand(input, reply.text, sizeof(reply.text))) return;
   if (!strcmp(input, "help") || !strncmp(input, "help ", 5)) {
-    if (!input[4]) {
-      static constexpr char Help[] = "status; stats; ver; board; help TOPIC; role; key; password; bot help; bot https; source; wifi; radio; get; set; auth; data; telemetry";
-      static_assert(sizeof(Help) <= TextLimit - 17 + 1, "Help must fit a nonce-tagged native reply");
-      strcpy(reply.text, Help);
-    } else {
-      const char *topic = input + 5;
-      while (*topic == ' ') ++topic;
-      const char *usage = commandUsage(topic);
-      if (usage) snprintf(reply.text, sizeof(reply.text), "%s", usage);
-      else snprintf(reply.text, sizeof(reply.text), "Error: unknown help topic; use help");
-    }
+    helpCommand(input[4] ? input + 5 : "", reply);
+    return;
+  }
+  if (!strcmp(input, "wifi help") || !strncmp(input, "wifi help ", 10) ||
+      !strcmp(input, "bot help") || !strncmp(input, "bot help ", 9)) {
+    char argument[TextLimit + 1];
+    const bool wifi = input[0] == 'w';
+    const size_t offset = wifi ? 9 : 8;
+    snprintf(argument, sizeof(argument), "%s%s", wifi ? "wifi" : "bot", input + offset);
+    helpCommand(argument, reply);
+    return;
+  }
+  if (!strcmp(input, "source help")) {
+    helpCommand("source", reply);
+    return;
+  }
+  if (!strcmp(input, "roles") || !strcmp(input, "roles list") || !strncmp(input, "roles list ", 11)) {
+    rolesCommand(!strncmp(input, "roles list ", 11) ? input + 11 : "", reply);
     return;
   }
   if (const char *usage = commandUsage(input)) {
@@ -1014,10 +1301,11 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
   } else if (!strcmp(command, "stats") || !strcmp(command, "get stats") ||
              !strncmp(command, "stats ", 6)) {
     statsCommand(!strncmp(command, "stats ", 6) ? command + 6 : "radio", reply);
+  } else if (!strcmp(command, "get acl") || !strncmp(command, "get acl ", 8) ||
+             !strncmp(command, "setperm ", 8)) {
+    aclCommand(command, reply);
   } else if (!strncmp(command, "get ", 4) || !strncmp(command, "set ", 4)) {
     preferenceCommand(command, reply, transport, invokingBotJob);
-  } else if (!strcmp(command, "wifi help")) {
-    snprintf(reply.text, sizeof(reply.text), "%s", commandUsage("wifi"));
   } else if (!strncmp(command, "source ", 7)) {
     source_.execute(command + 7, reply.text, sizeof(reply.text));
   } else if (!strncmp(command, "role ", 5)) {
@@ -1079,8 +1367,6 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     commandBotService().discoveryCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot repeaters") || !strncmp(command, "bot repeaters ", 14)) {
     commandBotService().repeaterCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
-  } else if (!strcmp(command, "bot help")) {
-    strcpy(reply.text, "bot status|stats|log|diagnostics|admission|policy|mesh|discovery|name|destination|channel-wait|shared|home|reminders|events|cancel; role help; source status; reboot");
   } else if (!strcmp(command, "bot cancel")) {
     commandBotService().cancelJobs(invokingBotJob);
     strcpy(reply.text, "Cancellation requested for other running commands/events; admitted effects may have committed; reminders unchanged");
@@ -1313,9 +1599,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
   } else if (!strcmp(command, "auth status") || !strncmp(command, "auth status ", 12)) {
     unsigned used = 0;
     for (const auto &peer : replay_.peers) if (peer.timestamp) ++used;
+    for (const auto &peer : extraReplay_.peers) if (peer.timestamp) ++used;
     if (!command[11]) {
       snprintf(reply.text, sizeof(reply.text),
-               "RF peers=%u/4 compiled-owner=%u; auth peer 1..4; auth status KEY; auth forget KEY",
+               "RF peers=%u/10 compiled-owner=%u; sessions=6+compiled; auth peer 1..10; auth status KEY; auth forget KEY",
                used, ownerReplay_.peer.timestamp != 0);
     } else {
       uint8_t key[32];
@@ -1323,16 +1610,17 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
         strcpy(reply.text, "Error: auth status requires a full 32-byte public key"); return;
       }
       snprintf(reply.text, sizeof(reply.text),
-               "key=%s trusted=%u compiled=%u timestamp=%lu peers=%u/4",
+               "key=%s trusted=%u compiled=%u timestamp=%lu peers=%u/10",
                command + 12, trusted(key), compiledTrusted(key),
                static_cast<unsigned long>(lastTimestamp(key)), used);
     }
   } else if (!strncmp(command, "auth peer ", 10)) {
     uint32_t slot;
-    if (!number(command + 10, slot) || slot < 1 || slot > 4) {
-      strcpy(reply.text, "Error: auth peer requires slot 1..4"); return;
+    if (!number(command + 10, slot) || slot < 1 || slot > ReplaySlots) {
+      strcpy(reply.text, "Error: auth peer requires slot 1..10"); return;
     }
-    const auto &peer = replay_.peers[slot - 1];
+    const auto &peer = slot <= LegacyReplaySlots ? replay_.peers[slot - 1] :
+                       extraReplay_.peers[slot - LegacyReplaySlots - 1];
     if (!peer.timestamp) {
       snprintf(reply.text, sizeof(reply.text), "RF peer %u empty", unsigned(slot));
     } else {
@@ -1348,24 +1636,44 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: specify a non-compiled principal full key"); return;
     }
     Replay next = replay_;
-    bool found = false;
+    ExtraReplay extra = extraReplay_;
+    bool found = false, foundExtra = false;
     for (auto &peer : next.peers)
       if (peer.timestamp && !memcmp(peer.key, key, 32)) { peer = {}; found = true; }
+    for (auto &peer : extra.peers)
+      if (peer.timestamp && !memcmp(peer.key, key, 32)) { peer = {}; foundExtra = true; }
+    if (foundExtra)
+      mesh::Utils::sha256(extra.digest, sizeof(extra.digest), reinterpret_cast<const uint8_t *>(&extra),
+                          offsetof(ExtraReplay, digest));
     bool present;
-    if (!found || !mastRecord("replay", &next, sizeof(next), true, present)) {
-      strcpy(reply.text, "Error: principal absent or replay commit failed"); return;
+    if (!found && !foundExtra) {
+      strcpy(reply.text, "Error: principal absent"); return;
+    }
+    Replay actual;
+    ExtraReplay actualExtra;
+    if ((found && (!mastRecord("replay", &next, sizeof(next), true, present) ||
+                   !mastRecord("replay", &actual, sizeof(actual), false, present) ||
+                   !present || memcmp(&next, &actual, sizeof(next)))) ||
+        (foundExtra && (!mastRecord("replay-extra", &extra, sizeof(extra), true, present) ||
+                        !mastRecord("replay-extra", &actualExtra, sizeof(actualExtra), false, present) ||
+                        !present || memcmp(&extra, &actualExtra, sizeof(extra))))) {
+      ready_ = false;
+      strcpy(reply.text, "Error: replay forget commit/readback unknown; restart before native administration"); return;
     }
     replay_ = next;
+    extraReplay_ = extra;
     strcpy(reply.text, "Forgot principal replay state and session; fresh login required");
   } else if (!strncmp(command, "trust ", 6)) {
-    Settings next = settings_;
+    Settings next = settings_, actual;
     if (!strcmp(command + 6, "none")) {
       next.trustedSet = 0; memset(next.trustedKey, 0, 32);
     } else if (hex(command + 6, next.trustedKey, 32)) next.trustedSet = 1;
     else { strcpy(reply.text, "Error: trust requires a full 32-byte public key"); return; }
     bool present;
-    if (!mastRecord("settings", &next, sizeof(next), true, present)) {
-      strcpy(reply.text, "Error: trust commit failed"); return;
+    if (!mastRecord("settings", &next, sizeof(next), true, present) ||
+        !mastRecord("settings", &actual, sizeof(actual), false, present) ||
+        !present || memcmp(&next, &actual, sizeof(next))) {
+      strcpy(reply.text, "Error: trust commit/readback unknown; inspect saved settings and restart"); return;
     }
     settings_ = next;
     strcpy(reply.text, "Saved mast companion trust; role-local ACLs unchanged");
@@ -1410,6 +1718,7 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     }
     const bool ssid = command[5] == 's';
     const char *value = command + (ssid ? 10 : 14);
+    if (!strncmp(value, "hex ", 4)) value += 4;
     Settings next = settings_;
     char *destination = ssid ? next.wifi.ssid : next.wifi.password;
     const size_t maximum = ssid ? 32 : 64, n = strlen(value) / 2;

@@ -275,6 +275,19 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "archive does not identify"):
             candidate.verify(self.directory)
 
+    def test_new_source_cannot_omit_verified_input_receipts(self):
+        paths = [*versions.generated(versions.load()), "release/products.json", "go.sum",
+                 self.manifest["build"]["config_path"], "tools/release_inputs.py"]
+        with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
+                          pax_headers={"comment": self.manifest["source"]["commit"]}) as archive:
+            for path in paths:
+                archive.add(ROOT / path, arcname=path)
+        self.manifest["files"] = [candidate.record(self.directory / item["name"], item["role"])
+                                  for item in self.manifest["files"]]
+        self.save()
+        with self.assertRaisesRegex(ValueError, "missing verified firmware source inputs"):
+            candidate.verify(self.directory)
+
     def test_go_dependency_inventory_stream(self):
         self.assertEqual(candidate.json_stream('{"Path":"one"}\n{"Path":"two"}\n'),
                          [{"Path": "one"}, {"Path": "two"}])

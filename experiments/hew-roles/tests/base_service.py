@@ -40,7 +40,7 @@ def addressed(seed, kind, plain, recipient=1):
 
 
 class Source:
-    def __init__(self, port=0, negotiation_packet=None, telemetry=None, connection=None):
+    def __init__(self, port=0, negotiation_packet=None, telemetry=None, connection=None, profile=PROFILE):
         self.listener = None
         self.port = port
         if connection is None:
@@ -59,7 +59,7 @@ class Source:
         self.completion_phase = 2
         self.negotiation_packet = negotiation_packet
         self.telemetry = telemetry or {}
-        self.profile = PROFILE
+        self.profile = profile
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -321,6 +321,85 @@ def load_rollback_in_go(directory, expected_public):
 
 
 class BaseScenario(unittest.TestCase):
+    def test_profile_boundaries_boot_without_retuning(self):
+        root = ROOT/"build"/f"base-profile-{os.getpid()}"
+        root.mkdir(mode=0o700)
+        try:
+            for sf, power in ((5, 22), (6, 23), (7, 2), (12, 30)):
+                with self.subTest(sf=sf, reported_power=power):
+                    directory = root/f"sf{sf}"
+                    directory.mkdir(mode=0o700)
+                    for name, data in (("identity.seed", bytes([1])*32),
+                                       ("companion.json", json.dumps(saved_state()).encode())):
+                        path = directory/name
+                        path.write_bytes(data)
+                        path.chmod(0o600)
+                    profile = bytearray(PROFILE)
+                    profile[8], profile[10] = sf, power
+                    modem = Source(profile=bytes(profile))
+                    try:
+                        config = root/f"sf{sf}.json"
+                        config.write_text(json.dumps({"state_dir": str(directory),
+                            "radio_address": f"127.0.0.1:{modem.port}",
+                            "companion_listen": "127.0.0.1:0",
+                            "required_profile": profile.hex(), "run_ms": 50}))
+                        config.chmod(0o600)
+                        result = subprocess.run([str(BIN), str(config)], capture_output=True,
+                                                text=True, timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+                        self.assertIn("BASE_LISTEN ", result.stdout)
+                        self.assertIn("BASE_STOP ", result.stdout)
+                        self.assertIsNone(modem.error)
+                        self.assertIn((34, b"\1\0"), modem.controls)
+                        self.assertTrue(all(data == b"\1\0"
+                                            for op, data in modem.controls if op == 34))
+                    finally:
+                        modem.close()
+        finally:
+            shutil.rmtree(root)
+
+    def test_invalid_required_profiles_fail_before_modem_open(self):
+        cases = [("", "36 hexadecimal"), (PROFILE.hex()[:-1], "36 hexadecimal"),
+                 ("g"+PROFILE.hex()[1:], "non-hexadecimal")]
+        for offset, fmt, value, error in (
+            (0, "<I", 149999999, "frequency"), (0, "<I", 960000001, "frequency"),
+            (4, "<I", 123456, "bandwidth"), (8, "<B", 4, "SF=4"),
+            (8, "<B", 13, "SF=13"), (9, "<B", 4, "CR=4"),
+            (9, "<B", 9, "CR=9"), (10, "<B", 31, "reported TX power=31"),
+            (11, "<f", -1, "airtime factor"), (11, "<f", float("nan"), "airtime factor"),
+            (11, "<f", float("inf"), "airtime factor"), (15, "<B", 2, "CAD flag=2")):
+            profile = bytearray(PROFILE)
+            struct.pack_into(fmt, profile, offset, value)
+            cases.append((profile.hex(), error))
+        root = ROOT/"build"/f"base-invalid-profile-{os.getpid()}"
+        root.mkdir(mode=0o700)
+        try:
+            with socket.socket() as modem:
+                modem.bind(("127.0.0.1", 0))
+                modem.listen()
+                modem.settimeout(.05)
+                for profile, error in cases:
+                    with self.subTest(profile=profile):
+                        config = root/"config.json"
+                        config.write_text(json.dumps({"state_dir": str(root/"absent-state"),
+                            "radio_address": f"127.0.0.1:{modem.getsockname()[1]}",
+                            "required_profile": profile}))
+                        config.chmod(0o600)
+                        result = subprocess.run([str(BIN), str(config)], capture_output=True,
+                                                text=True, timeout=5)
+                        self.assertEqual(result.returncode, 1, result.stdout+result.stderr)
+                        self.assertIn("BASE_CONFIG_ERROR required_profile:", result.stdout)
+                        self.assertIn(error, result.stdout)
+                        self.assertTrue(result.stdout.endswith(
+                            "; correct the profile in the Base JSON configuration\n"), result.stdout)
+                        self.assertNotIn("panic", result.stderr.lower())
+                        self.assertFalse((root/"absent-state").exists())
+                        with self.assertRaises(socket.timeout):
+                            connection, _ = modem.accept()
+                            connection.close()
+        finally:
+            shutil.rmtree(root)
+
     def test_independent_engines_commit_refusal_and_slow_writer(self):
         root = ROOT/"build"/f"base-independent-{os.getpid()}"
         root.mkdir(mode=0o700)
@@ -778,9 +857,14 @@ class BaseScenario(unittest.TestCase):
             source.completion_phase = 4
             clients[0].command(b"\2\0\0"+struct.pack("<I", int(time.time()))+public(2)[:6]+b"unknown", 6)
             source.next(2)
-            with urllib.request.urlopen(f"http://127.0.0.1:{status_port}/status", timeout=4) as response:
-                status = json.load(response)
-            role = status["companion"]
+            until = time.monotonic()+4
+            while True:
+                with urllib.request.urlopen(f"http://127.0.0.1:{status_port}/status", timeout=4) as response:
+                    status = json.load(response)
+                role = status["companion"]
+                if role["role_tx"]["unknown"] != 0 or time.monotonic() >= until:
+                    break
+                time.sleep(.01)
             self.assertTrue(role["application_started_at"].endswith("Z"))
             self.assertEqual(role["role_tx"]["unknown"], 1)
             self.assertFalse(role["role_tx"]["airtime_complete"])

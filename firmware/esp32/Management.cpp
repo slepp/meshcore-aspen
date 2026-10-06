@@ -96,8 +96,8 @@ struct Management::Core : mesh::Mesh {
     uint32_t at = 0, timestamp = 0;
     uint32_t loginAt = 0;
     MastAdmin::Reply reply;
-  } sessions[5];
-  uint8_t matches[5]{};
+  } sessions[MastAdmin::SessionSlots];
+  uint8_t matches[MastAdmin::SessionSlots]{};
   mesh::Packet *effectPacket = nullptr;
   uint32_t effectTicket = 0;
   uint32_t ownerQueryWindow = millis();
@@ -202,11 +202,16 @@ struct Management::Core : mesh::Mesh {
       if (session.used && session.id.matches(sender)) { slot = &session; break; }
     if (slot && uint32_t(now - slot->loginAt) < 1000) return true;
     if (!slot && admin.compiledTrusted(sender.pub_key)) slot = &sessions[0];
-    for (unsigned i = 1; !slot && i < 5; ++i)
+    for (unsigned i = 1; !slot && i < MastAdmin::SessionSlots; ++i)
       if (!sessions[i].used) slot = &sessions[i];
     const uint32_t timestamp = queued_tx::get32(data);
-    if (!slot || !admin.rememberTimestamp(sender.pub_key, timestamp)) {
-      Serial.println("Mast login replay/storage/session admission rejected"); return true;
+    if (!slot) {
+      Serial.println("Mast login session capacity exhausted; retry after session expiry");
+      return true;
+    }
+    if (!admin.rememberTimestamp(sender.pub_key, timestamp)) {
+      Serial.println("Mast login replay/storage admission rejected; inspect auth status");
+      return true;
     }
     const PeerRoute known = slot->used && slot->id.matches(sender) ? slot->route : PeerRoute{};
     *slot = {};
@@ -237,7 +242,7 @@ struct Management::Core : mesh::Mesh {
     if (!admin.ready()) return 0;
     maintainSessions();
     unsigned count = 0;
-    for (unsigned i = 0; i < 5; ++i)
+    for (unsigned i = 0; i < MastAdmin::SessionSlots; ++i)
       if (sessions[i].used && uint32_t(millis() - sessions[i].at) < 900000 &&
           sessions[i].id.isHashMatch(hash)) matches[count++] = i;
     return count;

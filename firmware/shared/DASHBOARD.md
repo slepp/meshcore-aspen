@@ -14,7 +14,40 @@ This changes neither an RF identity nor the DHCP/mDNS hostname.
 There are no fixed IP addresses or device-specific identifiers in the page.
 SSID, WiFi credentials, private identities, stored keys and client IP addresses
 are not exported. Packet history contains only length, timing, outcome,
-signal metadata and the first 16 **raw, undecoded RF bytes** as hex.
+signal metadata and the first 16 raw RF bytes as hex.
+
+Recent activity decodes that preview in the browser: packet type, routing mode,
+payload version, transport codes and visible path prefixes. Flood paths show
+the traversed hops; direct paths show the remaining route. Direct trace packets
+carry signal bytes in the path field instead of contact prefixes.
+Private request, response, text and returned-path envelopes show visible
+source/destination prefixes; group envelopes show a channel hash. Encrypted
+content is not decoded. A long path can fill the preview before any payload
+prefix arrives, and an advert's name is beyond this 16-byte preview.
+
+On-device ESP32 snapshots also expose up to 32 native companion contact records:
+public key, name and advert type only. These are the companion's current
+received/stored contacts, not names inferred from partial adverts. Contact
+names take precedence over on-device role names for the same key. Multiple
+matching keys stay ambiguous; a match within this list does not authenticate
+the packet or exclude collisions with other mesh nodes. When contacts are
+omitted because the list exceeds 32, a single visible name is explicitly
+labeled `candidate …; prefix match; contact list incomplete`. Omitted contacts
+may share that prefix: this is a candidate label, not a unique identification.
+The page shows the exported count and total.
+
+Contacts are omitted when the companion is unavailable or restarting. Older
+firmware falls back to on-device role names; standalone shared modems show hex
+prefixes without names. Enumeration runs on the existing radio dispatch task;
+HTTP reads only the published snapshot. No contact endpoint, extra radio
+observer, channel keys, shared secrets or message content is added.
+
+RX rows mean reception over RF; TX rows retain their queued-transmission
+outcome, including unconfirmed transmissions. Local reflections do not enter
+this history. RSSI/SNR are displayed only for RF reception. Activity ages use
+whole seconds, then whole minutes, hours and days, updated by the existing
+live snapshots. Age-only updates keep the same table rows; API timestamps,
+packet bytes and newest-first ordering are unchanged.
 
 Read the running firmware profile from `GET /api/status`:
 
@@ -102,8 +135,30 @@ the current board's Arduino/radio loop on core 1. It has an 8 KiB task stack,
 three HTTP client sockets, a two-connection backlog, LRU eviction and
 two-second send/receive timeouts for ordinary HTTP requests. At most two
 sockets can subscribe to live updates, leaving a third for the page or
-diagnostics. JSON uses two fixed 24 KiB buffers: one diagnostics response
+diagnostics. JSON uses two fixed buffers (24 KiB each for a shared modem,
+40 KiB each for on-device ESP32 contact snapshots): one diagnostics response
 and one shared live message, not a copy per subscriber.
+Contact storage and the larger JSON buffers require both `MESHCORE_ONCHIP` and
+the existing `ESP32` build flag, with `NRF52_PLATFORM` excluded. The ESP32
+PlatformIO toolchain and ESP32 host-native lifecycle tests already set `ESP32`;
+the focused contact test sets it explicitly. General on-device, host and Pine
+builds retain the original snapshot layout and 24 KiB JSON capacity.
+
+Measured sizes on the native 64-bit test ABI, compared with `7c2e4c8` before the
+contact projection (six roles; ESP HTTP uses the SDK seam):
+
+| Profile | `RadioStatus` bytes | `Snapshot` bytes | `RadioDashboard` bytes | JSON buffer bytes |
+| --- | ---: | ---: | ---: | ---: |
+| General, unchanged | 312 | 4176 | 39968 | 24576 |
+| General on-device / Pine with `MESHCORE_ONCHIP`, unchanged | 1312 | 5176 | 42968 | 24576 |
+| ESP32 on-device with HTTP, before contacts | 1312 | 5176 | 72744 | 24576 |
+| ESP32 on-device with HTTP, with contacts | 3400 | 7264 | 113864 | 40960 |
+
+Only the ESP32 contact profile adds 2088 bytes per snapshot and 16384 bytes
+per JSON buffer. Its four-snapshot/two-buffer dashboard object grows by
+41120 bytes on this ABI. These are native test measurements, not ESP32 target
+heap readings; target structure sizes depend on the toolchain ABI. The
+seven-role worst-size JSON fixture uses 34218 of the 40960-byte JSON buffer.
 The compiled socket-capacity check reserves all KISS client slots, the KISS
 listener, up to three internal HTTP sockets, three HTTP clients and one spare
 sockets. The current ESP32-S3 SDK provides 16 slots for this configuration.
@@ -177,6 +232,15 @@ Each event contains `sequence`, `at_ms`, `direction` (`rx`/`tx`), native TX
 Admission increments its counter but does not occupy an event-history slot.
 Rejected submissions without an admitted packet have zero length/no preview.
 
+On-device ESP32 snapshots optionally add `contacts`: `capacity` (32), `total`
+(native non-anonymous contact count), `truncated` and `items`. Each item has a
+64-character lowercase `public_key`, `name` (up to 31 bytes) and numeric native
+advert `type` (1 chat, 2 repeater, 3 room, 4 sensor). The array uses the native
+contact iterator's order, skips anonymous reserved slots, and contains at most
+32 records per publication. A present empty list means the companion currently
+has no contacts; an absent field means contacts are unavailable. Native stored
+contacts can remain after a restart and do not imply recent RF reception.
+
 The endpoint admits at most two status requests per second across all
 browsers; excess requests return **429** with `Retry-After: 1`. A temporarily
 unavailable or more-than-three-second-old snapshot returns **503** with the
@@ -249,6 +313,16 @@ failures rather than reconnect-shaped successes.
 Node executes the shipped script with a controlled clock/transport to check
 pause/hide/resume, reconnect, invalid updates, watchdog expiry and absence
 of overlapping connections or HTTP polling.
+The focused `make -f test_support/phy_parity/Makefile dashboard-test` target
+also checks the browser's packet bounds, v0 decoding and unsupported versions,
+one-/two-/three-byte paths, ambiguous prefix names, text-only rendering and
+second/minute/hour/day age boundaries without rebuilding age-only rows.
+Its contact bridge test checks bounded native enumeration, lifecycle
+availability, public-only JSON escaping, snapshot copying and worst-size
+on-device serialization.
+`make -f test_support/phy_parity/Makefile dashboard-budget-test` checks contact
+storage presence and JSON capacities for general, general on-device, Pine and
+ESP32 profiles, and prints each profile's native structure sizes.
 
 `make -f test_support/phy_parity/Makefile dashboard-browser` optionally uses an
 installed Chrome/Chromium to render the page with a local fixture at

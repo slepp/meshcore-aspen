@@ -122,7 +122,7 @@ class ReceivePolicy(unittest.TestCase):
                     self.assertEqual(len(host.packet(packet(5, b"short", route=1), now=52000)), 1)
 
     def test_actual_native_service_hold_and_healthy_other_roles(self):
-        with RunningService(root=ROOT.parents[1]/f".rx-policy-{os.getpid()}-{time.monotonic_ns():x}") as service:
+        with RunningService(root=ROOT.parents[1]/f".rx-{os.getpid()}") as service:
             modem = service.emulator
             modem.send(0, 0, packet(7, public(1)[:1]+public(2)+seal(secret(2, public(1)),
                 struct.pack("<I", 10)+b"admin\0")))

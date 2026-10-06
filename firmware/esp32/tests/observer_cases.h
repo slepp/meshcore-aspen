@@ -54,6 +54,7 @@ struct ObserverTest {
   static void will(const Observer &observer, const std::string &base) {
     assert(observer.client->willTopic == base + "/status");
     assert(observer.client->will == "offline" && observer.client->retain);
+    assert(observer.client->willQos == 0);
     assert(observer.client->identity == base.substr(9));
   }
 };
@@ -84,18 +85,21 @@ static void public_observer_service() {
   const auto firstToken = client->password;
   assert(firstToken.find("eyJhbGciOiJFZDI1NTE5IiwidHlwIjoiSldUIn0.") == 0);
   assert(client->will.find("\"status\":\"offline\"") != std::string::npos);
+  assert(client->willQos == 1 && client->retain);
   assert(client->willTopic.find("meshcore/YYC/") == 0);
   onchip::ObserverTest::connect(observer, true);
   mqtt_test::messages.clear();
   onchip::ObserverTest::service(observer);
   assert(mqtt_test::messages.size() == 1);
   assert(mqtt_test::messages.back().data.find("\"status\":\"online\"") != std::string::npos);
+  assert(mqtt_test::messages.back().qos == 1 && mqtt_test::messages.back().retained);
   for (bool tx : {false, true}) {
     observer.packet(raw, sizeof(raw), tx, queued_tx::SUCCEEDED, -90, 4.5);
     onchip::ObserverTest::service(observer);
   }
   assert(mqtt_test::messages.size() == 2);
   assert(mqtt_test::messages.back().data.find("\"hash\":\"D20D9B3795B107AC\"") != std::string::npos);
+  assert(mqtt_test::messages.back().qos == 0 && !mqtt_test::messages.back().retained);
   observer.packet(raw, sizeof(raw), false, 0, 127, -32);
   onchip::ObserverTest::service(observer);
   assert(mqtt_test::messages.size() == 2);
@@ -167,6 +171,7 @@ static void public_observer_service() {
   onchip::ObserverTest::service(observer);
   assert(!onchip::ObserverTest::client(observer));
   assert(mqtt_test::messages.back().data.find("\"status\":\"offline\"") != std::string::npos);
+  assert(mqtt_test::messages.back().qos == 1 && mqtt_test::messages.back().retained);
   onchip::ObserverTest::close(observer);
   puts("PASS public observer service: clock gate, identity CONNECT, renewal, JSON status/LWT, RF-only output");
 }
@@ -223,7 +228,8 @@ static void observer_and_dashboard(const char *outputPath) {
   assert(mqtt_test::messages.size() == 7);
   assert(mqtt_test::messages.front().topic == base + "/status" &&
          mqtt_test::messages.front().data == "online" &&
-         mqtt_test::messages.front().retained);
+         mqtt_test::messages.front().retained &&
+         mqtt_test::messages.front().qos == 0);
   for (unsigned i = 0; i < 6; ++i) {
     const auto &m = mqtt_test::messages[i + 1];
     assert(m.retained && m.topic == base + "/roles/" + status.roles[i].role);

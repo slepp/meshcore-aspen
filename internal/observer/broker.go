@@ -76,7 +76,20 @@ func StartBroker(cfg BrokerConfig) (*Broker, error) {
 func (b *Broker) Addr() net.Addr { return b.addr }
 
 func (b *Broker) Close() error {
-	b.once.Do(func() { b.err = b.server.Close() })
+	b.once.Do(func() {
+		// Mochi v2.7.9 GetByListener recursively RLocks the client registry
+		// and can deadlock against disconnect cleanup (upstream issue #488).
+		// Close listeners with a single snapshot first; Server.Close's
+		// idempotent listener close then skips that lookup.
+		b.server.Listeners.CloseAll(func(id string) {
+			for _, client := range b.server.Clients.GetAll() {
+				if client.Net.Listener == id && !client.Closed() {
+					_ = b.server.DisconnectClient(client, packets.ErrServerShuttingDown)
+				}
+			}
+		})
+		b.err = b.server.Close()
+	})
 	return b.err
 }
 

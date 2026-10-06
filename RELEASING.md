@@ -3,7 +3,11 @@
 Release source and firmware together from a tagged commit in
 [`slepp/meshcore-aspen`](https://github.com/slepp/meshcore-aspen).
 Firmware versions identify the MeshCore base and profile, such as
-`1.17.1-slp-aspen`. Package manifests record the exact source commit,
+`1.17.1-slp-pine` for Pine. For Aspen and Birch, use the independent product
+versions, supported modem contract and candidate workflow in
+[Product versions and candidate builds](release/README.md);
+[`release/products.json`](release/products.json) is their version authority.
+Package manifests record the exact source commit,
 dependencies, board layout and image hashes.
 
 ## Check the source
@@ -32,8 +36,8 @@ toolchain. Give each profile a separate output directory. Set
 
 | Profile | Package | Build and update instructions |
 | --- | --- | --- |
-| Aspen | ESP32-S3 application BIN and offline owner-provisioning tools | [Public setup](firmware/esp32/PUBLIC_SETUP.md), [WiFi updates](firmware/esp32/ESP_FIELD_UPDATES.md) |
-| Birch | WiFi shared modem and Go host; separate UART modem BIN for queued-protocol clients | [Modem and Go host setup](HOST_GUIDE.md) |
+| Aspen | ESP32-S3 application and separate first-install files | [Product candidate build](release/README.md), [public setup](firmware/esp32/PUBLIC_SETUP.md), [WiFi updates](firmware/esp32/ESP_FIELD_UPDATES.md) |
+| Birch | Go host tools, native bot worker and matching WiFi shared modem from one commit | [Product candidate build and provisioning gate](release/README.md), [modem and Go host setup](HOST_GUIDE.md) |
 | Pine | nRF52840 application UF2, BIN and Legacy BLE DFU ZIP for initialized nodes | [Production Lua](firmware/nrf52840/PRODUCTION-LUA.md), [BLE updates](firmware/nrf52840/BLE-FIELD-UPDATE.md) |
 | Willow | Experimental Linux Hew host sources, including native Base, broker and dashboard | [Build and service setup](experiments/hew-roles/README.md) |
 
@@ -54,7 +58,13 @@ guide and state any remaining qualification gaps in the release description.
 
 ## Create the release
 
-Tag the selected source commit and push the tag. Create a GitHub draft
+For Aspen and Birch, satisfy the product-specific acceptance and publication
+gates in [the candidate guide](release/README.md), including Birch's modem
+provisioning requirement. Obtain approval for the product, tag, source commit
+and exact candidate hashes before creating or publishing its release.
+
+Tag the selected source commit and push the tag. Aspen and Birch require signed
+product tags as specified in their candidate guide. Create a GitHub draft
 release for that tag, then attach the packages, manifests and `SHA256SUMS`.
 Link each package to its source revision and dependency licenses.
 

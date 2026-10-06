@@ -6,10 +6,10 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.0-rc.1` | `aspen-v0.1.0` | `aspen-v0.1.1` |
+| Aspen | `aspen-v0.1.1-rc.1` | `aspen-v0.1.1` | `aspen-v0.1.2` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
 
-Show users **Aspen 0.1.0 RC1 · based on MeshCore 1.17.1**. Subsequent candidates
+Show users **Aspen 0.1.1 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -19,7 +19,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.0-rc.1` or `birch-0.1.0-rc.1`;
+Companion device information reports `aspen-0.1.1` or `birch-0.1.0-rc.1`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
@@ -59,19 +59,23 @@ ELF inspection uses GNU `readelf` from binutils.
 ```sh
 make release-check
 python3 tools/release_candidate.py build --product aspen \
-  --public-ref refs/heads/release/product-versioning
+  --public-ref refs/heads/main
 # Run on Linux x86_64. Build a new image with the public Dockerfile hash label:
 dockerfile_sha=$(sha256sum release/Dockerfile.debian12 | cut -d' ' -f1)
 docker build --iidfile .tmp/debian12-image-id \
   --label "org.meshcore.release.dockerfile-sha256=$dockerfile_sha" \
   -f release/Dockerfile.debian12 release
 python3 tools/release_candidate.py build --product birch \
-  --public-ref refs/heads/release/product-versioning \
+  --public-ref refs/heads/main \
   --native-image "$(cat .tmp/debian12-image-id)"
 python3 tools/release_candidate.py verify .tmp/candidates/EXTRACTED-CANDIDATE
 ```
 
-The bundle name is `aspen-v0.1.0-rc.1-xiao-esp32s3-sx1262-SOURCE12.zip`.
+Use `refs/heads/main` only when it resolves to the selected signed source commit.
+For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
+public ref must still resolve to the checkout's HEAD.
+
+The bundle name is `aspen-v0.1.1-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
 separate initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -98,6 +102,22 @@ from a newer host. Module downloads use a new public dependency cache; compilati
 runs without external network access. Distribution support still requires the
 exact packaged worker's software qualification results. Earlier host-native
 candidates requiring GLIBC 2.43 retain their original receipts and limitations.
+
+Both products now prepare firmware in a fresh tracked-source tree. The builder
+checks Crypto 0.4.0, CayenneLPP 1.6.1 and, where used, base64 1.4.0 against their
+SHA256-pinned registry archives. A changed, missing or extra source file stops
+the build; inspect or restore the named dependency rather than overwriting it
+blindly. PlatformIO's generated `.piopm` metadata must identify the matching
+library and version. The native worker uses freshly extracted package files.
+Lua 5.5.1 and WAMR archives are checked before staging; extracted interpreter
+sources and compiled objects from another build are not reused.
+
+The manifests record the checked archives and the prepared Lua/WAMR source
+files actually used. Relink archives include those inputs, and verification
+checks their bytes offline. Firmware receipts also inventory all resolved
+PlatformIO library files. Other PlatformIO libraries, framework packages and
+toolchains retain their existing resolution rules: their resolved versions and
+compiler hashes are recorded, but this is not a fully pinned PlatformIO build.
 
 For first Aspen installation, follow [offline USB setup](../firmware/esp32/PUBLIC_SETUP.md).
 Keep private SPIFFS setup and identity backups outside the public bundle. Ordinary
@@ -128,9 +148,23 @@ introduced by this release change.
    and candidate hashes. Create a signed component tag and draft release from
    that commit; verify GitHub's resolved tag and asset hashes before publishing.
 
-Adopting this pattern does not publish a release or create/move tags. A final
-`aspen-v0.1.0` requires its own acceptance; replacing `-rc.1` is a source change
-and requires fresh builds, since the embedded product identity changes.
+Adopting this pattern does not publish a release or create/move tags. Changing
+a candidate to a final version is a source change and requires a fresh build,
+since the embedded product identity changes.
+
+## Aspen 0.1.1
+
+This version adds saved Management/bot ACL entries, autonomous repeater-route
+recovery, named Lua file replacement, dashboard contact/activity reporting and
+optional UDP syslog through the existing diagnostics worker. Source bundles
+include the release builder's checked dependency archives and relink inputs.
+Birch's product version is unchanged.
+
+Use `help syslog` to configure logging and `stats system`, `stats memory`,
+`stats psram` and `stats vm` to inspect runtime headroom. App-only updates
+retain identities, settings and installed programs. Initial bootloader,
+partition or filesystem writes are a separate first-install operation; back
+up the node before using them.
 
 ## Historical artifacts
 

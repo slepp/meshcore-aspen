@@ -264,8 +264,13 @@ bool packageHeader(const char *source, size_t size, MastPackageMetadata &metadat
 bool inspectMetadataFile(const char *path, size_t expectedSize, MastPackageMetadata &metadata,
                          char *error, size_t capacity) {
   auto file = SPIFFS.open(path, "r");
-  if (!file || file.size() != expectedSize) {
-    snprintf(error, capacity, "package source file unavailable or size changed");
+  if (!file) {
+    snprintf(error, capacity, "source file unavailable");
+    return false;
+  }
+  if (file.size() != expectedSize) {
+    snprintf(error, capacity, "source size changed: expected=%u actual=%u",
+             unsigned(expectedSize), unsigned(file.size()));
     return false;
   }
   char line[256]{};
@@ -274,7 +279,7 @@ bool inspectMetadataFile(const char *path, size_t expectedSize, MastPackageMetad
     const int value = file.read();
     if (value < 0) {
       file.close();
-      snprintf(error, capacity, "package source metadata read incomplete");
+      snprintf(error, capacity, "source metadata read incomplete");
       return false;
     }
     if (value == '\n') break;
@@ -315,7 +320,7 @@ void MastSource::fail(const char *message) {
 #if ONCHIP_BOT_SINGLE_SESSION
   if (validator().sourceSuspended()) {
     if (validator().recoverSource()) phase_ = Phase::Recover;
-  } else commandBotService().setCommandAdmission(true);
+  } else commandBotService().setRuntimeAdmission(wasmRuntime_, true);
 #endif
   snprintf(outcome_, sizeof(outcome_), "Error: %.183s", message);
   Serial.printf("Mast source: %s\n", outcome_);
@@ -328,20 +333,19 @@ void MastSource::liveFailed(const char *message) {
     publication_ = 0;
   }
 #if ONCHIP_BOT_SINGLE_SESSION
-  bot.setCommandAdmission(false);
+  bot.setRuntimeAdmission(wasmRuntime_, false);
   if (validator().sourceSuspended() && validator().recoverSource()) phase_ = Phase::Recover;
-  else if (!validator().sourceSuspended()) bot.setCommandAdmission(true);
-#elif defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
-  bot.setCommandAdmission(wasmRuntime_);
+  else if (!validator().sourceSuspended()) bot.setRuntimeAdmission(wasmRuntime_, true);
 #else
-  if (bot.sourceReady()) bot.setCommandAdmission(true);
+  if (bot.sourceReady()) bot.setRuntimeAdmission(wasmRuntime_, !startupPending_);
 #endif
   livePending_ = ++liveRetries_ <= 3;
   retryAt_ = millis() + 1000 * liveRetries_;
-  snprintf(outcome_, sizeof(outcome_), "Error: %.127s; %s",
+  snprintf(outcome_, sizeof(outcome_), "Error: %.119s; %s",
            message, livePending_ ? "live retry pending" :
            startupPending_ ?
-             (wasmRuntime_ ? "use source wasm retry; startup blocked" : "use source retry; startup blocked") :
+             (wasmRuntime_ ? "use source wasm retry or source wasm remove; startup blocked" :
+                             "use source retry or source remove; startup blocked") :
              (wasmRuntime_ ? "use source wasm retry; prior live retained" : "use source retry; prior live retained"));
   Serial.printf("Mast source: %s\n", outcome_);
 }
@@ -426,8 +430,8 @@ void MastSource::publishReadiness() {
   if (!fault[0] && wasmBlocked)
     fault = "Error: retained Wasm selection/journal unavailable; restore Wasm-enabled firmware";
 #endif
-  commandBotService().setSourceDeploymentState(luaReady && wasmReady,
-      sealed_ || startupPending_ || wasmBlocked, fault);
+  commandBotService().setSourceDeploymentState(luaReady, sealed_ || startupPending_,
+                                               wasmReady, wasmBlocked, fault);
 }
 bool MastSource::save(const Deployment &deployment, const Upload &upload) {
   Journal next{deployment, upload};
@@ -465,7 +469,7 @@ bool MastSource::recoveryRequired() const {
 #endif
 bool MastSource::startCopy(const char *from, const char *to, size_t size, Phase phase) {
 #if ONCHIP_BOT_SINGLE_SESSION
-  commandBotService().setCommandAdmission(false);
+  commandBotService().setRuntimeAdmission(wasmRuntime_, false);
   commandBotService().cancelJobs();
   snprintf(copyFrom_, sizeof(copyFrom_), "%s", from ? from : "");
   snprintf(copyTo_, sizeof(copyTo_), "%s", to);
@@ -529,7 +533,11 @@ bool MastSource::metadata(uint8_t slot, MastPackageMetadata &value, char *error,
     snprintf(error, capacity, "source metadata slot unavailable");
     return false;
   }
-  if (!inspectMetadataFile(slotPath(slot), deployed_.sizes[slot], value, error, capacity)) return false;
+  char detail[96]{};
+  if (!inspectMetadataFile(slotPath(slot), deployed_.sizes[slot], value, detail, sizeof(detail))) {
+    snprintf(error, capacity, "%.27s: %.55s", slotPath(slot), detail);
+    return false;
+  }
   if (wasmRuntime_ != !strcmp(value.runtime, "wamr-2.4.1")) {
     snprintf(error, capacity, "durable package runtime does not match source selector");
     return false;
@@ -770,7 +778,9 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     MastPackageMetadata value;
     char error[96]{};
     if (!metadata(deployed_.active, value, error, sizeof(error))) {
-      snprintf(reply, capacity, "Error: %.100s", error); return;
+      snprintf(reply, capacity, "Error: %.100s; %s source%s remove", error,
+               livePending_ ? "wait for retries, then use" : "use", wasmRuntime_ ? " wasm" : "");
+      return;
     }
     if (!value.present) {
       respond(value.bundled ? (wasmRuntime_ ? "EMPTY schema=none" : "BUNDLED schema=none") : "PLAIN schema=unknown"); return;
@@ -1068,8 +1078,12 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
       MastPackageMetadata active, target;
       char error[96]{};
       if (!metadata(deployed_.active, active, error, sizeof(error)) ||
-          !metadata(candidate, target, error, sizeof(error)) ||
-          !compatible(active, target, true, error, sizeof(error))) {
+          !metadata(candidate, target, error, sizeof(error))) {
+        snprintf(reply, capacity, "Error: %.100s; use source%s remove",
+                 error, wasmRuntime_ ? " wasm" : "");
+        return;
+      }
+      if (!compatible(active, target, true, error, sizeof(error))) {
         snprintf(reply, capacity, "Error: %.100s", error); return;
       }
     }
@@ -1120,7 +1134,7 @@ void MastSource::serviceLoop() {
     if (wasmSource_->phase_ != Phase::Idle || wasmSource_->livePending_) return;
   }
   auto &bot = commandBotService();
-  if (sealed_) { if (!wasmRuntime_) bot.setCommandAdmission(false); return; }
+  if (sealed_) { bot.setRuntimeAdmission(wasmRuntime_, false); return; }
   if (packageFetch.pending && packageFetch.wasm == wasmRuntime_) {
     BotHttpsFetchResult result{};
     if (!bot.pollPackageFetch(result)) {
@@ -1206,7 +1220,7 @@ void MastSource::serviceLoop() {
       bot.releaseSourcePublication(publication_);
       publication_ = 0;
     }
-    bot.setCommandAdmission(result.ok);
+    bot.setRuntimeAdmission(wasmRuntime_, result.ok);
     if (!result.ok) {
       livePending_ = false;
       liveActive_ = false;
@@ -1344,7 +1358,7 @@ void MastSource::serviceLoop() {
       strcpy(outcome_, "source saved; bot disabled; loads on next enabled boot");
       return;
     }
-    bot.setCommandAdmission(false);
+    bot.setRuntimeAdmission(wasmRuntime_, false);
     if (!bot.sourceReady()) return;
     if (startupPending_) {
       MastPackageMetadata active;
@@ -1393,7 +1407,7 @@ void MastSource::serviceLoop() {
       publication_ = 0; publicationDurable_ = false; offlinePublication_ = false;
       liveActive_ = true;
       startupPending_ = false;
-      bot.setCommandAdmission(true);
+      bot.setRuntimeAdmission(wasmRuntime_, true);
     }
   }
 }

@@ -156,6 +156,16 @@ func TestPublicWireRFAndPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 		checkPublicPacket(t, payload)
+		object := decodeObject(t, payload)
+		if object["route"] == "F" && object["path"] != nil {
+			t.Fatal("flood reception included a direct-route path")
+		}
+		if object["route"] == "D" {
+			path, ok := object["path"].([]any)
+			if !ok || len(path) != 2 || path[0] != "aabbcc" || path[1] != "123456" {
+				t.Fatal("direct reception did not include lowercase three-byte hop hashes")
+			}
+		}
 		item.snr, item.rssi = -32, 127
 		if _, err := o.publicPacket(item); err == nil {
 			t.Fatal("reflection counted as RF")
@@ -522,7 +532,7 @@ func verifyNativeObserverFixture(t *testing.T, directory string) {
 	reader := connectTestClient(t, address, "test-reader", "test-password")
 	topic := "meshcore/YYC/" + identity.Key
 	messages := subscribe(t, reader, topic+"/packets")
-	for _, name := range []string{"packet.json", "trace.json", "capture.json"} {
+	for _, name := range []string{"packet.json", "flood.json", "trace.json", "capture.json"} {
 		payload, err := os.ReadFile(filepath.Join(directory, name))
 		if err != nil {
 			t.Fatal(err)

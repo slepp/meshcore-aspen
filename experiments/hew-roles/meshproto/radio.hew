@@ -8,6 +8,43 @@ import hostlib.binary;
 
 import std.math;
 
+pub fn validate_profile(profile: bytes) -> Result<(), string> {
+    if profile.len() != 18 {
+        return .Err("profile must contain exactly 18 bytes");
+    }
+    let frequency = integer(profile, 0, 4);
+    if frequency < 150000000 || frequency > 960000000 {
+        return .Err(f"frequency={frequency} Hz must be 150000000..960000000");
+    }
+    let bandwidth = integer(profile, 4, 8);
+    if bandwidth != 7800 && bandwidth != 7810 && bandwidth != 10400 && bandwidth != 10420 &&
+        bandwidth != 15600 && bandwidth != 15630 && bandwidth != 20800 && bandwidth != 20830 &&
+        bandwidth != 31250 && bandwidth != 41700 && bandwidth != 62500 && bandwidth != 125000 &&
+        bandwidth != 250000 && bandwidth != 500000 {
+        return .Err(f"bandwidth={bandwidth} Hz is not a supported LoRa bandwidth");
+    }
+    if profile[8] < 5 || profile[8] > 12 {
+        return .Err(f"SF={profile[8]} must be 5..12");
+    }
+    if profile[9] < 5 || profile[9] > 8 {
+        return .Err(f"CR={profile[9]} must be 5..8");
+    }
+    if profile[10] > 30 {
+        return .Err(f"reported TX power={profile[10]} dBm must be 0..30");
+    }
+    let factor = match binary.finite_float32(binary.slice(profile, 11, 15).expect("profile factor")) {
+        .Some(value) => value,
+        .None => return .Err("airtime factor must be finite and nonnegative"),
+    };
+    if factor < 0.0 {
+        return .Err("airtime factor must be finite and nonnegative");
+    }
+    if profile[15] > 1 {
+        return .Err(f"CAD flag={profile[15]} must be 0 or 1");
+    }
+    .Ok(())
+}
+
 pub fn packet_score(snr: f64, sf: i64, size: i64) -> f64 {
     if sf < 7 || sf > 12 {
         return 0.0;

@@ -110,6 +110,7 @@ struct BotAirSnapshot {
 
 struct BotEvent {
   enum Kind : uint8_t { Command, Startup, Connectivity, Message, NodeStatus, Scheduled } kind = Command;
+  uint8_t runtimeMask = 0;
   uint32_t eventEpoch = 0;
   char message[BotTextLimit + 1]{};
   char name[BotNameLimit + 1]{}, arguments[BotArgumentsLimit + 1]{};

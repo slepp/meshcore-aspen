@@ -187,12 +187,8 @@ fn config(root: string) -> Config {
     if worker == "-" && (!bot_home.is_empty() || !bot_default.is_empty()) {
         panic("bot_home and bot_default require the verified native worker");
     }
-    let frequency = wire.uint(wire.cut(profile, 0, 4));
-    let bandwidth = wire.uint(wire.cut(profile, 4, 8));
-    let factor = wire.uint(wire.cut(profile, 11, 15));
-    let valid_bandwidth = bandwidth == 7800 || bandwidth == 7810 || bandwidth == 10400 || bandwidth == 10420 || bandwidth == 15600 || bandwidth == 15630 || bandwidth == 20800 || bandwidth == 20830 || bandwidth == 31250 || bandwidth == 41700 || bandwidth == 62500 || bandwidth == 125000 || bandwidth == 250000 || bandwidth == 500000;
-    if frequency < 150000000 || frequency > 960000000 || !valid_bandwidth || profile[8] < 5 || profile[8] > 12 || profile[9] < 5 || profile[9] > 8 || profile[10] > 30 || profile[15] > 1 || !(factor < 2139095040 || factor == 2147483648) {
-        panic("invalid shared modem profile; check frequency, bandwidth, SF, CR, power, airtime factor and CAD");
+    if let .Err(error) = radio.validate_profile(profile) {
+        panic(f"invalid shared modem profile: {error}");
     }
     Config { address: address, port: port, profile: profile, worker: worker, password: password, admin: admin, width: width, region: region, channel: channel, run_ms: run_ms, native_airtime: native_airtime, bot_home: bot_home, bot_default: bot_default, relay_options: relay_options, room_options: room_options, bot_name: bot_name, channel_name: channel_name, native_preserve: native_preserve, imported: imported, observer_options: observer_options }
 }

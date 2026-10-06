@@ -47,8 +47,8 @@ def load_config(path):
         if not isinstance(feed, dict):
             raise ValueError("Each feed must be an object")
         name, host, port = feed.get("name"), feed.get("host"), feed.get("port")
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
-            raise ValueError("Feed name must be a short identifier")
+        if not isinstance(name, str) or not re.fullmatch(r"[\x20-\x7e]{1,64}", name):
+            raise ValueError("Feed name requires 1–64 printable ASCII characters matching the radio name")
         if not isinstance(host, str) or not host or len(host) > 253:
             raise ValueError(f"Feed {name} requires a host")
         if type(port) is not int or not 1 <= port <= 65535:

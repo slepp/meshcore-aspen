@@ -103,6 +103,18 @@ void telemetryLoop(RadioDashboard &dashboard, const RadioDashboard::RadioStatus 
   initialize();
   const auto now = uptime();
   publisher.poll(now);
+  static TelemetryError lastError = TelemetryError::Disabled;
+  const auto &status = publisher.status();
+  if (status.error != lastError) {
+    if (status.error == TelemetryError::None) diagnosticEvent("Telemetry upload recovered");
+    else if (status.error != TelemetryError::Disabled) {
+      char event[96];
+      snprintf(event, sizeof(event), "Telemetry upload unavailable: %s HTTP=%u",
+               telemetryErrorName(status.error), status.httpStatus);
+      diagnosticEvent(event);
+    }
+    lastError = status.error;
+  }
   if (!publisher.config().enabled && !publisher.status().pending) releaseRoleStorage(workspace);
   if (!publisher.due(now)) return;
   if (!radio.wifi_connected) { publisher.drop(now, TelemetryError::Wifi); return; }

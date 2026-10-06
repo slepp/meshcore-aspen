@@ -70,6 +70,26 @@ class WorkerProcessTest(unittest.TestCase):
         self.addCleanup(cleanup)
         return process
 
+    def test_hello_spreading_and_reported_power_boundaries(self):
+        for sf, power, valid in ((5, 22, True), (6, 23, True), (7, 18, True),
+                                 (12, 30, True), (4, 18, False), (13, 18, False),
+                                 (7, 31, False)):
+            with self.subTest(sf=sf, reported_power=power):
+                hello = bytearray(self.hello)
+                hello[4 + 75] = sf
+                hello[4 + 77] = power
+                process = self.start()
+                process.stdin.write(hello)
+                process.stdin.flush()
+                if valid:
+                    self.ready(process, hello=False)
+                    self.stop(process)
+                else:
+                    self.assertEqual(receive(process.stdout), (0x84, b"\x01"))
+                    process.stdin.close()
+                    self.assertEqual(process.wait(timeout=8), 1)
+                    self.assertIn("invalid HELLO", process.stderr.read().decode())
+
     def test_dormant_candidate_never_transmits_before_explicit_activation(self):
         process = self.start(dormant=True)
         process.stdin.write(self.hello)
@@ -661,10 +681,10 @@ class WorkerProcessTest(unittest.TestCase):
             metadata, separator, outcome = status.partition("; ")
             self.assertTrue(separator, status)
             self.assertIn(" active=0 ", metadata)
-            self.assertTrue(outcome.startswith("Error: package source file unavailable or size changed; "), status)
-            if outcome == "Error: package source file unavailable or size changed; use source retry; startup blocked":
+            self.assertTrue(outcome.startswith("Error: /command-bot/a.lua: source file unavailable; "), status)
+            if outcome == "Error: /command-bot/a.lua: source file unavailable; use source retry or source remove; startup blocked":
                 break
-            self.assertEqual(outcome, "Error: package source file unavailable or size changed; live retry pending")
+            self.assertEqual(outcome, "Error: /command-bot/a.lua: source file unavailable; live retry pending")
             self.assertLess(time.monotonic(), deadline, "missing-source retries did not terminate")
             time.sleep(0.05)
         self.assertTrue(self.admin(second, "advert.zerohop", faulted=True).startswith("Error:"))

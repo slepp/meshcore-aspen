@@ -29,6 +29,7 @@ def build():
             str(HERE / "examples/fault.c"), "-o", str(OUT / f"fault-{fault}.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/events.c"), "-o", str(OUT / "c-events.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/dispatch.c"), "-o", str(OUT / "c-dispatch.wasm")])
+    commands.append(["clang"] + common + [str(HERE / "examples/suspension.c"), "-o", str(OUT / "c-suspension.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/rpc_args.c"), "-o", str(OUT / "c-rpc-args.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/owner.c"), "-o", str(OUT / "c-owner.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/admin.c"), "-o", str(OUT / "c-admin.wasm")])

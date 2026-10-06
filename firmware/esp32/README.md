@@ -14,8 +14,8 @@ The [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads) is
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.0 RC1** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.0-rc.1`,
+New source builds use the **Aspen 0.1.1** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.1`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
@@ -75,6 +75,10 @@ Do not put secrets in shell history, public build logs or source control.
 The mast password is separate from role passwords. Trusted companion keys
 and the signed-role operator key serve different authorization paths; see
 [mast administration](MAST_ADMIN.md) before enabling remote changes.
+For multiple operators, use Management's `setperm KEY64 3` for each full
+public key and verify with `get acl KEY64`. This grants passwordless
+Management and command-bot administration; configure repeater/room ACLs
+separately. See [Management ACL](MAST_ADMIN.md#management-acl).
 
 Build an administrable bot image with Lua and the optional Wasm interpreter:
 

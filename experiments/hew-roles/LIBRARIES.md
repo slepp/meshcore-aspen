@@ -101,6 +101,12 @@ python3 -B tests/event_performance.py \
   --report build/event-performance-results.json
 ```
 
+Synthetic state and profiler sockets use private temporary directories under
+the source root. For a long checkout path, set `MESHCORE_NATIVE_TEST_STATE_ROOT`
+to an existing short absolute directory; complete Unix socket paths must fit
+107 bytes on Linux. Executables and the path-bound worker stay in the selected
+build directory.
+
 Each isolated fleet runs a host and its native worker, two Base companions,
 a broker and a dashboard with six synthetic identities. Each Base starts with
 167 contacts and 256 retained messages. The script waits for combined readiness,

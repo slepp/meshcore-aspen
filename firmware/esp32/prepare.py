@@ -10,6 +10,22 @@ import shutil
 import subprocess
 import sys
 
+COMPANION_DASHBOARD_BRIDGE = """
+#include "DashboardContacts.h"
+namespace onchip {
+void companionDashboardContacts(RadioDashboard::RadioStatus& status) {
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+  status.contacts_available = false;
+  status.contact_count = status.contact_total = 0;
+  if (!meshInstance || lifecycleBusy(Role::Companion)) return;
+  copyDashboardContacts<ContactInfo>(*meshInstance, status);
+#else
+  (void)status;
+#endif
+}
+}
+"""
+
 
 def check_target(upstream, target):
     root = Path(__file__).resolve().parents[2]
@@ -229,6 +245,10 @@ def generate(upstream, target):
                         '                     radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");',
                         '  // Physical RX gain is owned and reported by the shared modem.')
                 if role != "companion":
+                    for timer in ("next_flood_advert", "next_local_advert"):
+                        text = replace_once(
+                            text, f"if ({timer} && millisHasNowPassed({timer}))",
+                            f"if (onchip::automaticAdvertsEnabled() && {timer} && millisHasNowPassed({timer}))")
                     text = body(text, f"bool {cls}::formatFileSystem()",
                                 '  Serial.println("Use the local deferred role erase command");\n  return false;')
                     text = body(text, f"void {cls}::setTxPower(", '  Serial.println("Role TX power changes are unsupported");')
@@ -398,6 +418,7 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
             (native / name).write_text(text)
         wrapper = f"""// Generated from pinned native application; original notices remain in {role}/.
 #include "Runtime.h"
+#include "RoleProfile.h"
 #include "ScopedFS.h"
 #include "CommandPolicy.h"
 #include "CompanionSessions.h"
@@ -498,7 +519,7 @@ static void construct() {{
         wrapper += f"  reflectSharedConfiguration(*mesh.getNodePrefs(), {role}Radio());\n"
         wrapper += "  report();\n"
         if role != "companion":
-            wrapper += "  mesh.sendSelfAdvertisement(16000, false);\n"
+            wrapper += "  if (automaticAdvertsEnabled()) mesh.sendSelfAdvertisement(16000, false);\n"
         wrapper += f"""  return true;
 }}
 void {role}Loop() {{
@@ -591,7 +612,7 @@ RolePasswordUpdate {role}SetPassword(const char* password) {{
 }}
 """
         if role == "companion":
-            wrapper += """
+            wrapper += COMPANION_DASHBOARD_BRIDGE + """
 namespace onchip {
 unsigned companionChannelCount() { return MAX_GROUP_CHANNELS; }
 bool companionChannelInfo(unsigned index, char name[32], uint8_t fingerprint[8]) {

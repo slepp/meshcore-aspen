@@ -21,6 +21,7 @@ import (
 	meshcore "github.com/meshcore-go/meshcore-go"
 	protocol "github.com/meshcore-go/meshcore-go/companion"
 	"github.com/meshcore-go/meshcore-go/hardware"
+	"meshcore.local/meshcore/internal/policy"
 	rolestate "meshcore.local/meshcore/internal/state"
 )
 
@@ -135,6 +136,60 @@ func (p *hewBaseProcess) line() string {
 		p.t.Fatalf("Hew companion exited: %s (%v)", p.stderr.String(), p.output.Err())
 	}
 	return p.output.Text()
+}
+
+func TestHewBaseReceivePolicyDifferential(t *testing.T) {
+	if os.Getenv("MESHCORE_HEW_BASE_BIN") == "" {
+		t.Skip("set MESHCORE_HEW_BASE_BIN")
+	}
+	id := testIdentity(1)
+	s, err := New(id, newTestRadio(), testConfig(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.mu.Lock()
+	data, err := json.Marshal(s.state)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "companion.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	seed := id.Seed()
+	p := startHewBase(t, path, seed[:])
+	for _, sf := range []uint8{5, 6, 7, 12} {
+		for _, snr := range []float64{-32, -7.5, 12} {
+			for _, base := range []float32{0, .1, 2, 20} {
+				prefs := policy.Defaults(policy.Companion)
+				prefs.RXDelay = base
+				for _, airtime := range []uint32{1, 100, 50000} {
+					score := float32(hardware.PacketScore(snr, sf, 64))
+					if sf < 7 && score != 0 {
+						t.Fatalf("SF%d score=%g, want zero", sf, score)
+					}
+					delay, err := policy.RXDelayMillis(prefs, score, airtime)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := int64(delay)
+					if want < 50 {
+						want = 0
+					} else if want > 32000 {
+						want = 32000
+					}
+					p.send(fmt.Sprintf("DELAY %d %g 64 %d %g", sf, snr, airtime, base))
+					got, err := strconv.ParseInt(p.line(), 10, 64)
+					if err != nil || got != want {
+						t.Fatalf("SF%d SNR%g base%g airtime%d: got %d (%v), want %d",
+							sf, snr, base, airtime, got, err, want)
+					}
+				}
+			}
+		}
+	}
 }
 
 func (p *hewBaseProcess) events(line string) map[int64][][]byte {

@@ -753,6 +753,9 @@ def main():
     named_install.add_argument("source", type=Path)
     named_remove = sub.add_parser("source-remove", help="remove one named Lua source; retain the rest")
     named_remove.add_argument("name")
+    named_export = sub.add_parser("source-export", help="read one installed Lua file without changing the selected source set")
+    named_export.add_argument("name")
+    named_export.add_argument("destination", type=Path)
     sub.add_parser("source-list", help="list separately installed Lua sources and their byte lengths")
     for action in ("package-install", "update"):
         package_install_parser = sub.add_parser(action, help="validate and atomically install a source package")
@@ -882,7 +885,7 @@ def main():
         elif args.action == "install":
             source = read_file(args.source, SOURCE_LIMIT)
             install(client, source)
-        elif args.action in ("source-install", "source-remove", "source-list"):
+        elif args.action in ("source-install", "source-remove", "source-list", "source-export"):
             from tools.hardware import lua_sources
             if args.runtime != "lua":
                 raise ValueError("Named sources require the Lua runtime")
@@ -902,6 +905,14 @@ def main():
             else:
                 if not lua_sources.NAME.fullmatch(args.name):
                     raise ValueError("Lua source name requires 1..24 lowercase identifier bytes")
+                if args.action == "source-export":
+                    if args.name not in parts:
+                        raise ValueError("Lua source name is not installed")
+                    if parts[args.name] is None:
+                        raise ValueError("Lua source refers to bundled commands, not an installed file")
+                    write_new_file(args.destination, parts[args.name], 0o600)
+                    print(f"Wrote installed Lua source {args.name} to {args.destination}")
+                    return
                 if args.action == "source-install":
                     parts[args.name] = read_file(args.source, SOURCE_LIMIT)
                     source = lua_sources.encode(parts)

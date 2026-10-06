@@ -57,8 +57,8 @@ Run commands from the repository root unless a guide says otherwise.
 The root `Makefile` provides setup/build entry points; component Makefiles
 are selected with `make -C firmware/esp32`, `make -C firmware/nrf52840` or
 the other documented component directory.
-The root `meshcore_kiss_monitor.py` and `meshcore_kiss_broker.py` remain
-standalone tools. The chat entry point is
+The root `meshcore_kiss_monitor.py` is a standalone packet monitor.
+The chat entry point is
 `make -C cmd/meshcore-chat run ARGS='...'`.
 
 ESP32 builds stage upstream MeshCore plus local sources into `.tmp/` build

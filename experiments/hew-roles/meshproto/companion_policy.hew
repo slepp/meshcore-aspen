@@ -1,6 +1,8 @@
 //! Native companion receive and retransmit timing; source admission is separate.
 import meshproto.companion_state as state;
 
+import meshproto.radio;
+
 import std.encoding.json;
 
 import std.crypto.crypto;
@@ -11,17 +13,10 @@ import wire;
 
 pub fn receive_delay(prefs: json.Value, snr: f64, sf: i64, size: i64, airtime: i64) -> i64 {
     let base = state.decimal(prefs, "rxdelay") as f32;
-    if base == 0.0 || sf < 7 || sf > 12 {
+    if base == 0.0 {
         return 0;
     }
-    let threshold = -7.5 - ((sf - 7) as f64) * 2.5;
-    var score = ((snr - threshold) / 10.0) * (1.0 - (size as f64) / 256.0);
-    if score < 0.0 {
-        score = 0.0;
-    }
-    if score > 1.0 {
-        score = 1.0;
-    }
+    let score = radio.packet_score(snr, sf, size);
     let exponent = (0.85 as f32) - (score as f32);
     let power = math.pow(base as f64, exponent as f64) as f32;
     let delay = ((power as f64) - 1.0) * (airtime as f64);

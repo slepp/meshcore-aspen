@@ -33,6 +33,47 @@ The native HTTPS image also supports [optional device metrics](TELEMETRY.md)
 through `telemetry help`. It is disabled until explicitly provisioned through
 this same RF/web management backend; role administrator ACLs are unchanged.
 
+### Remote logs and memory checks
+
+On an ESP32 mast, enter these commands through authenticated Management RF
+or the browser's command console:
+
+```text
+set syslog 192.0.2.10:514
+get syslog
+syslog test
+get syslog.stats
+get diagnostics
+stats system
+stats memory
+stats psram
+stats vm
+```
+
+Replace the destination with your UDP syslog collector's IPv4 address. The
+default port is 514. The setting survives reboot; `set syslog off` stops remote
+logging. The collector receives RFC 5424 `local0.info` messages from the device
+hostname, with a missing timestamp (`-`); use the collector's receipt time.
+Allow UDP from the radio on the collector and keep this unencrypted traffic
+on a trusted network.
+
+Logs include boot/reset reason, WiFi and UTC transitions, companion connection
+errors, telemetry error/recovery and numeric Lua/Wasm execution measurements.
+Packet contents, caller commands, script error text and credentials are not
+forwarded. UDP is fire and forget: `submitted` counts local stack submissions,
+not reception. `failed`, `limited` and `offline` count transport/encoding
+failures, the eight-message-per-second limit and disconnected WiFi.
+
+The existing diagnostics worker drains an eight-record queue without blocking
+radio dispatch. Queue data uses PSRAM when available; the control block and
+4 KiB worker stack remain internal. Full queues and unavailable USB output
+increment the cumulative `get diagnostics` counters. `stats system` reports
+the reset reason, maximum active loop duration and loop-start gap in
+microseconds, remaining diagnostics stack low-water in bytes and whether the
+queue uses PSRAM. These measurements reset at reboot. Use `stats memory`'s
+minimum free heap and largest block alongside `stats vm` and `stats psram`
+when checking headroom during source updates or HTTPS activity.
+
 ## Administrator workflow
 
 ### CLI prerequisites
@@ -117,9 +158,12 @@ still reports `verified` is not a completed reboot; inspection also requires
 the new boot's idle update state and no running-hash read error.
 
 In the MeshCore app, use the Management contact's console for mast commands.
-Start with `status`, `help wifi`, `get name`, `get owner.info` or `role help`.
-Bare command namespaces return a usage error, and `help TOPIC` gives quick
-syntax. Standard name/owner and WiFi commands map to Management's own settings;
+Start with `status`, `roles`, `help`, `get name`, `get owner.info` or `role help`.
+`help` returns the first of three topic-index pages; request `help 2` or
+`help 3` for the rest. `help TOPIC [PAGE]` returns one requested syntax page,
+including `help wifi 2` for text setters and `help wifi 3` for hex setters.
+Other bare command namespaces return a usage error. Standard name/owner and
+WiFi commands map to Management's own settings;
 repeat/delay/region settings still belong to the Relay or Room.
 See the [app endpoint compatibility table](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 
@@ -236,6 +280,13 @@ make -C firmware/esp32 beta-test
 make -C firmware/esp32 beta-build
 ```
 
+`beta-test` runs host-native fixtures, including requested help pages, named
+role readback, literal and hex WiFi setters, safe SSID rendering, private
+password readback and the 145/146-byte tagged boundary. It does not connect
+to a device or transmit RF.
+To run just the Management CLI fixtures, use
+`make -C firmware/esp32 admin-cli-core-test`.
+
 `beta-build` uses a public build-only profile and does not upload. An operator
 build uses `bot-firmware`, an explicit configuration, and
 `ENV=Xiao_S3_WIO_onchip_beta`. Supply a nonempty `ONCHIP_MAST_PASSWORD`
@@ -307,8 +358,9 @@ snapshot/page semantics.
 
 An authenticated private DM `!admin bot help` to the **command-bot** identity
 uses the same full-key trust, durable replay state and backend as mast
-management. Establish trust through the existing management CLI/web path;
-channel nicknames, group membership and Lua declarations cannot authorize it.
+management. Grant the native administrator role with `setperm KEY64 3` on
+Management's authenticated CLI/web connection (see [Management ACL](#management-acl)).
+Channel nicknames, group membership and Lua declarations cannot authorize it.
 `!admin bot status`, `bot stats`, `bot log`, `bot admission`, `bot policy`,
 `bot limits`, `bot mesh`, `bot contention`, `source status`, `roles MASK`,
 `bot cancel` and `reboot` provide practical inspection/configuration/recovery.
@@ -724,7 +776,7 @@ extensions, but transit community repeaters must only need native MeshCore
 packet/routing behavior, never an upload handler or our firmware.
 
 RF administration uses native `ANON_REQ` login: timestamp and password, or
-an empty password from the full trusted companion key. Login replies use the
+an empty password from a full administrator public key. Login replies use the
 pinned native 13-byte response layout, including path-return framing for flood
 requests. Subsequent encrypted `TXT_MSG` CLI messages support plain and CLI
 text types. Pinned reply-route/scope policy and authenticated native PATH
@@ -738,11 +790,66 @@ No arbitrary-file use of native `MULTIPART` is introduced.
 Source chunks and receipts are encrypted CLI text inside those same native
 packets; their private grammar does not change the public wire protocol.
 
-An authenticated CLI session lasts 15 minutes. Four ordinary full RF principals
-and the separately reserved compiled owner have durable timestamp high-water
-marks. Authenticated `auth forget KEY` removes a noncompiled replay record and
+### Management ACL
+
+Management supports five persisted native ACL entries in addition to the
+existing singleton `trust KEY|none` and compiled recovery owner. To grant five
+operators, repeat these commands for each operator's **full 64-hex public key**
+on an authenticated Management connection:
+
+```text
+setperm KEY64 3
+get acl KEY64
+```
+
+The readback reports `permissions=3 admin=1`. Each operator can then use
+`login mast ""` and encrypted native CLI commands on Management, and
+`!admin bot status` in a private authenticated DM to the command-bot identity.
+No password or private-key import is required to grant a public key.
+Repeater and room have separate native ACLs: configure `setperm KEY64 3` on
+each of those role connections independently.
+
+`setperm` accepts a full key and a decimal permission byte, 0..255. It uses
+MeshCore's native lower-two-bit role: 0 removes the entry, 1 is read-only,
+2 is read-write, and 3 is administrator. Only the administrator role grants
+passwordless Management login or bot owner authority; other permission bits
+do not promote a guest/read-only/read-write caller. Management does not add
+read-only or read-write login modes. `get acl` reports capacity; `get acl 1`
+through `get acl 5` inspect one entry per reply.
+
+Use `setperm KEY64 0` to revoke an ACL grant. New passwordless logins and new
+bot owner commands are denied; existing Management sessions retain their
+normal 15-minute expiry, and knowledge of the Management password still
+allows password login. Replay timestamps are retained. If the key also has
+legacy singleton trust, run `trust none` before downgrading/removing it;
+otherwise `setperm` returns an error rather than claiming revocation.
+The compiled recovery owner's authority cannot be revoked this way.
+`trust KEY` replaces only the legacy singleton, and `trust none` clears only
+that singleton; neither modifies the ACL.
+
+ACL changes are committed and read back before live admission. An ACL storage
+error disables ACL-derived authority and reports an error; compiled and valid
+legacy recovery authority remain available. After an uncertain write, inspect
+the saved `mc-mast-admin/acl` record and restart before retrying. A valid
+committed change may apply after restart even if its readback failed. A
+corrupt record is never replaced with default grants by these commands.
+
+The Management permission record is a checked NVS extension of the native
+ACL semantics. Upstream `ClientInfo::isAdmin()` determines authority.
+Upstream `ClientACL::save/load` use role-local contact files, have no checked
+commit result and accept truncated reads, so Management does not share those
+files or their transient shared-secret/route state.
+
+An authenticated CLI session lasts 15 minutes. Six ordinary full RF principals
+and the separately reserved compiled owner can have simultaneous sessions.
+Ten noncompiled principals have durable timestamp high-water marks: the
+existing four version-1 replay slots remain intact, and six additional slots
+accommodate five ACL owners plus the retained singleton. Version-1 settings,
+WiFi, singleton trust and the reserved compiled-owner replay record retain
+their existing layouts and contents; no identity changes are made.
+Authenticated `auth forget KEY` removes a noncompiled replay record and
 session to free a slot; it does not revoke retained credentials. Use a stable companion identity rather
-than generating another identity for every command. A stock companion owns
+than generating another identity for every command. A companion owns
 its native CLI timestamps; keep its RTC synchronized. The raw-KISS reference
 client instead keeps its timestamp alongside its seed and correlates replies
 with a 64-bit CLI tag. Never run concurrent raw-KISS clients sharing the same
@@ -751,10 +858,21 @@ seed/timestamp file.
 If RF login receives no reply, use authenticated web administration or another
 working management connection to run `auth status FULL_PUBLIC_KEY`. It reports
 that key's trust, last accepted timestamp and occupied replay slots.
-`auth status` shows overall occupancy; `auth peer 1` through `auth peer 4` show
-the full keys and timestamps without changing them. If all four slots are
+`auth status` shows overall occupancy; `auth peer 1` through `auth peer 10` show
+the full keys and timestamps without changing them. If all ten replay slots are
 occupied, identify an obsolete principal before using `auth forget KEY`.
-Setting `trust KEY` alone does not free a replay slot.
+Changing permissions or singleton trust alone does not free a replay slot.
+Session capacity rejection does not consume a timestamp; retry after an
+obsolete session expires or use `auth forget` for an obsolete principal.
+A replay commit/readback failure disables native administration until restart.
+
+Host-native checks for ACL permissions, all five Management/bot callers,
+legacy records, reboot, revocation and storage failures:
+
+```sh
+make -C firmware/esp32 admin-cli-core-test ONCHIP_BOT_WASM=0
+make -C firmware/esp32 admin-cli-core-test ONCHIP_BOT_WASM=1
+```
 
 Web Host headers are allowlisted even when Origin matches: configured hostname,
 `.local`, actual WiFi IP, or explicit `ONCHIP_MAST_WEB_HOST`, using the HTTP
@@ -850,11 +968,13 @@ KISS radio, not the target mast; its PHY must match the mast.
 | --- | --- |
 | `status` | Applied/saved native role masks, durable role generation, saved bot selection and effective PHY/generation |
 | `stats [TOPIC]`, `stats help` | Versioned read-only hardware/runtime statistics; named fields and units, no counter reset; see the [stats API](../shared/STATS.md) |
-| `ver`, `board`, `help TOPIC` | Read the firmware profile/platform or quick command syntax; `help wifi` and `wifi help` are equivalent |
+| `ver`, `board`, `help [TOPIC] [PAGE]` | Read the firmware profile/platform or one requested help page; `help` / `help 2` / `help 3` list every topic; `help wifi [PAGE]` and `wifi help [PAGE]` are equivalent |
 | `get name`, `set name TEXT` | Read/save Management's display name, preserving its key |
 | `get owner.info`, `set owner.info TEXT` | Read/save Management's own 0..119-byte owner text; `|` separates lines; native binary owner information uses the same record |
 | `get radio`, `get freq`, `get tx` | Read the effective shared radio configuration |
+| `get autoadvert`, `set autoadvert on\|off` | Read or save/apply the device-wide startup/periodic advert switch; manual app/admin adverts remain available |
 | `roles MASK` | Save mask 0..15: repeater=1, room=2, companion=4, observer=8; preserve the signed role journal |
+| `roles`, `roles list [1\|2]` | Read named applied/saved role bits, then separate bot selection and Management/KISS availability; no save or reboot |
 | `bot status`, `bot key` | Applied/saved bot selection and readiness, or its separate public identity |
 | `bot stats`, `bot admission` | Read-only reply/rejection/VM/notice counters; last admission gate, remaining retry wait, active jobs and distinct throttle/busy counters |
 | `bot diagnostics` | Read-only command serial-log queue/drop counters; no USB connection or counter reset |
@@ -871,7 +991,8 @@ KISS radio, not the target mast; its PHY must match the mast.
 | `role channel ROLE SLOT [off\|NAMEHEX KEY32]` | Read channel metadata or configure a native 128-bit group key; never return the PSK |
 | `apply`, `reboot` | Reboot after the acceptance reply; `apply` uses the saved role selections |
 | `wifi ssid HEX`, `wifi password HEX` | Encrypted RF only; save bounded SSID/password bytes; `-` explicitly selects an open network password |
-| `get wifi.enabled`, `get wifi.ssid`, `get wifi.ip`, `get wifi.status` | Saved enable/credential configuration and current connection readback; status is the Arduino WiFi status number |
+| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit hex aliases; the shorter forms above retain the same hex meaning |
+| `get wifi.enabled`, `get wifi.ssid`, `get wifi.ip`, `get wifi.status` | Saved enable/credential configuration and current connection readback; printable ASCII SSIDs return `> SSID`, other bytes return `> hex HEX`; status is the Arduino WiFi status number |
 | `get wifi.pwd` | Password readback over encrypted Management RF only; do not publish the response or collect it in ordinary diagnostic captures |
 | `set wifi.ssid TEXT`, `set wifi.pwd TEXT` | Save literal text over encrypted Management RF; spaces are retained, and an explicitly empty password selects an open network |
 | `set wifi.enabled 0`, `set wifi.enabled 1` | Save and defer WiFi stop/start until after the response; disabling keeps RF roles/admin running and preserves credentials |
@@ -880,6 +1001,8 @@ KISS radio, not the target mast; its PHY must match the mast.
 | `radio HZ BW_HZ SF CR DBM` | Save and apply the shared PHY after the old-PHY acceptance transmission |
 | `tempradio SECONDS HZ BW_HZ SF CR DBM` | Apply a temporary PHY for 1..3600 seconds, then restore the complete durable profile |
 | `trust FULL_PUBLIC_KEY`, `trust none` | Set/remove the additional persisted full companion key; a compiled trusted key is unchanged |
+| `setperm KEY64 PERMISSIONS` | Save a Management ACL permission byte using MeshCore's native role mask; role 3 grants Management/bot administration, role 0 removes |
+| `get acl [KEY64\|1..5]` | Inspect Management ACL capacity or one full-key permission entry; reports effective administrator authority and retained legacy/compiled trust |
 | `job` | Latest deferred-control outcome, including failures |
 
 PHY ranges are 150..960 MHz, an enumerated SX1262 bandwidth up to 500 kHz,
@@ -895,6 +1018,29 @@ If the response transmission fails, the saved setting can differ from the
 running connection. Inspect `get wifi.enabled`, `wifi status` and `job` before
 retrying.
 HTTP WiFi provisioning is refused by both the page and backend.
+
+Text setters preserve every byte after the separating space, including leading
+and trailing spaces, quotes, backslashes and `|`. They do not unquote text or
+guess hex: `set wifi.ssid 4142` saves the four-character SSID `4142`, while
+`wifi ssid 4142` saves `AB`. CLI input remains printable ASCII. Encode UTF-8 or
+other SSID bytes as hex; SSIDs are 1..32 decoded bytes and cannot contain NUL.
+Passwords accept an explicitly empty value, 8..63 bytes, or 64 ASCII hex
+characters for a PSK. `get wifi.pwd` returns the exact saved value, including
+spaces, only on encrypted Management RF; keep that response private.
+
+With the default 16-hex tag and `|`, each command and reply has **145 content
+bytes** within the 162-byte text limit. A maximum SSID plus password cannot fit
+the combined `wifi SSIDHEX PWDHEX` form: save them separately. A 63-byte password
+fits `wifi password hex HEX` with the tag; a 64-byte PSK in that long alias is
+146 content bytes and does not fit. Use the shorter `wifi password HEX` (142
+bytes) or `set wifi.pwd TEXT` (77 bytes) for that PSK. Neither form drops the tag.
+
+`roles` is the same read-only first page as `roles list 1`. Its `applied/saved`
+pairs describe the boot selection and next-boot selection; `roles list 2`
+shows the bot separately. Management remains available with mask zero.
+Observer is a mask bit, but has no `role config observer` command; KISS is the
+shared modem service, not an RF role or mask bit. `roles N` still **saves a mask**,
+not a list page. Apply saved selections only when you intend to reboot.
 
 ### Runtime role names and keys
 
@@ -928,8 +1074,25 @@ error. Success means **queued**, not delivered or learned by a peer. Adverts
 retain native RTC timestamps: peers may ignore older/equal timestamps, especially
 after a restart without fresh clock synchronization. Confirm actual RF reception
 and peer name readback separately; this command does not repair clocks or claim
-peer learning. It does not alter automatic startup adverts or make plain native
+peer learning. It does not make plain native
 `advert` zero-hop (that command still floods).
+
+To keep a node quiet while retaining its existing contacts, use
+`set autoadvert off`, then check `get autoadvert` for `saved=off live=off`.
+The setting survives restart and suppresses repeater/room startup and periodic
+adverts plus the bot startup advert. It leaves the native per-role advert
+intervals unchanged; `set autoadvert on` resumes them. Companion and Management
+have no automatic adverts. The companion app Advert button, native `advert`,
+and authenticated `role advert ROLE zerohop` still send deliberately.
+Operator-installed Lua/Wasm programs can also explicitly request adverts;
+disable such scheduled requests in those programs if configured.
+
+The setting does not retract an already queued or transmitted advert. Set it
+before changing mesh profiles, allow existing transmissions to finish, and
+restart on the old profile if startup adverts were already queued. Without a
+saved setting, automatic adverts retain their previous enabled behavior.
+An unreadable or invalid setting disables automatic adverts at boot and reports
+an error; repair it with `set autoadvert off` before retuning.
 
 For example, persist service labels using the authenticated CLI or
 `/admin` command backend:

@@ -2,6 +2,10 @@ import companion;
 
 import companion_radio;
 
+import meshproto.companion_policy as policy;
+
+import std.encoding.json;
+
 import std.os;
 
 import std.io;
@@ -21,6 +25,13 @@ fn main() {
             continue;
         }
         match words[0] {
+            "DELAY" => {
+                let sf = string.to_int(words[1]).expect("spreading factor");
+                radio.set_spreading(sf).expect("shared spreading factor");
+                let prefs = json.parse("{\"rxdelay\":" + words[5] + "}").expect("receive preferences");
+                println(policy.receive_delay(prefs, string.to_float(words[2]).expect("snr"),
+                    sf, string.to_int(words[3]).expect("packet size"), string.to_int(words[4]).expect("airtime")));
+            }
             "CONNECT" => println(f"CONNECTED {base.connect(string.to_int(words[1]).expect("client")).expect("connect")}"),
             "DISCONNECT" => {
                 base.disconnect(string.to_int(words[1]).expect("client")).expect("disconnect");

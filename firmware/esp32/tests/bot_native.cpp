@@ -1110,7 +1110,7 @@ static void retained_worker_state_and_timers() {
   f.step(300);
   const auto cancelled = first.replies(f.bot.publicKey(), f.radio);
   assert(cancelled.size() == 1 &&
-         cancelled[0] == "Error: !delayed: Source changed; pending operation outcome may be unknown");
+         cancelled[0] == "Error: !delayed: Runtime code changed; pending operation outcome may be unknown");
   const char *hungry =
       "retained={} function hungry() for i=1,10000 do retained[i]={i,i,i,i} end end";
   assert(f.bot.stageSource(hungry, strlen(hungry))); f.step();
@@ -1362,7 +1362,7 @@ static void retained_native_radio_io() {
     assert(f.bot.pollSourceResult(result) && result.ok);
     messages = first.replies(f.bot.publicKey(), f.radio);
     assert(messages.size() == 1 &&
-           messages[0] == "Error: !holding: Source changed; pending operation outcome may be unknown");
+           messages[0] == "Error: !holding: Runtime code changed; pending operation outcome may be unknown");
   }
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!sendonly")); f.step();
@@ -2387,6 +2387,101 @@ static void native_repeater_monitor() {
   }
   assert(saveBotRepeaterPolicy({}));
   puts("PASS native repeater flood: first unknown-route request and durable hourly cooldown across restart without replay");
+
+  BotRadioPolicy recoveryPolicy;
+  recoveryPolicy.pathWidth = 3;
+  assert(saveBotRadioPolicy(recoveryPolicy));
+  Fixture recovery; recovery.start();
+  uint32_t utc = 1800010000;
+  beginNetworkClock(true); receiveNetworkTime(utc); recovery.step();
+  snprintf(command, sizeof(command), "add pilot %s 912525000", key);
+  recovery.bot.repeaterCommand(command, reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  recovery.bot.repeaterCommand("on", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  assert(recovery.bot.stageSource(source, strlen(source))); recovery.step();
+  assert(recovery.bot.pollSourceResult(staged) && staged.ok);
+  assert(recovery.bot.activateStaged()); recovery.step();
+  assert(recovery.bot.pollSourceResult(staged) && staged.ok);
+  assert(recovery.bot.setEventAccess(16)); recovery.step();
+  const auto advance = [&](uint32_t seconds) {
+    timeMs += seconds * 1000; utc += seconds;
+    receiveNetworkTime(utc); recovery.step();
+  };
+  const auto request = [&](bool flood, const Bytes &path, uint32_t seconds = 16) {
+    recovery.radio.sent.clear();
+    unsigned count = 0; uint32_t requestTag = 0;
+    advance(seconds);
+    for (const auto &raw : recovery.radio.sent) {
+      mesh::Packet packet;
+      assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() != PAYLOAD_TYPE_REQ) continue;
+      assert(packet.isRouteFlood() == flood && packet.getPathHashSize() == 3);
+      assert(packet.getPathByteLen() == path.size());
+      assert(path.empty() || !memcmp(packet.path, path.data(), path.size()));
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, recovery.bot.publicKey());
+      assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2,
+                                        packet.payload_len - 2) == 16 && plain[4] == 1);
+      requestTag = queued_tx::get32(plain); ++count;
+    }
+    assert(count == 1 && requestTag && recovery.bot.jobsInUse());
+    return requestTag;
+  };
+  const auto routedResponse = [&](Peer &sender, uint32_t echoed, const Bytes &path) {
+    uint8_t secret[32]{}, plain[60]{};
+    sender.self_id.calcSharedSecret(secret, recovery.bot.publicKey());
+    queued_tx::put32(plain, echoed);
+    plain[4] = 0xe3; plain[5] = 0x0e; queued_tx::put32(plain + 24, 54321);
+    auto *packet = sender.createPathReturn(mesh::Identity(recovery.bot.publicKey()), secret,
+        path.data(), uint8_t(0x80 | path.size() / 3), PAYLOAD_TYPE_RESPONSE, plain, sizeof(plain));
+    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    return sender.wire(packet);
+  };
+  const Bytes originalPath{0xcc, 0x26, 0x8a}, alternatePath{0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6};
+  const auto discoveryTag = request(true, {});
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=unknown repair=0"));
+  recovery.deliver(routedResponse(peer, discoveryTag, originalPath)); recovery.step();
+  assert(!recovery.bot.jobsInUse());
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:cc268a repair=0"));
+  BotRepeaterPolicy discoveredPolicy;
+  assert(loadBotRepeaterPolicy(discoveredPolicy));
+  const auto discoveryUtc = discoveredPolicy.targets[0].lastFloodUtc;
+  for (unsigned failure = 1; failure <= 3; ++failure) {
+    request(false, originalPath, failure == 1 ? 317 : (300u << (failure - 1)) + 17);
+    advance(31);
+    assert(!recovery.bot.jobsInUse());
+    assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+           snapshots[0].available && !snapshots[0].fresh &&
+           snapshots[0].error == BotRepeaterError::Timeout &&
+           snapshots[0].failures == failure && snapshots[0].attempts == failure + 1);
+  }
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:cc268a repair=1"));
+  const auto repairTag = request(true, {}, 2417);
+  assert(loadBotRepeaterPolicy(discoveredPolicy) &&
+         discoveredPolicy.targets[0].lastFloodUtc >= discoveryUtc + 3600);
+  recovery.deliver(routedResponse(stranger, repairTag, alternatePath)); recovery.step();
+  recovery.deliver(routedResponse(peer, discoveryTag, alternatePath)); recovery.step();
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:cc268a repair=1") && recovery.bot.jobsInUse());
+  recovery.deliver(routedResponse(peer, repairTag, alternatePath)); recovery.step();
+  assert(!recovery.bot.jobsInUse());
+  assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].fresh && snapshots[0].error == BotRepeaterError::None &&
+         snapshots[0].stats.uptimeSeconds == 54321 && snapshots[0].attempts == 5);
+  const auto beforeRead = recovery.radio.sent.size();
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:a1b2c3d4e5f6 repair=0") &&
+         recovery.radio.sent.size() == beforeRead);
+  const auto recoveredTag = request(false, alternatePath, 317);
+  recovery.deliver(routedResponse(peer, recoveredTag, alternatePath)); recovery.step();
+  assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].fresh && snapshots[0].attempts == 6);
+  assert(recovery.bot.setEventAccess(0) && saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
+  puts("PASS native repeater recovery: learned three-byte hop, three direct failures, hourly flood repair, stale/foreign rejection and alternate multihop recovery without owner route updates");
 }
 static void event_collector_capacity() {
   for (unsigned mode = 0; mode < 3; ++mode) {
@@ -2885,17 +2980,22 @@ static void native_utilities() {
   f.deliver(first.targetedGroup(f.bot.publicKey(), "nickname-changed: !calc 9+9", "#example1")); f.step();
   const auto limited = first.groupReplies(f.radio, 3, "#example1");
   assert(limited.size() == 2 && limited.back() == "= 18");
+  const char *override = "function regional_calc() return '= 42' end override_command('calc','regional_calc')";
+  BotWorker::Result installed;
+  assert(f.bot.stageSource(override, strlen(override))); f.step();
+  assert(f.bot.pollSourceResult(installed) && installed.ok && f.bot.activateStaged()); f.step();
+  assert(f.bot.pollSourceResult(installed) && installed.ok);
   for (bool targeted : {false, true}) {
     timeMs += 61000; f.radio.sent.clear();
     const auto request = targeted ?
         first.targetedGroup(f.bot.publicKey(), "caller: !calc 6*7", "#example1") :
         first.group("caller: !calc 6*7", "#example1");
-    f.bot.setSourceDeploymentState(true, true, "Selected source startup pending");
+    f.bot.setSourceDeploymentState(true, true, true, false, "Lua source startup pending");
     const auto rejected = f.bot.counters().rejected;
     f.deliver(request); f.step();
     assert(f.bot.counters().rejected == rejected + 1 &&
            first.groupReplies(f.radio, 3, "#example1").empty());
-    f.bot.setSourceDeploymentState(true, false, nullptr);
+    f.bot.setSourceDeploymentState(true, false, true, false, nullptr);
     const auto reflect = [&]() {
       f.reflect(request);
       f.radio.sent.erase(std::remove(f.radio.sent.begin(), f.radio.sent.end(), request),
@@ -3027,6 +3127,92 @@ static bool stageHostSource(Fixture &fixture, const std::string &source,
   }
   return true;
 }
+#if ONCHIP_BOT_WASM
+static void native_runtime_admission_isolation(const char *modules) {
+  assert(prepareHostRunner());
+  const auto module = [&](const char *name) {
+    std::ifstream file(std::string(modules) + "/" + name + ".wasm", std::ios::binary);
+    assert(file);
+    return std::string(std::istreambuf_iterator<char>(file), {});
+  };
+  const std::string lua = "function lkeep() return 'Lua retained' end";
+  const auto wasm = module("c-notes");
+  Peer owner, stranger;
+  for (bool failingWasm : {false, true}) {
+    Fixture::Options options; options.nativeAdministrationForReplay = true;
+    std::string error;
+    {
+      Fixture setup(options); assert(setup.startReplay(error));
+      assert(stageHostSource(setup, lua, true, error));
+      assert(stageHostSource(setup, wasm, true, error));
+      std::string key;
+      char pair[3];
+      for (auto byte : owner.self_id.pub_key) {
+        snprintf(pair, sizeof(pair), "%02x", byte); key += pair;
+      }
+      assert(setup.administer(("trust " + key).c_str()).find("Saved ") == 0);
+      setup.learn(owner);
+      assert(setup.command(owner, "!wnote retained") == "Note saved");
+    }
+    // Keep the selected journal and its hash valid, but make guest initialization fail.
+    const auto broken = failingWasm ? module("fault-9") : std::string("missing_boot_initializer()");
+    nvs_handle_t handle;
+    assert(nvs_open("mc-mast-admin", NVS_READWRITE, &handle) == ESP_OK);
+    const char *journal = failingWasm ? "wasm-source" : "source";
+    size_t size = 0;
+    assert(nvs_get_blob(handle, journal, nullptr, &size) == ESP_OK && size == 572);
+    Bytes record(size);
+    assert(nvs_get_blob(handle, journal, record.data(), &size) == ESP_OK &&
+           queued_tx::get32(record.data()) == 1 && record[8] < 3);
+    const unsigned slot = record[8];
+    assert(broken.size() <= BotSourceLimit);
+    queued_tx::put32(record.data() + 12 + slot * 4, uint32_t(broken.size()));
+    mesh::Utils::sha256(record.data() + 24 + slot * 32, 32,
+                       reinterpret_cast<const uint8_t *>(broken.data()), broken.size());
+    assert(nvs_set_blob(handle, journal, record.data(), record.size()) == ESP_OK &&
+           nvs_commit(handle) == ESP_OK);
+    nvs_close(handle);
+    const char *luaPaths[] = {"/command-bot/a.lua", "/command-bot/b.lua", "/command-bot/c.lua"};
+    const char *wasmPaths[] = {"/command-bot/wa.lua", "/command-bot/wb.lua", "/command-bot/wc.lua"};
+    auto file = SPIFFS.open((failingWasm ? wasmPaths : luaPaths)[slot], "w");
+    assert(file && file.write(reinterpret_cast<const uint8_t *>(broken.data()), broken.size()) == broken.size());
+    file.flush(); file.close();
+    {
+      Fixture recovered(options);
+      recovered.startReplay(error);
+      recovered.step(4000);
+      assert(recovered.bot.sourceReady() && !recovered.bot.sourceDeploymentReady());
+      const auto status = recovered.administer(failingWasm ? "source wasm status" : "source status");
+      printf("Runtime recovery status: %s\n", status.c_str());
+      fflush(stdout);
+      assert(status.find("Error:") != std::string::npos &&
+             status.find(failingWasm ? "instruction limit exceeded" : "missing_boot_initializer") != std::string::npos);
+      recovered.learn(owner); recovered.learn(stranger);
+      assert(recovered.command(owner, failingWasm ? "!lkeep" : "!wnote") ==
+             (failingWasm ? "Lua retained" : "retained"));
+      assert(recovered.command(owner, "!ping") == "Pong");
+      assert(recovered.command(stranger, "!admin source status").find("permission not granted") != std::string::npos);
+      const auto ownerStatus = recovered.command(owner, "!admin source status");
+      printf("Authenticated runtime recovery status: %s\n", ownerStatus.c_str());
+      fflush(stdout);
+      assert(ownerStatus.find("active=") != std::string::npos);
+      if (failingWasm) {
+        // Wasm source controls retain their existing private native-management path.
+        assert(recovered.command(owner, "!admin source wasm status").find("native management CLI/web") != std::string::npos);
+        assert(recovered.administer("source wasm remove").find("Accepted verification") == 0);
+      } else {
+        assert(recovered.command(owner, "!admin source remove").find("Accepted verification") == 0);
+      }
+      recovered.step(1000);
+      assert(recovered.bot.sourceDeploymentReady());
+      assert(recovered.command(owner, failingWasm ? "!lkeep" : "!wnote") ==
+             (failingWasm ? "Lua retained" : "retained"));
+      assert(recovered.command(owner, "!ping") == "Pong");
+    }
+  }
+  puts("PASS failed durable Lua/Wasm initialization: other runtime and native ping stay admitted; authenticated owner recovery works and strangers remain denied");
+}
+#endif
 static std::string runnerText(std::string value) {
   for (char &byte : value) if (byte == '\r' || byte == '\n') byte = ' ';
   return value;
@@ -3875,6 +4061,12 @@ int main(int argc, char **argv) {
     return 0;
   }
 #ifdef BOT_HOST_RUNNER
+#if ONCHIP_BOT_WASM
+  if (argc == 3 && !strcmp(argv[1], "--runtime-isolation-test")) {
+    native_runtime_admission_isolation(argv[2]);
+    return 0;
+  }
+#endif
   if (argc == 2 && !strcmp(argv[1], "--source-api-test")) {
     native_source_api_capacities();
     return 0;
@@ -4065,6 +4257,12 @@ int main(int argc, char **argv) {
     return 0;
   }
 #ifdef BOT_HOST_RUNNER
+#if ONCHIP_BOT_WASM
+  if (argc == 3 && !strcmp(argv[1], "--runtime-isolation-test")) {
+    native_runtime_admission_isolation(argv[2]);
+    return 0;
+  }
+#endif
   if (argc == 2 && !strcmp(argv[1], "--source-api-test")) {
     native_source_api_capacities();
     return 0;

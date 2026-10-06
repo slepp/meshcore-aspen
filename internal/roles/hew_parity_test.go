@@ -324,15 +324,18 @@ func TestHewRepeaterSerializedDifferential(t *testing.T) {
 			})
 		}
 	}
-	payload := []byte("scoped relay")
-	code := policy.TransportCode(policy.Scope{Name: "#ab", Key: regionKey}, 5, payload)
-	scoped := append([]byte{0x14, byte(code), byte(code >> 8), byte(code), byte(code >> 8), 128}, payload...)
-	radio.inject(t, scoped, false)
-	got := run(scoped, false)
-	want := radio.next(t)
-	if len(got) != 1 || !bytes.Equal(want, got[0]) {
-		t.Fatalf("scoped Go %x Hew %x", want, got)
+	checkScoped := func(payload []byte) {
+		t.Helper()
+		code := policy.TransportCode(policy.Scope{Name: "#ab", Key: regionKey}, 5, payload)
+		scoped := append([]byte{0x14, byte(code), byte(code >> 8), byte(code), byte(code >> 8), 128}, payload...)
+		radio.inject(t, scoped, false)
+		got := run(scoped, false)
+		want := radio.next(t)
+		if len(got) != 1 || !bytes.Equal(want, got[0]) {
+			t.Fatalf("scoped Go %x Hew %x", want, got)
+		}
 	}
+	checkScoped([]byte("scoped relay"))
 	for mode := policy.LoopOff; mode <= policy.LoopStrict; mode++ {
 		service.mu.Lock()
 		service.state.Preferences.Loop = mode
@@ -341,6 +344,7 @@ func TestHewRepeaterSerializedDifferential(t *testing.T) {
 		if !scanner.Scan() || scanner.Text() != "true" || !scanner.Scan() || scanner.Text() != "END" {
 			t.Fatal("Hew loop configuration")
 		}
+		checkScoped([]byte(fmt.Sprintf("scoped relay loop=%d", mode)))
 		for width := 1; width <= 3; width++ {
 			for count := 0; count <= 4; count++ {
 				t.Run(fmt.Sprintf("loop%d/width%d/matches%d", mode, width, count), func(t *testing.T) {

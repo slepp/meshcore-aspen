@@ -207,7 +207,6 @@ pub actor Role {
     var closed: bool = false;
     var durable: bool = false;
     var configured_scopes: bool = false;
-    var scope_keys: Vec<bytes>;
     var named_regions: regions.Table = regions.empty();
     var regions_saved: bool = false;
     var region_load: Option<regions.Load> = .None;
@@ -274,6 +273,7 @@ pub actor Role {
         var has_default = false;
         var has_wildcard = false;
         var has_allowed = false;
+        var allowed_keys: Vec<bytes> = Vec.new();
         for line in options.split("\n") {
             if line.is_empty() {
                 continue;
@@ -336,15 +336,15 @@ pub actor Role {
                 }
                 "regions" => {
                     has_allowed = true;
-                    scope_keys = Vec.new();
+                    allowed_keys = Vec.new();
                     configured_scopes = true;
                     if !value.is_empty() {
                         for item in value.split(",") {
                             let region_key = hex.decode(item);
-                            if region_key.len() != 16 || scope_keys.len() >= 128 {
+                            if region_key.len() != 16 || allowed_keys.len() >= 128 {
                                 return false;
                             }
-                            scope_keys.push(region_key);
+                            allowed_keys.push(region_key);
                         }
                     }
                 }
@@ -407,16 +407,16 @@ pub actor Role {
             if has_wildcard && wildcard != ((baseline.wildcard & 1) == 0) { configured_wildcard = .Some(wildcard); }
             if has_allowed {
                 var actual = bytes.new(); var expected = bytes.new();
-                for key in scope_keys { actual.append(key); }
+                for key in allowed_keys { actual.append(key); }
                 for key in regions.permitted(baseline) { expected.append(key); }
-                if !wire.equal(actual, expected) { configured_allowed = .Some(scope_keys); }
+                if !wire.equal(actual, expected) { configured_allowed = .Some(allowed_keys); }
             }
             match regions.override_scopes(baseline, configured_home, configured_default, configured_wildcard, configured_allowed) {
                 .Ok(value) => adopt_regions(value),
                 .Err(_) => return false,
             }
         } else {
-            named_regions.legacy_keys = scope_keys;
+            if has_allowed { named_regions.legacy_keys = allowed_keys; }
             named_regions.default_key = region;
             named_regions.wildcard = if wildcard { 0 } else { 1 };
         }
@@ -770,7 +770,6 @@ pub actor Role {
             }
         } else if command == "region" || command.starts_with("region ") {
             if !regions_saved {
-                named_regions.legacy_keys = scope_keys;
                 named_regions.default_key = region;
                 named_regions.wildcard = if wildcard { 0 } else { 1 };
             }
@@ -1374,17 +1373,8 @@ pub actor Role {
                 request_scope = bytes.new();
             }
             if p.route == 0 {
-                if regions_saved {
-                    if let .Some(key) = regions.receive_scope(named_regions, p) {
-                        request_scope = key; scope_known = true;
-                    }
-                } else {
-                    for region_key in scope_keys {
-                        if !scope_known && p.code1 == wire.region_code(region_key, p) {
-                            request_scope = region_key;
-                            scope_known = true;
-                        }
-                    }
+                if let .Some(key) = regions.receive_scope(named_regions, p) {
+                    request_scope = key; scope_known = true;
                 }
             }
         }
@@ -1912,7 +1902,7 @@ pub actor Role {
                 peer.path = wire.cut(plain, 6, 6 + size);
                 var reply = wire.cat(wire.cut(plain, 0, 4), wire.le(timestamp(now), 4));
                 if plain[4] == 1 {
-                    if !scope_keys.is_empty() {
+                    if !regions.permitted(named_regions).is_empty() {
                         return out;
                     }
                     if wildcard {
@@ -2417,5 +2407,8 @@ pub fn create(seed: bytes, role: i64, name: string, password: string, admin: str
     if region.len() == 16 {
         keys.push(region);
     }
-    spawn Role(seed: seed, role: role, name: name, password: password, admin: admin, width: width, region: region, channel: channel, scope_keys: keys, configured_scopes: region.len() == 16, airtime_table: bytes.new(), repeat: role == 2, members: Vec.new(), history: Vec.new(), seen: Vec.new(), requests: Vec.new(), notes: Vec.new(), deferred: Vec.new())
+    var table = regions.empty();
+    table.legacy_keys = keys;
+    table.default_key = region;
+    spawn Role(seed: seed, role: role, name: name, password: password, admin: admin, width: width, region: region, channel: channel, named_regions: table, configured_scopes: region.len() == 16, airtime_table: bytes.new(), repeat: role == 2, members: Vec.new(), history: Vec.new(), seen: Vec.new(), requests: Vec.new(), notes: Vec.new(), deferred: Vec.new())
 }

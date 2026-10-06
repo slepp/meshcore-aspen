@@ -12,11 +12,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-from service_demo import ROOT, RunningService, kiss
+from service_demo import ROOT, RunningService, STATE_SEQUENCE, kiss
 from build_worker import verify
 
 HARNESS=ROOT/"build/mkiss-native/mkiss-session"
-PROFILE=struct.pack("<IIBBBfBh",910525000,62500,7,5,20,1.0,0,0)
+PROFILE=struct.pack("<IIBBBfBh",910525000,62500,7,5,20,1.0,1,0)
 
 
 def build():
@@ -143,7 +143,11 @@ class FirmwareNegotiation(unittest.TestCase):
         if session: self.assertEqual(peer.request(37,b"\1\1")[-1],1)
         return peer
     def refused(self,profile):
-        root=ROOT/"build"/f"firmware-refusal-{os.getpid()}-{time.monotonic_ns()}"
+        root=ROOT.parents[1]/f".f-{os.getpid()}-{next(STATE_SEQUENCE)}"
+        for name in ("owner.sock","admin.sock","profile.sock"):
+            path=root/name
+            if len(os.fsencode(path))>107:
+                raise ValueError(f"firmware refusal fixture socket exceeds 107 bytes: {path}")
         root.mkdir(mode=0o700); self.addCleanup(shutil.rmtree,root)
         config=root/"config"
         config.write_text(f"address=127.0.0.1\nport={self.tap.port}\nprofile={profile.hex()}\n"

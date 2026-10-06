@@ -129,7 +129,7 @@ func (o *Observer) publicPacket(item observation) ([]byte, error) {
 		"SNR": signal, "RSSI": fmt.Sprint(item.rssi),
 		"hash": strings.ToUpper(hex.EncodeToString(hash[:])),
 	}
-	if (packet.PathHashCount() > 0 && o.cfg.Format != CaptureFormat) ||
+	if (packet.PathHashCount() > 0 && o.cfg.Format != CaptureFormat && route == "D") ||
 		(o.cfg.Format == CaptureFormat && route == "D") {
 		path := make([]string, 0, packet.PathHashCount())
 		for _, hop := range packet.PathHashes() {

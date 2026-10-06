@@ -148,9 +148,10 @@ def slope(rows, label, field):
 
 
 def measure(binary_directory, warmup, seconds, synchronous_reference_broker=False):
-    with tempfile.TemporaryDirectory(prefix="mc-events-", dir="/tmp") as temporary, ExitStack() as cleanup:
+    fixture_root = Path(os.environ.get("MESHCORE_NATIVE_TEST_STATE_ROOT", ROOT.parents[1])).resolve()
+    with tempfile.TemporaryDirectory(prefix=".e-", dir=fixture_root) as temporary, ExitStack() as cleanup:
         root = Path(temporary)
-        runtime = root / "runtime"
+        runtime = root / "r"
         runtime.mkdir(mode=0o700)
         environment = os.environ | {"HEW_WORKERS": "4", "HEW_PPROF": "auto",
                                      "HEW_OBSERVE": "1", "XDG_RUNTIME_DIR": str(runtime)}

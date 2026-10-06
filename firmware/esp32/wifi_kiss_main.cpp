@@ -212,16 +212,37 @@ void connectWifi() {
     halt();
   }
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+#ifdef MESHCORE_ONCHIP
+    char message[80];
+#endif
     if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
       wifi_loss_generation.fetch_add(1, std::memory_order_relaxed);
+#ifdef MESHCORE_ONCHIP
+      snprintf(message, sizeof(message), "WiFi association lost: reason %u", info.wifi_sta_disconnected.reason);
+      onchip::diagnosticEvent(message);
+#else
       Serial.printf("WiFi association lost: reason %u\n",
                     info.wifi_sta_disconnected.reason);
+#endif
     } else if (event == ARDUINO_EVENT_WIFI_STA_LOST_IP) {
       wifi_loss_generation.fetch_add(1, std::memory_order_relaxed);
+#ifdef MESHCORE_ONCHIP
+      onchip::diagnosticEvent("WiFi lost IP address");
+#endif
     } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+#ifdef MESHCORE_ONCHIP
+      snprintf(message, sizeof(message), "WiFi associated: channel %u, AP auth mode %u",
+               info.wifi_sta_connected.channel, info.wifi_sta_connected.authmode);
+      onchip::diagnosticEvent(message);
+#else
       Serial.printf("WiFi associated: channel %u, AP auth mode %u\n",
                     info.wifi_sta_connected.channel,
                     info.wifi_sta_connected.authmode);
+#endif
+    } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+#ifdef MESHCORE_ONCHIP
+      onchip::diagnosticEvent("WiFi IP ready");
+#endif
     }
   });
   bool stationReady = false;
@@ -355,6 +376,10 @@ void setup() {
   dashboard_storage = new (memory) RadioDashboard();
 #endif
 #ifdef MESHCORE_ONCHIP
+#if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
+  if (!onchip::beginDiagnostics())
+    Serial.println("Diagnostics worker unavailable; WiFi event logs will be dropped");
+#endif
   // Start the ESP entropy source before creating durable role identities.
   connectWifi();
 #endif
@@ -464,6 +489,9 @@ void setup() {
 }
 
 void loop() {
+#ifdef MESHCORE_ONCHIP
+  const uint32_t loopStarted = micros();
+#endif
   kiss_stream.serviceTransmit();
 #if KISS_STREAM_ENDPOINT
   kiss_stream.pollStream();
@@ -569,5 +597,8 @@ void loop() {
 
   // Yield to the WiFi/lwIP tasks. Without this the busy loop starves the
   // network stack and the node stops answering ARP within ~30 s.
+#ifdef MESHCORE_ONCHIP
+  onchip::diagnosticLoopSample(loopStarted, micros());
+#endif
   delay(1);
 }

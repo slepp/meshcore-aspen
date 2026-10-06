@@ -122,7 +122,7 @@ size_t packet(const uint8_t *raw, size_t length, const char *origin,
   }
   char path[512]{};
   size_t at = 0;
-  const unsigned hops = captureFormat && strcmp(route, "D") ?
+  const unsigned hops = decoded.isRouteFlood() || (captureFormat && strcmp(route, "D")) ?
                         0 : decoded.getPathHashCount();
   for (unsigned i = 0; i < hops; ++i) {
     char hop[7];

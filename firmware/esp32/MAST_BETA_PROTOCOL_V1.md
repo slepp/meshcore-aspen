@@ -109,21 +109,42 @@ Successful command results and errors are plain text, without JSON wrapping.
 | `bot status` | `bot applied=A saved=S ready=R state=TEXT` |
 | `bot key` | `KEY ` followed by 64 lowercase hex characters, or an error if disabled |
 | `roles MASK` | Save mask 0..15: repeater=1, room=2, companion=4, observer=8 |
+| `roles`, `roles list [1\|2]` | Read-only named applied/saved bits on page 1; Management availability, separate applied/saved bot and KISS service on page 2. `roles N` remains a mask write |
 | `bot on`, `bot off` | Save independent next-boot bot selection |
 | `apply`, `reboot` | Accept a deferred reboot; `apply` is not hot role recreation |
 | `wifi ssid HEX`, `wifi password HEX` | Encrypted RF only; save SSID 1..32 bytes or password 8..63 bytes/64 ASCII hex digits; `wifi password -` explicitly selects an open network |
-| `get wifi.enabled/ssid/pwd/ip/status` | Separate field commands, native `> VALUE` replies; enabled is saved 0/1, status is Arduino WiFi status, IP is current station IPv4. Password readback requires encrypted RF |
+| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit aliases for the separate hex setters; no text/hex autodetection |
+| `get wifi.enabled/ssid/pwd/ip/status` | Separate field commands, native `> VALUE` replies; nonprintable/non-ASCII SSIDs use `> hex HEX`. Enabled is saved 0/1, status is Arduino WiFi status, IP is current station IPv4. Exact password readback requires encrypted RF |
 | `set wifi.ssid TEXT`, `set wifi.pwd TEXT` | Encrypted RF only; literal printable text including spaces; an empty password explicitly selects an open network. Save first, then `wifi apply` |
 | `set wifi.enabled 0/1` | Encrypted RF only; `off/on` aliases accepted. Save and defer station stop/start until after the response. Default enabled; disabling retains credentials and RF roles |
 | `wifi apply`, `wifi forget` | Deferred reconnect using saved fields, or remove mast override for next boot |
 | `wifi status` | On ESP32: `wifi saved=S ssid-bytes=N connected=C`; never credentials |
 | `radio HZ BW SF CR DBM` | Deferred persistent PHY change |
 | `tempradio SECONDS HZ BW SF CR DBM` | Deferred temporary PHY, 1..3600 seconds, then automatic restore |
-| `trust KEY`, `trust none` | Save/remove additional full-key trust; compiled trust and role-local ACLs remain unchanged |
+| `trust KEY`, `trust none` | Replace/remove the legacy singleton full-key authority; compiled trust and all ACLs remain unchanged |
+| `setperm KEY64 PERMISSIONS` | Management-local checked ACL, five entries; full key and decimal byte 0..255. Native role mask 3: guest role 0 removes, only administrator role 3 grants passwordless Management/bot administration. Existing sessions expire normally; replay timestamps remain |
+| `get acl [KEY64\|1..5]` | Inspect capacity or one entry: full key, permission byte, effective administrator authority and legacy/compiled recovery flags. Repeater/room ACLs remain separate |
+| `auth status [KEY64]`, `auth peer 1..10` | Inspect durable full-key replay occupancy/timestamps; six ordinary RF sessions plus the reserved compiled owner. The four original replay slots remain unchanged |
 | `auth forget KEY` | Authenticated removal of a noncompiled principal's replay record and current session, freeing a slot. Not password revocation; anyone retaining valid credentials can log in again |
 | `role password repeater\|room HEX` | Save/apply the active native role's administrator password; authenticated encrypted Management RF only |
 | `job` | Latest deferred-control outcome, human-readable; **no host-visible job ID** |
-| `help`, `source help` | Human-readable command usage |
+| `help [TOPIC] [PAGE]`, `source help` | One requested help page; bare `help` lists index 1/3, `help 2` / `help 3` list the remaining topics. WiFi has four pages, source three, bot/get two; other topics have one |
+
+Management's ACL uses MeshCore's native administrator role check. Read-only,
+read-write and unrelated upper permission bits do not grant owner authority.
+ACL commits require matching readback before live grants; an uncertain/corrupt
+ACL disables ACL-derived authority, retaining valid singleton/compiled
+recovery. A singleton-trusted key must first be cleared with `trust none`
+before `setperm` can downgrade/remove it; compiled recovery cannot be revoked.
+See [Management ACL](MAST_ADMIN.md#management-acl) for setup and recovery.
+
+Help content is at most 145 bytes, leaving 17 bytes for the default 16-hex tag
+and `|`; complete tagged replies are at most 162 bytes, with 163 bytes of storage
+including NUL. No extra help pages are sent without a request.
+The combined maximum WiFi hex fields do not fit this text limit. Use separate
+setters. `wifi password hex HEX` with a 64-byte ASCII-hex PSK is 146 content
+bytes and cannot carry the default tag; use `wifi password HEX` or the literal
+`set wifi.pwd TEXT` instead. See [WiFi and role readback](MAST_ADMIN.md#common-control-commands).
 
 `G` is durable role-journal u64; parse without floating-point loss. `E` is
 boot-local effective-PHY u32, advancing on change and return, restarting on

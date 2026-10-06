@@ -48,8 +48,8 @@ build/companion-checks-release: companion_checks.hew companion.hew companion_rad
 	$(HEW) build companion_checks.hew --release -o $@ $(LINK)
 .PHONY: base-local-test
 base-local-test: build/companion-checks build/companion-checks-release
-	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BASE_BIN=$(CURDIR)/build/companion-checks go test ../../internal/companion -run '^TestHewBase(Local|RF)Differential$$' -count=1 -timeout=120s
-	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BASE_BIN=$(CURDIR)/build/companion-checks-release go test ../../internal/companion -run '^TestHewBase(Local|RF)Differential$$' -count=1 -timeout=120s
+	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BASE_BIN=$(CURDIR)/build/companion-checks go test ../../internal/companion -run '^TestHewBase(Local|RF|ReceivePolicy)Differential$$' -count=1 -timeout=120s
+	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BASE_BIN=$(CURDIR)/build/companion-checks-release go test ../../internal/companion -run '^TestHewBase(Local|RF|ReceivePolicy)Differential$$' -count=1 -timeout=120s
 BASE_INPUTS = base_service.hew companion.hew companion_radio.hew companion_connection.hew companion_telemetry.hew companion_lifecycle.hew $(MESHPROTO) session.hew $(HOSTLIB) wire.hew storage.hew transport.hew
 BASE_LINK = $(LINK) --link-lib $(CURDIR)/build/listener_bridge.o
 build/hew-base: $(BASE_INPUTS) build/listener_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
@@ -316,7 +316,8 @@ test-release: build/roles-release build/hew-host-release build/oracle build/arit
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/service_demo.py
 	MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/readiness.py
 	MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/migration.py
-	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release \
+	TMPDIR=$(CURDIR)/build MESHCORE_NATIVE_TEST_STATE_ROOT=$(abspath $(CURDIR)/../..) \
+	  MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release \
 	  MESHCORE_HEW_TRANSCRIPT=$(CURDIR)/build/bot-differential.json \
 	  MESHCORE_HEW_SCOPE_TRANSCRIPT=$(CURDIR)/build/bot-scoped-differential.json \
 	  BOT_NATIVE_WORKER=$${BOT_NATIVE_WORKER:-$(CURDIR)/build/native-worker} \

@@ -19,6 +19,7 @@ import zipfile
 
 from product_versions import ROOT, display, generated, identity, load, tag
 from elf_abi import inspect_elf
+from release_inputs import firmware_inputs, stage_source, tree_inventory, verify_relink
 
 PROFILES = {
     "aspen": ("public_aspen", "firmware/esp32/platformio.public.ini.example"),
@@ -28,14 +29,14 @@ IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin", "boot_app0.bin"}
 HOST_FILES = {"meshcore-host", "meshcore-check", "meshcore-rf-check", "bot-native-worker"}
 
 
-def stage_birch_files(work):
+def stage_birch_files(work, root=ROOT):
     dest = work / "examples/kiss_modem"
-    shutil.copy2(ROOT / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
+    shutil.copy2(root / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
     for name in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp", "QueuedTxProtocol.h",
                  "RadioDashboard.h", "RadioDashboard.cpp", "RadioDashboardPage.h",
                  "RadioNetwork.h", "RadioFirmwareIdentity.h", "EspSntpClock.h", "SntpConfig.h"):
-        shutil.copy2(ROOT / "firmware/shared" / name, dest / name)
-    shutil.copy2(ROOT / "firmware/esp32/FirmwareIdentity.h", dest / "FirmwareIdentity.h")
+        shutil.copy2(root / "firmware/shared" / name, dest / name)
+    shutil.copy2(root / "firmware/esp32/FirmwareIdentity.h", dest / "FirmwareIdentity.h")
 
 
 def required_symbol_versions(text):
@@ -199,8 +200,6 @@ def build(product, ref, output, native_image=None):
     output.mkdir(parents=True, exist_ok=True)
     directory = output / stem
     directory.mkdir()  # Never overwrite a candidate, even from the same SHA.
-    work = ROOT / ".tmp" / ("onchip-release-" + stem)
-    work.mkdir(parents=True)
     env = {key: os.environ[key] for key in ("HOME", "USER", "PATH") if key in os.environ}
     env.update(PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(ROOT / ".tmp"),
                SOURCE_DATE_EPOCH=run(["git", "show", "-s", "--format=%ct", "HEAD"]))
@@ -216,25 +215,31 @@ def build(product, ref, output, native_image=None):
     command(["make", "onchip-upstream"])
     if run(["git", "rev-parse", "HEAD"], cwd=upstream) != data["upstream"]["commit"]:
         raise ValueError("Upstream checkout differs from the release pin")
+    firmware_source = ROOT / ".tmp" / ("onchip-release-firmware-" + stem)
+    stage_source(ROOT, firmware_source, command, run)
+    work = firmware_source / ".tmp/onchip-firmware"
     toolchain = {"platformio": run(["pio", "--version"], env=env),
                  "python": platform.python_version(), "build_os": platform.platform()}
     linked_libraries = []
     native_receipt = {}
     native_source = None
     if product == "aspen":
-        command(["make", "-C", "firmware/esp32", "bot-firmware", f"BUILD={work}",
-                 f"CONFIG={ROOT / config}", f"ENV={profile}"])
+        command(["make", "-C", str(firmware_source / "firmware/esp32"), "bot-firmware", f"BUILD={work}",
+                 f"CONFIG={firmware_source / config}", f"ENV={profile}"])
     else:
+        work.mkdir()
         # Stage a fresh modem without reading private firmware/platformio.local.ini.
+        upstream = firmware_source / ".tmp/onchip-upstream"
         command(["git", "clone", "--no-hardlinks", str(upstream), str(work / "upstream")])
         command(["git", "-C", str(work / "upstream"), "archive", "--output=" + str(work / "upstream.tar"), "HEAD"])
         with tarfile.open(work / "upstream.tar") as archive:
             archive.extractall(work, filter="data")
         shutil.rmtree(work / "upstream")
         (work / "upstream.tar").unlink()
-        command(["patch", "--directory", str(work), "-p1", "--input", str(ROOT / "firmware/shared/radio-reconfigure.patch")])
-        stage_birch_files(work)
-        shutil.copy2(ROOT / config, work / "platformio.local.ini")
+        command(["patch", "--directory", str(work), "-p1", "--input",
+                 str(firmware_source / "firmware/shared/radio-reconfigure.patch")])
+        stage_birch_files(work, firmware_source)
+        shutil.copy2(firmware_source / config, work / "platformio.local.ini")
         command(["pio", "run", "--project-dir", str(work), "-e", profile])
         from release_native import build_native
         native_source, native_receipt = build_native(native_image, stem, env, command)
@@ -248,7 +253,8 @@ def build(product, ref, output, native_image=None):
         with tarfile.open(directory / "native-relink.tar.gz", "w:gz") as archive:
             for relative in (".tmp/onchip-native-worker", ".tmp/onchip-native-source", ".tmp/onchip-phy",
                              ".tmp/onchip-lua", ".tmp/MeshCore/.pio/libdeps", ".tmp/native-test-deps",
-                             ".cache/meshcore-wamr", ".tmp/native-toolchain", ".tmp/native-receipt.json"):
+                             ".cache/meshcore-wamr", ".cache/meshcore-release-inputs",
+                             ".tmp/native-toolchain", ".tmp/native-receipt.json"):
                 archive.add(native_source / relative, arcname=relative)
     pio_build = work / ".pio/build" / profile
     for name in IMAGES - {"boot_app0.bin"}:
@@ -260,7 +266,9 @@ def build(product, ref, output, native_image=None):
     metadata = json.loads(run(["pio", "project", "metadata", "--project-dir", str(work),
                                "-e", profile, "--json-output"], env=env))
     inventory = {"resolved_packages": run(["pio", "pkg", "list", "--project-dir", str(work),
-                                           "-e", profile], env=env), "build_metadata": metadata[profile]}
+                                           "-e", profile], env=env), "build_metadata": metadata[profile],
+                 "source_files": tree_inventory(work / ".pio/libdeps" / profile)}
+    firmware_receipt = firmware_inputs(firmware_source, work, profile, bot=product == "aspen")
     compiler = Path(metadata[profile]["cxx_path"])
     toolchain["firmware_cxx"] = run([str(compiler), "--version"], env=env).splitlines()[0]
     toolchain["firmware_cxx_sha256"] = digest(compiler)
@@ -287,6 +295,7 @@ def build(product, ref, output, native_image=None):
                   "native_linked_libraries": linked_libraries,
                   "native_abi": native_receipt.get("native_abi", {}),
                   "native_environment": native_receipt,
+                  "firmware_source_inputs": firmware_receipt,
                   "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                   "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de"},
         "compatibility": data["compatibility"],
@@ -349,6 +358,9 @@ def verify(directory):
         raise ValueError("Candidate is missing the build epoch")
     if not build["dependencies"].get("resolved_packages") or not build["dependencies"].get("build_metadata"):
         raise ValueError("Candidate is missing resolved PlatformIO dependencies")
+    if "firmware_source_inputs" in build:
+        verify_relink(directory / "firmware-relink.tar.gz", build["firmware_source_inputs"],
+                      profile=profile, bot=product == "aspen")
     if product == "birch":
         if not toolchain.get("go") or not toolchain.get("cxx") or not build.get("go_modules"):
             raise ValueError("Birch is missing host/native build receipts")
@@ -403,6 +415,8 @@ def verify(directory):
                 for family, required_version in item["required_symbol_versions"].items():
                     if tuple(map(int, required_version.split("."))) > tuple(map(int, limits[family].split("."))):
                         raise ValueError("Birch packaged ELF exceeds its Debian 12 baseline")
+            if "source_inputs" in native:
+                verify_relink(directory / "native-relink.tar.gz", native["source_inputs"])
     names = set()
     for entry in manifest["files"]:
         name = entry["name"]
@@ -444,6 +458,11 @@ def verify(directory):
     with tarfile.open(directory / "source.tar.gz") as archive:
         if archive.pax_headers.get("comment") != source["commit"]:
             raise ValueError("Source archive does not identify the candidate commit")
+        if "tools/release_inputs.py" in archive.getnames():
+            if "firmware_source_inputs" not in build:
+                raise ValueError("Candidate is missing verified firmware source inputs")
+            if product == "birch" and not build.get("native_environment", {}).get("source_inputs"):
+                raise ValueError("Birch is missing verified native source inputs")
         for path, expected in generated(data).items():
             if archive.extractfile(path).read().decode() != expected:
                 raise ValueError(f"Archived product identity differs: {path}")
