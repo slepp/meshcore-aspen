@@ -12,6 +12,7 @@
 #include "PineRuntimePlatform.h"
 #include "platform/nvs.h"
 #include <Utils.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -88,7 +89,7 @@ void MastAdmin::acknowledged(uint32_t ticket, bool transmitted) {
   }
 }
 void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
-                        Transport transport, const uint8_t *) {
+                        Transport transport, const uint8_t *, size_t replyCapacity) {
   reply = {};
   auto say = [&](const char *message) { snprintf(reply.text, sizeof(reply.text), "%s", message); };
   if (!text) { say("Error: empty Pine admin command"); return; }
@@ -102,7 +103,7 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
       say("Error: node backups require direct authenticated administration"); return;
     }
     nodeBackup().command(!strncmp(text, "backup ", 7) ? text + 7 : "help",
-                         reply.text, sizeof(reply.text), transport == Transport::NativeEncrypted);
+                         reply.text, std::min(replyCapacity, sizeof(reply.text)), transport == Transport::NativeEncrypted);
     return;
   }
 #endif

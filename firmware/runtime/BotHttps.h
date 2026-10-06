@@ -35,7 +35,7 @@ bool botHttpsClockTrusted();
 // Authenticated mast-admin entry; command excludes "bot https ".
 // status | discard | commit | endpoint NAME IPV4 HOST PORT PATH get|post|both
 // ca|token NAME HEX (up to 128 hex characters per append)
-// rpc SERVICE OPERATION PATH | drop NAME | unmap SERVICE OPERATION
+// rpc SERVICE OPERATION PATH | drop NAME | unmap SERVICE OPERATION | retain home
 bool botHttpsAdmin(const char *command, char *reply, size_t capacity);
 
 class BotHttpsTransport {

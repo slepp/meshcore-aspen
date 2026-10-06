@@ -109,6 +109,31 @@ struct PackageSink : BotHttpsBodySink {
   void abort(const char *) override { aborted = true; bytes.clear(); }
 };
 int main() {
+#ifdef ONCHIP_RETAIN_HOME_TEST
+  {
+  assert(admin("retain home"));
+  assert(!admin("retain home"));
+  assert(admin("commit") && botNetworkHomeConfigured());
+  BotIoRequest request;
+  request.kind = BotIoRequest::Rpc;
+  strcpy(request.endpoint, "home");
+  strcpy(request.key, "health");
+  BotNetworkRoute first, saved;
+  assert(botNetworkResolve(request, first));
+  const auto &initial = botHttpsConfig();
+  assert(!strcmp(first.address, initial.address) && !strcmp(first.host, initial.host) &&
+         !strcmp(first.ca, initial.ca) && !strcmp(first.token, initial.token) &&
+         first.port == initial.port && first.operations == initial.operations);
+  assert(botNetworkReload());
+  assert(botNetworkResolve(request, saved));
+  assert(!strcmp(first.address, saved.address) && !strcmp(first.host, saved.host) &&
+         !strcmp(first.ca, saved.ca) && !strcmp(first.token, saved.token) &&
+         first.port == saved.port && first.operations == saved.operations);
+  assert(!filesystem_test::files.empty());
+  puts("PASS retained initial HTTPS home endpoint, CA/token, grants and persistent restart selection");
+  return 0;
+  }
+#endif
   assert(!botNetworkConfigured());
   assert(admin("endpoint service 192.0.2.1 home.example 443 /v1/data both"));
   assert(!admin("ca service xyz"));

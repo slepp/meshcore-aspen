@@ -16,13 +16,15 @@ struct PublicProvisioningRecord {
   uint8_t wifiEnabled, tailReserved[7], digest[32];
 };
 static_assert(sizeof(PublicProvisioningRecord) == 336, "Public setup record layout changed");
+bool validatePublicProvisioning(const PublicProvisioningRecord &record);
+bool retainPublicProvisioning(const PublicProvisioningRecord &record, char *error, size_t capacity);
+bool publicProvisioningStored();
 
 #if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
 bool beginPublicProvisioning();
 bool publicProvisioningReady();
 bool loadPublicInitialRadio(RadioConfig &radio);
 bool initializePublicRuntimePreferences();
-bool validatePublicProvisioning(const PublicProvisioningRecord &record);
 const PublicProvisioningRecord &publicProvisioning();
 uint32_t provisioningUint32(const uint8_t bytes[4]);
 #endif

@@ -56,6 +56,14 @@ On ESP32, CA/token staging requires encrypted Management RF. Both the HTTP
 handler and shared administration dispatcher reject web/Lua staging; the
 native host's private owner socket permits provisioning.
 
+To move a configured private Aspen application to a generic build, use
+`bot https retain home` followed by `bot https commit`. This stages the initial
+home address, CA, token and allowed operations without printing or transporting
+them. It refuses an absent initial configuration or an already staged/saved
+home endpoint. The saved route takes priority over build defaults and remains
+available after a generic application update. This operation requires direct
+authenticated administration; it does not enable the bot's network grant.
+
 Stage secrets only through encrypted authenticated RF administration or the
 local protected Unix socket. Plaintext web administration rejects CA/token
 staging. Do not paste token hex into shell history, log files or source.

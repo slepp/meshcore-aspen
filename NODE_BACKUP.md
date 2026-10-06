@@ -89,8 +89,13 @@ trusted-key login. A dedicated recipient seed instead needs the existing
 administrator password. Reception and replies use encrypted native admin DMs.
 The backup's own encryption remains the same as the WiFi download.
 
-RF reads carry 48 archive bytes and wait at least five seconds between chunks.
-Budget at least 18 minutes for 10 KiB, plus radio transmission/reply time.
+Current source builds use unpadded Base64 replies sized to fill the native
+162-byte admin text limit, including the request tag, backup ID and byte offset.
+With the downloader's 16-digit request tag, each reply usually carries 84--88
+archive bytes. Budget about 10 minutes for 10 KiB, plus radio transmission/reply
+time. Reads still wait at least five seconds between chunks.
+Aspen 0.1.2 and other older backup builds use 48-byte hex replies; the downloader
+detects that command version and falls back, taking at least 18 minutes per 10 KiB.
 Keep the workstation and companion connected; large contact inventories can
 take over an hour. Other roles continue sharing the radio. This is a paced
 pull transfer, not an unsolicited flood.
@@ -132,14 +137,21 @@ workflow does not provide a whole-node network restore command.
 ## Commands, limits and archive layout
 
 Authenticated administration accepts `backup help`, `backup start KEY64`,
-`backup status`, `backup load`, `backup read ID16 OFFSET`, `backup cancel` and
+`backup status`, `backup load`, `backup read64 ID16 OFFSET`,
+`backup read ID16 OFFSET`, `backup cancel` and
 `backup clear`. `clear` removes saved backup files, not the node's settings.
 Lua jobs cannot request whole-node exports. WiFi downloads use
 `GET /admin/backup?id=ID16` with the existing authenticated session.
 
 `READY ID16 bytes=N sha=SHA256` describes the encrypted file. ID16 is the
 first 16 lowercase hex digits of its SHA-256. RF replies are
-`CHUNK ID16 OFFSET HEX`, `WAIT ms=N` or `EOF`. A `WAIT` is a pacing response,
+`CHUNK64 ID16 OFFSET BASE64`, `WAIT ms=N` or `EOF`. Base64 is the standard
+alphabet without `=` padding. Its decoded chunk size is
+`floor((162 - tag_bytes - header_bytes) * 3 / 4)`, capped by the bytes remaining
+in the file; the header includes its trailing space. Untagged reads can carry
+up to 101 archive bytes. Advance by the actual decoded length, not a fixed
+chunk size. Legacy `read` remains `CHUNK ID16 OFFSET HEX` with at most 48 bytes
+for older clients. A `WAIT` is a pacing response,
 not a failed read. Preparation and downloads cannot replace the same file
 while an active download holds it.
 

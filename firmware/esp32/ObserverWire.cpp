@@ -71,6 +71,23 @@ bool decode(const uint8_t *raw, size_t length, mesh::Packet &packet) {
   if (offset >= length || length - offset > MAX_PACKET_PAYLOAD) return false;
   return packet.readFrom(raw, length);
 }
+bool dnsAudience(const char *audience) {
+  if (!audience || !audience[0] || strlen(audience) > 253) return false;
+  size_t label = 0;
+  char previous = 0;
+  for (const char *p = audience; *p; ++p) {
+    const char c = *p;
+    if (c == '.') {
+      if (!label || previous == '-') return false;
+      label = 0;
+    } else {
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || (c == '-' && label)) || ++label > 63) return false;
+    }
+    previous = c;
+  }
+  return label && previous != '-';
+}
 bool token(const mesh::LocalIdentity &identity, const char *audience,
            uint32_t epoch, char *output, size_t capacity, uint32_t lifetime) {
   if (!audience || !*audience || epoch < 1735689600u || !lifetime ||

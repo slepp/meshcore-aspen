@@ -1,13 +1,15 @@
-# Set up a public Aspen radio over USB
+# Set up a public Aspen radio
 
 Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
-Aspen application. The application needs your **private SPIFFS setup
-image before it starts RF or administration**. Provision your credentials
-offline over USB. This ESP32-S3 profile uses `.bin` files with esptool.
+Aspen application. The application needs your **private setup record in SPIFFS
+before it starts RF or administration**. On a blank board, provision your
+credentials offline over USB. An initialized private build can
+[save its setup without replacing SPIFFS](#move-an-initialized-private-build-to-a-generic-application).
+This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image. Current source builds identify `aspen-0.1.2`; see the
+per-node setup image. Current source builds identify `aspen-0.1.3`; see the
 [release guide](../../release/README.md) for source builds.
 
 The application supports repeater, room, companion, Management and Lua/Wasm
@@ -27,6 +29,39 @@ written by the setup installer.
 Before maintaining an initialized node, download its
 [encrypted logical backup](../../NODE_BACKUP.md) over authenticated WiFi or RF.
 Keep the matching operator seed; an application image is not a state backup.
+
+## Move an initialized private build to a generic application
+
+Current source builds can save their initial private settings without
+replacing SPIFFS. First install the updated **private application only**, keeping
+its existing operator authority, WiFi and role defaults. Then use authenticated
+Management administration:
+
+```text
+setup migrate
+setup status
+mqtt commit
+bot https retain home
+bot https commit
+```
+
+`setup migrate` adds and reads back only `/public-setup.bin`. It uses the current
+committed radio profile, role selection, WiFi settings, initial role passwords,
+current Management password and public
+authorities; identities and existing files/NVS records stay in place. An
+existing different setup record is never replaced. `mqtt commit` saves the
+private build's initial observer settings as ordinary runtime configuration.
+If that build has a configured home HTTPS endpoint, `bot https retain home`
+stages its address, CA, token and allowed operations without printing them;
+`bot https commit` saves it. Omit the HTTPS commands when home HTTPS is unused.
+If home is already staged/saved, inspect `bot https status` rather than replacing it.
+
+Reboot the private application and check `setup status`, `mqtt status`,
+`bot https status` and the running role identities before uploading a generic
+application. Use the same signed [application-only update](ESP_FIELD_UPDATES.md)
+path and verification authority. After the generic boot, check the exact
+running image, saved settings, identities and normal radio/observer operation.
+Do **not** run `install-config` or `uploadfs` on the initialized node.
 
 ## Make your private setup image
 

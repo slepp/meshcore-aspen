@@ -123,7 +123,7 @@ func (w *roleWorker) start() (*roleInstance, error) {
 	w.mu.Unlock()
 	config := w.config
 	if w.cfg.nodeBackup != nil {
-		config.BackupCommand = w.cfg.nodeBackup.Command
+		config.BackupCommand = w.cfg.nodeBackup.CommandBudget
 	}
 	// Timing and RX scoring follow this source's verified PHY across retunes.
 	if estimate := link.AirtimeEstimator(); estimate != nil {

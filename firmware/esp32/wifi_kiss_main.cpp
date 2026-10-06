@@ -580,11 +580,7 @@ void loop() {
     (!wifi_was_connected || http_ready);
   nativeRolesReady = nativeRolesReady && !onchip::companionSessions().stats().nativeFault;
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
-  RadioDashboard::RoleStatus botStatus;
-  onchip::commandBotService().dashboardStatus(botStatus);
-  nativeRolesReady = nativeRolesReady &&
-    onchip::commandBotService().sourceDeploymentReady() &&
-    (!strcmp(botStatus.state, "disabled") || (botStatus.ready && !botStatus.fault[0]));
+  nativeRolesReady = nativeRolesReady && onchip::commandBotService().bootReady();
 #endif
   onchip::serviceEspUpdate(nativeRolesReady, wifi_was_connected && http_ready,
                           wifi_join_enabled);

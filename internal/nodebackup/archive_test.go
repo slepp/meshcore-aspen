@@ -2,9 +2,12 @@
 package nodebackup
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -122,6 +125,26 @@ func TestPersistentSnapshotPacingLeasesAndFailureRetention(t *testing.T) {
 	}
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
+	}
+	for _, prefix := range []int{0, 3, 17} {
+		for _, offset := range []int{0, 9, 99, 100, size - 1} {
+			command := fmt.Sprintf("backup read64 %s %d", id, offset)
+			reply := service.CommandBudget(command, false, 162-prefix)
+			words := strings.Fields(reply)
+			if len(words) != 4 || words[0] != "CHUNK64" || words[1] != id {
+				t.Fatal(reply)
+			}
+			chunk, err := base64.RawStdEncoding.Strict().DecodeString(words[3])
+			header := len(reply) - len(words[3])
+			want := min(size-offset, (162-prefix-header)*3/4)
+			if err != nil || len(chunk) != want || !bytes.Equal(chunk, raw[offset:offset+want]) ||
+				len(reply)+prefix > 162 {
+				t.Fatalf("budget=%d offset=%d: %s (%v)", 162-prefix, offset, reply, err)
+			}
+			if want < size-offset && header+base64.RawStdEncoding.EncodedLen(want+1)+prefix <= 162 {
+				t.Fatal("reply leaves room for another archive byte")
+			}
+		}
 	}
 	if reply := service.Command("backup read "+id+" 0", true); !strings.HasPrefix(reply, "CHUNK "+id+" 0 ") {
 		t.Fatal(reply)

@@ -11,8 +11,8 @@ func TestNodeBackupRequiresNativeAdministrator(t *testing.T) {
 	for _, room := range []bool{false, true} {
 		cfg := config(t)
 		var admitted atomic.Int32
-		cfg.BackupCommand = func(command string, radio bool) string {
-			if command != "backup status" || !radio {
+		cfg.BackupCommand = func(command string, radio bool, budget int) string {
+			if command != "backup status" || !radio || (budget != 159 && budget != 145) {
 				t.Errorf("unexpected backup call: %s radio=%v", command, radio)
 			}
 			admitted.Add(1)
@@ -48,6 +48,33 @@ func TestSplitCommandPreservesNativeAndOperatorTags(t *testing.T) {
 		prefix, body := splitCommand(test.command)
 		if prefix != test.prefix || body != test.body {
 			t.Fatalf("split %q: %q %q", test.command, prefix, body)
+		}
+
+	}
+}
+
+func TestBase64BackupRepliesUseNativeTextCapacity(t *testing.T) {
+	for _, room := range []bool{false, true} {
+		cfg := config(t)
+		cfg.BackupCommand = func(command string, radio bool, budget int) string {
+			if !radio || command != "backup read64 aaaaaaaaaaaaaaaa 0" {
+				t.Fatal("unexpected backup read")
+			}
+			header := "CHUNK64 aaaaaaaaaaaaaaaa 0 "
+			count := (budget - len(header)) * 3 / 4
+			return header + strings.Repeat("A", (count*4+2)/3)
+		}
+		s, radio, id := startRole(t, room, cfg)
+		admin := fixedID(2)
+		loggedIn(t, s, radio, admin, id, room, 1, "admin")
+		for index, prefix := range []string{"", "ab|", "0123456789abcdef|"} {
+			radio.inject(t, textWire(t, admin, id, uint32(index+2), 4,
+				prefix+"backup read64 aaaaaaaaaaaaaaaa 0"), false)
+			body := decrypted(t, radio.next(t), admin, id)
+			reply := string(cstring(body[5:]))
+			if !strings.HasPrefix(reply, prefix+"CHUNK64 ") || len(reply) < 161 || len(reply) > 162 {
+				t.Fatalf("native backup response truncated: %q", reply)
+			}
 		}
 	}
 }

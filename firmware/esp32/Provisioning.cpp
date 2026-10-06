@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-#if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
 #include "Provisioning.h"
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -13,8 +12,10 @@
 
 namespace onchip {
 namespace {
+#if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
 PublicProvisioningRecord selected{};
 bool ready = false;
+#endif
 void wipe(void *memory, size_t size) {
   auto *bytes = static_cast<volatile uint8_t *>(memory);
   while (size--) *bytes++ = 0;
@@ -44,6 +45,7 @@ bool publicKey(const char (&value)[65], bool required) {
   }
   return nonzero && nonff;
 }
+#if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
 bool failure(const char *condition) {
   ready = false;
   wipe(&selected, sizeof(selected));
@@ -51,6 +53,7 @@ bool failure(const char *condition) {
                 condition);
   return false;
 }
+#endif
 } // namespace
 uint32_t provisioningUint32(const uint8_t bytes[4]) {
   return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 |
@@ -95,6 +98,61 @@ bool validatePublicProvisioning(const PublicProvisioningRecord &record) {
       text(record.wifiPassword, sizeof(record.wifiPassword), false) && wifiValid &&
       record.wifiEnabled <= 1 && (!record.wifiEnabled || record.wifiSsid[0]);
 }
+bool retainPublicProvisioning(const PublicProvisioningRecord &record, char *error, size_t capacity) {
+  const auto fail = [&](const char *message) { snprintf(error, capacity, "%s", message); return false; };
+  if (!validatePublicProvisioning(record)) return fail("runtime setup fields invalid; no setup file written");
+  auto layout = SPIFFS.open("/onchip-layout", "r");
+  constexpr char expected[] = "meshcore-onchip-fs-v1\n";
+  char actual[sizeof(expected) - 1]{};
+  if (!layout || layout.size() != sizeof(actual) ||
+      layout.read(reinterpret_cast<uint8_t *>(actual), sizeof(actual)) != sizeof(actual) ||
+      memcmp(actual, expected, sizeof(actual)))
+    return fail("existing SPIFFS layout invalid; setup migration refused");
+  layout.close();
+  PublicProvisioningRecord check{};
+  struct Clear {
+    PublicProvisioningRecord &record;
+    ~Clear() { wipe(&record, sizeof(record)); }
+  } clear{check};
+  const auto read = [&](const char *path) {
+    auto file = SPIFFS.open(path, "r");
+    const bool valid = file && file.size() == sizeof(check) &&
+        file.read(reinterpret_cast<uint8_t *>(&check), sizeof(check)) == sizeof(check) &&
+        file.size() == sizeof(check) && validatePublicProvisioning(check);
+    file.close();
+    return valid;
+  };
+  if (SPIFFS.exists("/public-setup.bin")) {
+    if (!read("/public-setup.bin") || memcmp(&record, &check, sizeof(record)))
+      return fail("public setup already exists and differs; retained without replacement");
+    return true;
+  }
+  constexpr char temporary[] = "/public-setup.tmp";
+  auto file = SPIFFS.open(temporary, "w");
+  if (!file) return fail("setup staging file could not be opened");
+  const bool written = file.write(reinterpret_cast<const uint8_t *>(&record), sizeof(record)) == sizeof(record);
+  file.flush();
+  file.close();
+  if (!written || !read(temporary) || memcmp(&record, &check, sizeof(record))) {
+    if (!SPIFFS.remove(temporary)) return fail("setup staging failed and temporary file removal failed");
+    return fail("setup staging write/readback failed; published setup unchanged");
+  }
+  if (!SPIFFS.rename(temporary, "/public-setup.bin") || !read("/public-setup.bin") ||
+      memcmp(&record, &check, sizeof(record)))
+    return fail("setup publication/readback unknown; inspect setup status before retry");
+  return true;
+}
+bool publicProvisioningStored() {
+  auto file = SPIFFS.open("/public-setup.bin", "r");
+  PublicProvisioningRecord record{};
+  const bool valid = file && file.size() == sizeof(record) &&
+      file.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) == sizeof(record) &&
+      file.size() == sizeof(record) && validatePublicProvisioning(record);
+  file.close();
+  wipe(&record, sizeof(record));
+  return valid;
+}
+#if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
 bool beginPublicProvisioning() {
   ready = false;
   wipe(&selected, sizeof(selected));
@@ -154,5 +212,5 @@ bool initializePublicRuntimePreferences() {
   return true;
 }
 const PublicProvisioningRecord &publicProvisioning() { return selected; }
-} // namespace onchip
 #endif
+} // namespace onchip

@@ -64,6 +64,10 @@ static void public_observer_service() {
   onchip::Observer observer;
   Fixture f;
   assert(observer.begin(f.mux));
+  char ownerToken[1024]{}, ownerTokenError[120]{};
+  assert(!observer.mintToken("broker.example", ownerToken, sizeof(ownerToken),
+                            ownerTokenError, sizeof(ownerTokenError)));
+  assert(strstr(ownerTokenError, "network UTC") && !ownerToken[0]);
   assert(!onchip::ObserverTest::client(observer));
   onchip::ObserverTest::service(observer);
   assert(!onchip::ObserverTest::client(observer));
@@ -79,6 +83,14 @@ static void public_observer_service() {
   RadioDashboard::RadioStatus status{};
   observer.observeRoles(status);
   const auto firstIssued = onchip::ObserverTest::epoch(observer, now);
+  assert(observer.mintToken("broker.example", ownerToken, sizeof(ownerToken),
+                           ownerTokenError, sizeof(ownerTokenError)));
+  assert(std::count(ownerToken, ownerToken + strlen(ownerToken), '.') == 2);
+  for (const char *audience : {"", "broker.example:443", "bad..example", "-bad.example", "bad-.example",
+                              "mqtt://broker.example", "broker.example/", "broker.example."}) {
+    assert(!observer.mintToken(audience, ownerToken, sizeof(ownerToken),
+                              ownerTokenError, sizeof(ownerTokenError)) && !ownerToken[0]);
+  }
   onchip::ObserverTest::service(observer);
   auto client = onchip::ObserverTest::client(observer);
   assert(client && client->username.find("v1_") == 0);

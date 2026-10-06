@@ -20,6 +20,10 @@ Use the same provisioning mode, operator public key and
 image or an image compiled with different operator/configuration defaults.
 For a public Aspen application, complete [USB setup](PUBLIC_SETUP.md) first;
 its private setup record supplies the update verification authority.
+To change an initialized private application to the generic build, first
+[save its runtime setup](PUBLIC_SETUP.md#move-an-initialized-private-build-to-a-generic-application).
+This migration adds a setup record without replacing SPIFFS and keeps the same
+verification authority.
 
 ## Prepare and upload
 
@@ -88,6 +92,10 @@ setting).
 Every selected Lua and Wasm deployment must also finish verified live activation.
 A ready bundled VM does not substitute for a retained program that cannot be
 opened, read, verified or initialized.
+After a selected program initializes, ordinary command or scheduled-event errors
+remain in the bot's diagnostics but do not restart the boot health window.
+Source activation failures and invalid adaptive-admission policy still block
+confirmation.
 
 ## Boot health and recovery
 

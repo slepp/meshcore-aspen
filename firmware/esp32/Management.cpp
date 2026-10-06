@@ -367,7 +367,7 @@ struct Management::Core : mesh::Mesh {
       for (size_t i = 0; prefix && i < tagSize; ++i)
         if (nibble(command[i]) < 0) prefix = 0;
       admin.execute(command + prefix, result, 0, MastAdmin::Transport::NativeEncrypted,
-                    session.id.pub_key);
+                    session.id.pub_key, sizeof(result.text) - prefix);
       if (prefix) {
         if (strlen(result.text) > MastAdmin::TextLimit - prefix) {
           admin.acknowledged(result.ticket, false);

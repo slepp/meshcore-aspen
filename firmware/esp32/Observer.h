@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "WifiKissMultiplexer.h"
+#include "ObserverConfig.h"
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -35,6 +36,7 @@ class Observer final : public KissPacketObserver {
   char radio[64] = "unknown";
   bool haveRoles = false, rolesPublished = false;
   RadioDashboard::RoleStatus identity{};
+  ObserverConfig settings{};
   RadioDashboard::RoleStatus botSource{};
   QueueHandle_t queue = nullptr, statusQueue = nullptr;
   esp_mqtt_client_handle_t client = nullptr;
@@ -68,6 +70,7 @@ public:
   bool begin(WifiKissMultiplexer &mux);
   void dashboardStatus(RadioDashboard::RoleStatus &) const;
   void statistics(char *reply, size_t capacity) const;
+  bool mintToken(const char *audience, char *output, size_t capacity, char *error, size_t errorCapacity) const;
   void observeRoles(const RadioDashboard::RadioStatus &);
   void packet(const uint8_t *, uint16_t, bool, uint8_t, float, float) override;
   void transmitted(const uint8_t *, uint16_t, uint8_t, uint8_t, uint32_t,

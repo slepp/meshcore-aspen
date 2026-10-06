@@ -2,6 +2,7 @@
 #include "CompanionSessions.h"
 #include "Runtime.h"
 #include "Management.h"
+#include "ObserverConfig.h"
 #include "ScopedFS.h"
 #include <SPIFFS.h>
 #include <Utils.h>
@@ -124,6 +125,9 @@ struct Fixture {
     for (const auto &callback : callbacks)
       callback.stop();
     onchip::companionSessions().end();
+#ifdef ONCHIP_OBSERVER_CONFIG_TEST
+    onchip::resetObserverConfigForTest();
+#endif
     assert(psram_test::allocations.empty());
   }
   void step(unsigned count = 1) {

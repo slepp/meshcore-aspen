@@ -2535,6 +2535,12 @@ void CommandBot::dashboardStatus(RadioDashboard::RoleStatus &status) const {
 bool CommandBot::sourceReady() const {
   return core_ && core_->initialized && radio_.queuedReady();
 }
+bool CommandBot::bootReady() const {
+  RadioDashboard::RoleStatus status;
+  dashboardStatus(status);
+  return selectedSourcesReady_ && !adaptivePolicyFault_ &&
+      (!strcmp(status.state, "disabled") || status.ready);
+}
 bool CommandBot::retrySourceInitialization() {
   if (!core_ || core_->initialized || core_->initializing || worker_.busy()) return false;
   if (!worker_.stage(BotDefaultSource, strlen(BotDefaultSource))) return false;

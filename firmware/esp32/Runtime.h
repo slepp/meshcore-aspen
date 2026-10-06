@@ -40,6 +40,7 @@ bool beginDiagnostics();
 bool diagnosticsCommand(const char *command, char *reply, size_t capacity);
 void diagnosticLoopSample(uint32_t started, uint32_t finished);
 void observerStatistics(char *reply, size_t capacity);
+bool observerToken(const char *audience, char *output, size_t capacity, char *error, size_t errorCapacity);
 bool sharedRadioReadCommand(const LocalRadio &radio, const char *command, char *reply, size_t capacity);
 bool repeaterBegin(WifiKissMultiplexer &mux);
 bool roomBegin(WifiKissMultiplexer &mux);

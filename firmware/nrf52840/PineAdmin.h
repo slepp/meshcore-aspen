@@ -13,7 +13,8 @@ public:
   void loop();
   void stop();
   void execute(const char *, Reply &, uint32_t invokingJob = 0,
-               Transport transport = Transport::Other, const uint8_t *nativeSender = nullptr);
+               Transport transport = Transport::Other, const uint8_t *nativeSender = nullptr,
+               size_t replyCapacity = TextLimit + 1);
   bool trusted(const uint8_t key[32]) const;
   bool ready() const { return ready_; }
   bool rememberTimestamp(const uint8_t key[32], uint32_t timestamp);

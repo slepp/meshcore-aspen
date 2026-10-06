@@ -4,6 +4,7 @@
 #undef main
 #include "Management.h"
 #include "MastWeb.h"
+#include "ObserverConfig.h"
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
 #include "bot_parser_cases.h"
@@ -65,6 +66,9 @@ struct BetaFixture {
       repeaterStop(); roomStop(); companionStop(); companionSessions().end();
     }
     management.stop(); bot.stop();
+#ifdef ONCHIP_OBSERVER_CONFIG_TEST
+    resetObserverConfigForTest();
+#endif
     assert(psram_test::allocations.empty());
   }
   void step(unsigned count = 100) {
@@ -146,6 +150,54 @@ struct BetaFixture {
   }
 };
 static std::string encode(const uint8_t *bytes, size_t size);
+#ifdef ONCHIP_RUNTIME_CONFIG_ADMIN_TEST
+static void runtime_config_admin() {
+  BetaFixture f;
+  TestHTTPServer server;
+  assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 5);
+  const auto request = [&](const char *path, const std::string &text, const std::string &token = "") {
+    httpd_req_t r;
+    r.body = text; r.content_len = text.size();
+    r.headers["Host"] = "mast.test";
+    if (!token.empty()) r.headers["X-Mast-Session"] = token;
+    assert(server.routes.at(path).handler(&r) == ESP_OK);
+    return r;
+  };
+  assert(request("/admin/observer-token", "broker.example").status == "403 Forbidden");
+  timeMs += 1100;
+  const auto login = request("/admin/login", "mast-pass-12");
+  assert(login.status == "200 OK" && login.response.size() == 32);
+  const auto token = login.response;
+  assert(request("/admin/observer-token", "broker.example:443", token).status == "400 Bad Request");
+  assert(request("/admin/observer-token", "broker.example", token).status == "503 Service Unavailable");
+  for (const char *text : {"mqtt ca", "mqtt ca clear", "mqtt username 6162", "mqtt password 736563726574"})
+    assert(request("/admin/command", text, token).status == "403 Forbidden");
+  MastAdmin::Reply reply;
+  f.management.admin().execute("mqtt uri mqtt://unauthorized", reply);
+  assert(strstr(reply.text, "authenticated administration"));
+  f.management.admin().execute("mqtt commit", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "authenticated administration"));
+  f.management.admin().execute("setup migrate", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "authenticated Management"));
+  Peer owner;
+  const auto loggedIn = f.send(owner, "mast-pass-12", true);
+  assert(!loggedIn.empty());
+  const auto rf = [&](const char *text) {
+    const auto body = f.send(owner, text, false);
+    assert(body.size() > 5 && body[4] == 4);
+    return std::string(reinterpret_cast<const char *>(body.data() + 5));
+  };
+  assert(rf("0123456789abcdef|mqtt uri mqtt://configured-broker") ==
+         "0123456789abcdef|Staged MQTT field; mqtt commit then reboot to apply");
+  assert(rf("0123456789abcdef|mqtt username 75736572").find("Staged") != std::string::npos);
+  assert(rf("0123456789abcdef|mqtt password 736563726574").find("Staged") != std::string::npos);
+  assert(rf("0123456789abcdef|mqtt commit").find("Saved MQTT settings") != std::string::npos);
+  assert(rf("0123456789abcdef|mqtt uri") == "0123456789abcdef|mqtt://configured-broker");
+  assert(rf("0123456789abcdef|mqtt status").find("secret") == std::string::npos);
+  assert(rf("0123456789abcdef|setup status").find("public setup missing") != std::string::npos);
+  puts("PASS runtime config owner RF/Web boundaries, correlated replies, private credentials and observer token auth/error handling");
+}
+#endif
 static void public_time_guest() {
   beginClocks();
   beginNetworkClock(true);
@@ -1256,7 +1308,7 @@ static void interrupted_upload() {
   const auto authenticated_web = [](bool installCommands = false) {
     BetaFixture f;
     TestHTTPServer server;
-    assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 4);
+    assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 5);
     const auto request = [&](const char *path, const std::string &body,
                              const std::string &token = "", const std::string &origin = "") {
       httpd_req_t r;
@@ -1268,6 +1320,7 @@ static void interrupted_upload() {
       return r;
     };
     assert(request("/admin/command", "status").status == "403 Forbidden");
+    assert(request("/admin/observer-token", "public.example").status == "403 Forbidden");
     assert(request("/admin/command", "bot diagnostics").status == "403 Forbidden");
     assert(request("/admin/command", "data export bot " + std::string(64, '0')).status == "403 Forbidden");
     assert(request("/admin/command", "data restore 0000000000000000").status == "403 Forbidden");
@@ -1291,6 +1344,8 @@ static void interrupted_upload() {
              denied.response.find("736563726574") == std::string::npos);
     }
     assert(request("/admin/command", "bot https token demo 616263", token).status == "403 Forbidden");
+    for (const char *text : {"mqtt ca", "mqtt ca clear", "mqtt username 6162", "mqtt password 736563726574"})
+      assert(request("/admin/command", text, token).status == "403 Forbidden");
     assert(request("/admin/command", "role password repeater 736563726574", token).status == "403 Forbidden");
     assert(request("/admin/command", "role password room 736563726574", token).status == "403 Forbidden");
     assert(request("/admin/command", "bot https  ca demo 616263", token).status == "403 Forbidden");
@@ -2889,6 +2944,11 @@ static void adaptive_policy_admin() {
 }
 
 int main(int argc, char **argv) {
+#ifdef ONCHIP_RUNTIME_CONFIG_ADMIN_TEST
+  assert(saveRoleProfile({0}) && saveBotEnabled(true));
+  runtime_config_admin();
+  return 0;
+#endif
   setbuf(stdout, nullptr);
 #ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
   assert(saveRoleProfile({0}) && saveBotEnabled(true) && saveBotEventAccess(0));
@@ -2904,7 +2964,13 @@ int main(int argc, char **argv) {
   assert(saveRoleProfile({0}) && saveBotEnabled(true));
   selected_source_boot_health();
   live_source_retry();
+  runtime_fault_boot_health();
   packageMetadataLifecycle();
+  return 0;
+#endif
+#ifdef ONCHIP_RUNTIME_BOOT_HEALTH_TEST
+  assert(saveRoleProfile({0}) && saveBotEnabled(true));
+  runtime_fault_boot_health();
   return 0;
 #endif
 #ifdef PINE_PARSER_STACK_TEST

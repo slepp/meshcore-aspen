@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 namespace onchip::observerWire {
+bool dnsAudience(const char *audience);
 // agessaman/MeshCore observer-firmware c2c4cb59e34c9d305a23bfc5d30f16c6fc3e30b2.
 constexpr uint32_t TOKEN_LIFETIME = 86400, RENEWAL_MARGIN = 300;
 bool decode(const uint8_t *, size_t, mesh::Packet &);

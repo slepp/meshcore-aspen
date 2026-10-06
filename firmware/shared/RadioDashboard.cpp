@@ -938,7 +938,7 @@ bool RadioDashboard::beginHTTP() {
   config.backlog_conn = 2;
   config.max_uri_handlers = 3;
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
-  config.max_uri_handlers += 7;
+  config.max_uri_handlers += 8;
 #if MESHCORE_NODE_BACKUP
   config.max_uri_handlers += 1;
 #endif

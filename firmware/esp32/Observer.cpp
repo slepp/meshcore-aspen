@@ -120,16 +120,19 @@ bool Observer::begin(WifiKissMultiplexer &mux) {
   auto secret = reinterpret_cast<volatile uint8_t *>(&loaded);
   for (size_t i = 0; i < sizeof(loaded); ++i)
     secret[i] = 0;
+  if (!loadObserverConfig(settings))
+    return fail("Saved MQTT settings invalid; inspect mqtt status");
+  strcpy(identity.name, settings.name);
   for (unsigned i = 0; i < sizeof(identity.public_key); ++i)
-    snprintf(identityHex + 2 * i, 3, ONCHIP_MQTT_FORMAT ? "%02X" : "%02x",
+    snprintf(identityHex + 2 * i, 3, settings.format ? "%02X" : "%02x",
              identity.public_key[i]);
-  if (!ONCHIP_MQTT_URI[0])
+  if (!settings.uri[0])
     return true;
   uint8_t nonce[16];
   esp_fill_random(nonce, sizeof(nonce));
   for (unsigned i = 0; i < sizeof(nonce); ++i)
     snprintf(eventPrefix + 2 * i, 3, "%02x", nonce[i]);
-  const char *prefix = ONCHIP_MQTT_TOPIC_PREFIX;
+  const char *prefix = settings.prefix;
   const size_t length = strlen(prefix);
   if (!length || length > 120 || prefix[0] == '/' ||
       prefix[length - 1] == '/' || strpbrk(prefix, "+#") != nullptr)
@@ -138,25 +141,25 @@ bool Observer::begin(WifiKissMultiplexer &mux) {
        *p; ++p)
     if (*p < 32 || *p >= 127)
       return fail("Invalid MQTT topic prefix");
-  if (ONCHIP_MQTT_FORMAT) {
-    const char *iata = ONCHIP_MQTT_IATA;
+  if (settings.format) {
+    const char *iata = settings.iata;
     if (strlen(iata) != 3)
       return fail("Configure MQTT IATA as three uppercase letters");
     for (unsigned i = 0; i < 3; ++i)
       if (iata[i] < 'A' || iata[i] > 'Z')
         return fail("Configure MQTT IATA as three uppercase letters");
-    if (strchr(ONCHIP_MQTT_URI, '@') && ONCHIP_MQTT_AUDIENCE[0])
+    if (strchr(settings.uri, '@') && settings.audience[0])
       return fail("JWT MQTT URI must not contain credentials");
-    const bool secure = !strncmp(ONCHIP_MQTT_URI, "mqtts://", 8) ||
-                        !strncmp(ONCHIP_MQTT_URI, "wss://", 6);
-    if (secure && !ONCHIP_MQTT_CA_PEM[0])
+    const bool secure = !strncmp(settings.uri, "mqtts://", 8) ||
+                        !strncmp(settings.uri, "wss://", 6);
+    if (secure && !settings.ca[0])
       return fail("Secure MQTT connection requires a CA certificate");
-    if (strncmp(ONCHIP_MQTT_URI, "mqtt://", 7) &&
-        strncmp(ONCHIP_MQTT_URI, "ws://", 5) && !secure)
+    if (strncmp(settings.uri, "mqtt://", 7) &&
+        strncmp(settings.uri, "ws://", 5) && !secure)
       return fail("MQTT URI must use mqtt, mqtts, ws or wss");
     snprintf(baseTopic, sizeof(baseTopic), "%s/%s/%s", prefix, iata, identityHex);
   } else {
-    if (ONCHIP_MQTT_AUDIENCE[0])
+    if (settings.audience[0])
       return fail("JWT authentication requires public observer format");
     snprintf(baseTopic, sizeof(baseTopic), "%s/%s", prefix, identityHex);
   }
@@ -181,7 +184,7 @@ bool Observer::begin(WifiKissMultiplexer &mux) {
     queue = statusQueue = nullptr;
     return fail("MQTT queue allocation failed");
   }
-  if (!ONCHIP_MQTT_FORMAT && !startClient(0)) {
+  if (!settings.format && !startClient(0)) {
     vQueueDelete(queue);
     vQueueDelete(statusQueue);
     queue = statusQueue = nullptr;
@@ -204,22 +207,24 @@ bool Observer::begin(WifiKissMultiplexer &mux) {
 bool Observer::startClient(uint32_t epoch) {
   esp_mqtt_client_config_t config{};
   char *will = json, *password = json + 1024;
-  config.uri = ONCHIP_MQTT_URI;
+  config.uri = settings.uri;
+  config.username = settings.username[0] ? settings.username : nullptr;
+  config.password = settings.password[0] ? settings.password : nullptr;
+  config.cert_pem = settings.ca[0] ? settings.ca : nullptr;
   config.client_id = identityHex;
   config.lwt_topic = statusTopic;
   config.lwt_msg = "offline";
-  if (ONCHIP_MQTT_FORMAT) {
+  if (settings.format) {
     if (!observerWire::status("offline", identity.name, identityHex,
          ONCHIP_MQTT_MODEL, ONCHIP_MQTT_FIRMWARE_VERSION, radio, epoch, will, 1024))
       return fail("MQTT status invalid: check model/version/time");
     config.lwt_msg = will;
-    config.cert_pem = ONCHIP_MQTT_CA_PEM[0] ? ONCHIP_MQTT_CA_PEM : nullptr;
-    if (ONCHIP_MQTT_AUDIENCE[0]) {
+    if (settings.audience[0]) {
       mesh::LocalIdentity loaded;
       if (!loadIdentity("observer", loaded)) return false;
       const bool same = !memcmp(loaded.pub_key, identity.public_key, 32);
       const bool signedToken = same && observerWire::token(
-          loaded, ONCHIP_MQTT_AUDIENCE, epoch, password, 1024);
+          loaded, settings.audience, epoch, password, 1024);
       auto secret = reinterpret_cast<volatile uint8_t *>(&loaded);
       for (size_t i = 0; i < sizeof(loaded); ++i) secret[i] = 0;
       if (!signedToken) return fail("Observer identity changed or JWT signing failed");
@@ -230,7 +235,7 @@ bool Observer::startClient(uint32_t epoch) {
       tokenExpires = epoch + observerWire::TOKEN_LIFETIME;
     }
   }
-  config.lwt_qos = ONCHIP_MQTT_FORMAT ? 1 : 0;
+  config.lwt_qos = settings.format ? 1 : 0;
   config.lwt_retain = true;
   config.buffer_size = 3072;
   config.network_timeout_ms = 1000;
@@ -257,9 +262,9 @@ void Observer::dashboardStatus(RadioDashboard::RoleStatus &status) const {
   if (const auto fault = connectionFault.load())
     snprintf(status.fault, sizeof(status.fault), "%s", fault);
   strcpy(status.state, status.fault[0]     ? "fault"
-                       : !ONCHIP_MQTT_URI[0] ? "disabled"
+                       : !settings.uri[0] ? "disabled"
                        : status.ready        ? "running"
-                       : ONCHIP_MQTT_FORMAT && !observationEpoch(0, true)
+                       : settings.format && !observationEpoch(0, true)
                                              ? "waiting-time"
                                              : "connecting");
 }
@@ -342,10 +347,10 @@ void Observer::packet(const uint8_t *raw, uint16_t length, bool tx,
                       uint8_t state, float rssi, float snr) {
   if (!queue)
     return;
-  if (ONCHIP_MQTT_FORMAT && (tx || (rssi == 127 && snr == -32)))
+  if (settings.format && (tx || (rssi == 127 && snr == -32)))
     return;
-  if (ONCHIP_MQTT_FORMAT && length &&
-      !(ONCHIP_MQTT_PACKET_FILTER & (1u << ((raw[0] >> 2) & 15)))) {
+  if (settings.format && length &&
+      !(settings.filter & (1u << ((raw[0] >> 2) & 15)))) {
     dropped.fetch_add(1);
     return;
   }
@@ -367,7 +372,7 @@ void Observer::packet(const uint8_t *raw, uint16_t length, bool tx,
 }
 void Observer::transmitted(const uint8_t *raw, uint16_t length, uint8_t state,
                            uint8_t slot, uint32_t generation, uint32_t job) {
-  if (!queue || ONCHIP_MQTT_FORMAT)
+  if (!queue || settings.format)
     return;
   Pending *entry = nullptr, *free = nullptr;
   for (auto &item : pending) {
@@ -436,6 +441,23 @@ void Observer::statistics(char *reply, size_t capacity) const {
   if (size < 0 || size > 130 || size_t(size) >= capacity)
     snprintf(reply, capacity, "Error: observer stats response exceeds encrypted CLI capacity");
 }
+bool Observer::mintToken(const char *audience, char *output, size_t capacity,
+                         char *error, size_t errorCapacity) const {
+  const auto reject = [&](const char *message) { snprintf(error, errorCapacity, "%s", message); return false; };
+  if (!output || !capacity) return reject("Observer token reply storage unavailable");
+  output[0] = 0;
+  if (!observerWire::dnsAudience(audience))
+    return reject("Observer token audience must be a broker DNS name");
+  const auto epoch = observationEpoch(0, true);
+  if (!epoch) return reject("Observer token requires fresh network UTC; inspect get sntp.current");
+  mesh::LocalIdentity loaded;
+  const bool available = loadIdentity("observer", loaded);
+  const bool same = available && !memcmp(loaded.pub_key, identity.public_key, sizeof(identity.public_key));
+  const bool signedToken = same && observerWire::token(loaded, audience, epoch, output, capacity);
+  auto *secret = reinterpret_cast<volatile uint8_t *>(&loaded);
+  for (size_t i = 0; i < sizeof(loaded); ++i) secret[i] = 0;
+  return signedToken || reject("Observer identity unavailable/changed or token signing failed");
+}
 void Observer::service() {
   Event e;
   const bool received = xQueueReceive(queue, &e, pdMS_TO_TICKS(100)) == pdTRUE;
@@ -448,7 +470,7 @@ void Observer::service() {
     haveRoles = true;
   }
   const auto epoch = observationEpoch(0, true);
-  if (ONCHIP_MQTT_FORMAT) {
+  if (settings.format) {
     if (epoch) lastReadyEpoch = epoch;
     if (client && (!epoch || (tokenExpires &&
         (epoch < tokenIssued ||
@@ -479,15 +501,15 @@ void Observer::service() {
   }
   const auto currentSession = session.load();
   const bool newSession = announcedSession.load() != currentSession;
-  if (newSession || (ONCHIP_MQTT_FORMAT &&
+  if (newSession || (settings.format &&
       (radioChanged || uint32_t(millis() - lastStatusAt) >= 60000u))) {
-    const auto length = ONCHIP_MQTT_FORMAT ?
+    const auto length = settings.format ?
         observerWire::status("online", identity.name, identityHex,
           ONCHIP_MQTT_MODEL, ONCHIP_MQTT_FIRMWARE_VERSION, radio, epoch,
           json, sizeof(json)) : 6;
-    if (!length || !publish(statusTopic, ONCHIP_MQTT_FORMAT ?
+    if (!length || !publish(statusTopic, settings.format ?
                            json : "online", length, true,
-                           ONCHIP_MQTT_FORMAT ? 1 : 0)) {
+                           settings.format ? 1 : 0)) {
       if (received)
         dropped.fetch_add(1);
       return;
@@ -496,7 +518,7 @@ void Observer::service() {
     lastStatusAt = millis();
     announcedSession.store(currentSession);
   }
-  if (haveRoles && !ONCHIP_MQTT_AUDIENCE[0]) {
+  if (haveRoles && !settings.audience[0]) {
     bool success = true;
     char metadataIdentity[65];
     for (unsigned i = 0; i < 32; ++i)
@@ -507,7 +529,7 @@ void Observer::service() {
         continue;
       char topic[224];
       snprintf(topic, sizeof(topic), "%s/%s/roles/%s",
-               ONCHIP_MQTT_TOPIC_PREFIX, metadataIdentity, latest[i].role);
+               settings.prefix, metadataIdentity, latest[i].role);
       const auto size =
           RadioDashboard::formatRoleJSON(latest[i], json, sizeof(json));
       if (!size) {
@@ -526,13 +548,13 @@ void Observer::service() {
   publishPacket(e);
 }
 void Observer::publishPacket(const Event &e) {
-  if (ONCHIP_MQTT_FORMAT) {
+  if (settings.format) {
     // Local transmissions and modem reflection remain internal observations,
     // never RF receptions on the public packet feed.
     if (e.tx) return;
     const auto size = observerWire::packet(
         e.raw, e.length, identity.name, identityHex, e.epoch, e.rssi, e.snr,
-        ONCHIP_MQTT_PACKET_FILTER, json, sizeof(json), ONCHIP_MQTT_FORMAT == 2);
+        settings.filter, json, sizeof(json), settings.format == 2);
     if (!size || !publish(packetTopic, json, size, false))
       dropped.fetch_add(1);
 #ifdef ARDUINO_ARCH_ESP32

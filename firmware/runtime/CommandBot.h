@@ -120,6 +120,7 @@ public:
   bool advertise(bool zeroHop = false);
   bool sourceReady() const;
   bool sourceDeploymentReady() const { return selectedSourcesReady_; }
+  bool bootReady() const;
   void setSourceDeploymentState(bool luaReady, bool luaBlocked, bool wasmReady, bool wasmBlocked,
                                 const char *fault);
   bool retrySourceInitialization();

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
+import base64
 import os
 from pathlib import Path
 import subprocess
@@ -13,12 +14,13 @@ from tools import node_backup
 
 
 class BackupClient:
-    def __init__(self, raw, interrupt=None):
+    def __init__(self, raw, interrupt=None, legacy=False):
         self.raw = raw
         self.interrupt = interrupt
         self.commands = []
         self.waited = False
         self.identifier = hashlib.sha256(raw).hexdigest()[:16]
+        self.legacy = legacy
 
     def command(self, text):
         self.commands.append(text)
@@ -26,13 +28,19 @@ class BackupClient:
             return "PREPARING"
         if text == "backup status":
             return f"READY {self.identifier} bytes={len(self.raw)} sha={hashlib.sha256(self.raw).hexdigest()}"
-        if text.startswith("backup read "):
+        if text.startswith("backup read64 ") and self.legacy:
+            return "Error: unknown backup command; use backup help"
+        if text.startswith(("backup read ", "backup read64 ")):
             if not self.waited:
                 self.waited = True
                 return "WAIT ms=5000"
             offset = int(text.split()[-1])
             if self.interrupt is not None and offset >= self.interrupt:
                 raise TimeoutError("RF reply uncertain")
+            if text.startswith("backup read64 "):
+                header = f"CHUNK64 {self.identifier} {offset} "
+                count = (145 - len(header)) * 3 // 4
+                return header + base64.b64encode(self.raw[offset:offset + count]).decode().rstrip("=")
             return f"CHUNK {self.identifier} {offset} {self.raw[offset:offset + 48].hex()}"
         raise AssertionError(text)
 
@@ -122,7 +130,7 @@ class NodeBackupTests(unittest.TestCase):
                 self.assertEqual(second.commands[0], "backup load")
                 self.assertFalse(any(text.startswith("backup start") for text in second.commands))
                 if radio:
-                    self.assertIn(f"backup read {second.identifier} {size}", second.commands)
+                    self.assertIn(f"backup read64 {second.identifier} {size}", second.commands)
                     self.assertTrue(sleep.called)
 
     def test_download_rejects_truncation_and_authenticated_tampering(self):
@@ -167,6 +175,29 @@ class NodeBackupTests(unittest.TestCase):
             self.assertEqual(client.commands[0], "backup load")
             self.assertFalse(any(text.startswith("backup start") for text in client.commands))
             self.assertEqual(output.read_bytes(), self.raw)
+
+    def test_rf_legacy_fallback_and_variable_base64_chunks(self):
+        metadata = {"id": hashlib.sha256(self.raw).hexdigest()[:16], "bytes": len(self.raw)}
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), patch.object(node_backup.time, "sleep"):
+                client = BackupClient(self.raw, legacy=legacy)
+                chunks = list(node_backup.rf_chunks(client, metadata, 0))
+                self.assertEqual(b"".join(chunks), self.raw)
+                if legacy:
+                    self.assertEqual(len(chunks[0]), 48)
+                    self.assertEqual(sum("backup read64 " in command for command in client.commands), 1)
+                else:
+                    self.assertGreater(len(chunks[0]), 48)
+
+    def test_rf_rejects_invalid_chunks_without_legacy_fallback(self):
+        identifier = "a" * 16
+        metadata = {"id": identifier, "bytes": 300}
+        for payload in ("A", "AB", "AA=", "AA-", "AAAAA", "A" * 164):
+            class Invalid:
+                def command(self, text):
+                    return f"CHUNK64 {identifier} 0 {payload}"
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                list(node_backup.rf_chunks(Invalid(), metadata, 0))
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ class ESPFieldUpdate(unittest.TestCase):
             self.assertIn("serviceEspUpdate", main)
             dashboard = (native.parent / "RadioDashboard.cpp").read_text()
             self.assertEqual(dashboard.count("registerClockHTTP(_server)"), 1)
-            self.assertIn("config.max_uri_handlers += 7;", dashboard)
+            self.assertIn("config.max_uri_handlers += 8;", dashboard)
         finally:
             shutil.rmtree(build)
 
@@ -91,4 +91,5 @@ class ESPFieldUpdate(unittest.TestCase):
         self.assertIn("wifi_was_connected && http_ready,\n                          wifi_join_enabled", main)
         health = main.split("bool nativeRolesReady = roles_ready;", 1)[1].split(
             "onchip::serviceEspUpdate(", 1)[0]
-        self.assertIn("onchip::commandBotService().sourceDeploymentReady() &&", health)
+        self.assertIn("onchip::commandBotService().bootReady()", health)
+        self.assertNotIn("botStatus.fault[0]", health)

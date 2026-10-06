@@ -120,7 +120,7 @@ void NodeBackup::endRead() {
 void NodeBackup::command(const char *text, char *reply, size_t capacity, bool radio) {
   const auto say = [&](const char *message) { snprintf(reply, capacity, "%s", message); };
   if (!text || !*text || !strcmp(text, "help")) {
-    say("backup start KEY64; status; load; read ID16 OFFSET; cancel; clear. Encrypted to KEY64; RF reads paced 5s; retain your operator seed.");
+    say("backup start KEY64; status; load; read64 ID16 OFFSET; read ID16 OFFSET; cancel; clear. Encrypted to KEY64; RF reads paced 5s; retain operator seed.");
     return;
   }
   if (!platform_ || !platform_->available()) { say("Error: node backup storage worker unavailable"); return; }
@@ -168,9 +168,10 @@ void NodeBackup::command(const char *text, char *reply, size_t capacity, bool ra
     bytes_ = 0; id_[0] = hash_[0] = 0; state_ = Empty;
     say("Saved backup removed; device settings unchanged"); return;
   }
-  if (!strncmp(text, "read ", 5)) {
+  const bool base64 = !strncmp(text, "read64 ", 7);
+  if (base64 || !strncmp(text, "read ", 5)) {
     char id[17]{}, offsetText[11]{}, extra;
-    if (sscanf(text + 5, "%16s %10s %c", id, offsetText, &extra) != 2 ||
+    if (sscanf(text + (base64 ? 7 : 5), "%16s %10s %c", id, offsetText, &extra) != 2 ||
         !*offsetText || strspn(offsetText, "0123456789") != strlen(offsetText)) {
       say("Error: backup read requires ID16 and decimal byte offset"); return;
     }
@@ -181,20 +182,40 @@ void NodeBackup::command(const char *text, char *reply, size_t capacity, bool ra
     if (radio && haveRfRead_ && uint32_t(now - lastRfRead_) < RfPacingMs) {
       snprintf(reply, capacity, "WAIT ms=%lu", static_cast<unsigned long>(RfPacingMs - uint32_t(now - lastRfRead_))); return;
     }
-    if (!beginRead(id)) { say("Error: backup download busy"); return; }
     const uint32_t offset = number;
-    uint8_t bytes[48];
-    const size_t count = std::min(size_t(bytes_ - offset), sizeof(bytes));
+    capacity = std::min(capacity, size_t(163));
+    const int header = snprintf(reply, capacity, "%s %s %lu ", base64 ? "CHUNK64" : "CHUNK",
+                                id_, static_cast<unsigned long>(offset));
+    if (header < 0 || size_t(header) + (base64 ? 2 : 96) >= capacity) {
+      say("Error: backup reply capacity is too small"); return;
+    }
+    uint8_t bytes[122];
+    const size_t limit = base64 ? (capacity - 1 - size_t(header)) * 3 / 4 : 48;
+    const size_t count = std::min(size_t(bytes_ - offset), std::min(limit, sizeof(bytes)));
+    if (!beginRead(id)) { say("Error: backup download busy"); return; }
     const bool ok = !count || read(offset, bytes, count) == count;
     endRead();
     if (!ok) { say("Error: backup file read failed"); return; }
     if (!count) { say("EOF"); return; }
     if (radio) { lastRfRead_ = now; haveRfRead_ = true; }
-    const int header = snprintf(reply, capacity, "CHUNK %s %lu ", id_, static_cast<unsigned long>(offset));
-    if (header < 0 || size_t(header) + 2 * count >= capacity) {
-      say("Error: backup reply capacity is too small"); return;
+    if (base64) {
+      static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      size_t output = size_t(header);
+      uint32_t bits = 0;
+      unsigned pending = 0;
+      for (size_t i = 0; i < count; ++i) {
+        bits = (bits << 8) | bytes[i];
+        pending += 8;
+        while (pending >= 6) {
+          pending -= 6;
+          reply[output++] = alphabet[(bits >> pending) & 63];
+        }
+      }
+      if (pending) reply[output++] = alphabet[(bits << (6 - pending)) & 63];
+      reply[output] = 0;
+    } else {
+      for (size_t i = 0; i < count; ++i) snprintf(reply + header + 2 * i, 3, "%02x", bytes[i]);
     }
-    for (size_t i = 0; i < count; ++i) snprintf(reply + header + 2 * i, 3, "%02x", bytes[i]);
     return;
   }
   say("Error: unknown backup command; use backup help");

@@ -132,6 +132,45 @@ int main(int argc, char **argv) {
   service.command(command, reply, sizeof(reply), true);
   assert(!strncmp(reply, "CHUNK ", 6));
   assert(service.beginRead(id));
+  service.command("read64 invalid 0", reply, sizeof(reply), false);
+  assert(strstr(reply, "not ready"));
+  service.endRead();
+  for (size_t prefix : {size_t(0), size_t(3), size_t(17)}) {
+    for (unsigned offset : {0u, 9u, 99u, 100u, unsigned(platform.saved.size() - 1)}) {
+      memset(reply, 0x7f, sizeof(reply));
+      const size_t capacity = sizeof(reply) - prefix;
+      snprintf(command, sizeof(command), "read64 %s %u", id, offset);
+      service.command(command, reply, capacity, false);
+      assert(!strncmp(reply, "CHUNK64 ", 8));
+      const char *payload = strrchr(reply, ' ') + 1;
+      const size_t header = payload - reply;
+      const size_t count = std::min(platform.saved.size() - offset, (capacity - 1 - header) * 3 / 4);
+      assert(strlen(payload) == (count * 4 + 2) / 3);
+      assert(header + strlen(payload) < capacity);
+      const char *alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      uint32_t bits = 0;
+      unsigned pending = 0;
+      size_t decoded = 0;
+      for (const char *p = payload; *p; ++p) {
+        const char *digit = strchr(alphabet, *p);
+        assert(digit);
+        bits = (bits << 6) | unsigned(digit - alphabet);
+        pending += 6;
+        if (pending >= 8) {
+          pending -= 8;
+          assert(uint8_t(bits >> pending) == platform.saved[offset + decoded++]);
+        }
+      }
+      assert(decoded == count);
+      if (count < platform.saved.size() - offset)
+        assert(header + ((count + 1) * 4 + 2) / 3 >= capacity);
+      assert(!prefix || reply[capacity] == char(0x7f));
+    }
+  }
+  snprintf(command, sizeof(command), "read64 %s 0", id);
+  service.command(command, reply, 27, false);
+  assert(!strncmp(reply, "Error:", 6));
+  assert(service.beginRead(id));
   service.command("clear", reply, sizeof(reply), false);
   assert(!strncmp(reply, "Error:", 6) && platform.exists);
   service.endRead();

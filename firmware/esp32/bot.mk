@@ -479,6 +479,12 @@ beta-build:
 .PHONY: bot-https-build bot-https-test
 .PHONY: bot-https-worker-test
 .PHONY: bot-network-test
+.PHONY: bot-network-retain-test
+bot-network-retain-test:
+	$(MAKE) bot-network-test BOT_FLAGS='$(BOT_FLAGS) -DONCHIP_RETAIN_HOME_TEST=1 \
+		-DONCHIP_BOT_HOME_ADDRESS=\"192.0.2.1\" -DONCHIP_BOT_HOME_HOST=\"home.example\" \
+		-DONCHIP_BOT_HOME_CA=\"-----BEGIN\ CERTIFICATE-----\\nfixture\\n-----END\ CERTIFICATE-----\" \
+		-DONCHIP_BOT_HOME_TOKEN=\"tttttttttttttttttttttttttttttttt\" -DONCHIP_BOT_HOME_OPERATIONS=7'
 .PHONY: bot-https-tls-test
 .PHONY: bot-https-device-test
 bot-https-device-test: prepare

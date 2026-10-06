@@ -91,6 +91,13 @@ void observerStatistics(char *reply, size_t capacity) {
   if (observerActive) observer.statistics(reply, capacity);
   else snprintf(reply, capacity, "Error: observer is not running");
 }
+bool observerToken(const char *audience, char *output, size_t capacity, char *error, size_t errorCapacity) {
+  if (!observerActive) {
+    snprintf(error, errorCapacity, "Observer role unavailable; enable it and inspect mqtt status");
+    return false;
+  }
+  return observer.mintToken(audience, output, capacity, error, errorCapacity);
+}
 bool repeaterName(char name[32]);
 bool roomName(char name[32]);
 bool companionName(char name[32]);

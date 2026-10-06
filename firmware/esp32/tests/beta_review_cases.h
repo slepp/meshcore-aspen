@@ -286,6 +286,7 @@ static void live_source_retry() {
     f.bot.dashboardStatus(status);
     assert(status.ready);
     assert(!f.bot.sourceDeploymentReady());
+    assert(!f.bot.bootReady());
     Peer peer;
     const auto advert = peer.advert();
     f.mux.received(advert.data(), advert.size(), -90, 4); f.step();
@@ -301,6 +302,7 @@ static void live_source_retry() {
     f.step(300);
     assert(f.action("source status").find("durably saved and active") != std::string::npos);
     assert(f.bot.sourceDeploymentReady());
+    assert(f.bot.bootReady());
     assert(ask() == std::vector<std::string>{"Pong"});
     assert(ask("!recovered") == std::vector<std::string>{"recovered"});
     assert(f.action("source retry").find("Accepted") == 0);
@@ -364,6 +366,7 @@ static void selected_source_boot_health() {
               f.action("source wasm status").c_str());
     assert(f.bot.sourceDeploymentReady() == ready);
     assert(status.ready == ready && snapshot.ready == ready);
+    assert(f.bot.bootReady() == ready);
     if (!ready) {
       assert(!strcmp(status.state, "source-recovery"));
       assert(status.fault[0] && snapshot.fault);
@@ -521,6 +524,54 @@ static void selected_source_boot_health() {
   filesystem_test::files = baselineFiles;
 #endif
   puts("PASS selected Lua/Wasm boot health: missing/open/size/metadata/header/hash/journal faults, bundled fallback fenced, retained journals, retry and valid restart");
+}
+static void runtime_fault_boot_health() {
+  const auto baseline = identity_test::durable;
+  const auto baselineFiles = filesystem_test::files;
+  assert(saveBotEnabled(true) && saveBotEventAccess(16));
+  {
+    BetaFixture f;
+    assert(f.action("bot repeaters off").find("Saved") == 0);
+    upload(f, "function fleet_poll() local peer=repeater.next() "
+              "if peer then repeater.status(peer) end end events.every(15,'fleet_poll')");
+    const auto source = f.action("source hash");
+    f.step(2000);
+    RadioDashboard::RoleStatus status;
+    f.bot.dashboardStatus(status);
+    assert(f.bot.counters().eventsFailed > 0);
+    assert(strstr(status.fault, "Repeater polling"));
+    assert(status.ready && f.bot.sourceDeploymentReady() && f.bot.bootReady());
+    assert(f.action("source hash") == source);
+    BotNodeSnapshot snapshot;
+    f.bot.nodeSnapshot(snapshot);
+    assert(snapshot.ready && snapshot.fault);
+    identity_test::durable[{"mc-onchip", "bot-adaptive"}] = {'B', 'A', 'D', 1, 0};
+    assert(f.action("bot adaptive").find("policy-fault=1") != std::string::npos);
+    assert(!f.bot.bootReady());
+    assert(f.action("bot adaptive off") == "Saved adaptive admission; reboot required");
+    assert(f.bot.bootReady());
+    f.bot.setSourceDeploymentState(false, true, true, false, "Selected Lua source unavailable");
+    assert(!f.bot.bootReady());
+    f.bot.setSourceDeploymentState(true, false, false, true, "Selected Wasm source unavailable");
+    assert(!f.bot.bootReady());
+    f.bot.setSourceDeploymentState(true, false, true, false, nullptr);
+    assert(f.bot.bootReady());
+  }
+  assert(saveBotEnabled(false));
+  {
+    BetaFixture f;
+    assert(!f.bot.bootReady());
+  }
+  identity_test::durable = baseline;
+  filesystem_test::files = baselineFiles;
+  assert(saveBotEnabled(false));
+  {
+    BetaFixture f;
+    assert(f.bot.bootReady());
+  }
+  identity_test::durable = baseline;
+  filesystem_test::files = baselineFiles;
+  puts("PASS boot health: script errors remain visible without blocking a ready VM; source and policy faults still block");
 }
 static void beta_review_regressions() {
   stock_admin_routes();

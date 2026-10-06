@@ -18,18 +18,43 @@ Existing consumers keep their current contract by default:
 | On-device build profile | `ONCHIP_MQTT_FORMAT=0` | `ONCHIP_MQTT_FORMAT=1` | `ONCHIP_MQTT_FORMAT=2` |
 | Go host `mqtt.format` | omitted or `internal-v1` | `observer-v1` | `capture-v1` |
 
-Public output requires a three-uppercase-letter IATA. For an on-device role,
-add these definitions to the protected operator header:
+Current Aspen source builds accept saved MQTT settings through authenticated
+Management administration. Keep the radio connected to one approved local
+receiver; forwarding from that receiver is a separate host service. For the
+public observer contract, configure:
 
-```c
-#define ONCHIP_MQTT_FORMAT 1
-#define ONCHIP_MQTT_IATA "YYC"
-/* Keep ONCHIP_MQTT_URI set to the approved internal broker. */
+```text
+mqtt uri mqtt://LOCAL_RECEIVER:11883
+mqtt format 1
+mqtt iata YYC
+mqtt name My observer
+mqtt commit
+reboot
 ```
 
-Rebuild the selected [ESP32 application](README.md#choose-an-image) to apply
-on-device definitions. Update the Go host binary before adding the new MQTT
-configuration fields; an older host may reject them.
+`mqtt status` reports whether configuration is saved, staged or in error.
+`mqtt uri`, `name`, `iata`, `prefix`, `audience`, `format` and `filter` read the
+saved fields; append a value to stage a replacement. Use `-` for an empty URI
+or audience. An empty URI disables the connection. `mqtt discard` drops staged
+changes. A commit takes effect after reboot and never replaces the observer
+identity. The running connection continues using its startup settings until then.
+
+Stage `mqtt username clear|HEX`, `mqtt password clear|HEX` and
+`mqtt ca clear|HEX` through **encrypted Management RF**, not the browser command
+box. Hex chunks append decoded bytes; clear a field before replacing it.
+Limits are 128 username bytes, 256 password bytes and 4096 CA bytes.
+Do not put credentials in the saved URI. These fields are not printed by
+status or read commands. TLS requires a valid PEM CA bundle.
+Saved settings use two SPIFFS files and a small NVS reference; a failed
+commit/readback reports an uncertain saved outcome. Reboot and inspect
+`mqtt status` before retrying. A missing configuration uses the build's initial
+defaults; an invalid saved reference/file disables MQTT rather than selecting
+another broker.
+
+Aspen 0.1.2 and older builds need an application update to add these commands.
+Their protected build profiles use `ONCHIP_MQTT_URI`, `ONCHIP_MQTT_FORMAT` and
+`ONCHIP_MQTT_IATA` as initial settings. Update the Go host binary before adding
+its MQTT configuration fields; an older host may reject them.
 
 For the Go host, set `mqtt.format` to `observer-v1`, `mqtt.iata` to `YYC`,
 and `mqtt.origin` to the observer's name. Keep the existing private `mqtt.url`,
@@ -40,7 +65,7 @@ reference's transport route and comma-separated direct path.
 
 Read the observer key from the dashboard or host status. Public-format topics
 are `meshcore/YYC/UPPERCASE_OBSERVER_KEY/packets` and `.../status`.
-`ONCHIP_MQTT_TOPIC_PREFIX` / `mqtt.topic_prefix` replace `meshcore`.
+On-device `mqtt prefix` / host `mqtt.topic_prefix` replace `meshcore`.
 The on-device exact `ONCHIP_MQTT_TOPIC` override remains available.
 On-device `roles/*` records remain separate retained internal metadata.
 
@@ -122,8 +147,8 @@ radio-status stack allocation.
 Static username/password authentication remains available for the internal
 broker. A successful static-password CONNECT is **not** an identity exchange.
 
-For a separately authorized private receiver implementing MeshCore identity
-authentication, configure `ONCHIP_MQTT_AUDIENCE` or host `mqtt.audience`.
+For an authorized receiver implementing MeshCore identity authentication,
+configure on-device `mqtt audience` or host `mqtt.audience`.
 The audience must match that receiver's expected audience, normally its DNS
 name. Do not put static credentials in a JWT URI or host JWT configuration.
 
@@ -144,6 +169,16 @@ Tokens renew through a fresh CONNECT five minutes before expiry. A backwards
 clock correction invalidates the connection and creates fresh credentials.
 Optional owner/email claims are not sent by this adapter.
 
+An authenticated host reflector can request a broker-specific observer token
+with `POST /admin/observer-token`, using `X-Mast-Session` and a plain DNS audience
+in the body. The radio signs with its existing observer identity; the private
+key is not exported. This route requires the selected observer role and fresh
+network UTC, sends `Cache-Control: no-store`, and limits successful signing to
+one request per two seconds. Tokens expire after 24 hours. Keep tokens private
+and renew them before reconnecting to their broker. Use the trusted management
+LAN or a protected TLS tunnel: the radio's HTTP session and returned token are
+not encrypted by HTTP. The token request does not add a second radio MQTT feed.
+
 Public on-device MQTT waits for a fresh accepted network-clock sample before
 connecting. It drops packets captured before UTC was ready and disconnects
 when the accepted sample exceeds twice the configured SNTP interval.
@@ -159,7 +194,7 @@ Configure host OS time synchronization before enabling its observer. The host
 rejects pre-2025 UTC and suspends identity sessions on backwards corrections.
 
 On-device URI schemes are `mqtt://`, `mqtts://`, `ws://`, and `wss://`.
-Secure schemes require `ONCHIP_MQTT_CA_PEM` in the protected build header;
+Secure schemes require saved `mqtt ca` (or initial `ONCHIP_MQTT_CA_PEM`);
 certificate/hostname verification stays enabled. Include the receiver's actual
 WebSocket path in its URI, often `/mqtt`. Go supports `tcp://`, `tls://`,
 `ssl://`, `ws://` and `wss://`, with system CA roots by default and a verified
@@ -176,7 +211,7 @@ Use `source cancel` if abandoning the staged upload. Review the enabled roles
 and transport's memory load before retrying activation; do not erase source
 or identities to free memory.
 
-`ONCHIP_MQTT_PACKET_FILTER` is a 16-bit allowed-payload-type mask, default
+On-device `mqtt filter` is a decimal 16-bit allowed-payload-type mask, default
 `0xffff`; `0` suppresses packets without suppressing status. Host
 `mqtt.packet_filter` uses the same numeric mask; omitted means all types.
 The observer never subscribes to remote commands or transmits an identity

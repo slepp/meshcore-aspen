@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	meshcore "github.com/meshcore-go/meshcore-go"
@@ -339,7 +340,11 @@ func (s *Service) cliReply(e event, m *member, timestamp uint32, reply string) (
 	}
 	put32(plain, now)
 	plain[4] = 1 << 2
-	plain = append(plain, meshcore.TruncateUTF8(reply, 155)...)
+	limit := 155
+	if _, body := splitCommand(reply); strings.HasPrefix(body, "CHUNK64 ") {
+		limit = 162
+	}
+	plain = append(plain, meshcore.TruncateUTF8(reply, limit)...)
 	p, err := s.datagram(m, meshcore.PayloadTypeTxtMsg, plain)
 	p = s.prepareReply(p, e.context)
 	delay := 1500 * time.Millisecond

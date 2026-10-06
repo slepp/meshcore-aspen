@@ -29,7 +29,8 @@ public:
   bool begin(WifiKissMultiplexer &mux, uint8_t appliedMask, ProfileJournal &journal,
              Management &management);
   void execute(const char *command, Reply &reply, uint32_t invokingBotJob = 0,
-               Transport transport = Transport::Other, const uint8_t *nativeSender = nullptr);
+               Transport transport = Transport::Other, const uint8_t *nativeSender = nullptr,
+               size_t replyCapacity = TextLimit + 1);
   void acknowledged(uint32_t ticket, bool transmitted);
   void loop();
   static bool loadWifi(WifiCredentials &credentials, bool &present);
@@ -100,6 +101,7 @@ private:
   void wifiCommand(char *command, Reply &reply, Transport transport, uint32_t invokingBotJob);
   void preferenceCommand(char *command, Reply &reply, Transport transport, uint32_t invokingBotJob);
   void statsCommand(const char *topic, Reply &reply);
+  void setupCommand(const char *command, Reply &reply);
   void helpCommand(const char *argument, Reply &reply);
   void rolesCommand(const char *argument, Reply &reply);
   bool validACL(const ACL &acl) const;

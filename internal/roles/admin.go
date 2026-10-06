@@ -48,7 +48,7 @@ func (s *Service) commandWithTelemetry(timestamp uint32, command string, telemet
 			if command == "help backup" {
 				command = "backup help"
 			}
-			reply = s.cfg.BackupCommand(command, true)
+			reply = s.cfg.BackupCommand(command, true, 162-len(prefix))
 		}
 	case command == "help":
 		reply = "help get|set|wifi|radio|region|owner|stats; backup help; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot"

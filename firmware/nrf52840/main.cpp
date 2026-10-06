@@ -21,7 +21,7 @@
 #include "PineRuntimePlatform.h"
 #include "PineNodeBackup.h"
 #include "platform/nvs.h"
-static bool luaAdminCommand(const char*, char*);
+static bool luaAdminCommand(const char*, char*, size_t capacity = 160);
 #endif
 
 static bool statsCommand(const char*, char*);
@@ -70,7 +70,7 @@ public:
     if (runtimeConfig && !strcmp(body, "bot time.fetch") &&
         runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
 #if NRFMAST_PRODUCTION_LUA
-    if (luaAdminCommand(body, output)) return;
+    if (luaAdminCommand(body, output, MAX_TEXT_LEN + 1 - size_t(output - reply))) return;
 #endif
     if (runtimeConfig && runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
     MyMesh::handleCommand(senderTimestamp, text, reply);
@@ -281,7 +281,7 @@ static bool prepareLuaFilesystem() {
   }
   return true;
 }
-static bool luaAdminCommand(const char* text, char* reply) {
+static bool luaAdminCommand(const char* text, char* reply, size_t capacity) {
   char nameCommand[48];
   if (!strncmp(text, "set bot.name ", 13)) {
     if (strlen(text + 13) > 31) {
@@ -340,8 +340,9 @@ static bool luaAdminCommand(const char* text, char* reply) {
       !strcmp(text, "bot") || !strcmp(text, "source") ||
       !strcmp(text, "help bot") || !strcmp(text, "help source")) {
     onchip::MastAdmin::Reply result;
-    onchip::MastAdmin::service()->execute(text, result, 0, onchip::MastAdmin::Transport::NativeEncrypted);
-    snprintf(reply, 160, "%s", result.text);
+    onchip::MastAdmin::service()->execute(text, result, 0, onchip::MastAdmin::Transport::NativeEncrypted,
+                                         nullptr, capacity);
+    snprintf(reply, capacity, "%s", result.text);
     return true;
   }
   return false;
@@ -542,7 +543,7 @@ static void runCommand() {
     bot.advertise();
 #endif
   } else {
-    char reply[160] = {};
+    char reply[MAX_TEXT_LEN + 1] = {};
     repeater.handleCommand(0, command, reply);
     if (reply[0]) Serial.println(reply);
   }

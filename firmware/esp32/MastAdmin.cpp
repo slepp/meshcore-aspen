@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastAdmin.h"
+#include "ObserverConfig.h"
 #if MESHCORE_NODE_BACKUP
 #include "NodeBackup.h"
 #endif
@@ -130,6 +131,8 @@ constexpr Help topics[] = {
     {"autoadvert", "get autoadvert; set autoadvert on|off; saved/live device-wide startup/periodic adverts; manual app/admin adverts unchanged"},
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
+    {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
+    {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
     {"key", "key ROLE [pending|cancel|HEX128]; use key help; private imports: encrypted RF only"},
@@ -218,7 +221,7 @@ void fingerprint(const uint8_t key[16], char out[17]) {
 void MastAdmin::helpCommand(const char *argument, Reply &reply) {
   static constexpr const char *index[] = {
     "help 1/3: status; stats; ver; board; help role|roles|room|companion|bot|stats; next: help 2",
-    "help 2/3: help wifi|radio|tempradio|cad|radio-controls|autoadvert|sntp|syslog|get|set; next: help 3",
+    "help 2/3: help wifi|radio|tempradio|cad|radio-controls|autoadvert|sntp|syslog|mqtt|setup|get|set; next: help 3",
     "help 3/3: help auth|setperm|trust|password|key|source|data|backup|telemetry; apply|reboot"
   };
   static_assert(textLength(index[0]) <= TextLimit - 17 &&
@@ -1226,8 +1229,82 @@ void MastAdmin::statsCommand(const char *topic, Reply &reply) {
     strcpy(reply.text, "Error: unknown stats topic; use stats help");
   }
 }
+void MastAdmin::setupCommand(const char *command, Reply &reply) {
+  if (!command[0] || !strcmp(command, "status")) {
+    strcpy(reply.text, publicProvisioningStored() ?
+        "Public setup saved and valid; generic application updates retain identities, settings and files" :
+        "Error: public setup missing or invalid; use setup migrate on the configured private application before a generic update");
+    return;
+  }
+  if (strcmp(command, "migrate")) {
+    strcpy(reply.text, "Error: setup status|migrate; migrate saves initial private defaults without replacing SPIFFS"); return;
+  }
+#if defined(MESHCORE_PUBLIC_PROVISIONING) && MESHCORE_PUBLIC_PROVISIONING
+  strcpy(reply.text, "Error: this application already uses public setup; use setup status"); return;
+#else
+  if (!mux_ || !journal_ || effect_ != Effect::None || temporary_) {
+    strcpy(reply.text, "Error: setup migration requires committed radio and no pending administration change"); return;
+  }
+  struct Migration {
+    PublicProvisioningRecord record{};
+    WifiCredentials wifi{};
+    PasswordRecord password{};
+    ~Migration() { clearSecret(this, sizeof(*this)); }
+  } migration;
+  auto &record = migration.record;
+  bool present, enabled;
+  uint8_t width;
+  if (!loadWifi(migration.wifi, present) || !loadWifiEnabled(enabled) ||
+      !loadPassword(migration.password, present) || !loadOriginPathWidth(width)) {
+    strcpy(reply.text, "Error: setup migration could not read saved WiFi, authority or path settings"); return;
+  }
+  memcpy(record.magic, "MCP\1", 4);
+  record.roles = journal_->profile.enabled;
+  record.pathWidth = width;
+  const auto radio = mux_->currentConfiguration();
+  queued_tx::put32(record.frequencyHz, radio.freq_hz);
+  queued_tx::put32(record.bandwidthHz, radio.bw_hz);
+  record.sf = radio.sf; record.cr = radio.cr; record.txDbm = radio.tx_power;
+  const auto copy = [](char *out, size_t capacity, const char *text) {
+    if (strlen(text) >= capacity) return false;
+    strcpy(out, text); return true;
+  };
+  if (!copy(record.adminPassword, sizeof(record.adminPassword), adminPassword()) ||
+      !copy(record.roomPassword, sizeof(record.roomPassword), roomPassword()) ||
+      !copy(record.mastPassword, sizeof(record.mastPassword), present ? migration.password.password : mastPassword()) ||
+      !copy(record.operatorPublicKey, sizeof(record.operatorPublicKey), operatorPublicKey()) ||
+      !copy(record.trustedCompanionPublicKey, sizeof(record.trustedCompanionPublicKey), trustedCompanionPublicKey())) {
+    strcpy(reply.text, "Error: setup migration authority fields exceed record limits"); return;
+  }
+  if (settings_.trustedSet)
+    for (unsigned i = 0; i < 32; ++i)
+      snprintf(record.trustedCompanionPublicKey + 2 * i, 3, "%02x", settings_.trustedKey[i]);
+  if (!migration.wifi.ssid[0]) {
+#ifdef WIFI_SSID
+    if (!copy(migration.wifi.ssid, sizeof(migration.wifi.ssid), WIFI_SSID)) {
+      strcpy(reply.text, "Error: initial WiFi SSID exceeds setup limit"); return;
+    }
+#endif
+#ifdef WIFI_PWD
+    if (!copy(migration.wifi.password, sizeof(migration.wifi.password), WIFI_PWD)) {
+      strcpy(reply.text, "Error: initial WiFi password exceeds setup limit"); return;
+    }
+#endif
+  }
+  memcpy(record.wifiSsid, migration.wifi.ssid, sizeof(record.wifiSsid));
+  memcpy(record.wifiPassword, migration.wifi.password, sizeof(record.wifiPassword));
+  record.wifiEnabled = enabled;
+  mesh::Utils::sha256(record.digest, sizeof(record.digest), reinterpret_cast<const uint8_t *>(&record),
+                      offsetof(PublicProvisioningRecord, digest));
+  char error[120]{};
+  if (!retainPublicProvisioning(record, error, sizeof(error))) {
+    snprintf(reply.text, sizeof(reply.text), "Error: %s", error); return;
+  }
+  strcpy(reply.text, "Saved public setup; identities, settings and files retained. Save mqtt and HTTPS settings before generic update");
+#endif
+}
 void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob,
-                        Transport transport, const uint8_t *nativeSender) {
+                        Transport transport, const uint8_t *nativeSender, size_t replyCapacity) {
   reply = {};
   if (!ready_) {
     strcpy(reply.text, "Error: mast replay storage invalid; administration disabled"); return;
@@ -1247,10 +1324,37 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: node backups require authenticated Management RF or Web administration"); return;
     }
     nodeBackup().command(!strcmp(input, "help backup") ? "help" : input[6] ? input + 7 : "",
-                         reply.text, sizeof(reply.text), native);
+                         reply.text, std::min(replyCapacity, sizeof(reply.text)), native);
     return;
   }
 #endif
+  if (!strcmp(input, "setup") || !strncmp(input, "setup ", 6)) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: setup migration requires authenticated Management RF or Web administration"); return;
+    }
+    setupCommand(input[5] ? input + 6 : "", reply);
+    return;
+  }
+  if (!strcmp(input, "mqtt") || !strncmp(input, "mqtt ", 5) || !strcmp(input, "help mqtt")) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: MQTT settings require direct authenticated administration"); return;
+    }
+    const char *command = !strcmp(input, "help mqtt") ? "help" : input[4] ? input + 5 : "";
+    if (transport != Transport::NativeEncrypted &&
+        (!strncmp(command, "username ", 9) || !strncmp(command, "password ", 9) ||
+         !strncmp(command, "ca ", 3))) {
+      strcpy(reply.text, "Error: MQTT credentials and CA staging require encrypted Management RF"); return;
+    }
+    observerConfigCommand(command, reply.text, std::min(replyCapacity, sizeof(reply.text)));
+    return;
+  }
+  if (!strncmp(input, "bot https retain", 16) &&
+      (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+       !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender))))) {
+    strcpy(reply.text, "Error: retaining HTTPS defaults requires authenticated Management RF or Web administration"); return;
+  }
   if (networkClockCommand(input, reply.text, sizeof(reply.text), true) ||
       syslogCommand(input, reply.text, sizeof(reply.text)) ||
       diagnosticsCommand(input, reply.text, sizeof(reply.text))) return;

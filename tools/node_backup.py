@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Inspect or unpack an operator-encrypted MeshCore node backup."""
 import argparse
+import base64
+import binascii
 import hashlib
 import hmac
 import io
@@ -165,8 +167,15 @@ def ready(client, radio):
 
 
 def rf_chunks(client, metadata, offset):
+    verb = "read64"
     while offset < metadata["bytes"]:
-        response = checked(client, f"backup read {metadata['id']} {offset}")
+        response = client.command(f"backup {verb} {metadata['id']} {offset}")
+        if verb == "read64" and response == "Error: unknown backup command; use backup help":
+            print("Node backup RF: legacy firmware; using 48-byte hex replies", file=sys.stderr)
+            verb = "read"
+            continue
+        if response.startswith("Error:"):
+            raise ValueError(response)
         wait = re.fullmatch(r"WAIT ms=([0-9]+)", response)
         if wait:
             milliseconds = int(wait[1])
@@ -174,11 +183,22 @@ def rf_chunks(client, metadata, offset):
                 raise ValueError("Node backup returned an invalid pacing interval")
             time.sleep(milliseconds / 1000 + 0.1)
             continue
-        match = re.fullmatch(r"CHUNK ([0-9a-f]{16}) ([0-9]+) ([0-9a-f]{2,96})", response)
-        if not match or match[1] != metadata["id"] or int(match[2]) != offset or len(match[3]) % 2:
+        pattern = (r"CHUNK64 ([0-9a-f]{16}) ([0-9]+) ([A-Za-z0-9+/]{2,162})" if verb == "read64" else
+                   r"CHUNK ([0-9a-f]{16}) ([0-9]+) ([0-9a-f]{2,96})")
+        match = re.fullmatch(pattern, response)
+        if len(response) > 162 or not match or match[1] != metadata["id"] or int(match[2]) != offset:
             raise ValueError("Node backup RF chunk has the wrong id, offset or encoding")
-        chunk = bytes.fromhex(match[3])
-        if len(chunk) != min(48, metadata["bytes"] - offset):
+        text = match[3]
+        try:
+            chunk = (base64.b64decode(text + "=" * (-len(text) % 4), validate=True) if verb == "read64" else
+                     bytes.fromhex(text))
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("Node backup RF chunk has invalid encoding") from error
+        if verb == "read64" and base64.b64encode(chunk).decode("ascii").rstrip("=") != text:
+            raise ValueError("Node backup RF chunk has noncanonical Base64 encoding")
+        if not chunk or len(chunk) > metadata["bytes"] - offset:
+            raise ValueError("Node backup RF chunk has an unexpected length")
+        if verb == "read" and len(chunk) != min(48, metadata["bytes"] - offset):
             raise ValueError("Node backup RF chunk has an unexpected length")
         yield chunk
         previous = offset

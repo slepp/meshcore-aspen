@@ -345,7 +345,25 @@ bool botHttpsAdmin(const char *command, char *reply, size_t capacity) {
     say(reply, capacity, "HTTPS configuration verified and committed; previous network requests revoked");
     return true;
   }
-  if (!strcmp(verb, "endpoint") && count == 6) {
+  if (!strcmp(verb, "retain") && count == 1 && !strcmp(args[0], "home")) {
+    const auto &initial = botHttpsConfig();
+    if (!initial.valid() || endpoint(stage, "home", false)) {
+      say(reply, capacity, "HTTPS home defaults unavailable or endpoint already staged/saved; inspect bot https status");
+      return false;
+    }
+    Endpoint *e = endpoint(stage, "home", true);
+    if (!e) return false;
+    *e = {};
+    strcpy(e->name, "home");
+    strcpy(e->address, initial.address);
+    strcpy(e->host, initial.host);
+    strcpy(e->ca, initial.ca);
+    strcpy(e->token, initial.token);
+    strcpy(e->path, "/v1/rpc");
+    e->port = initial.port;
+    e->methods = 2;
+    e->operations = initial.operations;
+  } else if (!strcmp(verb, "endpoint") && count == 6) {
     if (!name(args[0], BotNameLimit) ||
         !path(args[4])) return false;
     unsigned port = 0; char extra;

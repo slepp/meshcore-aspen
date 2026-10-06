@@ -4,6 +4,7 @@ package nodebackup
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -187,6 +188,10 @@ func (s *Service) publish(path string, raw []byte) error {
 }
 
 func (s *Service) Command(command string, radio bool) string {
+	return s.CommandBudget(command, radio, 162)
+}
+
+func (s *Service) CommandBudget(command string, radio bool, replyLimit int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	argument := strings.TrimPrefix(command, "backup")
@@ -200,7 +205,7 @@ func (s *Service) Command(command string, radio bool) string {
 	}
 	switch {
 	case argument == "" || argument == "help":
-		return "backup start KEY64; status; load; read ID16 OFFSET; cancel; clear. Encrypted to KEY64; RF reads paced 5s; retain your operator seed."
+		return "backup start KEY64; status; load; read64 ID16 OFFSET; read ID16 OFFSET; cancel; clear. Encrypted to KEY64; RF reads paced 5s; retain operator seed."
 	case argument == "status":
 		if s.busy {
 			return "PREPARING; check backup status"
@@ -269,7 +274,7 @@ func (s *Service) Command(command string, radio bool) string {
 		}
 		s.ready, s.failure = false, ""
 		return "Saved backup removed; host settings unchanged"
-	case strings.HasPrefix(argument, "read "):
+	case strings.HasPrefix(argument, "read ") || strings.HasPrefix(argument, "read64 "):
 		words := strings.Split(argument, " ")
 		if len(words) != 3 || strings.Trim(words[2], "0123456789") != "" || words[2] == "" {
 			return "Error: backup read requires ID16 and decimal byte offset"
@@ -297,7 +302,21 @@ func (s *Service) Command(command string, radio bool) string {
 		if err != nil || !os.SameFile(info, actual) {
 			return "Error: backup file changed while opening"
 		}
-		count := min(48, s.saved.Bytes-int(offset))
+		encoded := words[0] == "read64"
+		kind := "CHUNK"
+		if encoded {
+			kind = "CHUNK64"
+		}
+		header := fmt.Sprintf("%s %s %d ", kind, words[1], offset)
+		budget := min(replyLimit, 162) - len(header)
+		limit := 48
+		if encoded {
+			limit = budget * 3 / 4
+		}
+		if budget < 2 || (!encoded && budget < 96) {
+			return "Error: backup reply capacity is too small"
+		}
+		count := min(limit, s.saved.Bytes-int(offset))
 		raw := make([]byte, count)
 		if _, err := file.ReadAt(raw, int64(offset)); err != nil {
 			return "Error: backup file read failed"
@@ -305,7 +324,10 @@ func (s *Service) Command(command string, radio bool) string {
 		if radio {
 			s.lastRF = time.Now()
 		}
-		return fmt.Sprintf("CHUNK %s %d %x", words[1], offset, raw)
+		if encoded {
+			return header + base64.RawStdEncoding.EncodeToString(raw)
+		}
+		return header + hex.EncodeToString(raw)
 	default:
 		return "Error: unknown backup command; use backup help"
 	}

@@ -2,6 +2,9 @@
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastWeb.h"
 #include "MastAdminPage.h"
+#include "Runtime.h"
+#include "RoleStorage.h"
+#include "ObserverWire.h"
 #if MESHCORE_NODE_BACKUP
 #include "NodeBackup.h"
 #include "Runtime.h"
@@ -175,6 +178,10 @@ esp_err_t execute(httpd_req_t *request) {
     memset(input, 0, sizeof(input));
     return error(request, "403 Forbidden", "Telemetry CA/token staging requires encrypted authenticated RF");
   }
+  if (verb("mqtt ca") || verb("mqtt username") || verb("mqtt password")) {
+    memset(input, 0, sizeof(input));
+    return error(request, "403 Forbidden", "MQTT credentials and CA staging require encrypted Management RF");
+  }
   if (!strncmp(input, "bot https ", 10)) {
     const char *operation = input + 10;
     while (*operation == ' ') ++operation;
@@ -255,6 +262,35 @@ esp_err_t updateReboot(httpd_req_t *request) {
   return rebootEspUpdate(request);
 }
 #endif
+esp_err_t observerTokenRequest(httpd_req_t *request) {
+  if (!origin(request) || !authenticated(request))
+    return error(request, "403 Forbidden", "Authenticated same-origin session required");
+  if (recoveryOnly)
+    return error(request, "503 Service Unavailable", "Recovery mode: observer identity signing unavailable");
+#ifdef ARDUINO_ARCH_ESP32
+  if (espUpdateBusy())
+    return error(request, "409 Conflict", "Application update active; inspect /admin/update before signing");
+#endif
+  struct Signing {
+    char audience[254]{}, token[1024]{}, error[120]{};
+  };
+  Signing *signing = allocateRoleStorage<Signing>("observer token request");
+  if (!signing) return error(request, "503 Service Unavailable", "Observer token storage allocation failed");
+  struct Release { Signing *&signing; ~Release() { releaseRoleStorage(signing); } } release{signing};
+  if (!body(request, signing->audience, sizeof(signing->audience)))
+    return error(request, "400 Bad Request", "Expected a broker DNS audience as 1..253 ASCII bytes");
+  if (!observerWire::dnsAudience(signing->audience))
+    return error(request, "400 Bad Request", "Observer token audience must be a broker DNS name");
+  static uint32_t lastSigned = 0;
+  if (lastSigned && uint32_t(millis() - lastSigned) < 2000)
+    return error(request, "429 Too Many Requests", "Observer token rate limit; retry after two seconds");
+  if (!observerToken(signing->audience, signing->token, sizeof(signing->token),
+                      signing->error, sizeof(signing->error)))
+    return error(request, "503 Service Unavailable", signing->error);
+  lastSigned = millis() ? millis() : 1;
+  headers(request);
+  return httpd_resp_sendstr(request, signing->token);
+}
 #if MESHCORE_NODE_BACKUP
 esp_err_t backupDownload(httpd_req_t *request) {
   if (!origin(request) || !authenticated(request))
@@ -323,6 +359,10 @@ esp_err_t registerMastWeb(httpd_handle_t server) {
     const auto result = httpd_register_uri_handler(server, &route);
     if (result != ESP_OK) return result;
   }
+  httpd_uri_t tokenRoute{};
+  tokenRoute.uri = "/admin/observer-token"; tokenRoute.method = HTTP_POST; tokenRoute.handler = observerTokenRequest;
+  const auto tokenResult = httpd_register_uri_handler(server, &tokenRoute);
+  if (tokenResult != ESP_OK) return tokenResult;
 #ifdef ARDUINO_ARCH_ESP32
   const char *updatePaths[] = {"/admin/update", "/admin/update", "/admin/update/reboot"};
   esp_err_t (*updateHandlers[])(httpd_req_t *) = {updateStatus, updateUpload, updateReboot};

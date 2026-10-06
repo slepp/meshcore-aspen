@@ -7,6 +7,19 @@ include $(ROOT)/release/versions.mk
 PIN := $(MESHCORE_RELEASE_SHA)
 .DEFAULT_GOAL := test
 .PHONY: node-backup-test
+.PHONY: observer-config-test
+observer-config-test: prepare
+	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
+	@mkdir -p "$(TEST_BUILD)"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DONCHIP_OBSERVER_CONFIG_TEST=1 \
+		-DONCHIP_MQTT_URI='"mqtt://user:secret%2F%40%3Apass@test-broker:11883"' \
+		-I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(CRYPTO) \
+		tests/observer_config.cpp ObserverConfig.cpp $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o \
+		-o "$(TEST_BUILD)/observer-config"
+	"$(TEST_BUILD)/observer-config"
 node-backup-test:
 	@mkdir -p "$(TEST_BUILD)"
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) -I$(CRYPTO) -DMESHCORE_NODE_BACKUP=1 \
@@ -213,6 +226,10 @@ automatic-adverts-test:
 admin-cli-core-test:
 	$(MAKE) lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 ADMIN_CLI_CORE_ONLY=1 \
 		TEST_FLAGS='$(TEST_FLAGS) -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1'
+.PHONY: runtime-config-admin-test
+runtime-config-admin-test:
+	$(MAKE) lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 ADMIN_CLI_CORE_ONLY=1 \
+		TEST_FLAGS='$(TEST_FLAGS) -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1 -DONCHIP_RUNTIME_CONFIG_ADMIN_TEST=1'
 lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATION),$(if $(or $(ADAPTIVE_ADMIN_ONLY),$(ADMIN_CLI_CORE_ONLY),$(AUTOMATIC_ADVERTS_ONLY)),,$(if $(filter 1,$(ONCHIP_BOT_WASM)),bot-wasm-examples)))
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	@mkdir -p $(TEST_BUILD)
@@ -220,7 +237,7 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/rf_vector.py query $(TEST_BUILD)/python-query.bin
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder $(TEST_FLAGS) \
 		-ffunction-sections -fdata-sections -Wl,--gc-sections -pthread \
-		-DESP32 -DMESHCORE_ONCHIP=1 -DCOMPANION_SESSIONS_HOST -DKISS_LOCAL_SOURCES=$(if $(BOT_INTEGRATION),5,4) -DKISS_MAX_TCP_CLIENTS=4 \
+		-DESP32 -DMESHCORE_ONCHIP=1 -DONCHIP_OBSERVER_CONFIG_TEST=1 -DCOMPANION_SESSIONS_HOST -DKISS_LOCAL_SOURCES=$(if $(BOT_INTEGRATION),5,4) -DKISS_MAX_TCP_CLIENTS=4 \
 		-DCONFIG_LWIP_MAX_SOCKETS=16 \
 		-DMAX_CONTACTS=256 -DMAX_GROUP_CHANNELS=8 \
 		-DONCHIP_ADMIN_PASSWORD='"test-admin"' -DONCHIP_ROOM_PASSWORD='"test-room"' \
@@ -239,9 +256,9 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 		-I$(BASE64) $(BOT_LIFECYCLE_FLAGS) \
 		$(if $(SIGNED_INTEGRATION),tests/lifecycle.cpp,$(if $(ADMIN_INTEGRATION),tests/beta_native.cpp,$(if $(BOT_INTEGRATION),tests/bot_native.cpp,tests/lifecycle.cpp))) $(BOT_LIFECYCLE_SOURCES) \
 		$(NATIVE)/Repeater.cpp $(NATIVE)/Room.cpp $(NATIVE)/Companion.cpp \
-		$(NATIVE)/Lifecycle.cpp $(NATIVE)/RoleIdentity.cpp $(NATIVE)/RoleProfile.cpp $(NATIVE)/Management.cpp \
+		$(NATIVE)/Lifecycle.cpp $(NATIVE)/RoleIdentity.cpp $(NATIVE)/RoleProfile.cpp $(NATIVE)/Provisioning.cpp $(NATIVE)/Management.cpp \
 		$(NATIVE)/CompanionSessions.cpp $(NATIVE)/Runtime.cpp $(NATIVE)/Syslog.cpp \
-		$(NATIVE)/Observer.cpp $(NATIVE)/ObserverWire.cpp $(NATIVE)/Clock.cpp \
+		$(NATIVE)/Observer.cpp $(NATIVE)/ObserverConfig.cpp $(NATIVE)/ObserverWire.cpp $(NATIVE)/Clock.cpp \
 		$(NATIVE)/MastAdmin.cpp $(NATIVE)/MastSource.cpp $(NATIVE)/MastWeb.cpp \
 		$(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp \
 		$(BUILD)/src/Dispatcher.cpp $(BUILD)/src/Mesh.cpp $(BUILD)/src/Packet.cpp \
