@@ -284,6 +284,10 @@ bool BotStore::recover(char *error, size_t capacity) {
   if (legacyJournal) files_->initialized = true;
   if (!files_->initialized) {
     for (unsigned shard = 0; shard < Shards; ++shard) for (unsigned bank = 0; bank < 2; ++bank) {
+      if (uint32_t(millis() - started) >= BotKvRecoveryBudgetMs) {
+        if (opened) nvs_close(handle);
+        return storageError(error, capacity, "KV empty-media scan deadline; retry recovery");
+      }
       char path[40]; fileName(shard, bank, path);
       if (SPIFFS.exists(path)) {
         if (opened) nvs_close(handle);
@@ -485,10 +489,10 @@ bool BotStore::validSnapshot(const Snapshot &data, const uint8_t bot[32], char *
   return true;
 }
 bool BotStore::snapshot(const uint8_t bot[32], Snapshot &data, char *error, size_t capacity) {
-  const uint32_t started = millis();
   if (!record_) record_ = allocateRoleStorage<Record>("bot durable KV");
   if (!record_) return storageError(error, capacity, "Bot-data export storage RAM unavailable");
   if (!recover(error, capacity)) return false;
+  const uint32_t started = millis();
   const auto scope = data.scope;
   uint8_t principal[32]; memcpy(principal, data.principal, 32);
   data = {}; data.scope = scope; memcpy(data.principal, principal, 32);
@@ -515,7 +519,6 @@ bool BotStore::snapshot(const uint8_t bot[32], Snapshot &data, char *error, size
 }
 void BotStore::restore(const uint8_t bot[32], const Snapshot &data, BotIoResult &result,
                        uint32_t epoch, const std::atomic<uint32_t> &generation) {
-  const uint32_t started = millis();
   resetBotIoResult(result);
   const auto fail = [&](const char *message) { storageError(result.error, sizeof(result.error), message); };
   if (!validSnapshot(data, bot, result.error, sizeof(result.error))) return;
@@ -524,6 +527,7 @@ void BotStore::restore(const uint8_t bot[32], const Snapshot &data, BotIoResult 
   if (files_) files_->verified = false;
   if (!recover(result.error, sizeof(result.error))) return;
   if (epoch != generation.load()) { fail("Bot-data restore cancelled before admission"); return; }
+  const uint32_t started = millis();
   auto &journal = *journal_;
   journal = {}; memcpy(journal.magic, "BTX\1", 4);
   uint8_t free[Slots]{}; unsigned available = 0;
@@ -585,7 +589,7 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
                        const std::atomic<uint32_t> &generation, const std::atomic<bool> &sharedState,
                        const std::atomic<uint32_t> &sharedGrant, const std::atomic<uint32_t> *eventEpoch) {
   static_assert(sizeof(Record) == 136 + BotValueLimit, "Durable KV record format changed");
-  const uint32_t started = millis();
+  uint32_t started = millis();
   resetBotIoResult(result); result.token = request.token;
   const auto fail = [&](const char *message) {
     snprintf(result.error, sizeof(result.error), "%s", message);
@@ -617,6 +621,8 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
   if (files_ && request.kind != BotIoRequest::Get && request.kind != BotIoRequest::List)
     files_->verified = false;
   if (!recover(result.error, sizeof(result.error))) return;
+  // Empty-media checks have their own recovery budget before the first operation.
+  if (!files_->initialized) started = millis();
   if (request.kind == BotIoRequest::Cas || request.kind == BotIoRequest::Transaction) {
     transact(bot, request, result, generation, sharedState, sharedGrant, eventEpoch, started); return;
   }

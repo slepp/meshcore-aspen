@@ -21,7 +21,7 @@ static void faultsOff() {
   filesystem_test::afterWrite = filesystem_test::afterFlush = nullptr;
   filesystem_test::failOpen = filesystem_test::appendOnRead = false;
   filesystem_test::readLimit = filesystem_test::writeLimit = std::numeric_limits<size_t>::max();
-  filesystem_test::readDelayMs = 0;
+  filesystem_test::readDelayMs = filesystem_test::existsDelayMs = 0;
   now = 0;
 }
 static void reset() {
@@ -537,6 +537,54 @@ static void interruptedEmptyInitialization() {
   reboot.get("next"); assert(reboot.result.ok && !strcmp(reboot.result.value, "committed"));
   puts("PASS interrupted empty initialization: slow checked recovery completes all banks, discards unpublished value, preserves 2s request fence and next/restart behavior");
 }
+static void slowEmptyMedia() {
+  reset();
+  filesystem_test::existsDelayMs = 250;
+  Client c;
+  BotStore::Snapshot backup; backup.principal[0] = 7; char error[128]{};
+  assert(c.store.snapshot(c.bot, backup, error, sizeof(error)) && !backup.count);
+  assert(now == 2500 && identity_test::durable.empty() && filesystem_test::files.empty());
+  c.get("absent"); assert(c.result.ok && !c.result.found && now == 5000);
+  c.put("first", "retained");
+  assert(c.result.ok && c.result.outcome == BotIoResult::Committed);
+  faultsOff();
+  c.get("first"); assert(c.result.ok && !strcmp(c.result.value, "retained"));
+  assert(c.store.snapshot(c.bot, backup, error, sizeof(error)) && backup.count == 1);
+
+  for (bool transaction : {false, true}) {
+    reset();
+    filesystem_test::existsDelayMs = 250;
+    Client fresh;
+    fresh.request.kind = transaction ? BotIoRequest::Transaction : BotIoRequest::Cas;
+    fresh.request.mutations = 1;
+    auto &op = fresh.request.mutation[0];
+    strcpy(op.key, "first"); strcpy(op.value, "retained");
+    op.compare = !transaction; op.present = false;
+    fresh.run();
+    assert(fresh.result.ok && fresh.result.outcome == BotIoResult::Committed && now > 2500);
+    faultsOff();
+    fresh.get("first"); assert(fresh.result.ok && !strcmp(fresh.result.value, "retained"));
+  }
+  reset();
+  filesystem_test::existsDelayMs = 250;
+  Client restored;
+  restored.store.restore(restored.bot, backup, restored.result, 1, restored.generation);
+  assert(restored.result.ok && restored.result.outcome == BotIoResult::Committed && now > 2500);
+  faultsOff();
+  restored.get("first"); assert(restored.result.ok && !strcmp(restored.result.value, "retained"));
+
+  for (unsigned cost : {BotKvRecoveryBudgetMs / 10, 1200u}) {
+    reset();
+    filesystem_test::existsDelayMs = cost;
+    Client expired;
+    BotStore::Snapshot empty; empty.principal[0] = 7;
+    assert(!expired.store.snapshot(expired.bot, empty, error, sizeof(error)));
+    assert(strstr(error, "deadline") &&
+           now == ((BotKvRecoveryBudgetMs + cost - 1) / cost) * cost);
+    assert(identity_test::durable.empty() && filesystem_test::files.empty());
+  }
+  puts("PASS slow empty-media preflight: first read/write/CAS/transaction/export/restore succeed; recovery remains bounded without weakening write deadlines");
+}
 static void migrationDeadlines() {
   for (bool withRedo : {false, true}) {
     reset();
@@ -664,7 +712,7 @@ static void cancellationAndWear() {
 int main() {
   atomicCuts(); legacyMigration(); restoreCuts(); restoreCancellation(); physicalMigration();
   initializationBudget(); corruptMigration(); ioFailures(); uncertainRetry(); cancellationAndWear();
-  cachedRecovery(); cachedCorruption(); repeatedEmptyRecords(); interruptedEmptyInitialization(); migrationDeadlines();
+  cachedRecovery(); cachedCorruption(); repeatedEmptyRecords(); interruptedEmptyInitialization(); slowEmptyMedia(); migrationDeadlines();
   reset();
   assert(psram_test::allocations.empty());
 }

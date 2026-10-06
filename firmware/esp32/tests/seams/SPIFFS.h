@@ -12,6 +12,7 @@ inline unsigned directoryReads = 0;
 inline size_t writeLimit = std::numeric_limits<size_t>::max();
 inline std::atomic<size_t> readLimit{std::numeric_limits<size_t>::max()};
 inline unsigned long readDelayMs = 0;
+inline unsigned long existsDelayMs = 0;
 inline size_t bytesRead = 0, readCalls = 0, largestRead = 0;
 inline bool appendOnRead = false;
 inline void (*afterWrite)() = nullptr, (*afterFlush)() = nullptr;
@@ -128,7 +129,10 @@ public:
     checkpoint(mode[0] == 'w' ? "file.after-open-write" : "file.after-open-read");
     return result;
   }
-  bool exists(const char *path) override { return files.count(path); }
+  bool exists(const char *path) override {
+    if (existsDelayMs) delay(existsDelayMs);
+    return files.count(path);
+  }
   bool remove(const char *path) override {
     return !failRemove && files.erase(path);
   }

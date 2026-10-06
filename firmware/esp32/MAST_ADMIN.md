@@ -560,6 +560,11 @@ records never regain delivery authority from an imported file.
 For a raw authenticated CLI/web command, use `data help`:
 `data export [kv|timers|reminders] SCOPE PRINCIPAL64`, then poll `data status`. An `EXPORTED SHA256 ID`
 result freezes a 2,422-byte snapshot; `data read ID INDEX` reads 48-byte chunks.
+KV recovery has a ten-second limit. On a newly provisioned filesystem, the
+empty-store scan runs before the first KV operation's two-second window.
+KV export and restore also start their two-second operation window after
+recovery; keep polling `data status` while it reports `PENDING`. Requests
+against initialized KV data retain their existing two-second deadline.
 The family-tagged version-1 formats are `BKD`, `BTD` and `BRD`; each checks the
 full bot identity, scope/principal, sorted unique records, unused padding and
 SHA256. Timer/reminder payloads retain checked native v1 records (including
