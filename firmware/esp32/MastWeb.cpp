@@ -2,6 +2,10 @@
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastWeb.h"
 #include "MastAdminPage.h"
+#if MESHCORE_NODE_BACKUP
+#include "NodeBackup.h"
+#include "Runtime.h"
+#endif
 #include "Config.h"
 #include "RadioNetwork.h"
 #include <atomic>
@@ -232,6 +236,10 @@ esp_err_t page(httpd_req_t *request) {
 esp_err_t updateUpload(httpd_req_t *request) {
   if (!origin(request) || !authenticated(request))
     return error(request, "403 Forbidden", "Authenticated same-origin session required");
+#if MESHCORE_NODE_BACKUP
+  if (nodeBackup().active())
+    return error(request, "409 Conflict", "Backup preparation active; wait or cancel it before an application update");
+#endif
   return uploadEspUpdate(request);
 }
 esp_err_t updateStatus(httpd_req_t *request) {
@@ -245,6 +253,39 @@ esp_err_t updateReboot(httpd_req_t *request) {
   if (request->content_len)
     return error(request, "400 Bad Request", "Reboot request must have an empty body");
   return rebootEspUpdate(request);
+}
+#endif
+#if MESHCORE_NODE_BACKUP
+esp_err_t backupDownload(httpd_req_t *request) {
+  if (!origin(request) || !authenticated(request))
+    return error(request, "403 Forbidden", "Authenticated same-origin session required");
+  if (recoveryOnly)
+    return error(request, "503 Service Unavailable", "Recovery mode: node backups are unavailable");
+  char query[24]{}, id[17]{};
+  if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+      strlen(query) != 19 || strncmp(query, "id=", 3) || strspn(query + 3, "0123456789abcdef") != 16)
+    return error(request, "400 Bad Request", "Expected the saved backup id=ID16");
+  memcpy(id, query + 3, 16);
+  auto &backup = nodeBackup();
+  if (!backup.beginRead(id))
+    return error(request, "409 Conflict", "Backup changed or is busy; inspect backup status");
+  struct Release { NodeBackup &backup; ~Release() { backup.endRead(); } } release{backup};
+  headers(request);
+  httpd_resp_set_type(request, "application/octet-stream");
+  char disposition[100];
+  snprintf(disposition, sizeof(disposition), "attachment; filename=\"node-backup-%s.mcb\"", id);
+  httpd_resp_set_hdr(request, "Content-Disposition", disposition);
+  uint8_t bytes[512];
+  for (uint32_t offset = 0; offset < backup.bytes();) {
+    const size_t count = std::min(size_t(backup.bytes() - offset), sizeof(bytes));
+    if (backup.read(offset, bytes, count) != count) {
+      diagnosticEvent("Node backup download read failed"); return ESP_FAIL;
+    }
+    if (httpd_resp_send_chunk(request, reinterpret_cast<const char *>(bytes), count) != ESP_OK)
+      return ESP_FAIL;
+    offset += count;
+  }
+  return httpd_resp_send_chunk(request, nullptr, 0);
 }
 #endif
 } // namespace
@@ -263,7 +304,7 @@ void serviceMastWeb(MastAdmin &admin) {
   if (ticket) admin.acknowledged(ticket, acknowledgedOK.load());
   int expected = Pending;
   if (state.compare_exchange_strong(expected, Running)) {
-    admin.execute(command, reply);
+    admin.execute(command, reply, 0, MastAdmin::Transport::AuthenticatedWeb);
     expected = Running;
     if (!state.compare_exchange_strong(expected, Done)) {
       admin.acknowledged(reply.ticket, false); state = Idle;
@@ -292,6 +333,12 @@ esp_err_t registerMastWeb(httpd_handle_t server) {
     const auto result = httpd_register_uri_handler(server, &route);
     if (result != ESP_OK) return result;
   }
+#endif
+#if MESHCORE_NODE_BACKUP
+  httpd_uri_t backupRoute{};
+  backupRoute.uri = "/admin/backup"; backupRoute.method = HTTP_GET; backupRoute.handler = backupDownload;
+  const auto backupResult = httpd_register_uri_handler(server, &backupRoute);
+  if (backupResult != ESP_OK) return backupResult;
 #endif
   return ESP_OK;
 }

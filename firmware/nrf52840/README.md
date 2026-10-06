@@ -7,6 +7,10 @@ connected to another companion radio: open Pine-Relay's authenticated admin
 console for `bot status` and `source status`, then send Pine-Bot `!ping` and
 `!help` as encrypted DMs. No wired host, WiFi or nearby BLE connection is needed.
 Start with [production Lua setup, limits and recovery](PRODUCTION-LUA.md).
+Current Lua source builds also provide `backup help` through authenticated
+repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
+to download InternalFS identities/settings and QSPI source/data without USB
+access; retain the recipient's operator seed.
 The [public Pine bundle](https://ve6slp.ca/projects/meshcore/#downloads),
 `1.17.1-slp-pine` from earlier source `8b41d9c`, is **update-only**. It requires
 initialized repeater/bot identities and credential records; it does not

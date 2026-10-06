@@ -349,6 +349,7 @@ interval setters; native validation errors and units remain authoritative.
 | Native bot name, shared/home/reminder/channel-wait/discovery grants | Guided controls; durable native helpers | Native owner CLI |
 | Lua source up to 4096 UTF-8 bytes | Explicit resumable upload, then verify/install exact snapshot; editor edits stay separate | Owner CLI for verified source download, larger supported packages and recovery |
 | Scoped KV/timer/reminder transfer | Allowlisted native `data` console; errors and scopes preserved | `admin.py` scoped file export/stage/restore for verified backups and no-rearm |
+| Whole-host identities, configuration, credentials, programs and data | Encrypted **Node backup** download, independent of the native bot | [Paced encrypted RF retrieval](NODE_BACKUP.md) through a running repeater/room's administrator |
 | Host role placement, listener/MQTT configuration and PHY authority | Monitoring only; no configuration overwrite or restart button | Operator host configuration and explicit restart |
 | Chats, contacts, channels and role-specific settings | Not a chat client | Native MeshCore app on the companion endpoint, or permitted role owner CLI |
 | Wasm packages, credentials, private identity/channel keys | No imports through this page | Protected native owner CLI / supported role transport |

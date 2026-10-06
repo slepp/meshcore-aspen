@@ -9,19 +9,20 @@ WiFi. WiFi provides KISS, companion TCP, the dashboard and optional networking.
 For a generic application without compiled credentials, use
 [offline USB first-boot setup](PUBLIC_SETUP.md). It supplies a private per-node
 SPIFFS image and retains that configuration through app-only updates.
-The [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads) is
-`1.17.1-slp-aspen` from earlier source `8b41d9c`; it requires that setup before roles,
+The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
+requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.1** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.1`,
+New source builds use the **Aspen 0.1.2** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.2`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 
-See the [release guide](../../release/README.md) for candidate tags, manifests and
-qualification; the historical website image above retains its original version.
+Download an [encrypted node backup](../../NODE_BACKUP.md) through Management RF
+or the WiFi administration page to retain identities, settings, source and data.
+See the [release guide](../../release/README.md) for tags, manifests and builds.
 
 For a host-based setup, use the [Go guide](../../HOST_GUIDE.md).
 For nRF native notes/BLE, use the [nRF guide](../nrf52840/README.md);

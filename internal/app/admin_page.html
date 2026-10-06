@@ -47,16 +47,22 @@ Use the owner CLI to read durable source, roll back, recover or install packages
 <label>Native command (160 printable ASCII bytes)<input id="command" value="help" maxlength="160" size="60"></label><button id="run">Run</button>
 <p>Bot diagnostics, grants, source and scoped <code>data</code> export/stage/restore commands use the existing owner API.
 Backups contain private values; use <code>mast_cli.py --unix-socket … data-export/data-restore</code> for verified files.
-There is no whole-host import/export. Role identities, private keys, passwords, channel provisioning and radio retuning are not accepted here.</p>
+Whole-host encrypted exports are available below. Role identities, private keys, passwords, channel provisioning and radio retuning are not accepted as console inputs.</p>
 <p>The native MeshCore app connects to the companion TCP endpoint for chats, contacts, channels and role-specific radio administration.
 Use the local owner CLI for additional host-role settings reported by its help.</p></section>
+<section><h2>Node backup</h2>
+<p>Download this host's role identities, configuration, configured credentials, programs and saved data, compressed and encrypted to your operator public key.
+Keep the matching private seed to inspect or extract the file with <code>tools/node_backup.py</code>. This export does not include the companion radio's state.</p>
+<label>Recipient public key<input id="backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
+<button id="backup-create">Create and download node backup</button><button id="backup-download">Download saved node backup</button>
+<pre id="backup-status">A new snapshot replaces the saved encrypted backup; host settings remain unchanged.</pre></section>
 <section aria-live="polite"><button id="inspect">Inspect affected outcome</button><pre id="result"></pre>
 <p class="warning">Accepted means pending. A lost reply blocks writes in this tab; no automatic retry.
 Inspection unlocks only a matching durable source hash and terminal status. Other unknown writes require scoped readback through the owner CLI; do not repeat them.</p></section>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let token='',expires=0,busy=false,nativeOwner=false,uncertain=false,uploaded=null,pending=null,roleOwners=[];
+let token='',expires=0,busy=false,nativeOwner=false,nodeBackup=false,uncertain=false,uploaded=null,pending=null,roleOwners=[];
 const readOnly=/^(?:help(?: (?:bot|source|data|role|stats))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|name|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|shared|home|reminders|events|channel-wait|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch))?|read \d+)|data (?:help|status|read [0-9a-f]{16} \d+))$/;
 const writeOnly=/^(?:bot (?:name [\x20-\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|cancel)|source (?:begin [0-9a-f]{16} [0-9]{1,4} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel|rollback|remove|retry|help [\x20-\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel) [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$/;
 const roleRead=/^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\.info|radio|freq|tx|stats|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval|rxdelay|txdelay|direct\.txdelay|af|dutycycle))$/;
@@ -72,6 +78,8 @@ function controls(){
   $('host-role').disabled=busy||!token||!roleOwners.length;
   $('inspect').disabled=busy||!token||(!nativeOwner&&!pending?.role);
   $('login').disabled=busy; $('logout').disabled=busy; $('source').disabled=false;
+  $('backup-create').disabled=busy||!token||!nodeBackup||uncertain;
+  $('backup-download').disabled=busy||!token||!nodeBackup;
 }
 async function request(path,body=''){
   if(path!=='/admin/login'&&(!token||Date.now()>=expires)){token='';nativeOwner=false;throw Error('Host admin session expired; connect again. Draft and unresolved outcome retained.');}
@@ -88,8 +96,10 @@ async function request(path,body=''){
 }
 async function command(text){
   if(!/^[\x20-\x7e]{1,160}$/.test(text))throw Error('Command requires 1..160 printable ASCII bytes.');
-  if(!readOnly.test(text)&&!writeOnly.test(text))throw Error('Unsupported host admin command. Credentials, private keys and radio provisioning are unavailable over HTTP; no request sent.');
-  const write=!readOnly.test(text);
+  const backupRead=/^backup (?:help|status|load|read [0-9a-f]{16} \d+)$/.test(text);
+  const backupWrite=/^backup (?:start [0-9a-f]{64}|cancel|clear)$/.test(text);
+  if(!readOnly.test(text)&&!writeOnly.test(text)&&!backupRead&&!backupWrite)throw Error('Unsupported host admin command. Credentials, private keys and radio provisioning are unavailable over HTTP; no request sent.');
+  const write=!readOnly.test(text)&&!backupRead;
   if(write){
     if(uncertain)throw Error('Prior write outcome unknown; inspect affected state. No write sent.');
     pending={command:text,snapshot:uploaded?{...uploaded}:null};
@@ -116,6 +126,7 @@ async function write(text){
 async function monitor(){
   const value=JSON.parse(await request('/admin/status'));
   nativeOwner=value.capabilities.native_owner===true;
+  nodeBackup=value.capabilities.node_backup===true;
   roleOwners=Array.isArray(value.capabilities.role_owner_commands)?value.capabilities.role_owner_commands.filter(role=>['room','repeater'].includes(role)):[];
   const selected=$('host-role').value;
   $('host-role').replaceChildren();
@@ -164,6 +175,40 @@ $('logout').onclick=()=>action(async()=>{
   finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; draft and unresolved outcome retained';$('monitoring').textContent='';}
 });
 $('monitor').onclick=()=>action(monitor);
+async function backupDownload(create){
+  const key=$('backup-key').value.trim();
+  if(create){
+    if(!/^[0-9a-f]{64}$/.test(key)||/^0+$/.test(key))throw Error('Enter your operator public key: 64 lowercase hex characters, not a private seed.');
+    if(!window.confirm('Replace the saved node backup with a new encrypted snapshot? Keep the matching operator seed private.'))return 'Cancelled; no backup requested.';
+    await command('backup start '+key);
+  }else await command('backup load');
+  const deadline=Date.now()+180000;
+  let match;
+  while(true){
+    const status=await command('backup status');$('backup-status').textContent=status;
+    match=/^READY ([0-9a-f]{16}) bytes=(\d+) sha=([0-9a-f]{64})$/.exec(status);
+    if(match)break;
+    if(!status.startsWith('PREPARING'))throw Error('Unexpected node backup status: '+status);
+    if(Date.now()>=deadline)throw Error('Backup preparation timed out; inspect backup status before starting another snapshot.');
+    await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+  if(match[1]!==match[3].slice(0,16)||+match[2]<120||+match[2]>2113656)throw Error('Node backup returned an invalid id or size.');
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
+  let bytes;
+  try{
+    const response=await fetch('/admin/backup?id='+match[1],{headers:{'X-Host-Admin':token,'X-Host-Intent':'admin-v1'},
+      cache:'no-store',credentials:'omit',redirect:'error',signal:controller.signal});
+    if(!response.ok)throw Error('Node backup download failed: HTTP '+response.status);
+    bytes=new Uint8Array(await response.arrayBuffer());
+  }finally{clearTimeout(timer);}
+  if(bytes.length!==+match[2]||await digest(bytes)!==match[3])throw Error('Node backup size or checksum failed; download the saved backup again.');
+  if(create&&hex(bytes.slice(40,72))!==key)throw Error('Node backup recipient differs from the requested operator key.');
+  const url=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');
+  a.href=url;a.download='meshcore-node-'+match[1]+'.mcb';a.click();URL.revokeObjectURL(url);
+  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect with tools/node_backup.py and your private operator seed.';
+}
+$('backup-create').onclick=()=>action(()=>backupDownload(true));
+$('backup-download').onclick=()=>action(()=>backupDownload(false));
 $('bot-status').onclick=()=>action(async()=>await command('bot status')+'\n'+await command('bot policy'));
 $('name-save').onclick=()=>action(()=>{const name=$('name').value;if(!/^[\x20-\x39\x3b-\x7e]{1,31}$/.test(name))throw Error('Name requires 1..31 printable ASCII bytes without colon.');return write('bot name '+name);});
 $('grant-save').onclick=()=>action(()=>write('bot '+$('grant').value+' '+$('grant-value').value));

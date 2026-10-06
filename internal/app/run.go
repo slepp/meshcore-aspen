@@ -15,6 +15,7 @@ import (
 	"github.com/meshcore-go/meshcore-go/hardware"
 	"meshcore.local/meshcore/internal/kissproxy"
 	nativebot "meshcore.local/meshcore/internal/nativebot/host"
+	"meshcore.local/meshcore/internal/nodebackup"
 	"meshcore.local/meshcore/internal/observer"
 	"meshcore.local/meshcore/internal/radio"
 	"meshcore.local/meshcore/internal/roles"
@@ -162,6 +163,26 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (result error) {
 		return err
 	}
 	cleanups = append(cleanups, lock.Close)
+	roleWorkers := make(map[string]*roleWorker)
+	backupReady := make(chan struct{})
+	cfg.nodeBackup, err = nodebackup.New(ctx, filepath.Join(cfg.StateDir, "node-backup"),
+		func(snapshotContext context.Context) (map[string][]byte, error) {
+			select {
+			case <-backupReady:
+			case <-snapshotContext.Done():
+				return nil, snapshotContext.Err()
+			}
+			for role, owner := range newHostRoleAdmin(roleWorkers) {
+				if _, err := owner(snapshotContext, "get name"); err != nil {
+					return nil, fmt.Errorf("backup %s state barrier: %w", role, err)
+				}
+			}
+			return hostBackupSnapshot(snapshotContext, cfg)
+		})
+	if err != nil {
+		return fmt.Errorf("host backup storage: %w", err)
+	}
+	cleanups = append(cleanups, cfg.nodeBackup.Close)
 	if err := activatePendingRoleIdentities(cfg); err != nil {
 		return err
 	}
@@ -309,7 +330,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (result error) {
 		}
 		cleanups = append(cleanups, botCompanion.Close)
 	}
-	roleWorkers := make(map[string]*roleWorker)
 	for _, role := range []string{"room", "repeater"} {
 		if !cfg.roleEnabled(role) {
 			continue
@@ -386,6 +406,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) (result error) {
 			logger.Info("endpoint listening", "role", "bot", "address", botListener.Addr())
 		}
 	}
+	close(backupReady)
 	mux := newStatusHandler(ctx, func() map[string]roleStatus {
 		status := make(map[string]roleStatus)
 		for _, role := range []string{"repeater", "room", "companion", "observer", "bot"} {

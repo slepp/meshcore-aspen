@@ -6,10 +6,10 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.1-rc.1` | `aspen-v0.1.1` | `aspen-v0.1.2` |
+| Aspen | `aspen-v0.1.2-rc.1` | `aspen-v0.1.2` | `aspen-v0.1.3` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
 
-Show users **Aspen 0.1.1 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.2 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -19,7 +19,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.1` or `birch-0.1.0-rc.1`;
+Companion device information reports `aspen-0.1.2` or `birch-0.1.0-rc.1`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
@@ -75,7 +75,7 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The bundle name is `aspen-v0.1.1-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The bundle name is `aspen-v0.1.2-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
 separate initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -159,6 +159,15 @@ Use `help syslog` to configure logging and `stats system`, `stats memory`,
 retain identities, settings and installed programs. Initial bootloader,
 partition or filesystem writes are a separate first-install operation; back
 up the node before using them.
+
+## Aspen 0.1.2
+
+This version adds device-generated compressed, operator-encrypted whole-node
+backups. Aspen downloads over authenticated WiFi or paced Management RF;
+current Birch host and Pine Lua source builds use the same archive and operator
+tool. Saved snapshots and interrupted downloads can resume after a restart.
+See the [node backup guide](../NODE_BACKUP.md) for commands, privacy, storage
+limits and the distinction from scoped bot-data restoration.
 
 ## Historical artifacts
 

@@ -5,6 +5,9 @@
 #include "BotHttpsMetrics.h"
 #include "BotHttpsProbe.h"
 #include "BotNetworkConfig.h"
+#if MESHCORE_NODE_BACKUP && defined(NRF52_PLATFORM)
+#include "NodeBackup.h"
+#endif
 #include "BotVm.h"
 #include "BotUtilities.h"
 #include <array>
@@ -1259,6 +1262,9 @@ void BotWorker::runIo() {
     BotIoResult *restoreResult = nullptr;
     uint32_t nextReminderPoll = 0;
     while (!control_->stopping.load()) {
+#if MESHCORE_NODE_BACKUP && defined(NRF52_PLATFORM)
+      nodeBackup().work();
+#endif
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
       const auto revision = BotWake::shared().snapshot();
 #endif

@@ -71,6 +71,7 @@ extends = env:Xiao_S3_WIO_onchip_bot
 build_flags =
   ${env:Xiao_S3_WIO_onchip_bot.build_flags}
   -D MESHCORE_MAST_ADMIN=1
+  -D MESHCORE_NODE_BACKUP=1
   -D ONCHIP_TRUSTED_COMPANION_PUBKEY='"${sysenv.ONCHIP_TRUSTED_COMPANION_PUBKEY}"'
   -D ONCHIP_MAST_PASSWORD='"${sysenv.ONCHIP_MAST_PASSWORD}"'
   -D ONCHIP_SERVICE_REGION='"${sysenv.ONCHIP_SERVICE_REGION}"'

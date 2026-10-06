@@ -450,6 +450,23 @@ bool trustedNetworkTime(uint32_t &early, uint32_t &late, const char **reason) {
 int main() {
   Nor flash;
   assert(nrfmast::botFilesystem.begin(flash, true));
+  assert(nrfmast::botFilesystem.mkdir("/metadata/inventory"));
+  auto inventoryFile = nrfmast::botFilesystem.open("/metadata/inventory/record", "w");
+  const uint8_t inventoryBytes[] = {1, 2, 3};
+  assert(inventoryFile && inventoryFile.write(inventoryBytes, sizeof(inventoryBytes)) == sizeof(inventoryBytes));
+  inventoryFile.close();
+  unsigned inventoried = 0;
+  assert(nrfmast::botFilesystem.visit("/metadata", [](const char *path, void *context) {
+    assert(!strcmp(path, "/metadata/inventory/record"));
+    ++*static_cast<unsigned *>(context);
+    return true;
+  }, &inventoried));
+  assert(inventoried == 1);
+  assert(!nrfmast::botFilesystem.visit("/metadata", [](const char *, void *) { return false; }, nullptr));
+  assert(nrfmast::botFilesystem.remove("/metadata/inventory/record"));
+  assert(nrfmast::botFilesystem.remove("/metadata/inventory"));
+  assert(nrfmast::botFilesystem.totalBytes() == nrfmast::PineFilesystem::Bytes);
+  assert(nrfmast::botFilesystem.usedBytes() < nrfmast::botFilesystem.totalBytes());
   metadataCuts(flash);
   adaptiveSettings(flash);
   workerSources();

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Runtime.h"
+#if MESHCORE_NODE_BACKUP
+#include "NodeBackup.h"
+#include "EspNodeBackup.h"
+#endif
 #include "Capacity.h"
 #include "CompanionSessions.h"
 #include "Config.h"
@@ -269,6 +273,9 @@ static void diagnosticWorker(void *argument) {
   for (;;) {
     if (xQueueReceive(queue, &entry, portMAX_DELAY) != pdTRUE)
       continue;
+#if MESHCORE_NODE_BACKUP
+    nodeBackup().work();
+#endif
     char line[176];
     const int size = snprintf(line, sizeof(line), "%s%s%s",
                               entry.companion ? "Companion: " : "", entry.message,
@@ -305,7 +312,13 @@ bool beginDiagnostics() {
   if (!queue)
     return false;
   beginSyslog();
-  if (xTaskCreate(diagnosticWorker, "mesh-diagnostics", 4096, queue, 1,
+  if (xTaskCreate(diagnosticWorker, "mesh-diagnostics",
+#if MESHCORE_NODE_BACKUP
+                  8192,
+#else
+                  4096,
+#endif
+                  queue, 1,
 #ifdef ARDUINO_ARCH_ESP32
                   &diagnosticTask
 #else
@@ -320,8 +333,15 @@ bool beginDiagnostics() {
     return false;
   }
   diagnosticQueue.store(queue);
+#if MESHCORE_NODE_BACKUP
+  beginEspNodeBackup();
+#endif
   return true;
 }
+#if MESHCORE_NODE_BACKUP
+bool backupWorkerReady() { return diagnosticQueue.load() != nullptr; }
+void wakeBackupWorker() { diagnosticEvent("Node backup preparation requested"); }
+#endif
 CompanionSessions &companionSessions() {
 #ifdef COMPANION_SESSIONS_HOST
   static CompanionSessions sessions(0, 10000, companionDiagnostic);

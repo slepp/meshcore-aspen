@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastAdmin.h"
+#if MESHCORE_NODE_BACKUP
+#include "NodeBackup.h"
+#endif
 #include "Config.h"
 #include "Clock.h"
 #include "BotHttps.h"
@@ -216,7 +219,7 @@ void MastAdmin::helpCommand(const char *argument, Reply &reply) {
   static constexpr const char *index[] = {
     "help 1/3: status; stats; ver; board; help role|roles|room|companion|bot|stats; next: help 2",
     "help 2/3: help wifi|radio|tempradio|cad|radio-controls|autoadvert|sntp|syslog|get|set; next: help 3",
-    "help 3/3: help auth|setperm|trust|password|key|source|data|telemetry; apply|reboot"
+    "help 3/3: help auth|setperm|trust|password|key|source|data|backup|telemetry; apply|reboot"
   };
   static_assert(textLength(index[0]) <= TextLimit - 17 &&
                 textLength(index[1]) <= TextLimit - 17 &&
@@ -1236,6 +1239,18 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     if (*p < 32 || *p > 126) {
       strcpy(reply.text, "Error: printable CLI text required"); return;
     }
+#if MESHCORE_NODE_BACKUP
+  if (!strcmp(input, "backup") || !strncmp(input, "backup ", 7) || !strcmp(input, "help backup")) {
+    const bool native = transport == Transport::NativeEncrypted &&
+                        management_->authenticatedNativeSender(nativeSender);
+    if (invokingBotJob || (!native && transport != Transport::AuthenticatedWeb)) {
+      strcpy(reply.text, "Error: node backups require authenticated Management RF or Web administration"); return;
+    }
+    nodeBackup().command(!strcmp(input, "help backup") ? "help" : input[6] ? input + 7 : "",
+                         reply.text, sizeof(reply.text), native);
+    return;
+  }
+#endif
   if (networkClockCommand(input, reply.text, sizeof(reply.text), true) ||
       syslogCommand(input, reply.text, sizeof(reply.text)) ||
       diagnosticsCommand(input, reply.text, sizeof(reply.text))) return;

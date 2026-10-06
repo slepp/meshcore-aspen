@@ -3,6 +3,9 @@
 #include "PineAdmin.h"
 #include "FirmwareIdentity.h"
 #include "onchip/CommandBot.h"
+#if MESHCORE_NODE_BACKUP
+#include "onchip/NodeBackup.h"
+#endif
 #include "onchip/BotVm.h"
 #include "onchip/Clock.h"
 #include "onchip/BotRegistry.h"
@@ -93,8 +96,18 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
   for (const unsigned char *p = reinterpret_cast<const unsigned char *>(text); *p; ++p)
     if (*p < 32 || *p > 126) { say("Error: printable Pine admin text required"); return; }
   if (!strcmp(text, "ver")) { say("v" MESHCORE_SLP_PINE_VERSION); return; }
+#if MESHCORE_NODE_BACKUP
+  if (!strcmp(text, "backup") || !strcmp(text, "help backup") || !strncmp(text, "backup ", 7)) {
+    if (invokingJob) {
+      say("Error: node backups require direct authenticated administration"); return;
+    }
+    nodeBackup().command(!strncmp(text, "backup ", 7) ? text + 7 : "help",
+                         reply.text, sizeof(reply.text), transport == Transport::NativeEncrypted);
+    return;
+  }
+#endif
   if (!strcmp(text, "help") || !strcmp(text, "help bot") || !strcmp(text, "bot")) {
-    say("bot help; source help; help wifi; bot status|mesh|policy|owner|time|adaptive; source status|hash|api; native role settings on the repeater");
+    say("bot help; source help; backup help; help wifi; bot status|mesh|policy|owner|time|adaptive; source status|hash|api; repeater role settings");
     return;
   }
   if (!strcmp(text, "help source") || !strcmp(text, "source")) {

@@ -6,6 +6,14 @@ ENV ?= Xiao_S3_WIO_onchip
 include $(ROOT)/release/versions.mk
 PIN := $(MESHCORE_RELEASE_SHA)
 .DEFAULT_GOAL := test
+.PHONY: node-backup-test
+node-backup-test:
+	@mkdir -p "$(TEST_BUILD)"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) -I$(CRYPTO) -DMESHCORE_NODE_BACKUP=1 \
+		tests/node_backup_archive.cpp ../runtime/NodeBackup.cpp $(addprefix $(CRYPTO)/,AES128.cpp AESCommon.cpp BlockCipher.cpp SHA256.cpp Hash.cpp Crypto.cpp) \
+		-o "$(TEST_BUILD)/node-backup"
+	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$(ROOT)" NODE_BACKUP_RUNNER="$(TEST_BUILD)/node-backup" \
+		python3 -m unittest -v test_support.test_node_backup
 PUBLIC_UPDATE_SOURCE ?= EspFieldUpdate.cpp
 .PHONY: public-update-test
 public-update-test:
@@ -88,6 +96,7 @@ field-rebuild:
 		{ echo "A previously prepared field project is required." >&2; exit 1; }
 	@if test -n "$(CONFIG)"; then install -m 600 "$(CONFIG)" "$(BUILD)/platformio.local.ini"; fi
 	cp $(filter-out wifi_kiss_main.cpp,$(wildcard *.cpp *.h)) ../runtime/*.cpp ../runtime/*.h "$(BUILD)/examples/kiss_modem/onchip/"
+	cp ../shared/RadioDashboard.cpp ../shared/RadioDashboard.h ../shared/RadioDashboardPage.h "$(BUILD)/examples/kiss_modem/"
 	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --field-network
 	TMPDIR="$(ROOT)/.tmp" python3 -B prepare_wasm.py --target "$(BUILD)" --enabled $(ONCHIP_BOT_WASM)
 	cd "$(BUILD)" && TMPDIR="$(ROOT)/.tmp" pio run -e "$(ENV)"

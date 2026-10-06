@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -244,6 +245,7 @@ func registerHostAdmin(mux *http.ServeMux, ctx context.Context, snapshot func() 
 		// Role snapshots contain public operational state, never the host Config.
 		_ = json.NewEncoder(w).Encode(map[string]any{"roles": snapshot(), "capabilities": map[string]any{
 			"native_owner":        cfg.BotRuntime == "native_lua" && cfg.roleEnabled("bot"),
+			"node_backup":         cfg.nodeBackup != nil,
 			"role_owner_commands": roleAdmin.names(),
 			"configuration":       "native bot settings/source/data persist through owner helpers; host role selection requires config and service restart",
 			"unsupported":         []string{"ESP WiFi provisioning", "ESP firmware OTA", "physical ADC", "host config overwrite", "private key/password/token imports", "Wasm installation through this page"},
@@ -253,12 +255,28 @@ func registerHostAdmin(mux *http.ServeMux, ctx context.Context, snapshot func() 
 		if !auth(w, r) {
 			return
 		}
-		if cfg.BotRuntime != "native_lua" || !cfg.roleEnabled("bot") {
-			http.Error(w, "Native bot owner is not enabled", http.StatusConflict)
-			return
-		}
 		command, read := hostAdminReadCommand(w, r)
 		if !read {
+			return
+		}
+		if command == "backup" || strings.HasPrefix(command, "backup ") || command == "help backup" {
+			if cfg.nodeBackup == nil {
+				http.Error(w, "Host node backup service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if command == "help backup" {
+				command = "backup help"
+			}
+			reply := cfg.nodeBackup.Command(command, false)
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			if strings.HasPrefix(reply, "Error:") {
+				w.WriteHeader(http.StatusConflict)
+			}
+			_, _ = io.WriteString(w, reply)
+			return
+		}
+		if cfg.BotRuntime != "native_lua" || !cfg.roleEnabled("bot") {
+			http.Error(w, "Native bot owner is not enabled", http.StatusConflict)
 			return
 		}
 		if !hostAdminCommandAllowed(command) {
@@ -278,6 +296,30 @@ func registerHostAdmin(mux *http.ServeMux, ctx context.Context, snapshot func() 
 			w.WriteHeader(http.StatusConflict)
 		}
 		_, _ = io.WriteString(w, reply)
+	})
+	mux.HandleFunc("GET /admin/backup", func(w http.ResponseWriter, r *http.Request) {
+		if !auth(w, r) {
+			return
+		}
+		if cfg.nodeBackup == nil {
+			http.Error(w, "Host node backup service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if len(id) != 16 {
+			http.Error(w, "Node backup requires its saved ID16", http.StatusBadRequest)
+			return
+		}
+		file, size, err := cfg.nodeBackup.Open(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", `attachment; filename="meshcore-node-`+id+`.mcb"`)
+		w.Header().Set("Content-Length", strconv.Itoa(size))
+		_, _ = io.CopyN(w, file, int64(size))
 	})
 	mux.HandleFunc("POST /admin/role/{role}", func(w http.ResponseWriter, r *http.Request) {
 		if !auth(w, r) {

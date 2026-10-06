@@ -56,6 +56,9 @@ public:
   bool rename(const char *from, const char *to);
   bool mkdir(const char *path);
   bool capacity(uint32_t &used, uint32_t &total);
+  uint32_t totalBytes();
+  uint32_t usedBytes();
+  bool visit(const char *directory, bool (*callback)(const char *, void *), void *context, unsigned depth = 0);
 };
 extern PineFilesystem botFilesystem;
 }

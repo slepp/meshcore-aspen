@@ -15,8 +15,10 @@ companion used for RF checks, not a shipped setup.
 
 The project and community documentation are public at
 [ve6slp.ca/projects/meshcore](https://ve6slp.ca/projects/meshcore/).
-See [firmware downloads](https://ve6slp.ca/projects/meshcore/#downloads) for
-packaged images and hardware requirements. First-install procedures differ
+Get the [published Aspen release](https://github.com/slepp/meshcore-aspen/releases/latest)
+for the XIAO ESP32-S3R8 + Wio SX1262, or see
+[other firmware downloads](https://ve6slp.ca/projects/meshcore/#downloads).
+First-install procedures differ
 from application-only updates that retain an existing node's identities and
 settings. Flash the selected image to update a node's firmware.
 
@@ -71,14 +73,19 @@ existing installation. Aspen, Birch and Pine retain their own setup guides.
 | Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
 
 Aspen and Birch use independent product versions. The current source reports
-`aspen-0.1.1` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
-Show releases as **Aspen 0.1.1 · based on MeshCore 1.17.1** and tag them
-`aspen-v0.1.1` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
+`aspen-0.1.2` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
+Show releases as **Aspen 0.1.2 · based on MeshCore 1.17.1** and tag them
+`aspen-v0.1.2` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
 host, native worker and modem bundle. Pine retains `1.17.1-slp-pine`.
 The [release guide](release/README.md) lists compatibility contracts, candidate
-build commands and qualification gates. Existing website downloads and the
+build commands and publication steps. Existing website downloads and the
 older GitHub draft keep their original identities and source revisions.
 Choose enabled roles and features in the build and saved configuration.
+
+To retain a node's identities, settings, programs and saved data, use the
+[encrypted node backup workflow](NODE_BACKUP.md). Aspen and Birch can download
+over WiFi; Aspen, Birch and Pine also support paced authenticated RF retrieval.
+Keep the matching operator seed to inspect or extract an encrypted archive.
 
 ## Start a WiFi radio and Go host
 

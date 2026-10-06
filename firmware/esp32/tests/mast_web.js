@@ -145,6 +145,10 @@ function fixture() {
         if(path==='/admin/login') {state.session=true;return {ok:true,status:200,text:async()=>'ab'.repeat(16)};}
         assert.equal(options.headers['X-Mast-Session'],'ab'.repeat(16));
         if(path==='/admin/logout') {state.session=false;return {ok:true,status:200,text:async()=>'Logged out'};}
+        if(path.startsWith('/admin/backup?id=')) {
+          assert.equal(path,'/admin/backup?id='+digest(state.nodeBackup).slice(0,16));
+          return {ok:true,status:200,arrayBuffer:async()=>state.nodeBackup};
+        }
         assert(/^[\x20-\x7e]{1,162}$/.test(options.body),'Native command framing must fit');
         const result=native(options.body);
         return {ok:true,status:200,text:async()=>result};
@@ -176,6 +180,34 @@ async function tests() {
     assert.equal(f.evaluate(`sha256(Uint8Array.from(${JSON.stringify([...bytes])}))`),digest(bytes));
   }
   await f.login();
+  const node=fixture();
+  await node.login();
+  node.state.nodeBackup=Buffer.alloc(384);
+  Buffer.from('MCB\x01\x01\0\0\0').copy(node.state.nodeBackup);
+  const recipient='56'.repeat(32);
+  Buffer.from(recipient,'hex').copy(node.state.nodeBackup,40);
+  let prepared=false;
+  node.state.override=text=>{
+    if(text==='backup start '+recipient){prepared=true;return 'PREPARING encrypted node backup';}
+    if(text==='backup load')return 'PREPARING saved backup';
+    if(text==='backup status'){
+      assert(prepared);
+      return `READY ${digest(node.state.nodeBackup).slice(0,16)} bytes=${node.state.nodeBackup.length} sha=${digest(node.state.nodeBackup)}`;
+    }
+  };
+  node.element('node-backup-key').value=recipient;
+  await node.element('node-backup-create').click();
+  assert.equal(node.downloads.length,1);
+  assert.match(node.element('result').textContent,/Downloaded encrypted node backup/);
+  assert.deepEqual(Buffer.from(await node.downloads[0].arrayBuffer()),node.state.nodeBackup);
+  await node.element('node-backup-download').click();
+  assert.equal(node.downloads.length,2);
+  assert.equal(node.requests.filter(request=>request.body?.startsWith('backup start ')).length,1,'Saved download must not create a new snapshot');
+  node.element('node-backup-key').value='private seed is not a public key';
+  await node.element('node-backup-create').click();
+  assert.equal(node.downloads.length,2);
+  assert.match(node.element('result').textContent,/operator public key/);
+  console.log('PASS encrypted node backup UI: recipient validation, saved snapshot download, exact size/digest and no create replay');
   f.element('grant').value='reminders';f.element('grant-on').value='on';
   await f.element('grant-save').click();
   assert.match(f.confirms.at(-1),/private reminders/);

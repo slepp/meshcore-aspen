@@ -21,6 +21,9 @@ func (s *Service) commandAt(timestamp uint32, command string) (string, []transmi
 
 func splitCommand(command string) (string, string) {
 	command = strings.TrimLeft(command, " \t")
+	if len(command) > 17 && command[16] == '|' && strings.Trim(command[:16], "0123456789abcdef") == "" {
+		return command[:17], strings.TrimLeft(command[17:], " \t")
+	}
 	if len(command) > 3 && command[2] == '|' {
 		return command[:3], strings.TrimLeft(command[3:], " \t")
 	}
@@ -38,8 +41,17 @@ func (s *Service) commandWithTelemetry(timestamp uint32, command string, telemet
 	reply := ""
 	var packets []transmission
 	switch {
+	case command == "backup" || strings.HasPrefix(command, "backup ") || command == "help backup":
+		if s.cfg.BackupCommand == nil {
+			reply = "Error: host node backup service unavailable"
+		} else {
+			if command == "help backup" {
+				command = "backup help"
+			}
+			reply = s.cfg.BackupCommand(command, true)
+		}
 	case command == "help":
-		reply = "help get|set|wifi|radio|region|owner|stats; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot"
+		reply = "help get|set|wifi|radio|region|owner|stats; backup help; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot"
 	case command == "stats" || strings.HasPrefix(command, "stats "):
 		reply = s.statsCommand(strings.TrimPrefix(command, "stats"), telemetry, telemetryErr)
 	case strings.HasPrefix(command, "help "):

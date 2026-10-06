@@ -19,6 +19,7 @@
 #include "PineFilesystem.h"
 #include "PineNotesMigration.h"
 #include "PineRuntimePlatform.h"
+#include "PineNodeBackup.h"
 #include "platform/nvs.h"
 static bool luaAdminCommand(const char*, char*);
 #endif
@@ -335,6 +336,7 @@ static bool luaAdminCommand(const char* text, char* reply) {
     return true;
   }
   if (!strncmp(text, "bot ", 4) || !strncmp(text, "source ", 7) ||
+      !strncmp(text, "backup ", 7) || !strcmp(text, "backup") || !strcmp(text, "help backup") ||
       !strcmp(text, "bot") || !strcmp(text, "source") ||
       !strcmp(text, "help bot") || !strcmp(text, "help source")) {
     onchip::MastAdmin::Reply result;
@@ -633,6 +635,9 @@ void setup() {
     const RadioConfig configuration{uint32_t(profile.frequency * 1000000), uint32_t(profile.bandwidth * 1000),
                                     profile.sf, profile.cr, uint8_t(prefs->tx_power_dbm)};
     luaStarted = onchip::commandBotService().begin(sharedRadio.lua, configuration);
+#if MESHCORE_NODE_BACKUP
+    if (luaStarted) nrfmast::beginNodeBackup();
+#endif
     if (!onchip::MastAdmin::service()->begin())
       Serial.println("Lua administration: source/owner journal requires recovery; native repeater administration remains available");
   } else Serial.println("Lua startup: original notes or saved Lua name unavailable; inspect bot state and Lua filesystem; native repeater remains available");

@@ -939,6 +939,9 @@ bool RadioDashboard::beginHTTP() {
   config.max_uri_handlers = 3;
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
   config.max_uri_handlers += 7;
+#if MESHCORE_NODE_BACKUP
+  config.max_uri_handlers += 1;
+#endif
 #endif
   // LRU purge runs before accept/route admission and may evict a healthy
   // stream. Full capacity must wait in the bounded listen backlog instead.

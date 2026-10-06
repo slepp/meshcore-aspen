@@ -18,7 +18,7 @@ public:
   static constexpr unsigned ExtraReplaySlots = ACLSlots + 1;
   static constexpr unsigned ReplaySlots = LegacyReplaySlots + ExtraReplaySlots;
   static constexpr unsigned SessionSlots = ACLSlots + 2;
-  enum class Transport { Other, NativeEncrypted };
+  enum class Transport { Other, NativeEncrypted, AuthenticatedWeb };
   struct Reply {
     char text[TextLimit + 1]{};
     uint32_t ticket = 0;

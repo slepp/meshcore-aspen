@@ -73,6 +73,7 @@ type Config struct {
 	// after confirmed persistence; never Close, restart or activate here. The
 	// read-only input is borrowed until return, then cleared. Nil disables import.
 	StageIdentity func(context.Context, []byte) error
+	BackupCommand func(string, bool) string
 }
 
 type event struct {

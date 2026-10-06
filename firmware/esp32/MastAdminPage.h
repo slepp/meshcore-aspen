@@ -103,7 +103,13 @@ Message the bot with <code>!plugins</code> or <code>!help</code> to list its com
 <div class="actions"><button id="grant-read">Load permission</button><button id="grant-save">Save permission</button>
 <button data-write="bot cancel" data-warning="Stop running bot commands and message collectors? Actions already sent cannot be undone. Scheduled reminders will stay unchanged.">Stop bot work</button></div>
 <p class="muted">Discovery shares Base telemetry with signed contacts. HTTPS access is limited to the configured service.</p></div></div></section>
-<section id="storage"><h2>Bot data backups</h2>
+<section id="storage"><h2>Node backup</h2>
+<p>Download this node's identities, settings, programs and saved data, compressed and encrypted to your operator key. Retain the matching private seed to inspect or extract the archive with <code>tools/node_backup.py</code>.</p>
+<label>Recipient public key<input id="node-backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
+<div class="actions"><button id="node-backup-create">Create and download node backup</button><button id="node-backup-download">Download saved node backup</button>
+<button data-read="backup status" data-target="node-backup-status">Check node backup</button></div>
+<pre id="node-backup-status">A new snapshot replaces the saved encrypted backup; it does not change settings or bot data.</pre>
+<h2>Scoped bot data backups</h2>
 <p class="warning">Backups contain private bot data. Keep downloaded files private. They do not include programs, identities, passwords or permissions.</p>
 <button id="storage-read">Load backup options</button>
 <details><summary>Storage limits and transfer status</summary><button data-read="data status" data-target="storage-status">Check transfer</button>
@@ -131,7 +137,7 @@ Restarting interrupts all roles. Keep USB recovery accessible.</p>
 <section id="advanced"><h2>Command console</h2><p>Use CLI commands for settings without a form. Changes require confirmation.</p>
 <form id="command-form" class="actions"><label>Command<input id="command" maxlength="162" value="status" size="60"></label><button type="submit">Run native command</button></form>
 <div class="actions"><button data-read="help" data-target="result">Command help</button><button data-read="role help" data-target="result">Role help</button><button data-read="bot help" data-target="result">Bot help</button>
-<button data-read="source help" data-target="result">Source help</button><button data-read="data help" data-target="result">Data help</button></div>
+<button data-read="source help" data-target="result">Source help</button><button data-read="data help" data-target="result">Data help</button><button data-read="backup help" data-target="result">Node backup help</button></div>
 <details><summary>Passwords and private settings</summary><p>Change passwords, WiFi credentials, channel keys and private identities through encrypted Management RF using the owner CLI. These settings are not transferred over this unencrypted page.</p></details></section>
 </div>
 </main><script>
@@ -516,7 +522,7 @@ const readonly=/^(?:status|ver|board|job|help(?: \S+)?|get (?:name|owner\.info|r
 const readonlyStats=/^(?:get stats|stats(?: (?:help|radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion))?)$/;
 function nativeRead(text) {
   const normalized=text.trim().replace(/ +/g,' ').replace(/^source wasm /,'source ');
-  return readonly.test(normalized) || readonlyStats.test(normalized);
+  return readonly.test(normalized) || readonlyStats.test(normalized) || /^backup (?:help|status|read [0-9a-f]{16} \d+)$/.test(normalized);
 }
 async function nativeWrite(text,warning) {
   validateCommand(text);
@@ -540,6 +546,42 @@ function radioCommand(temporary) {
   return (temporary?'tempradio '+integer('seconds',1,3600):'radio')+' '+profile;
 }
 function bind(id,label,work) { $(id).onclick=()=>action(label,work); }
+async function nodeBackupDownload(create) {
+  if(create) {
+    const key=$('node-backup-key').value.trim();
+    if(!/^[0-9a-f]{64}$/.test(key) || /^0+$/.test(key)) throw Error('Enter your operator public key: 64 lowercase hex characters, not a private seed.');
+    if(!confirmed('Create a new encrypted snapshot? This replaces the saved node backup. Keep the matching operator seed private.')) return 'Cancelled; no snapshot requested.';
+    await cmd('backup start '+key);
+  } else {
+    await cmd('backup load');
+  }
+  const deadline=Date.now()+180000;
+  let match;
+  while(true) {
+    const status=await cmd('backup status');
+    $('node-backup-status').textContent=status;
+    match=/^READY ([0-9a-f]{16}) bytes=(\d+) sha=([0-9a-f]{64})$/.exec(status);
+    if(match) break;
+    if(!status.startsWith('PREPARING')) throw Error('Unexpected node backup status: '+status);
+    if(Date.now()>=deadline) throw Error('Backup preparation timed out. Check node backup before requesting another snapshot.');
+    await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+  if(match[1]!==match[3].slice(0,16) || +match[2]<120 || +match[2]>2113656) throw Error('Node backup returned an invalid id or size.');
+  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),90000);
+  let response, bytes;
+  try {
+    response=await fetch('/admin/backup?id='+match[1],{cache:'no-store',credentials:'omit',redirect:'error',
+      headers:{'X-Mast-Session':token},signal:controller.signal});
+    if(!response.ok) throw Error('Node backup download failed: HTTP '+response.status);
+    bytes=new Uint8Array(await response.arrayBuffer());
+  } finally {clearTimeout(timer);}
+  if(bytes.length!==+match[2] || sha256(bytes)!==match[3]) throw Error('Node backup download size or checksum failed; download the saved backup again.');
+  if(create && hex(bytes.slice(40,72))!==$('node-backup-key').value.trim()) throw Error('Node backup recipient changed; download rejected.');
+  download(bytes,'meshcore-node-'+match[1]+'.mcb');
+  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect it with tools/node_backup.py and your private operator seed.';
+}
+bind('node-backup-create','Preparing encrypted node backup',()=>nodeBackupDownload(true));
+bind('node-backup-download','Downloading saved node backup',()=>nodeBackupDownload(false));
 $('login-form').onsubmit=e=>{e.preventDefault();action('Logging into mast administration',async()=>{
   const password=$('password').value; $('password').value='';
   const value=await post('/admin/login',password,true);

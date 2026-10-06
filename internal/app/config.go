@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/meshcore-go/meshcore-go/hardware"
+	"meshcore.local/meshcore/internal/nodebackup"
 	"meshcore.local/meshcore/internal/policy"
 	"meshcore.local/meshcore/internal/radio"
 )
@@ -63,6 +64,7 @@ type Config struct {
 	radioCapacity         *capacityEvidence
 	phyGroup              *radio.PHYGroup
 	sessionActive         bool
+	nodeBackup            *nodebackup.Service
 }
 
 // RoleSelection distinguishes an omitted selection from an explicit empty list.

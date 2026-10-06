@@ -4,12 +4,11 @@ Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
 Aspen application. The application needs your **private SPIFFS setup
 image before it starts RF or administration**. Provision your credentials
 offline over USB. This ESP32-S3 profile uses `.bin` files with esptool.
-Get the [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads)
-(`1.17.1-slp-aspen`, earlier source `8b41d9c`) or build the generic image using the
+Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
+or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image. Current source builds identify `aspen-0.1.1`; see the
-[release guide](../../release/README.md) before substituting a candidate for the
-historical download.
+per-node setup image. Current source builds identify `aspen-0.1.2`; see the
+[release guide](../../release/README.md) for source builds.
 
 The application supports repeater, room, companion, Management and Lua/Wasm
 roles on one shared modem. The companion service is TCP port 5000 when WiFi is
@@ -24,6 +23,10 @@ Lua/Wasm data and caller banks. An application update must never run
 `install-config`, `uploadfs`, an erase command or a full/factory flash.** NVS,
 including existing node identities and saved shared radio settings, is never
 written by the setup installer.
+
+Before maintaining an initialized node, download its
+[encrypted logical backup](../../NODE_BACKUP.md) over authenticated WiFi or RF.
+Keep the matching operator seed; an application image is not a state backup.
 
 ## Make your private setup image
 

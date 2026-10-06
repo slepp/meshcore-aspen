@@ -119,6 +119,42 @@ bool PineFilesystem::capacity(uint32_t &used, uint32_t &total) {
   if (result || blocks > config_.block_count) return false;
   used = blocks * config_.block_size; total = Bytes; return true;
 }
+uint32_t PineFilesystem::totalBytes() {
+  uint32_t used, total;
+  return capacity(used, total) ? total : 0;
+}
+uint32_t PineFilesystem::usedBytes() {
+  uint32_t used, total;
+  return capacity(used, total) ? used : UINT32_MAX;
+}
+bool PineFilesystem::visit(const char *directory, bool (*callback)(const char *, void *),
+                           void *context, unsigned depth) {
+  if (!ready_ || !validPath(directory) || !callback || depth > 4) return false;
+  lfs_dir_t dir{};
+  lock();
+  const int opened = lfs_dir_open(&fs_, &dir, directory);
+  check(opened);
+  if (!opened) ++handles_;
+  unlock();
+  if (opened) return false;
+  bool ok = true;
+  while (ok) {
+    lfs_info info{};
+    lock();
+    const int result = ready_ ? lfs_dir_read(&fs_, &dir, &info) : LFS_ERR_IO;
+    check(result); unlock();
+    if (result <= 0) { ok = result == 0; break; }
+    if (!strcmp(info.name, ".") || !strcmp(info.name, "..")) continue;
+    char path[96];
+    const int size = snprintf(path, sizeof(path), "%s/%s", directory, info.name);
+    if (size < 0 || size_t(size) >= sizeof(path) || !validPath(path)) { ok = false; break; }
+    ok = info.type == LFS_TYPE_DIR ? visit(path, callback, context, depth + 1) : callback(path, context);
+  }
+  lock();
+  const int closed = lfs_dir_close(&fs_, &dir);
+  check(closed); --handles_; unlock();
+  return ok && !closed;
+}
 PineFile::operator bool() const { return handle_ && handle_->opened && handle_->owner.ready_; }
 size_t PineFile::size() const {
   if (!*this) return 0;
