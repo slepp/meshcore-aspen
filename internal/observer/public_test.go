@@ -85,7 +85,12 @@ func startIdentityReceiver(t *testing.T, now func() time.Time) (*mqtt.Server, st
 	if err := server.Serve(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = server.Close() })
+	broker := &Broker{server: server}
+	t.Cleanup(func() {
+		if err := broker.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	return server, listener.Address()
 }
 func testKey() meshcore.LocalIdentity { return meshcore.NewLocalIdentityFromSeed([32]byte{1}) }

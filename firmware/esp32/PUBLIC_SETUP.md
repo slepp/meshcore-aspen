@@ -7,7 +7,7 @@ offline over USB. This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [public Aspen bundle](https://ve6slp.ca/projects/meshcore/#downloads)
 (`1.17.1-slp-aspen`, earlier source `8b41d9c`) or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image. Current source builds identify `aspen-0.1.0-rc.1`; see the
+per-node setup image. Current source builds identify `aspen-0.1.1`; see the
 [release guide](../../release/README.md) before substituting a candidate for the
 historical download.
 

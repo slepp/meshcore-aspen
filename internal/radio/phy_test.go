@@ -142,6 +142,13 @@ func noMoreJobs(t *testing.T, phy *testPHY) {
 
 func effective(link *Link) (PHYState, bool) { return link.EffectivePHY() }
 
+func settledPHY(link *Link, generation uint32) bool {
+	link.mu.RLock()
+	defer link.mu.RUnlock()
+	return link.modem != nil && link.phy != nil &&
+		link.phy.ConfigurationGeneration == generation && link.settling == nil
+}
+
 func TestFollowRetuneAndReturnKeepsConnectionWithoutReplay(t *testing.T) {
 	phy := followPHY(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -184,8 +191,7 @@ func TestFollowRetuneAndReturnKeepsConnectionWithoutReplay(t *testing.T) {
 		t.Fatalf("stale submission: %+v", result)
 	}
 	waitUntil(t, "retune readback", func() bool {
-		state, ok := effective(link)
-		return ok && state.ConfigurationGeneration == 2
+		return settledPHY(link, 2)
 	})
 	state, _ = effective(link)
 	if state.Settings.Radio.SF != 9 || state.Settings.TxPower != 14 || estimate(10) != 9010 ||
@@ -230,8 +236,7 @@ func TestFollowRetuneAndReturnKeepsConnectionWithoutReplay(t *testing.T) {
 		t.Fatalf("stale submission after return: %+v", result)
 	}
 	waitUntil(t, "return readback", func() bool {
-		state, ok := effective(link)
-		return ok && state.ConfigurationGeneration == 3
+		return settledPHY(link, 3)
 	})
 	state, _ = effective(link)
 	status = link.PHYStatus()
