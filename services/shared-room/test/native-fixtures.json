@@ -1,0 +1,29 @@
+{
+  "author": {
+    "key": "5046adc1dba838867b2bbbfdd0c3423e58b57970b5267a90f57960924a87f1560a6a85eaa642dac835424b5d7c8d637c00408c7a73da672b7f498521420b6dd3",
+    "publicKey": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+  },
+  "authorLogin": "HYIBAgMEBQYiO2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2inoelCkOYwGFes0wD4lqS2OEl0=",
+  "otherRoom": {
+    "key": "a85e9b8e508a521b8f969e32585f87af246392f343c5cd53bd877cdaf89bf17e22c019d29a463c32c11d001fa07cbec2b3cc7f912e9c43fa73e72157157d438b",
+    "publicKey": "223e4fe5381fc451fb9a5329b96c75e73b7fed649a90033035c1089ab55a8745"
+  },
+  "path": "IoIBAgMEBQYis+izgpGRDgt1KTxIJftdaAeiew==",
+  "post": "CoIBAgMEBQYiO/QmyujGZLPQstGyA1V+TrhhiQ==",
+  "reader": {
+    "key": "0888b4427263f138d19d1aad530884398e1a028e6367086fbf2514c0de1923412199a728534cdaf2248c8c9d0cb9e58b03b865fe03ddebce4f2ca92b63833be5",
+    "publicKey": "b3e0e096b02e2ec98a3441410aeddd78c95e27a0da6f411a09c631c0f2bea6e9"
+  },
+  "readerLogin": "HYIBAgMEBQYis+DglrAuLsmKNEFBCu3deMleJ6Dab0EaCcYxwPK+pulEk/gZWVyUO9sfiSEvwxnrU0A=",
+  "refresh": "AoIBAgMEBQYiszPFAI8cZGNg7ZEsyJ0Nx1ysqA==",
+  "room": {
+    "key": "18bf5297036bf9a0bdce8f050f58e57e50413a49ae37e7fb74a044e8b48363632a2ce0aed069264b9a988490fb6cca0cce7285994ad29f6ad23c2920fbb76f47",
+    "publicKey": "22351e22105a19aabb42589162ad7f1ea0df1c25cebf0e4a9fcd261301274862"
+  },
+  "secondPost": "CoIBAgMEBQYiO8XnXEcBLDPUuTwh8UW+awR/UQ==",
+  "sharedReaderLogin": "HYIBAgMEBQYis+DglrAuLsmKNEFBCu3deMleJ6Dab0EaCcYxwPK+pukfRUm/cr//RwOvLOrjURDEepk=",
+  "thirdRoom": {
+    "key": "20160475c8ac5ef2dab4d50adce8baecd9efcd1d7cd3dd9caa8b5ced0613fc75fdf5f7bc6a146b82ef08fb82e9af9a3c5b8a707fc1037e67d5daf8d83cc77d9a",
+    "publicKey": "5c7f34a4bd4f2d04076a8c6f9060a0c8d2c6bdd082ceb3eda7df381cb260faff"
+  }
+}

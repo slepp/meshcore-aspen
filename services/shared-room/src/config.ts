@@ -7,6 +7,8 @@ export interface Env {
   ALIASES: string;
   FRONTENDS: string;
   HISTORY_LIMIT?: string;
+  MODE?: string;
+  ROOM_KEYS?: string;
 }
 export interface Connection {alias: string; frontend: string; credential: string}
 export class ApiError extends Error {

@@ -1,6 +1,13 @@
 import {DurableObject} from "cloudflare:workers";
 import {aliases, ApiError, authorize, credential, errorResponse, fail, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
+import {RadioCodec, opaque, OPAQUE_PROTOCOL} from "./native";
+import {base64, unbase64} from "./native-crypto";
+
+export interface Transmit {
+  type: "transmit"; alias: string; dispatchId: string; packet: string;
+  delayMs: number; priority: number;
+}
 
 interface Session {
   alias: string; client: string; cursor: number; lastTimestamp: number;
@@ -42,9 +49,11 @@ function route(value: unknown): string {
 /** One canonical history. Advertised identities have separate sessions and ACKs. */
 export class Room extends DurableObject<Env> {
   private sql: SqlStorage;
+  private codec: RadioCodec;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.codec = new RadioCodec(env);
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS identities (alias TEXT PRIMARY KEY, public_key TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (
@@ -65,6 +74,10 @@ export class Room extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS attempts (
         alias TEXT NOT NULL, client TEXT NOT NULL, kind TEXT NOT NULL, attempt TEXT NOT NULL,
         frontend TEXT NOT NULL, PRIMARY KEY(alias, client, kind, attempt)
+      );
+      CREATE TABLE IF NOT EXISTS dispatches (
+        id TEXT PRIMARY KEY, alias TEXT NOT NULL, frontend TEXT NOT NULL,
+        client TEXT, delivery_id TEXT, state TEXT NOT NULL
       );
     `);
   }
@@ -100,10 +113,13 @@ export class Room extends DurableObject<Env> {
       const alias = aliases(this.env)[connection.alias];
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
       this.bindIdentity(connection.alias);
+      const isOpaque = opaque(this.env);
+      if (isOpaque) this.codec.identity(connection.alias);
       if (match[2] === "socket") {
         if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
         const offered = request.headers.get("Sec-WebSocket-Protocol")?.split(",").map(p => p.trim());
-        if (offered && !offered.includes(WIRE_PROTOCOL)) fail(426, "Use aspen-room.v1.json");
+        const protocol = isOpaque ? OPAQUE_PROTOCOL : WIRE_PROTOCOL;
+        if (offered && !offered.includes(protocol)) fail(426, `Use ${protocol}`);
         // A frontend has one connection per alias. Reconnect replaces the old socket.
         for (const old of this.ctx.getWebSockets()) {
           const prior = old.deserializeAttachment() as Connection;
@@ -112,15 +128,15 @@ export class Room extends DurableObject<Env> {
         const [client, server] = Object.values(new WebSocketPair());
         this.ctx.acceptWebSocket(server);
         server.serializeAttachment(connection);
-        this.send(server, {type: "ready", version: 1, alias: connection.alias, publicKey: alias.publicKey, name: alias.name});
+        this.send(server, {type: "ready", version: isOpaque ? 2 : 1, alias: connection.alias, publicKey: alias.publicKey, name: alias.name});
         await this.pump();
         return new Response(null, {status: 101, webSocket: client,
-          headers: offered ? {"Sec-WebSocket-Protocol": WIRE_PROTOCOL} : undefined});
+          headers: offered ? {"Sec-WebSocket-Protocol": protocol} : undefined});
       }
       if (request.method !== "POST") fail(405, "POST required");
       const body = await request.text();
       if (textEncoder.encode(body).length > MAX_FRAME) fail(413, "Operation exceeds 4096 bytes");
-      const result = this.run(connection, this.parse(body));
+      const result = await this.handle(connection, this.parse(body));
       await this.ctx.storage.sync();
       await this.pump();
       return Response.json(result);
@@ -152,10 +168,11 @@ export class Room extends DurableObject<Env> {
       if (!frontend?.aliases.includes(connection.alias) || !frontend.token || await credential(frontend.token) !== connection.credential || !alias ||
           !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Frontend alias authorization changed");
       this.bindIdentity(connection.alias);
-      const result = this.run(connection, envelope.operation);
+      const result = await this.handle(connection, envelope.operation);
       // Flush durable state before exposing success or permitting RF dispatch.
       await this.ctx.storage.sync();
-      this.send(ws, {type: "result", id, result});
+      if ("transmission" in result && result.transmission) this.send(ws, result.transmission);
+      this.send(ws, {type: "result", id, result: "transmission" in result ? {accepted: result.accepted} : result});
       await this.pump();
     } catch (error) {
       this.send(ws, {type: "error", id, error: error instanceof ApiError ? error.message : "Room operation failed"});
@@ -166,6 +183,69 @@ export class Room extends DurableObject<Env> {
     ws.close(code === 1005 || code === 1006 || code === 1015 ? 1000 : code, reason);
   }
   webSocketError(ws: WebSocket): void {ws.close(1011, "Frontend connection failed");}
+
+  /** Internal DO RPC: prefix resolution stays behind the Worker binding. */
+  nativeMembers(alias: string, prefix: string, frontend: string): Member[] {
+    const config = aliases(this.env)[alias];
+    const grants = JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]}>;
+    if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend)) ||
+        !grants[frontend]?.aliases.includes(alias) || !/^[a-f0-9]{0,64}$/.test(prefix)) fail(403, "Invalid native lookup");
+    const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", alias)[0];
+    if (bound && bound.public_key !== config.publicKey) return [];
+    // Empty prefix is only used for bare ACKs: examine selected pending
+    // deliveries, without enumerating the whole membership over a socket.
+    const query = prefix ? `SELECT ${SESSION_COLUMNS} FROM sessions WHERE alias=? AND client>=? AND client<?` :
+      `SELECT ${SESSION_COLUMNS} FROM sessions WHERE alias=? AND frontend=? AND client IN (SELECT client FROM pending WHERE alias=? AND frontend=?)`;
+    const params = prefix ? [alias, prefix, `${prefix}g`] : [alias, frontend, alias, frontend];
+    return this.rows<Session>(query, ...params).map(s => {
+      const member: Member = {client: s.client, cursor: s.cursor};
+      if (s.frontend === frontend) member.route = s.route;
+      const p = this.pending(alias, s.client);
+      if (p?.frontend === frontend) member.pending = {deliveryId: p.deliveryId, proof: p.proof, state: p.state};
+      return member;
+    });
+  }
+
+  private dispatch(c: Connection, wire: Uint8Array, delayMs: number, client?: string, deliveryId?: string): Transmit {
+    const dispatchId = crypto.randomUUID();
+    this.sql.exec("INSERT INTO dispatches VALUES (?, ?, ?, ?, ?, 'prepared')", dispatchId, c.alias, c.frontend, client ?? null, deliveryId ?? null);
+    return {type: "transmit", alias: c.alias, dispatchId, packet: base64(wire), delayMs, priority: 0};
+  }
+
+  private async handle(c: Connection, operation: Operation): Promise<Result | {accepted: boolean; transmission?: Transmit}> {
+    if (!opaque(this.env)) return this.run(c, operation);
+    const op = operation as unknown as {op?: string; packet?: string; dispatchId?: string; outcome?: string};
+    if (!op || typeof op !== "object") fail(400, "Operation required");
+    if (op.op === "txReceipt") {
+      const id = string(op.dispatchId, "dispatch ID", 36);
+      if (!["sent", "failed", "unknown"].includes(op.outcome ?? "")) fail(400, "Invalid RF outcome");
+      const d = this.rows<{client: string | null; delivery_id: string | null; state: string}>(
+        "SELECT client, delivery_id, state FROM dispatches WHERE id=? AND alias=? AND frontend=?", id, c.alias, c.frontend)[0];
+      if (!d) fail(403, "Dispatch does not belong to this frontend");
+      // First terminal receipt wins. It never proves client reception.
+      if (d.state === "prepared") {
+        this.sql.exec("UPDATE dispatches SET state=? WHERE id=?", op.outcome!, id);
+        if (d.client && d.delivery_id) this.run(c, {op: "receipt", client: d.client, deliveryId: d.delivery_id, outcome: op.outcome as "sent" | "failed" | "unknown"});
+      }
+      return {accepted: true};
+    }
+    if (op.op === "advertise") return {accepted: true, transmission: this.dispatch(c, this.codec.advertisement(this.codec.identity(c.alias)), 0)};
+    if (op.op !== "rf") fail(403, "Opaque mode accepts only rf, txReceipt and explicit advertise operations");
+    let wire: Uint8Array;
+    try {wire = unbase64(string(op.packet, "native packet", 340));} catch {return fail(400, "Invalid native packet base64");}
+    const configured = aliases(this.env);
+    const grant = (JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]}>)[c.frontend];
+    const identities = grant.aliases.map(alias => this.codec.identity(alias));
+    const decoded = await this.codec.decode(wire, identities, async (alias, prefix) => {
+      const backend = configured[alias].backend;
+      if (this.ctx.id.equals(this.env.ROOMS.idFromName(backend))) return this.nativeMembers(alias, prefix, c.frontend);
+      return this.env.ROOMS.getByName(backend).nativeMembers(alias, prefix, c.frontend);
+    });
+    if (!decoded || decoded.identity.alias !== c.alias) return {accepted: false};
+    const result = this.run(c, decoded.operation);
+    const response = this.codec.response(decoded, result);
+    return {accepted: true, transmission: response ? this.dispatch(c, response, decoded.operation.op === "login" ? 300 : 0) : undefined};
+  }
 
   private claim(c: Connection, client: string, kind: string, attempt: unknown): boolean {
     const key = hex(attempt, "RF attempt", 32);
@@ -315,8 +395,36 @@ export class Room extends DurableObject<Env> {
       }
       sockets.set(`${c.alias}:${c.frontend}`, ws);
     }
-    const dispatches: {ws: WebSocket; delivery: Delivery}[] = [];
+    const dispatches: {ws: WebSocket; delivery: Delivery | Transmit}[] = [];
+    const occupied = new Map<string, Set<string>>();
+    if (opaque(this.env)) {
+      const checked = new Set<string>();
+      for (const ws of sockets.values()) {
+        const c = ws.deserializeAttachment() as Connection;
+        const proofs = occupied.get(c.frontend) ?? new Set<string>();
+        occupied.set(c.frontend, proofs);
+        for (const alias of configuredFrontends[c.frontend].aliases) {
+          const lookup = `${c.frontend}:${alias}`;
+          if (checked.has(lookup)) continue;
+          checked.add(lookup);
+          const backend = configuredAliases[alias]?.backend;
+          if (!backend) continue;
+          const members = this.ctx.id.equals(this.env.ROOMS.idFromName(backend)) ? this.nativeMembers(alias, "", c.frontend) :
+            await this.env.ROOMS.getByName(backend).nativeMembers(alias, "", c.frontend);
+          for (const member of members) if (member.pending?.proof) proofs.add(member.pending.proof);
+        }
+      }
+    }
     this.ctx.storage.transactionSync(() => {
+      // Re-read local proofs after remote awaits. This transaction serializes
+      // selection across all aliases sharing this room's canonical sequence.
+      for (const p of this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending WHERE proof IS NOT NULL`)) {
+        const alias = configuredAliases[p.alias];
+        const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", p.alias)[0];
+        if (alias && configuredFrontends[p.frontend]?.aliases.includes(p.alias) &&
+            this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend)) && bound?.public_key === alias.publicKey)
+          occupied.get(p.frontend)?.add(p.proof!);
+      }
       const configuredLimit = Number(this.env.HISTORY_LIMIT ?? "0");
       if (!Number.isSafeInteger(configuredLimit) || configuredLimit < 0) fail(503, "Invalid HISTORY_LIMIT");
       const latest = this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages")[0].seq;
@@ -333,8 +441,18 @@ export class Room extends DurableObject<Env> {
         if (cursor !== s.cursor) this.sql.exec("UPDATE sessions SET cursor=? WHERE alias=? AND client=?", cursor, s.alias, s.client);
         if (!message) continue;
         const deliveryId = crypto.randomUUID();
-        this.sql.exec("INSERT INTO pending VALUES (?, ?, ?, ?, ?, NULL, 'queued')", s.alias, s.client, deliveryId, message.seq, s.frontend);
-        dispatches.push({ws, delivery: {type: "delivery", alias: s.alias, client: s.client, deliveryId, route: s.route, message}});
+        const delivery: Delivery = {type: "delivery", alias: s.alias, client: s.client, deliveryId, route: s.route, message};
+        if (opaque(this.env)) {
+          const proofs = occupied.get(s.frontend)!;
+          const encoded = this.codec.delivery(this.codec.identity(s.alias), delivery, proofs);
+          if (!encoded) continue;
+          proofs.add(encoded.proof);
+          this.sql.exec("INSERT INTO pending VALUES (?, ?, ?, ?, ?, ?, 'prepared')", s.alias, s.client, deliveryId, message.seq, s.frontend, encoded.proof);
+          dispatches.push({ws, delivery: this.dispatch(ws.deserializeAttachment() as Connection, encoded.wire, 0, s.client, deliveryId)});
+        } else {
+          this.sql.exec("INSERT INTO pending VALUES (?, ?, ?, ?, ?, NULL, 'queued')", s.alias, s.client, deliveryId, message.seq, s.frontend);
+          dispatches.push({ws, delivery});
+        }
       }
     });
     await this.ctx.storage.sync();

@@ -98,8 +98,8 @@ build_flags =
   -D ONCHIP_BOT_HTTPS_METRICS=1
   -include ${sysenv.ONCHIP_OPERATOR_HEADER}
 
-; Direct Wi-Fi/WSS transport/task bridge compile. Startup stays disabled unless
-; an explicitly provisioned CloudRoomDriver is linked. No cloud keys/token here.
+; Direct Wi-Fi/WSS opaque frontend. Startup stays disabled unless a private
+; cloudRoomConfiguration() provider is linked. No cloud keys/token here.
 ; Two persistent alias sockets reserve two KISS client slots in the stock SDK.
 [env:Xiao_S3_WIO_onchip_cloudroom]
 extends = env:Xiao_S3_WIO_onchip_https

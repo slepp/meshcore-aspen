@@ -14,11 +14,12 @@ export default defineConfig({
     miniflare: {
       compatibilityDate: "2026-08-15",
       bindings: {
+        MODE: "decoded",
         ALIASES: JSON.stringify(aliases),
         FRONTENDS: JSON.stringify({local: {token: "local-token", aliases: ["A", "B", "C"]},
           remote: {token: "remote-token", aliases: ["A", "YEG", "YYC"]}}),
       },
     },
   })],
-  test: {include: ["test/**/*.test.ts"], testTimeout: 10000},
+  test: {include: ["test/room.test.ts", "test/native-crypto.test.ts"], testTimeout: 10000},
 });

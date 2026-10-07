@@ -45,7 +45,7 @@ bool Event::parse(const char *frame, size_t size) {
   const auto kind = Document::field(root, "type");
   if (kind.equals("ready")) {
     uint64_t version = 0;
-    if (!Document::field(root, "version").unsignedNumber(version, 1) || version != 1 ||
+    if (!Document::field(root, "version").unsignedNumber(version, 2) || !version ||
         !Document::field(root, "publicKey").hex(32)) return false;
     type = Ready; alias = Document::field(root, "alias"); body = root;
   } else if (kind.equals("result") || kind.equals("error")) {
@@ -54,6 +54,18 @@ bool Event::parse(const char *frame, size_t size) {
     if (id.type != JSONString || !id.size || id.size > 32) return false;
     body = Document::field(root, type == Result ? "result" : "error");
     if (body.type != (type == Result ? JSONObject : JSONString)) return false;
+  } else if (kind.equals("transmit")) {
+    type = Transmit; alias = Document::field(root, "alias");
+    dispatchId = Document::field(root, "dispatchId"); packet = Document::field(root, "packet");
+    uint64_t delay = 0, rank = 0;
+    if (dispatchId.type != JSONString || dispatchId.size != 36 || packet.type != JSONString || packet.size > 340 ||
+        !Document::field(root, "delayMs").unsignedNumber(delay, 30000) ||
+        !Document::field(root, "priority").unsignedNumber(rank, 255)) return false;
+    for (size_t i = 0; i < dispatchId.size; ++i) {
+      const char c = dispatchId.data[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
+    }
+    delayMs = uint32_t(delay); priority = uint8_t(rank);
   } else if (kind.equals("delivery")) {
     type = Delivery; alias = Document::field(root, "alias");
     client = Document::field(root, "client");
@@ -62,7 +74,7 @@ bool Event::parse(const char *frame, size_t size) {
     if (!client.hex(32) || deliveryId.type != JSONString || deliveryId.size != 36 ||
         route.type != JSONString || route.size > 340 || body.type != JSONObject) return false;
   } else return false;
-  if ((type == Ready || type == Delivery) &&
+  if ((type == Ready || type == Delivery || type == Transmit) &&
       (alias.type != JSONString || !alias.size || alias.size > 64)) return false;
   return true;
 }
