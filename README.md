@@ -27,7 +27,7 @@ settings. Flash the selected image to update a node's firmware.
 | Setup | Supported hardware | Use it when | Next step |
 | --- | --- | --- | --- |
 | Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Set up a public Aspen image over USB](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
-| Birch: WiFi modem + Go host | Seeed XIAO ESP32-S3 + Wio SX1262; Linux host for native Lua | You want host services, filesystem state, external automation or native Lua | [Build WiFi and start the host](#start-a-wifi-radio-and-go-host) |
+| Birch: WiFi modem + Go host | Configured queued-v1 WiFi/TCP shared modem; Linux x86_64 Debian 12 host | You want host services, filesystem state, external automation or native Lua | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
 | Willow: WiFi modem + Hew host | The same shared modem; Linux x86-64 host and pinned Hew compiler | You want to develop or trial the experimental Hew host, Base companion, MQTT broker and dashboard | [Willow source and setup guide](experiments/hew-roles/README.md) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
 | ESP32 role with a remote modem | XIAO ESP32-S3 indoors; ESP32 + SX1262 at the radio site | You want a repeater, room or companion on an indoor board, connected over WiFi | [Remote-radio roles](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) |
@@ -35,14 +35,16 @@ settings. Flash the selected image to update a node's firmware.
 The nRF `nrfmast_fleet_lua` image runs the compact production Lua bot and
 repeater; native-note images remain available. The default `nrfmast_rx` build
 is receive-only; select the guide's RF-capable image to transmit.
-**Aspen uses offline USB setup before its roles start.** The **Birch UART
-modem** connects queued-protocol clients on RX GPIO44/D7 and TX GPIO43/D6
-at 115200 8N1 with a 3.3 V adapter. The Go host connects to the
-WiFi modem built below. **The Pine download updates an initialized node**:
+**Aspen uses offline USB setup before its roles start.** **Birch's host
+download includes the host and native worker, not modem firmware.** Use an
+already configured WiFi/TCP shared modem or privately build the WiFi modem
+below. Existing UART modems serve wired queued-protocol clients; see
+[UART wiring](HOST_GUIDE.md#connect-the-public-birch-uart-modem).
+**The Pine download updates an initialized node**:
 it requires initialized identities and credential records and preserves its
 QSPI Lua state. Keep USB recovery accessible if using Pine BLE updates:
 an interrupted transfer can require USB. Follow each bundle's installation
-guide. See [Birch UART wiring](HOST_GUIDE.md#connect-the-public-birch-uart-modem).
+guide.
 ESP32 network calls need the HTTPS profile and approved service configuration.
 The ESP32 and native host bot can compile Wasm alongside Lua; see the
 [Wasm runtime and build flags](firmware/runtime/WASM_RUNTIME.md).
@@ -80,8 +82,8 @@ existing installation. Aspen, Birch and Pine retain their own setup guides.
 Aspen and Birch use independent product versions. The current source reports
 `aspen-0.1.8` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
 Show releases as **Aspen 0.1.8 · based on MeshCore 1.17.1** and tag them
-`aspen-v0.1.8` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
-host, native worker and modem bundle. Pine retains `1.17.1-slp-pine`.
+`aspen-v0.1.8` or `birch-v0.1.0-rc.1`. Birch 0.1.0 RC1 contains a matching
+host and native worker for a separately configured modem. Pine retains `1.17.1-slp-pine`.
 The [release guide](release/README.md) lists compatibility contracts, candidate
 build commands and publication steps. Existing website downloads and the
 older GitHub draft keep their original identities and source revisions.
@@ -93,6 +95,12 @@ over WiFi; Aspen, Birch and Pine also support paced authenticated RF retrieval.
 Keep the matching operator seed to inspect or extract an encrypted archive.
 
 ## Start a WiFi radio and Go host
+
+If the WiFi modem is already configured, use the
+[Birch host download](HOST_GUIDE.md#install-the-birch-host-download). Install
+into a new prefix, select the modem address and roles, run the installed
+`meshcore-host -config PATH -check`, then start the host. No compiler or Go
+installation is needed to run that download.
 
 With Git, Python 3, PlatformIO and Go installed, run from the repository root:
 

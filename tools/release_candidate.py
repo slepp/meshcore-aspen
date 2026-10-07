@@ -27,6 +27,10 @@ PROFILES = {
 }
 IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin", "boot_app0.bin"}
 HOST_FILES = {"meshcore-host", "meshcore-check", "meshcore-rf-check", "bot-native-worker"}
+HOST_PROFILE = ("public_birch_host", "release/birch-host.ini")
+HOST_MATERIAL = {"install-birch.py": "tools/install_birch.py",
+                 "meshcore-host.json.example": "meshcore-host.json.example",
+                 "HOST_GUIDE.md": "HOST_GUIDE.md"}
 
 
 def stage_birch_files(work, root=ROOT):
@@ -181,7 +185,9 @@ def archive_tree(source, destination):
                 archive.add(path, arcname=path.relative_to(source), recursive=False)
 
 
-def build(product, ref, output, native_image=None):
+def build(product, ref, output, native_image=None, host_only=False):
+    if host_only and product != "birch":
+        raise ValueError("--host-only is supported only for Birch")
     if (product == "birch") != bool(native_image):
         raise ValueError("Birch requires --native-image with the exact Debian 12 image ID; Aspen does not use it")
     data = load()
@@ -190,12 +196,14 @@ def build(product, ref, output, native_image=None):
             raise ValueError(f"Stale generated version: {path}")
     source = public_source(ref)
     version = data["products"][product]["version"]
-    profile, config = PROFILES[product]
+    profile, config = HOST_PROFILE if host_only else PROFILES[product]
     stem = f"{tag(product, version)}-xiao-esp32s3-sx1262-{source['commit'][:12]}"
     if product == "birch":
         if platform.system() != "Linux" or platform.machine() != "x86_64":
             raise ValueError("The initial Birch candidate bundle requires Linux x86_64")
         stem += "-linux-x86_64"
+    if host_only:
+        stem = f"{tag(product, version)}-linux-x86_64-{source['commit'][:12]}"
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     directory = output / stem
@@ -215,11 +223,12 @@ def build(product, ref, output, native_image=None):
     command(["make", "onchip-upstream"])
     if run(["git", "rev-parse", "HEAD"], cwd=upstream) != data["upstream"]["commit"]:
         raise ValueError("Upstream checkout differs from the release pin")
-    firmware_source = ROOT / ".tmp" / ("onchip-release-firmware-" + stem)
-    stage_source(ROOT, firmware_source, command, run)
-    work = firmware_source / ".tmp/onchip-firmware"
-    toolchain = {"platformio": run(["pio", "--version"], env=env),
-                 "python": platform.python_version(), "build_os": platform.platform()}
+    toolchain = {"python": platform.python_version(), "build_os": platform.platform()}
+    if not host_only:
+        firmware_source = ROOT / ".tmp" / ("onchip-release-firmware-" + stem)
+        stage_source(ROOT, firmware_source, command, run)
+        work = firmware_source / ".tmp/onchip-firmware"
+        toolchain["platformio"] = run(["pio", "--version"], env=env)
     linked_libraries = []
     native_receipt = {}
     native_source = None
@@ -227,20 +236,21 @@ def build(product, ref, output, native_image=None):
         command(["make", "-C", str(firmware_source / "firmware/esp32"), "bot-firmware", f"BUILD={work}",
                  f"CONFIG={firmware_source / config}", f"ENV={profile}"])
     else:
-        work.mkdir()
-        # Stage a fresh modem without reading private firmware/platformio.local.ini.
-        upstream = firmware_source / ".tmp/onchip-upstream"
-        command(["git", "clone", "--no-hardlinks", str(upstream), str(work / "upstream")])
-        command(["git", "-C", str(work / "upstream"), "archive", "--output=" + str(work / "upstream.tar"), "HEAD"])
-        with tarfile.open(work / "upstream.tar") as archive:
-            archive.extractall(work, filter="data")
-        shutil.rmtree(work / "upstream")
-        (work / "upstream.tar").unlink()
-        command(["patch", "--directory", str(work), "-p1", "--input",
-                 str(firmware_source / "firmware/shared/radio-reconfigure.patch")])
-        stage_birch_files(work, firmware_source)
-        shutil.copy2(firmware_source / config, work / "platformio.local.ini")
-        command(["pio", "run", "--project-dir", str(work), "-e", profile])
+        if not host_only:
+            work.mkdir()
+            # Stage a fresh modem without reading private firmware/platformio.local.ini.
+            upstream = firmware_source / ".tmp/onchip-upstream"
+            command(["git", "clone", "--no-hardlinks", str(upstream), str(work / "upstream")])
+            command(["git", "-C", str(work / "upstream"), "archive", "--output=" + str(work / "upstream.tar"), "HEAD"])
+            with tarfile.open(work / "upstream.tar") as archive:
+                archive.extractall(work, filter="data")
+            shutil.rmtree(work / "upstream")
+            (work / "upstream.tar").unlink()
+            command(["patch", "--directory", str(work), "-p1", "--input",
+                     str(firmware_source / "firmware/shared/radio-reconfigure.patch")])
+            stage_birch_files(work, firmware_source)
+            shutil.copy2(firmware_source / config, work / "platformio.local.ini")
+            command(["pio", "run", "--project-dir", str(work), "-e", profile])
         from release_native import build_native
         native_source, native_receipt = build_native(native_image, stem, env, command)
         native = native_source / ".tmp/onchip-native-worker"
@@ -256,24 +266,28 @@ def build(product, ref, output, native_image=None):
                              ".cache/meshcore-wamr", ".cache/meshcore-release-inputs",
                              ".tmp/native-toolchain", ".tmp/native-receipt.json"):
                 archive.add(native_source / relative, arcname=relative)
-    pio_build = work / ".pio/build" / profile
-    for name in IMAGES - {"boot_app0.bin"}:
-        shutil.copy2(pio_build / name, directory / name)
-    framework = Path(env["HOME"]) / ".platformio/packages/framework-arduinoespressif32"
-    shutil.copy2(framework / "tools/partitions/boot_app0.bin", directory / "boot_app0.bin")
-    if identity(product, version).encode() not in (directory / "firmware.bin").read_bytes():
-        raise ValueError("Built image does not contain the selected product identity")
-    metadata = json.loads(run(["pio", "project", "metadata", "--project-dir", str(work),
-                               "-e", profile, "--json-output"], env=env))
-    inventory = {"resolved_packages": run(["pio", "pkg", "list", "--project-dir", str(work),
-                                           "-e", profile], env=env), "build_metadata": metadata[profile],
-                 "source_files": tree_inventory(work / ".pio/libdeps" / profile)}
-    firmware_receipt = firmware_inputs(firmware_source, work, profile, bot=product == "aspen")
-    compiler = Path(metadata[profile]["cxx_path"])
-    toolchain["firmware_cxx"] = run([str(compiler), "--version"], env=env).splitlines()[0]
-    toolchain["firmware_cxx_sha256"] = digest(compiler)
-    # Include actual resolved libraries, objects, ELF/map and build source/config.
-    archive_tree(work, directory / "firmware-relink.tar.gz")
+    inventory, firmware_receipt = {}, {}
+    if host_only:
+        for name, relative in HOST_MATERIAL.items():
+            shutil.copy2(ROOT / relative, directory / name)
+    else:
+        pio_build = work / ".pio/build" / profile
+        for name in IMAGES - {"boot_app0.bin"}:
+            shutil.copy2(pio_build / name, directory / name)
+        framework = Path(env["HOME"]) / ".platformio/packages/framework-arduinoespressif32"
+        shutil.copy2(framework / "tools/partitions/boot_app0.bin", directory / "boot_app0.bin")
+        if identity(product, version).encode() not in (directory / "firmware.bin").read_bytes():
+            raise ValueError("Built image does not contain the selected product identity")
+        metadata = json.loads(run(["pio", "project", "metadata", "--project-dir", str(work),
+                                   "-e", profile, "--json-output"], env=env))
+        inventory = {"resolved_packages": run(["pio", "pkg", "list", "--project-dir", str(work),
+                                               "-e", profile], env=env), "build_metadata": metadata[profile],
+                     "source_files": tree_inventory(work / ".pio/libdeps" / profile)}
+        firmware_receipt = firmware_inputs(firmware_source, work, profile, bot=product == "aspen")
+        compiler = Path(metadata[profile]["cxx_path"])
+        toolchain["firmware_cxx"] = run([str(compiler), "--version"], env=env).splitlines()[0]
+        toolchain["firmware_cxx_sha256"] = digest(compiler)
+        archive_tree(work, directory / "firmware-relink.tar.gz")
     command(["git", "archive", "--format=tar.gz", "--output=" + str(directory / "source.tar.gz"), "HEAD"])
     shutil.copy2(ROOT / config, directory / "build-profile.ini")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY.md"):
@@ -299,7 +313,7 @@ def build(product, ref, output, native_image=None):
                   "lua_archive_sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
                   "wamr_commit": "b124f70345d712bead5c0c2393acb2dc583511de"},
         "compatibility": data["compatibility"],
-        "layout": {"partitions": partitions(directory / "partitions.bin"),
+        "layout": {} if host_only else {"partitions": partitions(directory / "partitions.bin"),
                    "initial_install_offsets": {"bootloader.bin": 0, "partitions.bin": 0x8000,
                                                "boot_app0.bin": 0xe000, "firmware.bin": 0x10000},
                    "application_update": "Only the selected health-confirmed application slot; preserve NVS/SPIFFS/OTA selection"},
@@ -307,6 +321,12 @@ def build(product, ref, output, native_image=None):
         "files": [record(path, artifact_role(path.name))
                   for path in sorted(directory.iterdir()) if path.name != "build.log"],
     }
+    if host_only:
+        manifest["build"]["scope"] = "host_only"
+        del manifest["build"]["dependencies"]
+        del manifest["build"]["firmware_source_inputs"]
+        manifest["layout"] = {"modem": "external", "queued_phy_version": data["compatibility"]["queued_phy"]}
+        manifest["hardware"] = "Linux x86_64, Debian 12 host; separately configured queued-v1 WiFi/TCP modem"
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     verify(directory)
     bundle = output / (stem + ".zip")
@@ -334,27 +354,35 @@ def verify(directory):
     source = manifest["source"]
     if source["repository"] != data["repository"] or source["dirty"] or not re.fullmatch(r"[0-9a-f]{40}", source["commit"]):
         raise ValueError("Candidate source is not an exact clean public commit")
-    profile, config = PROFILES[product]
+    host_only = manifest["build"].get("scope") == "host_only"
+    if (host_only and product != "birch") or manifest["build"].get("scope", "host_and_modem") not in (
+            "host_only", "host_and_modem"):
+        raise ValueError("Candidate has an unsupported product scope")
+    profile, config = HOST_PROFILE if host_only else PROFILES[product]
     if manifest["build"]["profile"] != profile or manifest["build"]["config_path"] != config:
         raise ValueError("Candidate build profile mismatch")
     if manifest["build"]["config_sha256"] != digest(directory / "build-profile.ini"):
         raise ValueError("Candidate build config hash mismatch")
     build = manifest["build"]
     toolchain = build["toolchain"]
-    for key in ("platformio", "python", "build_os", "firmware_cxx"):
+    for key in (("python", "build_os") if host_only else ("platformio", "python", "build_os", "firmware_cxx")):
         if not isinstance(toolchain.get(key), str) or not toolchain[key]:
             raise ValueError(f"Candidate is missing toolchain receipt: {key}")
-    for value in (toolchain.get("firmware_cxx_sha256", ""), build.get("go_sum_sha256", ""),
-                  build.get("lua_archive_sha256", "")):
+    hashes = [build.get("go_sum_sha256", ""), build.get("lua_archive_sha256", "")]
+    if not host_only:
+        hashes.append(toolchain.get("firmware_cxx_sha256", ""))
+    for value in hashes:
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
             raise ValueError("Candidate has an invalid compiler/dependency hash")
     if not re.fullmatch(r"[0-9a-f]{40}", build.get("wamr_commit", "")):
         raise ValueError("Candidate is missing the exact WAMR commit")
     if type(build.get("source_date_epoch")) is not int or build["source_date_epoch"] <= 0:
         raise ValueError("Candidate is missing the build epoch")
-    if not build["dependencies"].get("resolved_packages") or not build["dependencies"].get("build_metadata"):
+    if not host_only and (not build["dependencies"].get("resolved_packages") or not build["dependencies"].get("build_metadata")):
         raise ValueError("Candidate is missing resolved PlatformIO dependencies")
-    if "firmware_source_inputs" in build:
+    if host_only and ("firmware_source_inputs" in build or "dependencies" in build):
+        raise ValueError("Host-only Birch must not claim a modem firmware build")
+    if not host_only and "firmware_source_inputs" in build:
         verify_relink(directory / "firmware-relink.tar.gz", build["firmware_source_inputs"],
                       profile=profile, bot=product == "aspen")
     if product == "birch":
@@ -392,6 +420,8 @@ def verify(directory):
         # Older candidates retain their unqualified, host-native receipts. New
         # Debian 12 builds must identify the exact image and actual baseline ABI.
         native = build.get("native_environment")
+        if host_only and (not native or not native.get("source_inputs")):
+            raise ValueError("Host-only Birch requires verified Debian 12 native source inputs")
         if native:
             from release_native import DOCKERFILE, PROFILE
             if (native.get("profile") != PROFILE or
@@ -424,12 +454,12 @@ def verify(directory):
         path = directory / name
         if path.is_symlink() or not path.is_file() or record(path, entry["role"]) != entry:
             raise ValueError(f"Candidate file hash/size mismatch: {name}")
-    required = IMAGES | {"source.tar.gz", "firmware-relink.tar.gz", "build-profile.ini", "LICENSE", "NOTICE",
-                        "THIRD_PARTY.md", "dependency-notices.tar.gz"}
+    required = {"source.tar.gz", "build-profile.ini", "LICENSE", "NOTICE", "THIRD_PARTY.md", "dependency-notices.tar.gz"}
+    required |= set(HOST_MATERIAL) if host_only else IMAGES | {"firmware-relink.tar.gz"}
     if product == "birch":
         required |= HOST_FILES | {"native-relink.tar.gz"}
     if required != names:
-        raise ValueError("Incomplete product bundle; Birch requires the host and matching modem together")
+        raise ValueError("Incomplete product bundle for the selected host/modem scope")
     if product == "birch":
         for name in HOST_FILES:
             if build["native_abi"][name] != inspect_elf(directory / name):
@@ -437,23 +467,27 @@ def verify(directory):
     extras = {path.name for path in directory.iterdir()} - names - {"manifest.json", "build.log"}
     if extras:
         raise ValueError("Unmanifested files in candidate directory")
-    if identity(product, version).encode() not in (directory / "firmware.bin").read_bytes():
+    binary = "meshcore-host" if host_only else "firmware.bin"
+    if identity(product, version).encode() not in (directory / binary).read_bytes():
         raise ValueError("Candidate firmware identity mismatch")
-    if manifest["layout"]["partitions"] != partitions(directory / "partitions.bin"):
+    if host_only:
+        if manifest["layout"] != {"modem": "external", "queued_phy_version": data["compatibility"]["queued_phy"]}:
+            raise ValueError("Host-only Birch must require a separately configured queued-PHY modem")
+    elif manifest["layout"]["partitions"] != partitions(directory / "partitions.bin"):
         raise ValueError("Candidate partition layout mismatch")
     expected_offsets = {"bootloader.bin": 0, "partitions.bin": 0x8000,
                         "boot_app0.bin": 0xe000, "firmware.bin": 0x10000}
-    if manifest["layout"]["initial_install_offsets"] != expected_offsets:
+    if not host_only and manifest["layout"]["initial_install_offsets"] != expected_offsets:
         raise ValueError("Candidate initial-install offsets mismatch")
-    apps = [item for item in manifest["layout"]["partitions"] if item["type"] == 0]
-    if not apps or not any(item["offset"] == 0x10000 for item in apps) or any(
-            item["bytes"] < (directory / "firmware.bin").stat().st_size for item in apps):
+    apps = [] if host_only else [item for item in manifest["layout"]["partitions"] if item["type"] == 0]
+    if not host_only and (not apps or not any(item["offset"] == 0x10000 for item in apps) or any(
+            item["bytes"] < (directory / "firmware.bin").stat().st_size for item in apps)):
         raise ValueError("Candidate image does not fit the application layout")
     with tarfile.open(directory / "source.tar.gz") as archive:
         if archive.pax_headers.get("comment") != source["commit"]:
             raise ValueError("Source archive does not identify the candidate commit")
         if "tools/release_inputs.py" in archive.getnames():
-            if "firmware_source_inputs" not in build:
+            if not host_only and "firmware_source_inputs" not in build:
                 raise ValueError("Candidate is missing verified firmware source inputs")
             if product == "birch" and not build.get("native_environment", {}).get("source_inputs"):
                 raise ValueError("Birch is missing verified native source inputs")
@@ -470,6 +504,10 @@ def verify(directory):
             native = build["native_environment"]
             if hashlib.sha256(archive.extractfile(native["dockerfile"]).read()).hexdigest() != native["dockerfile_sha256"]:
                 raise ValueError("Native Dockerfile differs from the public source archive")
+        if host_only:
+            for name, relative in HOST_MATERIAL.items():
+                if archive.extractfile(relative).read() != (directory / name).read_bytes():
+                    raise ValueError(f"Host installation material differs from public source: {name}")
     return manifest
 
 
@@ -481,12 +519,14 @@ def main():
     builder.add_argument("--public-ref", required=True)
     builder.add_argument("--output", type=Path, default=ROOT / ".tmp/candidates")
     builder.add_argument("--native-image", help="Exact sha256:... ID built from release/Dockerfile.debian12 (Birch)")
+    builder.add_argument("--host-only", action="store_true",
+                         help="Birch host/worker bundle for an already configured queued-v1 WiFi/TCP modem")
     checker = commands.add_parser("verify")
     checker.add_argument("directory", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "build":
-            build(args.product, args.public_ref, args.output, args.native_image)
+            build(args.product, args.public_ref, args.output, args.native_image, args.host_only)
         else:
             verify(args.directory)
             print("Package hashes and metadata verified")

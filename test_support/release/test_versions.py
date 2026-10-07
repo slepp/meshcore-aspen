@@ -11,12 +11,14 @@ import re
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import product_versions as versions
 import release_candidate as candidate
 import release_native as native
+import install_birch as installer
 
 
 def linux_elf_fixture(glibc="2.43"):
@@ -185,6 +187,106 @@ class CandidateTests(unittest.TestCase):
         self.save()
         with self.assertRaisesRegex(ValueError, "Incomplete product bundle"):
             candidate.verify(self.directory)
+
+    def birch_host_metadata(self):
+        self.birch_metadata()
+        data = versions.load()
+        build = self.manifest["build"]
+        profile, config = candidate.HOST_PROFILE
+        build.update(scope="host_only", profile=profile, config_path=config)
+        build.pop("dependencies", None)
+        for key in ("platformio", "firmware_cxx", "firmware_cxx_sha256"):
+            build["toolchain"].pop(key, None)
+        self.manifest["layout"] = {"modem": "external", "queued_phy_version": 1}
+        for name in candidate.IMAGES | {"firmware-relink.tar.gz"}:
+            (self.directory / name).unlink(missing_ok=True)
+        (self.directory / "build-profile.ini").write_bytes((ROOT / config).read_bytes())
+        build["config_sha256"] = candidate.digest(self.directory / "build-profile.ini")
+        for name, relative in candidate.HOST_MATERIAL.items():
+            (self.directory / name).write_bytes((ROOT / relative).read_bytes())
+        for name in candidate.HOST_FILES:
+            content = linux_elf_fixture("2.36")
+            if name == "meshcore-host":
+                content += self.manifest["identity"].encode()
+            (self.directory / name).write_bytes(content)
+            build["native_abi"][name] = candidate.inspect_elf(self.directory / name)
+        build["native_linked_libraries"].extend(
+            {"soname": name, "sha256": "a" * 64, "bytes": 1}
+            for name in ("libc.so.6", "libstdc++.so.6"))
+        build["native_environment"] = {
+            "profile": native.PROFILE, "image_id": "sha256:" + "a" * 64,
+            "dockerfile": native.DOCKERFILE, "dockerfile_sha256": candidate.digest(ROOT / native.DOCKERFILE),
+            "source_commit": self.manifest["source"]["commit"],
+            "source_date_epoch": build["source_date_epoch"],
+            "distribution": {"ID": "debian", "VERSION_ID": "12"},
+            "native_abi": build["native_abi"], "native_linked_libraries": build["native_linked_libraries"],
+            "go_modules": build["go_modules"], "toolchain": build["toolchain"],
+            "source_inputs": {"fixture": "checked separately"},
+        }
+        (self.directory / "native-relink.tar.gz").write_bytes(b"fixture")
+        with tarfile.open(self.directory / "source.tar.gz", "w:gz", format=tarfile.PAX_FORMAT,
+                          pax_headers={"comment": self.manifest["source"]["commit"]}) as archive:
+            for relative in [*versions.generated(data), "release/products.json", "go.sum", config,
+                             native.DOCKERFILE, "tools/release_inputs.py", *candidate.HOST_MATERIAL.values()]:
+                content = (ROOT / relative).read_bytes()
+                info = tarfile.TarInfo(relative)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+        self.manifest["files"] = [candidate.record(path, candidate.artifact_role(path.name))
+                                  for path in sorted(self.directory.iterdir()) if path.name != "manifest.json"]
+        self.save()
+
+    def test_host_only_birch_checks_native_material_without_modem(self):
+        self.birch_host_metadata()
+        with patch.object(candidate, "verify_relink") as checked:
+            candidate.verify(self.directory)
+        checked.assert_called_once_with(self.directory / "native-relink.tar.gz",
+                                        self.manifest["build"]["native_environment"]["source_inputs"])
+        self.assertFalse(any((self.directory / name).exists() for name in candidate.IMAGES))
+
+    def test_host_only_requires_native_receipts_and_rejects_firmware_claims(self):
+        for change, error in (
+            (lambda build: build.pop("native_environment"), "requires verified Debian 12"),
+            (lambda build: build["native_environment"].pop("source_inputs"), "requires verified Debian 12"),
+            (lambda build: build.update(firmware_source_inputs={}), "must not claim a modem"),
+        ):
+            with self.subTest(error=error):
+                self.birch_host_metadata()
+                change(self.manifest["build"])
+                self.save()
+                with self.assertRaisesRegex(ValueError, error):
+                    candidate.verify(self.directory)
+
+    def test_aspen_cannot_select_host_only(self):
+        with self.assertRaisesRegex(ValueError, "supported only for Birch"):
+            candidate.build("aspen", "refs/heads/main", self.directory, host_only=True)
+        self.manifest["build"]["scope"] = "host_only"
+        self.save()
+        with self.assertRaisesRegex(ValueError, "unsupported product scope"):
+            candidate.verify(self.directory)
+
+    def test_birch_installer_preserves_existing_install_and_uses_native_worker(self):
+        self.birch_host_metadata()
+        prefix = self.directory / "installed"
+        config_path = installer.install(self.directory, prefix)
+        config = json.loads(config_path.read_text())
+        self.assertEqual(config["bot_runtime"], "native_lua")
+        self.assertEqual(config["bot_native_worker"], str(prefix / "bin/bot-native-worker"))
+        self.assertEqual(config["state_dir"], str(prefix / "state"))
+        self.assertEqual((config["phy_authority"], config["phy_tracking"]), ("modem", "follow"))
+        self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
+        before = config_path.read_bytes()
+        with self.assertRaises(FileExistsError):
+            installer.install(self.directory, prefix)
+        self.assertEqual(config_path.read_bytes(), before)
+
+    def test_birch_installer_rejects_tamper_before_creating_prefix(self):
+        self.birch_host_metadata()
+        (self.directory / "bot-native-worker").write_bytes(b"changed")
+        prefix = self.directory / "not-created"
+        with self.assertRaisesRegex(ValueError, "hash/size mismatch"):
+            installer.install(self.directory, prefix)
+        self.assertFalse(prefix.exists())
 
     def test_refuse_missing_and_false_birch_abi_claims(self):
         for change, error in (

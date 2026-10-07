@@ -20,14 +20,18 @@ Host roles use the **Birch 0.1.0 RC1** product version. Their `ver` command repo
 MeshCore protocol/reference separately from the host implementation; companion
 and native owner-information replies identify `birch-0.1.0-rc.1`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
-Birch releases keep the host, native worker and matching modem together. See
-the [release guide](release/README.md) for compatibility and RC qualification.
+The Birch 0.1.0 RC1 download contains the Linux x86_64 host tools and native
+worker. Connect an already configured WiFi/TCP shared modem implementing queued
+PHY v1, or build and privately provision the modem separately. The download
+does not contain a modem image or station credentials. See the
+[release guide](release/README.md) for compatibility and source builds.
 
 Configure WiFi on the external modem. See the
 [app endpoint guide](firmware/shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 
 ## Find a task
 
+- [Install the Birch host download](#install-the-birch-host-download).
 - [Connect the public Birch UART modem](#connect-the-public-birch-uart-modem).
 - [Build a WiFi modem and start the host](#start-with-a-wifi-radio-and-go-host).
 - [Configure role placement and shared PHY authority](#configure-the-go-host).
@@ -43,11 +47,54 @@ Configure WiFi on the external modem. See the
 Commands below run from the repository root. Choose legal local settings and make
 every participating radio match frequency, bandwidth, SF and coding rate.
 
+## Install the Birch host download
+
+Use Debian 12 on Linux x86_64 and an existing configured WiFi/TCP shared modem.
+The host needs `libcjson1` and `libssl3`; installing the download does not need
+Go, a compiler or PlatformIO. Python 3.11 or newer runs the installer.
+
+Download the ZIP, manifest and checksums from
+[Birch 0.1.0 RC1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0-rc.1)
+into a new directory. Extract the ZIP there, then run `sha256sum --check` on the
+downloaded SHA256SUMS file: both the ZIP and extracted manifest must match.
+Replace `SOURCE12` below with the suffix of the extracted directory.
+
+```sh
+python3 birch-v0.1.0-rc.1-linux-x86_64-SOURCE12/install-birch.py \
+  --prefix "$HOME/.local/opt/birch-0.1.0-rc.1"
+```
+
+The installer refuses an existing prefix. It installs four binaries and a
+private example configuration, but does not start services, connect to the
+modem or change an existing host's identities, state or configuration.
+Keep the source and native relink archives from the download.
+
+Edit `~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json`: set
+`radio_address`, select `enabled_roles` for the modem's available client slots,
+and set the room password environment variable if enabling the room.
+The installed example selects the bundled native Lua worker and follows the
+modem's PHY without retuning it. Keep all listeners on trusted interfaces.
+
+```sh
+export MESHCORE_ROOM_PASSWORD='choose-a-private-room-password'
+~/.local/opt/birch-0.1.0-rc.1/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json -check
+~/.local/opt/birch-0.1.0-rc.1/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json
+```
+
+`-check` validates configuration without opening the radio or creating
+identities. After starting the host, `http://127.0.0.1:9080/status` shows the
+connection and selected roles; a MeshCore companion application connects to
+the companion listener on port 5000 when that role is enabled.
+Do not point a new installation at an existing host's state directory as an
+upgrade procedure; use [retained-state upgrades](#upgrade-and-rollback).
+
 ## Connect the public Birch UART modem
 
-The [public Birch bundle](https://ve6slp.ca/projects/meshcore/#downloads),
-contains an ESP32-S3 **UART shared modem**. Use the bundle's first-install or app-only
-update instructions for your board's state.
+An existing UART shared modem is for wired clients implementing the queued TX
+contract below. It is not the WiFi/TCP modem used by the Go host setup, and the
+Birch host download does not flash or configure it.
 
 Connect a **3.3 V** USB-UART adapter to the XIAO ESP32-S3: adapter TX to
 **GPIO44/D7 (modem RX)**, adapter RX to **GPIO43/D6 (modem TX)**, and common
@@ -93,7 +140,8 @@ SF7, CR 4/5**. Open `http://127.0.0.1:9080/status` for role and radio status,
 or connect a MeshCore companion application to `HOST_IP:5000` on your trusted
 LAN. [Go host configuration](#configure-the-go-host) covers identities, policies,
 MQTT and the bot connection. Building firmware requires Git, Python 3 and
-PlatformIO; running the host requires Go.
+PlatformIO; building the host from source requires Go. Running the
+[host download](#install-the-birch-host-download) does not require Go.
 
 For the official Android app, choose **Connect → WiFi**, enter the companion
 address and port **5000**, and enable **Auto Reconnect**. Do not use the KISS

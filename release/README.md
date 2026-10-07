@@ -26,8 +26,11 @@ Keep full source/build information in each candidate manifest.
 
 Pine retains its existing `1.17.1-slp-pine` identity. Willow remains experimental.
 This change does not introduce independent host, modem, worker, Pine or Willow
-release streams. **Birch is one bundle containing the Go host tools, native bot
-worker and the matching ESP32 modem, all built from the same product commit.**
+release streams. **Birch 0.1.0 RC1 is a Linux x86_64 host-tools and native-worker
+bundle for an already configured queued-v1 WiFi/TCP shared modem.** The host
+and worker share one product commit. Modem firmware is built and privately
+provisioned separately; the host download contains no blank-credential modem
+image. Start with [host installation](../HOST_GUIDE.md#install-the-birch-host-download).
 
 ## Supported contracts
 
@@ -67,7 +70,7 @@ docker build --iidfile .tmp/debian12-image-id \
   -f release/Dockerfile.debian12 release
 python3 tools/release_candidate.py build --product birch \
   --public-ref refs/heads/main \
-  --native-image "$(cat .tmp/debian12-image-id)"
+  --native-image "$(cat .tmp/debian12-image-id)" --host-only
 python3 tools/release_candidate.py verify .tmp/candidates/EXTRACTED-CANDIDATE
 ```
 
@@ -75,11 +78,18 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The bundle name is `aspen-v0.1.7-xiao-esp32s3-sx1262-SOURCE12.zip`.
-Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
-separate initial-install images, source and relink archives, resolved dependency
+The Aspen bundle name is `aspen-v0.1.8-xiao-esp32s3-sx1262-SOURCE12.zip`.
+Its files include `manifest.json`, checksums, application and separate
+initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
 tag/full SHA and public source full SHA. Hashes identify the packaged files.
+The host-only Birch name is `birch-v0.1.0-rc.1-linux-x86_64-SOURCE12.zip`.
+It includes four host binaries, the installer and example configuration,
+host guide, source, native relink material and dependency notices. Its
+`public_birch_host` profile and `host_only` scope require an external queued-v1
+modem and contain no firmware/partition images or firmware build receipts.
+Omitting `--host-only` retains the older combined host/modem build for inspection;
+that blank-credential modem is not an installable radio download.
 The manifest records build information, not test status. Run the relevant
 software and device checks before publishing; keep test logs internal.
 
@@ -102,7 +112,7 @@ runs without external network access. Distribution support still requires the
 exact packaged worker's software qualification results. Earlier host-native
 candidates requiring GLIBC 2.43 retain their original receipts and limitations.
 
-Both products now prepare firmware in a fresh tracked-source tree. The builder
+Firmware candidates prepare firmware in a fresh tracked-source tree. The builder
 checks Crypto 0.4.0, CayenneLPP 1.6.1 and, where used, base64 1.4.0 against their
 SHA256-pinned registry archives. A changed, missing or extra source file stops
 the build; inspect or restore the named dependency rather than overwriting it
@@ -124,13 +134,13 @@ updates write only the selected application slot and retain node identities,
 settings and programs; use the existing update guide. The bundle distinguishes
 the application from initial-install bootloader/partition files.
 
-**Birch publication blocker:** the old generic UART image does not connect the
-documented Go host, and the current WiFi modem compiles station credentials.
+**Birch modem setup:** the old generic UART image does not connect the
+documented Go host, and a source-built WiFi modem compiles station credentials.
 `platformio.birch.ini` builds a matching WiFi modem with blank credentials for
-build inspection only. It cannot connect a newly installed modem. Qualify a
-private provisioning path before distributing an installable Birch RC; never
-put station passwords into a public image. No new provisioning behavior is
-introduced by this release change.
+build inspection only. It cannot connect a newly installed modem. The host-only
+RC requires an existing configured compatible modem, or an operator source
+build with private provisioning. Never put station passwords into a public
+image. Installing the host does not flash or provision the radio.
 
 ## Publish a release
 
@@ -138,7 +148,8 @@ introduced by this release change.
    hashes, image layout, installation instructions and licensing/relink files.
 2. Test changed behavior and the relevant install/update path, including retained
    identities, settings and programs. Reuse established results for unchanged
-   code. Birch needs a working modem provisioning path before publication.
+   code. Birch host-only publication needs the exact packaged worker and
+   installation path checked on Debian 12; modem setup remains separate.
 3. With the operator's publication approval, create a signed product tag and
    GitHub release. Attach the package, manifest and checksums; check downloaded
    assets against the local files. Do not publish private backups or test logs.
