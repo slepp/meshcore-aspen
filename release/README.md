@@ -173,9 +173,10 @@ credentials, grants and the existing Lua storage reserve.
 See the [administration downgrade warning](../firmware/esp32/MAST_ADMIN.md#native-rf-and-web-access)
 before installing an older application on an initialized radio.
 
-The source includes an optional direct shared-room WSS transport and radio task
-bridge. Its codec driver remains disabled: Worker-owned room keys need the
-Worker-native codec and opaque RF API before activation. See
+The source includes a Worker-owned native room codec and an optional direct
+WSS radio frontend. Public images contain no room credentials or configured
+aliases; private setup is required before a frontend can connect or advertise.
+See
 [native shared rooms](../services/shared-room/NATIVE.md).
 Application-only updates retain identities, settings and installed programs.
 
