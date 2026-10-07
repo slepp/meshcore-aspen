@@ -333,19 +333,20 @@ BOT_NATIVE_WORKER=/path/to/that/bot-native-worker python3 -m unittest \
   internal.nativebot.worker_test.WorkerProcessTest.test_sealed_source_emits_no_advert_until_recovered
 ```
 
-Bundled initialization requests 34,676 bytes at peak; a model including
-eight-byte allocator alignment/headers peaks at 40,936 bytes. The compact
+Bundled initialization requests 35,354 bytes at peak; a model including
+eight-byte allocator alignment/headers peaks at 41,584 bytes. The compact
 session keeps custom metadata in eight entries and native metadata in flash;
 every initialization checks that metadata against the Lua declarations.
 Regenerate it after changing native declarations using
 `PINE_DUMP_REGISTRY=1 firmware/nrf52840/.build/native/lua-vm`.
 Declarations are checked individually against the sorted flash catalogue, with
 a bounded registration mask; no whole-manifest temporary is allocated.
-The compact session allocates both job buffers only after source validation
-and parser garbage collection finish. This avoids overlapping idle job buffers
-with the parser's peak allocations; it does not reduce the two-job capacity,
+The compact session reserves two separate job-sized buffers before parser
+allocations fragment the heap. Read-only API and event proxies share one
+metatable, but each retains its own backing values; writes to existing and new
+keys remain denied. Neither optimization reduces the two-job capacity,
 48 KiB Lua quota or 8 KiB physical reserve. A failed job-buffer allocation
-rejects the candidate explicitly.
+rejects the candidate explicitly and releases partially allocated buffers.
 The ARM initialization frame is 64 bytes. The production build runs
 `parser-stack-check` against the actual compiler `.su` files. Its conservative
 bound is 16,000 bytes of the 16 KiB VM stack, including a 2 KiB allowance for
@@ -360,14 +361,14 @@ Use `mem` and `bot memory` to inspect the running task's remaining stack.
 The existing
 [`firmware/runtime/plugins/examples/lab.lua`](../runtime/plugins/examples/lab.lua)
 package has six exports for scoped KV,
-durable timers and channel waiting. Retained initialization peaks at 35,194
+durable timers and channel waiting. Retained initialization peaks at 35,682
 logical bytes. A concurrent custom timer job and native note read peak at
-39,044 bytes, leaving 10,108 bytes below the 48 KiB quota; the allocator model
-peaks at 47,128 bytes. These are native32 measurements, not physical free heap.
+38,424 bytes, leaving 10,728 bytes below the 48 KiB quota; the allocator model
+peaks at 46,224 bytes. These are native32 measurements, not physical free heap.
 
 Data-heavy Lua tables can require more RAM than their source size suggests.
 The 4 KiB, eight-export test catalogue with 32 table rows requires a
-53,077-byte load peak (61,664 bytes in the allocator model), so Pine explicitly
+54,137-byte load peak (62,728 bytes in the allocator model), so Pine explicitly
 rejects it at the configured 48 KiB quota. The test uses a larger simulation
 quota only to measure that constraint; production does not raise its cap.
 Keep runtime tables small, use persistent KV for data that need not stay in

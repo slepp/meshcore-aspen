@@ -175,8 +175,26 @@ void hook(lua_State *state, lua_Debug *) {
 int readonly(lua_State *state) {
   return luaL_error(state, "command event is read-only");
 }
+#if ONCHIP_BOT_COMPACT_PROFILE
+int readonlyIndex(lua_State *state) {
+  luaL_checkudata(state, 1, "onchip.bot.readonly");
+  lua_getiuservalue(state, 1, 1);
+  lua_pushvalue(state, 2);
+  lua_gettable(state, -2);
+  return 1;
+}
+#endif
 void freeze(lua_State *state) {
   // A userdata proxy prevents writes to existing keys as well as new keys.
+#if ONCHIP_BOT_COMPACT_PROFILE
+  lua_newuserdatauv(state, 1, 1);
+  lua_pushvalue(state, -2); lua_setiuservalue(state, -2, 1);
+  if (luaL_newmetatable(state, "onchip.bot.readonly")) {
+    lua_pushcfunction(state, readonlyIndex); lua_setfield(state, -2, "__index");
+    lua_pushcfunction(state, readonly); lua_setfield(state, -2, "__newindex");
+    lua_pushboolean(state, false); lua_setfield(state, -2, "__metatable");
+  }
+#else
   lua_newuserdatauv(state, 1, 0);
   lua_createtable(state, 0, 3);
   lua_pushvalue(state, -3);
@@ -185,6 +203,7 @@ void freeze(lua_State *state) {
   lua_setfield(state, -2, "__newindex");
   lua_pushboolean(state, 0);
   lua_setfield(state, -2, "__metatable");
+#endif
   lua_setmetatable(state, -2);
   lua_remove(state, -2);
 }

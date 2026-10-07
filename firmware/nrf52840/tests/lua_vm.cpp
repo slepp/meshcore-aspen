@@ -22,6 +22,43 @@ void onchipBotVmHeapModel(size_t oldSize, size_t newSize) {
   if (!physicalLive) physicalPeak = 0;
   if (physicalLive > physicalPeak) physicalPeak = physicalLive;
 }
+static void sharedReadonlyProxies() {
+  BotSession session;
+  BotVmStats stats;
+  char error[128]{};
+  const auto source = program(
+      "if not kv.get or not timer.get or kv.get==timer.get then return 'bad APIs' end "
+      "if ctx.packet.path_count~=2 or ctx.radio.rssi~=-90 then return 'bad event' end "
+      "sleep(1) return ctx.message");
+  assert(session.load(source.data(), source.size(), 1, stats, error, sizeof(error)));
+  auto original = event("!custom");
+  strcpy(original.message, "first invocation");
+  assert(session.start(1, original, error, sizeof(error)));
+  BotIoRequest first, second;
+  assert(session.nextIo(first) && first.kind == BotIoRequest::Sleep);
+  auto other = event("!custom");
+  strcpy(other.message, "second invocation");
+  assert(session.start(2, other, error, sizeof(error)));
+  assert(session.nextIo(second) && second.kind == BotIoRequest::Sleep);
+  BotIoResult completion;
+  BotSession::Result result;
+  completion.token = second.token; completion.ok = true;
+  assert(session.complete(completion) && session.poll(result) && result.ok &&
+         !strcmp(result.action.text, "second invocation"));
+  completion.token = first.token;
+  assert(session.complete(completion) && session.poll(result) && result.ok &&
+         !strcmp(result.action.text, "first invocation"));
+  for (const char *write : {
+      "kv.get=nil", "kv.newkey=true", "timer.get=nil", "timer.newkey=true",
+      "ctx.message='changed'", "ctx.newkey=true",
+      "ctx.packet.path_count=99", "ctx.packet.newkey=true"}) {
+    const auto denied = program(write);
+    assert(session.load(denied.data(), denied.size(), 2, stats, error, sizeof(error)));
+    assert(session.start(1, event("!custom"), error, sizeof(error)));
+    assert(session.poll(result) && !result.ok && strstr(result.error, "read-only"));
+  }
+  puts("Pine shared read-only metatable: distinct API/event backings, concurrent invocations and existing/new-key write denial");
+}
 static void parserStackValidation() {
   static_assert(LUAI_MAXCCALLS == 32, "Use the staged Pine parser limit");
   BotSession session;
@@ -68,6 +105,7 @@ static void customCapacity() {
   if (!loaded) fprintf(stderr, "Pine persistence/timer package rejected: %s\n", error);
   assert(loaded && session.manifest().count == 6);
   const size_t loadPeak = stats.peakBytes;
+  assert(loadPeak <= 36 * 1024);
   assert(session.start(1, event("!alarm wake 1"), error, sizeof(error)));
   BotIoRequest custom, native;
   assert(session.nextIo(custom) && custom.kind == BotIoRequest::TimerSet);
@@ -90,7 +128,7 @@ static void customCapacity() {
   assert(session.complete(done) && session.poll(result) && result.ok && result.job == 1 &&
          !strcmp(result.action.text, "Timer wake claimed"));
   jobPeak = std::max(jobPeak, size_t(result.stats.peakBytes));
-  assert(jobPeak <= BotVmLimits{}.heapBytes);
+  assert(jobPeak <= 39 * 1024 && jobPeak <= BotVmLimits{}.heapBytes);
   printf("Pine retained lab package: source=%zuB exports=%u scoped_KV=1 durable_timers=1 channel_wait=1 load_peak=%zuB concurrent_timer_native_note_peak=%zuB cap=%zuB spare=%zuB allocator_model_peak=%zuB\n",
          source.size(), session.manifest().count, loadPeak, jobPeak,
          BotVmLimits{}.heapBytes, BotVmLimits{}.heapBytes - jobPeak, physicalPeak);
@@ -122,6 +160,7 @@ int main() {
   static_assert(BotJobLimit == 2 && BotValueLimit == 128 && BotTransactionLimit == 2);
   assert(BotSession::InitializationStorageBytes < BotSession::StorageBytes);
   fragmentedJobBuffers();
+  sharedReadonlyProxies();
   if (std::getenv("PINE_DUMP_REGISTRY")) {
     BotManifest manifest;
     BotVmStats stats;
@@ -187,6 +226,7 @@ int main() {
   BotSession::Result formatted;
   assert(session.poll(formatted) && formatted.ok && !strcmp(formatted.action.text, "present"));
   assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 2, stats, error, sizeof(error)));
+  assert(stats.peakBytes <= 36 * 1024 && physicalPeak <= 42 * 1024);
   assert(session.start(1, event("!weather"), error, sizeof(error)));
   BotSession::Result unsupported;
   assert(session.poll(unsupported) && !unsupported.ok && strstr(unsupported.error, "unsupported"));
