@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <assert.h>
+#include <dirent.h>
 #include <poll.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -55,7 +56,43 @@ static void stopped_wait(void) {
     close(notification[0]); close(notification[1]);
 }
 
+static unsigned descriptors(void) {
+    DIR *directory = opendir("/proc/self/fd");
+    assert(directory);
+    unsigned count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory)))
+        if (entry->d_name[0] != '.') count++;
+    assert(closedir(directory) == 0);
+    return count;
+}
+
+static void registration_return(void) {
+    unsigned baseline = descriptors();
+    for (unsigned cycle = 0; cycle < 64; cycle++) {
+        int sockets[2];
+        assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
+        int64_t group = mc_events_new();
+        assert(group > 0);
+        int64_t keys[64];
+        for (unsigned i = 0; i < 64; i++) {
+            keys[i] = mc_events_add(group, sockets[0], 1);
+            assert(keys[i] > 0);
+        }
+        for (unsigned i = 0; i < 64; i++)
+            assert(mc_events_remove(group, keys[i]) == 0);
+        Events *events = (Events *)(uintptr_t)group;
+        for (unsigned i = 0; i < 1024; i++)
+            assert(events->registrations[i].fd == -1);
+        assert(descriptors() == baseline + 4);
+        mc_events_release(group);
+        close(sockets[0]); close(sockets[1]);
+        assert(descriptors() == baseline);
+    }
+}
+
 int main(void) {
+    unsigned baseline = descriptors();
     int sockets[2];
     assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
     int64_t group = mc_events_new();
@@ -117,6 +154,8 @@ int main(void) {
     expect_ready(child, 0, 0);
     assert(mc_events_remove(parent, channel) == 0);
     mc_events_release(child); mc_events_release(parent);
+    registration_return();
     for (int i = 0; i < 100; i++) stopped_wait();
+    assert(descriptors() == baseline);
     puts("EVENT_NATIVE_OK");
 }

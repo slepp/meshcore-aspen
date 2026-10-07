@@ -189,14 +189,19 @@ class Emulator:
                 except OSError: return
                 self.connection=connection; self.epoch+=1; epoch=self.epoch
                 connection.settimeout(.1); buffer=bytearray(); escaped=False
-                while not self.stop:
+                connected = True
+                while not self.stop and connected:
                     try: chunk=connection.recv(4096)
                     except socket.timeout: continue
                     except OSError: break
                     if not chunk: break
                     for byte in chunk:
                         if byte==192:
-                            if buffer: self.handle(bytes(buffer),connection,epoch)
+                            if buffer:
+                                try: self.handle(bytes(buffer),connection,epoch)
+                                except (BrokenPipeError, ConnectionResetError):
+                                    connected = False
+                                    break
                             buffer.clear(); escaped=False
                         elif escaped:
                             assert byte in (220,221)
@@ -295,6 +300,32 @@ class RunningService:
     def __exit__(self,*args):self.close()
 
 class ServiceTests(unittest.TestCase):
+    def test_emulator_accepts_after_disconnected_response(self):
+        class DisconnectOnce(Emulator):
+            def handle(self, frame, connection, epoch):
+                if epoch == 1:
+                    raise BrokenPipeError("closed synthetic source")
+                super().handle(frame, connection, epoch)
+
+        modem = DisconnectOnce()
+        try:
+            request = kiss(b"\x20\1\0", 0, 6)
+            with socket.create_connection(("127.0.0.1", modem.port), timeout=2) as first:
+                first.sendall(request)
+                self.assertEqual(first.recv(1), b"")
+            with socket.create_connection(("127.0.0.1", modem.port), timeout=2) as second:
+                second.sendall(request)
+                received = b""
+                while received.count(b"\xc0") < 2:
+                    chunk = second.recv(64)
+                    self.assertTrue(chunk, "replacement synthetic source closed before HELLO")
+                    received += chunk
+                self.assertTrue(received.startswith(b"\xc0\6\xa0\1\0"), received.hex())
+                self.assertEqual(modem.epoch, 2)
+                self.assertIsNone(modem.error)
+        finally:
+            modem.close()
+
     def test_first_addressed_channel_calc_after_dm_commands(self):
         with RunningService() as service:
             modem=service.emulator

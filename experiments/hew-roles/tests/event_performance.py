@@ -15,7 +15,8 @@ import threading
 import time
 from unittest.mock import patch
 
-from base_service import SharedModem, saved_state, transfer, PROFILE
+from base_service import SharedModem, Client as CompanionClient, saved_state, transfer, PROFILE
+from broker import Client as MQTTClient, frame
 from combined_service import unused_port
 from observer_service import ObserverService
 from parity import ROOT, public
@@ -52,10 +53,19 @@ def process(pid):
     root = Path("/proc") / str(pid)
     fields = (root / "stat").read_text().rsplit(")", 1)[1].split()
     status = dict(line.split(":", 1) for line in (root / "status").read_text().splitlines())
+    descriptors = list((root / "fd").iterdir())
+    registrations = 0
+    for descriptor in descriptors:
+        try:
+            registrations += sum(line.startswith("tfd:") for line in (
+                root / "fdinfo" / descriptor.name).read_text().splitlines())
+        except FileNotFoundError:
+            pass
     return {"pid": pid, "start_ticks": int(fields[19]),
             "cpu_ticks": int(fields[11]) + int(fields[12]),
             "rss_kib": int(status["VmRSS"].split()[0]),
             "threads": int(status["Threads"]),
+            "fds": len(descriptors), "registrations": registrations,
             "executable": str((root / "exe").resolve())}
 
 
@@ -116,11 +126,19 @@ class Program:
 
 
 def get_http(port, path):
+    return request_http(port, path)
+
+
+def request_http(port, path, body=b"", method="GET", token=""):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        connection.request("GET", path)
+        connection.request(method, path, body, {
+            "X-Host-Intent": "admin-v1", "X-Host-Admin": token})
         response = connection.getresponse()
-        return response.status, json.loads(response.read())
+        content = response.read()
+        if path in ("/status", "/readyz", "/admin/status"):
+            content = json.loads(content)
+        return response.status, content
     finally:
         connection.close()
 
@@ -147,7 +165,8 @@ def slope(rows, label, field):
         (x - mean_x) ** 2 for x, _ in pairs)
 
 
-def measure(binary_directory, warmup, seconds, synchronous_reference_broker=False):
+def measure(binary_directory, warmup, seconds, synchronous_reference_broker=False,
+            churn_cycles=0, warmup_cycles=16):
     fixture_root = Path(os.environ.get("MESHCORE_NATIVE_TEST_STATE_ROOT", ROOT.parents[1])).resolve()
     with tempfile.TemporaryDirectory(prefix=".e-", dir=fixture_root) as temporary, ExitStack() as cleanup:
         root = Path(temporary)
@@ -176,7 +195,7 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
         programs["host"] = host.proc
         modem = SharedModem()
         cleanup.callback(modem.close)
-        health_ports = []
+        health_ports, companion_ports = [], []
         for index, seed in enumerate((17, 18)):
             frozen = root / f"frozen-{index}"
             frozen.mkdir(mode=0o700)
@@ -197,7 +216,8 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
                 "status_role": ("companion", "bot_companion")[index],
                 "required_profile": PROFILE.hex(), "enable_factory_reset": False,
                 "enable_key_export": False, "enable_key_import": False}).encode())
-            launch(("base", "secondary")[index], "hew-base-release", config, "BASE_LISTEN ")
+            line = launch(("base", "secondary")[index], "hew-base-release", config, "BASE_LISTEN ")
+            companion_ports.append(int(line.split("port=")[1].split()[0]))
         dashboard_config = root / "dashboard.conf"
         private(dashboard_config, (f"port=0\nstate={host.root}\n"
             f"page={ROOT.parents[1] / 'internal/app/admin_page.html'}\n"
@@ -229,10 +249,8 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
                    if not (synchronous_reference_broker and label == "broker")}
         pids = {label: owner.pid for label, owner in programs.items()} | {"native": worker}
         print(f"FLEET_READY binaries={binary_directory} processes={len(pids)}", flush=True)
-        time.sleep(warmup)
-        began, rows = time.monotonic(), []
-        while True:
-            elapsed = time.monotonic() - began
+
+        def capture():
             values = {}
             for label, pid in pids.items():
                 value = process(pid)
@@ -241,7 +259,76 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
                     value["messages"] = fetch(sockets[label], "/api/metrics")["messages_sent"]
                     value["actors"] = len(fetch(sockets[label], "/api/actors"))
                 values[label] = value
-            rows.append({"elapsed": elapsed, "processes": values})
+            return values
+
+        churn = None
+        if churn_cycles:
+            code, token = request_http(dashboard_port, "/admin/login",
+                                       b"synthetic-password", "POST")
+            if code != 200:
+                raise RuntimeError("synthetic dashboard login failed")
+            token = token.decode()
+
+            def cycle(index):
+                for port, seed in zip(companion_ports, (17, 18)):
+                    client = CompanionClient(port)
+                    try:
+                        client.command(b"\x16\3", 13)
+                        if client.command(bytes([1]) + bytes(7), 5)[4:36] != public(seed):
+                            raise RuntimeError("companion identity changed during client churn")
+                    finally:
+                        client.close()
+                client = MQTTClient(broker_port, f"lifecycle-{index}", keepalive=0)
+                try:
+                    if client.connack != (32, b"\0\0"):
+                        raise RuntimeError("synthetic MQTT client was not admitted")
+                    client.subscribe([("lifecycle/#", 0)])
+                    client.conn.sendall(frame(192))
+                    client.expect(208, b"")
+                finally:
+                    client.close(graceful=True)
+                for path, body in (("/admin/command", b"bot status"),
+                                   ("/admin/role/room", b"get name"),
+                                   ("/admin/role/repeater", b"get name"),
+                                   ("/admin/status", b"")):
+                    if request_http(dashboard_port, path, body, "POST", token)[0] != 200:
+                        raise RuntimeError(f"synthetic dashboard RPC failed: {path}")
+
+            # Populate the bounded client/RPC caches before recording ownership.
+            for index in range(warmup_cycles):
+                cycle(index)
+            time.sleep(warmup)
+            before = capture()
+            checkpoints = []
+            began_churn = time.monotonic()
+            for index in range(churn_cycles):
+                cycle(index + warmup_cycles)
+                if (index + 1) % 16 == 0 or index + 1 == churn_cycles:
+                    checkpoints.append({"cycles": index + 1, "processes": capture()})
+            time.sleep(warmup)
+            after = capture()
+            failures = []
+            for label in pids:
+                first, last = before[label], after[label]
+                for field in ("fds", "registrations", "threads"):
+                    if last[field] > first[field]:
+                        failures.append(f"{label}: settled {field} did not return to the warmed baseline")
+                if label in sockets:
+                    if last["heap_bytes"] - first["heap_bytes"] > 131072:
+                        failures.append(f"{label}: lifecycle live heap grew by more than 128 KiB")
+                    if last["actors"] - first["actors"] > 2:
+                        failures.append(f"{label}: lifecycle actor count grew by more than two")
+            churn = {"cycles": churn_cycles, "warmup_cycles": warmup_cycles,
+                     "seconds": time.monotonic() - began_churn,
+                     "before": before, "checkpoints": checkpoints,
+                     "settled": after, "failures": failures,
+                     "native_memory": "RSS is an allocator/arena proxy, not live allocator bytes"}
+            print(f"FLEET_CHURN cycles={churn_cycles} failures={len(failures)}", flush=True)
+        time.sleep(warmup)
+        began, rows = time.monotonic(), []
+        while True:
+            elapsed = time.monotonic() - began
+            rows.append({"elapsed": elapsed, "processes": capture()})
             if elapsed >= seconds:
                 break
             code, ready = get_http(dashboard_port, "/readyz")
@@ -263,7 +350,9 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
             digest = hashlib.sha256(Path(last["executable"]).read_bytes()).hexdigest()
             item = {"binary_sha256": digest, "threads": last["threads"],
                     "cpu_percent_one_core": 100 * (last["cpu_ticks"] - first["cpu_ticks"]) / hz / interval,
-                    "rss_kib_first": first["rss_kib"], "rss_kib_last": last["rss_kib"]}
+                    "rss_kib_first": first["rss_kib"], "rss_kib_last": last["rss_kib"],
+                    "fd_growth": last["fds"] - first["fds"],
+                    "registration_growth": last["registrations"] - first["registrations"]}
             if label in sockets:
                 item.update(heap_bytes_per_second=slope(rows, label, "heap_bytes"),
                             heap_growth_bytes=last["heap_bytes"] - first["heap_bytes"],
@@ -271,6 +360,7 @@ def measure(binary_directory, warmup, seconds, synchronous_reference_broker=Fals
                             messages_per_second=(last["messages"] - first["messages"]) / interval)
             summary[label] = item
         return {"seconds": interval, "warmup_seconds": warmup, "processes": summary,
+                "churn": churn,
                 "unprofiled": {"broker": "reference broker has no scheduler/profiler startup"}
                 if synchronous_reference_broker else {},
                 "cpu_percent_one_core": sum(value["cpu_percent_one_core"] for value in summary.values()),
@@ -282,30 +372,42 @@ def main():
     parser.add_argument("--reference", type=Path, required=True, help="accepted reference build directory")
     parser.add_argument("--candidate", type=Path, default=ROOT / "build")
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--seconds", type=int, default=180)
-    parser.add_argument("--warmup", type=int, default=30)
+    parser.add_argument("--seconds", type=int, default=60)
+    parser.add_argument("--warmup", type=int, default=15)
+    parser.add_argument("--churn-cycles", type=int, default=64,
+                        help="finite candidate client/RPC lifecycle count before settled idle")
+    parser.add_argument("--warmup-cycles", type=int, default=16,
+                        help="finite client/RPC cache warmup before lifecycle baseline")
     parser.add_argument("--synchronous-reference-broker", action="store_true",
                         help="reference broker predates actors and cannot start the runtime profiler")
     args = parser.parse_args()
     if args.seconds < 60 or args.warmup < 15:
         raise ValueError("performance intervals require at least 60 s and 15 s warmup")
+    if args.churn_cycles < 0 or args.churn_cycles > 4096:
+        raise ValueError("churn cycles must be between zero and 4096")
+    if args.warmup_cycles < 1 or args.warmup_cycles > 4096:
+        raise ValueError("warmup cycles must be between one and 4096")
     os.umask(0o077)
     result = {"rf_commands": 0, "fixture": "six identities, 167 contacts and 256 retained messages per Base",
               "hew_workers": 4, "profiling": "same private v0.5 profiler settings on both fleets",
               "reference": measure(args.reference.resolve(), args.warmup, args.seconds,
                                    args.synchronous_reference_broker),
-              "candidate": measure(args.candidate.resolve(), args.warmup, args.seconds)}
+              "candidate": measure(args.candidate.resolve(), args.warmup, args.seconds,
+                                   churn_cycles=args.churn_cycles,
+                                   warmup_cycles=args.warmup_cycles)}
     old, new = result["reference"], result["candidate"]
     result["cpu_reduction_fraction"] = 1 - new["cpu_percent_one_core"] / old["cpu_percent_one_core"]
     previous_messages = sum(item.get("messages_per_second", 0) for item in old["processes"].values())
     current_messages = sum(item.get("messages_per_second", 0) for item in new["processes"].values())
     result["actor_message_reduction_fraction"] = 1 - current_messages / previous_messages
-    failures = []
+    failures = list((new["churn"] or {}).get("failures", []))
     if result["cpu_reduction_fraction"] < .5:
         failures.append("six-process CPU did not fall by at least 50%")
     if result["actor_message_reduction_fraction"] < .8:
         failures.append("profiled actor message rate did not fall by at least 80%")
     for label, item in new["processes"].items():
+        if item["fd_growth"] > 0 or item["registration_growth"] > 0:
+            failures.append(f"{label}: settled idle descriptors/registrations grew")
         if label == "native":
             continue
         if item["heap_bytes_per_second"] > 256 or item["heap_growth_bytes"] > 131072:

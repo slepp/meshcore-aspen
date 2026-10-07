@@ -248,6 +248,20 @@ Base-only Go and the independent observer broker need not restart for a
 Willow-only upgrade. After new activity, rolling back must reconcile that
 latest state; restoring the pre-upgrade state loses durable writes.
 
+Before changing an installed service, check recovery using synthetic state:
+
+```sh
+python3 -B tests/upgrade.py \
+  --reference /path/to/old-pinned-root/experiments/hew-roles
+```
+
+This loopback check creates a new room post, owner DM ledger entry, native note
+and admin request clock in the candidate, then rebinds into a **new** directory
+using the previous installation. It checks the previous host can read those
+writes and separately runs the Go recovery application. If the previous Hew
+version cannot read the current state, use the checked Go recovery path instead.
+It does not open a physical modem or copy running node state.
+
 ## Rollback
 
 Return to Go with `reconcile_go.py`, not by restoring `rollback-go/` alone.

@@ -98,6 +98,7 @@ Build the candidate, then compare it with an unchanged accepted installation:
 ```sh
 python3 -B tests/event_performance.py \
   --reference /path/to/accepted/experiments/hew-roles/build \
+  --seconds 60 --warmup 15 --warmup-cycles 16 --churn-cycles 64 \
   --report build/event-performance-results.json
 ```
 
@@ -110,9 +111,15 @@ build directory.
 Each isolated fleet runs a host and its native worker, two Base companions,
 a broker and a dashboard with six synthetic identities. Each Base starts with
 167 contacts and 256 retained messages. The script waits for combined readiness,
-warms each fleet for 30 seconds and samples for 180 seconds. It sends no RF
-commands and does not stop or configure the installed node. Avoid concurrent
-builds and load tests during the comparison.
+warms each fleet for 15 seconds and samples idle behavior for 60 seconds.
+Before candidate sampling, it warms 16 client/RPC cycles, then runs 64
+bounded cycles of companion connections, MQTT connections and dashboard
+bot/role/status requests. After clients close and the fleet settles, descriptor,
+epoll registration and thread counts must return to their warmed baselines;
+live heap may grow by at most 128 KiB and actor counts by at most two.
+Use `--churn-cycles 0` for an idle-only comparison.
+It sends no RF commands and does not stop or configure the installed node.
+Avoid concurrent builds and load tests during the comparison.
 
 The report records binary hashes, CPU as a percentage of one core, live-heap
 slopes, actor counts and message rates. The command fails unless total CPU falls
@@ -122,6 +129,10 @@ and 128 KiB over the interval, and each actor count grows by at most two.
 For a reference broker that predates actors and cannot start the runtime
 profiler, pass `--synchronous-reference-broker`. Its CPU and RSS still count;
 the report marks its unavailable heap/actor counters explicitly.
+The CPU/message reductions and 500-message/second limit apply to idle samples,
+not active client/RPC work. Native-worker RSS, descriptors and threads are
+recorded separately: RSS includes allocator arenas and is not a live-heap
+measurement. Reports remain private mode-0600 files.
 
 `hostlib.binary` reuses `std.encoding.binary` for fixed-width bit patterns.
 Its adapter checks lengths and pads short integers before calling std getters,
