@@ -181,7 +181,9 @@ export class Room extends DurableObject<Env> {
       if (operation.op === "members") {
         const prefix = operation.prefix === undefined ? "" : string(operation.prefix, "key prefix", 64);
         if (!/^[a-f0-9]*$/.test(prefix)) fail(400, "Invalid key prefix");
-        const members: Member[] = this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE alias=? AND client LIKE ? ORDER BY client LIMIT 1001`, c.alias, `${prefix}%`).map(s => {
+        // Hex keys permit an indexed prefix range. LIKE rejects long native
+        // full-key prefixes under workerd's bounded SQLite pattern limits.
+        const members: Member[] = this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE alias=? AND client>=? AND client<? ORDER BY client LIMIT 1001`, c.alias, prefix, `${prefix}g`).map(s => {
           const member: Member = {client: s.client, cursor: s.cursor};
           if (s.frontend === c.frontend) {
             member.route = s.route;
