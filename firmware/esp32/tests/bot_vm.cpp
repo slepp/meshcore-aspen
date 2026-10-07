@@ -1194,7 +1194,7 @@ static void diagnosticCommands() {
     strcpy(e.channel, channel ? "#example1" : "");
     e.replyLimit = channel ? BotReplyLimit - 33 : BotReplyLimit;
     assert(command("!about").find("key=ab00") != std::string::npos);
-    assert(command("!version").find("Lua 5.5.1; compiled fixture compilation") != std::string::npos);
+    assert(command("!version").find("MeshCore rev d92964352441; Lua 5.5.1; built fixture compilation") == 0);
     assert(command("!uptime") == "Uptime snapshot since boot: 49d 17h 2m 49s");
     auto status = command("!status");
     assert(status.find("WiFi=disconnected") != std::string::npos &&
@@ -1220,7 +1220,7 @@ static void diagnosticCommands() {
   for (uint8_t width : {1, 2, 3}) {
     e.path.width = width; e.path.count = 1;
     memset(e.path.bytes, 0xab, width);
-    assert(command("!signal").find("path=" + std::to_string(width) + ":" +
+    assert(command("!signal").find(std::string("path=") +
            (width == 1 ? "ab" : width == 2 ? "abab" : "ababab")) != std::string::npos);
   }
   e.path.width = 1; e.path.count = 63;
@@ -1939,11 +1939,11 @@ int main(int argc, char **argv) {
     for (unsigned j = 0; j < path.size(); ++j) path.bytes[j] = uint8_t(0xa1 + 16 * i + j);
   }
   assert(!strcmp(run(BotDefaultSource, routes).text,
-                 "2 unique paths in 5000 ms; 3:a1a2a3a4a5a6 | 3:b1b2b3b4b5b6"));
+                 "2 unique paths in 5000 ms; a1a2a3,a4a5a6 | b1b2b3,b4b5b6"));
   routes.observations[0].width = 1; routes.observations[0].count = 6;
   routes.observations[1].width = 2; routes.observations[1].count = 3;
   assert(!strcmp(run(BotDefaultSource, routes).text,
-                 "2 unique paths in 5000 ms; 1:a1a2a3a4a5a6 | 2:b1b2b3b4b5b6"));
+                 "2 unique paths in 5000 ms; a1,a2,a3,a4,a5,a6 | b1b2,b3b4,b5b6"));
   for (uint8_t width : {1, 2, 3}) {
     for (auto &path : routes.observations) {
       path.width = width; path.count = uint8_t(std::min<size_t>(63, BotPathLimit / width));
@@ -1955,14 +1955,21 @@ int main(int argc, char **argv) {
       const auto start = text.find("; ") + 2, split = text.find(" | "), end = text.rfind("; truncated");
       assert(text.size() <= limit && split != std::string::npos && end != std::string::npos);
       for (const auto &part : {text.substr(start, split - start), text.substr(split + 3, end - split - 3)}) {
-        assert(part[0] == char('0' + width) && part[1] == ':' && part.substr(part.size() - 3) == "...");
-        assert((part.size() - 5) % (2 * width) == 0 && part.size() >= size_t(5 + 2 * width));
+        assert(part.substr(part.size() - 3) == "...");
+        const auto hashes = part.substr(0, part.size() - 3);
+        size_t offset = 0;
+        do {
+          const auto comma = hashes.find(',', offset);
+          const auto end = comma == std::string::npos ? hashes.size() : comma;
+          assert(end - offset == 2 * width);
+          offset = end + 1;
+        } while (offset < hashes.size());
       }
     }
   }
   routes.replyLimit = BotReplyLimit; routes.observationCount = 1;
   routes.observations[0].count = 0;
-  assert(strstr(run(BotDefaultSource, routes).text, "3: (no-hop)"));
+  assert(strstr(run(BotDefaultSource, routes).text, "no repeaters"));
   routes.observationCount = 0; routes.path.known = false;
   assert(strstr(run(BotDefaultSource, routes).text, "direct/local path unknown"));
   routes.observationCount = BotObservationLimit; routes.replyLimit = 116;
@@ -1973,8 +1980,8 @@ int main(int argc, char **argv) {
   }
   const std::string crowded = run(BotDefaultSource, routes).text;
   assert(crowded.size() <= routes.replyLimit && crowded.find("8 unique paths") == 0 &&
-         crowded.find("3:a0a0a0") != std::string::npos &&
-         crowded.find(" | 3:a1a1a1") != std::string::npos &&
+         crowded.find("a0a0a0") != std::string::npos &&
+         crowded.find(" | a1a1a1") != std::string::npos &&
          crowded.find("; truncated") != std::string::npos);
   puts("PASS multitrace collector output: two actual width-three paths, whole-segment truncation at reply bounds and direct/no-hop distinction");
   assert(strstr(run(BotDefaultSource, event("!trace")).text, "Error: TRACE"));

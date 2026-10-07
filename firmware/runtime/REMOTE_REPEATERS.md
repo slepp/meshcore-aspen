@@ -62,7 +62,9 @@ Inspect:
 ```text
 bot repeaters status
 bot repeaters status ridge
+bot repeaters config ridge
 bot repeaters route ridge
+bot repeaters storage
 bot events
 telemetry status
 telemetry counts
@@ -82,6 +84,12 @@ flood limit still applies. Learned routes are rebuilt after a restart.
 See [Aspen telemetry setup](../esp32/TELEMETRY.md) if publishing is not already
 configured. HTTP 2xx confirms receiver acceptance; query the receiver to
 check ingestion.
+
+`config ALIAS` reads the saved public key and frequency without sending RF.
+`storage` reports free NVS entries, the required reserve and whether a policy
+authority is saved. A failed policy change reports the affected storage step
+and leaves live polling disabled. Inspect these results before retrying; do not
+erase NVS or format SPIFFS to make room.
 
 Import the [remote-repeater Grafana dashboard](../../dashboards/grafana/README.md)
 to view voltage, sample age, monitor errors, signal, packet counts and airtime

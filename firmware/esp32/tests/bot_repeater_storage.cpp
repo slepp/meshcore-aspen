@@ -43,10 +43,15 @@ static void expect(const BotRepeaterPolicy &policy) {
   assert(identity_test::handles.empty());
 }
 int main() {
+  char status[162]{}, error[128]{};
   BotRepeaterPolicy empty;
   assert(loadBotRepeaterPolicy(empty) && !empty.enabled);
+  botRepeaterStorageStatus(status, sizeof(status));
+  assert(strstr(status, "required=313 authority=none"));
   auto old = fixture(), next = old;
   assert(saveBotRepeaterPolicy(old));
+  botRepeaterStorageStatus(status, sizeof(status));
+  assert(strstr(status, "required=308 authority=saved"));
   assert(identity_test::durable.at(Key).size() == 37);
   expect(old);
   next.intervalSeconds = 600;
@@ -64,7 +69,7 @@ int main() {
       case 6: identity_test::failRead = true; break;
       case 7: psram_test::failAfter = 0; break;
     }
-    assert(!saveBotRepeaterPolicy(next));
+    assert(!saveBotRepeaterPolicy(next, error, sizeof(error)) && error[0]);
     assert(identity_test::durable.at(Key) == authority);
     clearFaults(); expect(old);
   }
@@ -86,10 +91,11 @@ int main() {
   assert(identity_test::durable.at(Key) == authority);
   identity_test::durable.clear(); filesystem_test::files.clear();
   identity_test::freeEntries = BotCoreNvsReserveEntries + BotNvsMutationEntries + 4;
-  assert(!saveBotRepeaterPolicy(old) && identity_test::durable.empty() &&
+  assert(!saveBotRepeaterPolicy(old, error, sizeof(error)) && identity_test::durable.empty() &&
          filesystem_test::files.empty());
+  assert(strstr(error, "312 free, 313 required"));
   identity_test::freeEntries++;
-  assert(saveBotRepeaterPolicy(old));
+  assert(saveBotRepeaterPolicy(old, error, sizeof(error)) && !error[0]);
   assert(psram_test::allocations.empty());
   puts("PASS repeater storage: 37-byte authority, two verified slots, full policy/cooldown retention, explicit storage faults and unchanged Lua reserve");
 }

@@ -694,13 +694,13 @@ Physical field acceptance is recorded separately; these are not live-RF claims.
 | `!ping` | `Pong` |
 | `!test` | Native message connection, complete received flood path when available, actual RSSI/SNR; local reflection explicitly has no measured RF signal |
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
-| `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports the actual observed `width:hex` paths (up to eight). Long replies retain whole hash segments and explicitly mark truncation; ninth paths, missing paths and RX queue overflow also mark the result truncated |
+| `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Long replies retain whole hashes and explicitly mark truncation; ninth paths, missing paths and RX queue overflow also mark the result truncated |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Persistent command-bot public key and role identity |
 | `!version` | Pinned upstream MeshCore revision, linked Lua version and compilation date/time; no firmware image hash |
 | `!uptime` | Boot uptime snapshot, extended across the 32-bit millisecond clock rollover |
 | `!status` | Bot readiness/fault flag, selected/ready role masks, WiFi connection state and explicit unavailable battery measurement |
-| `!signal` | This request's measured RSSI/SNR and full-width path; local reflection and missing measurements are identified |
+| `!signal` | This request's measured RSSI/SNR and comma-separated repeater hashes; local reflection and missing measurements are identified |
 | `!air [1..4]` | Bounded pages of actual scheduler credit, queues, RF airtime and TX outcomes; not delivery confirmation or duty-cycle history |
 
 ### Read-only diagnostics
@@ -769,9 +769,10 @@ paths` reports these encodings and supported widths.
 Multi-test counts complete paths, not hashes of paths, and excludes local
 forwarding reflections from its RF observation count. It runs the handler
 once after the window, not continuously during collection. For example,
-`!mt 5` can return `2 unique paths in 5000 ms; 3:a1a2a3b1b2b3 | 3:c1c2c3d1d2d3`.
+`!mt 5` can return `2 unique paths in 5000 ms; a1a2a3,b1b2b3 | c1c2c3,d1d2d3`.
 Each entry preserves the received path's 1/2/3-byte hash width and segment
-order; hashes are not expanded into full public keys. `3: (no-hop)` means an
+order; commas separate complete hashes without a width prefix. Hashes are not
+expanded into full public keys. `no repeaters` means an
 observed zero-hop flood, not a consumed direct route. With no complete flood
 observation, the reply explicitly reports direct/local path information as
 unknown.

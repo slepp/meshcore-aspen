@@ -730,7 +730,7 @@ static void commands_and_packets() {
   timeMs += 1000; f.step();
   const auto replies = peer.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 1 && replies[0] ==
-         "8 unique paths in 1000 ms; 1:01 | 1:02 | 1:03 | 1:04 | 1:05 | 1:06 | 1:07 | 1:08; truncated");
+         "8 unique paths in 1000 ms; 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08; truncated");
   assert(f.bot.counters().observationsDropped == 1);
   timeMs += 61000; f.radio.sent.clear();
   const auto overflow = peer.command(f.bot.publicKey(), "!mt 1", 1, {0xa1});
@@ -793,7 +793,7 @@ static void collected_path_segments() {
   timeMs += 5000; f.step();
   const auto replies = peer.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 1 && replies[0] ==
-         "2 unique paths in 5000 ms; 3:a1a2a3b1b2b3 | 3:c1c2c3d1d2d3");
+         "2 unique paths in 5000 ms; a1a2a3,b1b2b3 | c1c2c3,d1d2d3");
   assert(replies[0].size() <= BotReplyLimit && f.bot.counters().observationsDropped == 0);
   puts("PASS !mt 5 native two-path reply: actual three-byte header segments, deduplicated and bounded");
 }
@@ -2244,6 +2244,12 @@ static void native_repeater_monitor() {
   snprintf(command, sizeof(command), "add pilot %s 912525000 3:", key);
   f.bot.repeaterCommand(command, reply, sizeof(reply));
   assert(!strncmp(reply, "Saved/applied", 13));
+  f.bot.repeaterCommand("config pilot", reply, sizeof(reply));
+  assert(strstr(reply, key) && strstr(reply, "frequency=912525000"));
+  f.bot.repeaterCommand("storage", reply, sizeof(reply));
+  assert(strstr(reply, "nvs-free=") && strstr(reply, "authority=saved"));
+  f.bot.repeaterCommand("help", reply, sizeof(reply));
+  assert(strlen(reply) <= 162 && strstr(reply, "config ALIAS") && strstr(reply, "storage"));
   f.bot.repeaterCommand("on", reply, sizeof(reply));
   assert(!strncmp(reply, "Saved/applied", 13));
   const char *source =

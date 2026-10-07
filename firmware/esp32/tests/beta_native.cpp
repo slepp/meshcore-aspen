@@ -309,7 +309,7 @@ static void management_cli_compatibility() {
     for (const char *command : {"wifi ssid", "wifi password", "set wifi.ssid", "set wifi.pwd", "set wifi.enabled",
                                 "set name", "set owner.info"})
       assert(rf(command).find("Error: usage: ") == 0);
-    assert(rf("ver").find("v" MESHCORE_SLP_ASPEN_VERSION) == 0);
+    assert(rf("ver").find(MESHCORE_SLP_ASPEN_VERSION) == 0);
     assert(rf("get radio").find("> 912.525") == 0);
     assert(rf("get freq").find("> 912.525") == 0);
     assert(rf("get tx") == "> 2");
@@ -2169,7 +2169,7 @@ static void native_role_profile_owner_info() {
       assert(body.size() > 5 && body[4] == 4);
       return std::string(body.begin() + 5, std::find(body.begin() + 5, body.end(), 0));
     };
-    assert(cli("ver").find("v" MESHCORE_SLP_ASPEN_VERSION) == 0);
+    assert(cli("ver").find(MESHCORE_SLP_ASPEN_VERSION) == 0);
     assert(cli("set name " + std::string(31, 'n')).find("Error") == std::string::npos);
     assert(cli("set owner.info " + std::string(119, 'x')).find("Error") == std::string::npos);
     const std::string expected = MESHCORE_SLP_ASPEN_VERSION "\n" + std::string(31, 'n') + "\n" + std::string(119, 'x');

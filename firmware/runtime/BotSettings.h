@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "BotTypes.h"
+#include <stddef.h>
 #include <stdint.h>
 
 namespace onchip {
@@ -34,7 +35,8 @@ struct BotRepeaterPolicy {
   bool valid() const;
 };
 bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy);
-bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy);
+bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy, char *error = nullptr, size_t capacity = 0);
+void botRepeaterStorageStatus(char *reply, size_t capacity);
 struct BotForwardPolicy {
   uint8_t from[32]{}, to[32]{};
   bool enabled() const;

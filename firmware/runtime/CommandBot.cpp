@@ -2727,6 +2727,24 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     }
     return;
   }
+  if (!strcmp(action, "storage")) {
+    if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters storage"); return; }
+    botRepeaterStorageStatus(reply, capacity);
+    return;
+  }
+  if (!strcmp(action, "config")) {
+    const char *alias = strtok_r(nullptr, " ", &cursor);
+    if (!alias || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters config ALIAS"); return; }
+    for (const auto &target : core_->repeaterPolicy.targets) {
+      if (!target.used || strcmp(alias, target.alias)) continue;
+      char key[65];
+      for (unsigned i = 0; i < 32; ++i) snprintf(key + i * 2, 3, "%02x", target.key[i]);
+      snprintf(reply, capacity, "%s key=%s frequency=%u", target.alias, key, unsigned(target.frequencyHz));
+      return;
+    }
+    error("repeater alias is not configured");
+    return;
+  }
   if (!strcmp(action, "route")) {
     const char *alias = strtok_r(nullptr, " ", &cursor);
     if (!alias || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters route ALIAS"); return; }
@@ -2752,7 +2770,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "bot repeaters on|off|interval SECONDS|status [ALIAS]|route ALIAS|remove ALIAS|add ALIAS KEY64 FREQ_HZ [WIDTH:HEX]; read ACL required");
+    snprintf(reply, capacity, "bot repeaters on|off|interval SECONDS|status [ALIAS]|config ALIAS|route ALIAS|storage|remove ALIAS|add ALIAS KEY64 FREQ_HZ [WIDTH:HEX]");
     return;
   }
   auto candidate = core_->repeaterPolicy;
@@ -2822,9 +2840,11 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
   ++core_->repeaterGrant;
   for (auto &job : core_->invocations) if (job.used && job.ioPending && core_->repeaterIo(job))
     core_->failRepeater(job, BotRepeaterError::Cancelled, "Repeater policy changed; admitted request outcome may be unknown");
-  if (!saveBotRepeaterPolicy(candidate)) {
-    fault("Repeater policy commit/readback failed; live monitor disabled");
-    error("repeater policy commit/readback failed; live monitor disabled"); return;
+  char storageError[128]{};
+  if (!saveBotRepeaterPolicy(candidate, storageError, sizeof(storageError))) {
+    fault(storageError);
+    snprintf(reply, capacity, "Error: %s; live monitor disabled", storageError);
+    return;
   }
   for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
     const auto &old = core_->repeaterPolicy.targets[i], &next = candidate.targets[i];

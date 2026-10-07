@@ -1414,7 +1414,7 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     ~ClearCommand() { clearSecret(command, TextLimit + 1); }
   } clear{command};
   if (!strcmp(command, "ver")) {
-    snprintf(reply.text, sizeof(reply.text), "v%s (Build: %s)", ONCHIP_FIRMWARE_VERSION, __DATE__);
+    snprintf(reply.text, sizeof(reply.text), "%s (Build: %s)", ONCHIP_FIRMWARE_VERSION, __DATE__);
   } else if (!strcmp(command, "board")) {
     strcpy(reply.text, "ESP32; shared modem and on-device roles");
   } else if (!strcmp(command, "stats") || !strcmp(command, "get stats") ||

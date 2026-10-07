@@ -202,47 +202,72 @@ bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy) {
   policy = storage->record.policy;
   return true;
 }
-bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy) {
-  if (!policy.valid()) return failed("repeater monitor validation", ESP_ERR_INVALID_ARG);
+void botRepeaterStorageStatus(char *reply, size_t capacity) {
+  RepeaterReference reference;
+  bool present;
+  nvs_stats_t stats{};
+  if (!readRepeaterReference(reference, present) || nvs_get_stats(nullptr, &stats) != ESP_OK) {
+    snprintf(reply, capacity, "Error: repeater storage authority or NVS statistics unavailable");
+    return;
+  }
+  snprintf(reply, capacity, "Repeater storage nvs-free=%u required=%u authority=%s",
+           unsigned(stats.free_entries),
+           unsigned(BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u)),
+           present ? "saved" : "none");
+}
+bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy, char *error, size_t capacity) {
+  if (error && capacity) error[0] = 0;
+  const auto failSave = [&](const char *operation, esp_err_t result) {
+    if (error && capacity)
+      snprintf(error, capacity, "%s: %s", operation, esp_err_to_name(result));
+    return failed(operation, result);
+  };
+  if (!policy.valid()) return failSave("repeater monitor validation", ESP_ERR_INVALID_ARG);
   RepeaterReference previous, next;
   bool present;
-  if (!readRepeaterReference(previous, present)) return false;
+  if (!readRepeaterReference(previous, present))
+    return failSave("repeater monitor authority read", ESP_ERR_INVALID_STATE);
   nvs_stats_t stats{};
   auto result = nvs_get_stats(nullptr, &stats);
-  if (result != ESP_OK) return failed("repeater monitor headroom read", result);
+  if (result != ESP_OK) return failSave("repeater monitor headroom read", result);
   // A new four-entry reference must leave the existing public KV floor intact.
-  if (stats.free_entries < BotCoreNvsReserveEntries + BotNvsMutationEntries +
-                           (present ? 0u : 5u))
+  const size_t required = BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u);
+  if (stats.free_entries < required) {
+    if (error && capacity)
+      snprintf(error, capacity, "repeater NVS headroom: %u free, %u required",
+               unsigned(stats.free_entries), unsigned(required));
     return failed("repeater monitor NVS headroom; existing Lua data reserve required",
                   ESP_ERR_NVS_NOT_ENOUGH_SPACE);
+  }
   RepeaterStorage storage(allocateRoleStorage<RepeaterWorkspace>("repeater monitor save"));
-  if (!storage) return failed("repeater monitor save workspace unavailable", ESP_FAIL);
+  if (!storage) return failSave("repeater monitor save workspace unavailable", ESP_FAIL);
   auto &record = storage->record, &check = storage->check;
-  if (present && !readRepeaterFile(previous, check)) return false;
+  if (present && !readRepeaterFile(previous, check))
+    return failSave("repeater monitor saved file read/validation", ESP_ERR_INVALID_STATE);
   record.policy = policy;
   next.slot = present ? 1 - previous.slot : 0;
   repeaterDigest(record, next.digest);
   auto file = SPIFFS.open(RepeaterSlots[next.slot], "w");
-  if (!file) return failed("repeater monitor inactive file open", ESP_ERR_INVALID_STATE);
+  if (!file) return failSave("repeater monitor inactive file open", ESP_ERR_INVALID_STATE);
   const bool complete = file.write(reinterpret_cast<const uint8_t *>(&record), sizeof(record)) ==
                         sizeof(record);
   file.flush();
   file.close();
   if (!complete || !readRepeaterFile(next, check) || memcmp(&record, &check, sizeof(record)))
-    return failed("repeater monitor inactive file readback", ESP_ERR_INVALID_STATE);
+    return failSave("repeater monitor inactive file readback", ESP_ERR_INVALID_STATE);
   nvs_handle_t handle;
   result = nvs_open("mc-onchip", NVS_READWRITE, &handle);
-  if (result != ESP_OK) return failed("repeater monitor open", result);
+  if (result != ESP_OK) return failSave("repeater monitor open", result);
   result = nvs_set_blob(handle, "bot-repeaters", &next, sizeof(next));
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
-  if (result != ESP_OK) return failed("repeater monitor commit; outcome unknown", result);
+  if (result != ESP_OK) return failSave("repeater monitor commit; outcome unknown", result);
   RepeaterReference observed;
   if (!readRepeaterReference(observed, present) || !present ||
       memcmp(&observed, &next, sizeof(next)))
-    return failed("repeater monitor authority readback; outcome unknown", ESP_ERR_INVALID_STATE);
+    return failSave("repeater monitor authority readback; outcome unknown", ESP_ERR_INVALID_STATE);
   if (!readRepeaterFile(observed, check) || memcmp(&record, &check, sizeof(record)))
-    return failed("repeater monitor readback; outcome unknown", ESP_ERR_INVALID_STATE);
+    return failSave("repeater monitor readback; outcome unknown", ESP_ERR_INVALID_STATE);
   return true;
 }
 bool BotForwardPolicy::enabled() const {
