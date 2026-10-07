@@ -58,6 +58,8 @@ public:
   virtual void idle() = 0;
 };
 BotHttpsTransport *createBotHttpsTransport();
+// Same TLS verification/admission, without request-lifecycle metrics held open.
+BotHttpsTransport *createPersistentBotTlsTransport();
 bool beginBotHttpsMemory();
 
 class BotHttpsBodySink {

@@ -26,7 +26,10 @@ Cloudflare account and service access policy.
 | Advertised identity | `ALIASES[id] = {publicKey, name, password, backend}` | Its key, password, client membership, route, cursor and ACK namespace |
 | Backend room | The configured `backend` name | One canonical message sequence and shared history |
 
-An identity's expanded private key stays at its frontends. Frontends serving the
+The current decoded-operation prototype terminates room crypto at its frontends.
+This differs from the original central-key/opaque-frontend proposal; read the
+[trust boundary](TRUST.md) before provisioning keys. An identity's expanded private
+key stays at its frontends. Frontends serving the
 same alias use the same key and name. Distinct aliases use distinct keys, even
 when their first RF prefix byte collides. The service pins each alias ID to its
 public key on first use: use a new alias ID when replacing that key. Backend
@@ -159,7 +162,8 @@ slot, for example every 60 seconds plus jitter. Each successive slot advertises
 one identity, spreading advertisements instead of flooding every room together.
 
 The intended device frontend is [native Aspen directly over Wi-Fi/WSS](NATIVE.md).
-Its portable parser is implemented; WSS connection/runtime wiring remains. The
+Its portable parser and optional WSS/radio task bridge are implemented and have
+a native ESP32 compile profile. The codec driver remains disabled by default. The
 Worker does not terminate raw MeshCore crypto. The native-compatible reference
 [`internal/sharedroom`](../../internal/sharedroom) implements login/PATH responses,
 original posts, REQ history, signed deliveries and bare ACK matching using the

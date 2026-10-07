@@ -88,8 +88,8 @@ prepare:
 	@test "$$(git -C $(UPSTREAM) rev-parse HEAD)" = "$(PIN)"
 	@install -d -m 700 "$(BUILD)"
 	git -C $(UPSTREAM) archive HEAD | tar -x -C $(BUILD)
-	cd $(BUILD) && patch --forward -p1 < $(ROOT)/firmware/shared/radio-reconfigure.patch
-	cd $(BUILD) && patch --forward -p1 < $(ROOT)/firmware/shared/queued-dispatch.patch
+	git -C $(BUILD) apply $(ROOT)/firmware/shared/radio-reconfigure.patch
+	git -C $(BUILD) apply $(ROOT)/firmware/shared/queued-dispatch.patch
 	cp $(ROOT)/firmware/esp32/wifi_kiss_main.cpp $(BUILD)/examples/kiss_modem/main.cpp
 	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/QueuedTxProtocol.h \
 		$(ROOT)/firmware/shared/RadioDashboard.* $(ROOT)/firmware/shared/RadioDashboardPage.h \
