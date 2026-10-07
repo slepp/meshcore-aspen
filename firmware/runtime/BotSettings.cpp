@@ -488,7 +488,7 @@ void BotRadioPolicy::bindStorage(BotEvent &event) const {
     }
 }
 bool loadBotRadioPolicy(BotRadioPolicy &policy) {
-  policy = {};
+  policy = BotRadioPolicy{};
   nvs_handle_t handle;
   auto result = nvs_open("mc-onchip", NVS_READONLY, &handle);
   if (result == ESP_ERR_NVS_NOT_FOUND) return true;
