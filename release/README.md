@@ -6,10 +6,10 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.4` | `aspen-v0.1.5` |
+| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.5` | `aspen-v0.1.6` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
 
-Show users **Aspen 0.1.5-rc.3 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.5 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -19,7 +19,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.5-rc.3` or `birch-0.1.0-rc.1`;
+Companion device information reports `aspen-0.1.5` or `birch-0.1.0-rc.1`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
@@ -75,7 +75,7 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The bundle name is `aspen-v0.1.5-rc.3-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The bundle name is `aspen-v0.1.5-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
 separate initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -160,7 +160,7 @@ retain identities, settings and installed programs. Initial bootloader,
 partition or filesystem writes are a separate first-install operation; back
 up the node before using them.
 
-## Aspen 0.1.5 candidate
+## Aspen 0.1.5
 
 Use `bot repeaters storage` to inspect free NVS entries and the space required
 to save the monitor policy. Failed policy updates report the affected storage
