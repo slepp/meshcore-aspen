@@ -129,3 +129,36 @@ class HttpsPreparation(unittest.TestCase):
                 args, kwargs = compile.call_args
                 self.assertIn("bot-firmware", args[0])
                 self.assertEqual(kwargs["env"]["ONCHIP_BOT_WASM"], enabled)
+
+    def test_cloudroom_build_uses_sealed_provider_without_secret_arguments(self):
+        secret = "fixture-cloud-token-" * 3
+        fd = hardware.memory_header(hardware.header({"PROVIDER_TOKEN": secret}))
+        profile = "Xiao_S3_WIO_onchip_cloudroom_probe"
+        provider = Path(f"/proc/{os.getpid()}/fd/{fd}")
+        try:
+            with tempfile.TemporaryDirectory(dir=hardware.ROOT / ".tmp") as directory:
+                target = Path(directory) / "cloudroom-test"
+
+                def compile_stub(command, **kwargs):
+                    self.assertIn(f"ENV={profile}", command)
+                    self.assertNotIn(secret, repr(command))
+                    self.assertNotIn(secret, repr(kwargs["env"]))
+                    definitions = Path(kwargs["env"]["ONCHIP_OPERATOR_HEADER"]).read_bytes()
+                    self.assertIn(f'#define ONCHIP_CLOUD_ROOM_CONFIG_HEADER "{provider}"'.encode(), definitions)
+                    self.assertEqual(provider.read_bytes(), hardware.header({"PROVIDER_TOKEN": secret}))
+
+                with patch.object(hardware, "DIRECTORY", Path(directory)), \
+                        patch.object(hardware.subprocess, "run", side_effect=compile_stub):
+                    result = hardware.compile_image({"MESHCORE_PUBLIC_PROVISIONING": 1}, target,
+                                                    profile=profile, cloud_config_fd=fd)
+                    self.assertEqual(result, target / ".pio/build" / profile)
+                    with self.assertRaisesRegex(ValueError, "sealed private header"):
+                        hardware.compile_image({}, target, cloud_config_fd=fd)
+                unsealed = os.memfd_create("unsealed-config", os.MFD_ALLOW_SEALING)
+                try:
+                    with self.assertRaisesRegex(ValueError, "sealed private header"):
+                        hardware.compile_image({}, target, profile=profile, cloud_config_fd=unsealed)
+                finally:
+                    os.close(unsealed)
+        finally:
+            os.close(fd)

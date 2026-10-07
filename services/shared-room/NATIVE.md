@@ -16,6 +16,11 @@ The private `ONCHIP_CLOUD_ROOM_CONFIG_HEADER` may define the strong
 only in the opt-in profile. Keep that header and the resulting image private.
 The `Xiao_S3_WIO_onchip_cloudroom_probe` profile accepts the existing sealed
 operator header path rather than putting credentials in compiler arguments.
+The offline `https_profile.compile_image()` helper accepts that profile and a
+sealed provider descriptor through `profile` and `cloud_config_fd`. Create the
+descriptor with `memory_header()` and close it after compilation. The provider
+contains the frontend token, CA and public alias metadata, not room private
+keys. This build helper does not read or create a node backup.
 
 After an application-only private update, use authenticated Management:
 

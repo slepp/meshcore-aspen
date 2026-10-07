@@ -200,7 +200,7 @@ def readiness():
     return report
 
 
-def compile_image(native, target):
+def compile_image(native, target, profile=ENV, cloud_config_fd=None):
     private_directory(DIRECTORY)
     private_directory(target)
     env = os.environ.copy()
@@ -212,7 +212,15 @@ def compile_image(native, target):
                  "ONCHIP_ROOM_PASSWORD", "ONCHIP_MQTT_URI", "ONCHIP_SERVICE_REGION"):
         env[name] = ""
     env["MESHCORE_HOSTNAME"] = "meshcore-beta-lab"
-    fd = memory_header(header(native))
+    definitions = header(native)
+    if cloud_config_fd is not None:
+        seals = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+        if (type(cloud_config_fd) is not int or profile != "Xiao_S3_WIO_onchip_cloudroom_probe" or
+                fcntl.fcntl(cloud_config_fd, fcntl.F_GET_SEALS) & seals != seals):
+            raise ValueError("Cloud-room configuration requires a sealed private header and the cloudroom probe profile")
+        definitions += (f'\n#undef ONCHIP_CLOUD_ROOM_CONFIG_HEADER\n'
+                        f'#define ONCHIP_CLOUD_ROOM_CONFIG_HEADER "/proc/{os.getpid()}/fd/{cloud_config_fd}"\n').encode()
+    fd = memory_header(definitions)
     try:
         env["ONCHIP_OPERATOR_HEADER"] = f"/proc/{os.getpid()}/fd/{fd}"
         log = DIRECTORY / (target.name + ".log")
@@ -220,10 +228,10 @@ def compile_image(native, target):
         with os.fdopen(os.open(log, flags, 0o600), "w") as output:
             subprocess.run(["make", "-s", "-C", str(ROOT / "firmware/esp32"), "bot-firmware",
                             f"BUILD={target}", f"CONFIG={ROOT / 'firmware/esp32/platformio.ini.example'}",
-                            f"ENV={ENV}"], env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
+                            f"ENV={profile}"], env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
     finally:
         os.close(fd)
-    return target / ".pio/build" / ENV
+    return target / ".pio/build" / profile
 
 
 def build():
