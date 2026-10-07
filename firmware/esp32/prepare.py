@@ -267,7 +267,7 @@ def generate(upstream, target):
                     text = replace_once(text, anchor, f"""
   if (onchip::networkClockCommand(command, reply, 160, false)) return;
   if (!strcmp(command, "ver")) {{
-    snprintf(reply, 160, "v%s (Build: %s)", ONCHIP_FIRMWARE_VERSION, __DATE__);
+    snprintf(reply, 160, "%s (Build: %s)", ONCHIP_FIRMWARE_VERSION, __DATE__);
     return;
   }}
   if (onchip::lifecycleCommand(onchip::Role::{role.title()}, sender_timestamp, command, reply)) return;

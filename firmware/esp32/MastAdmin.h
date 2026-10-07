@@ -106,6 +106,11 @@ private:
   void rolesCommand(const char *argument, Reply &reply);
   bool validACL(const ACL &acl) const;
   bool validExtraReplay(const ExtraReplay &replay) const;
+  bool loadReplay();
+  bool saveReplay(const Replay &replay, const ExtraReplay &extra);
+#if defined(MESHCORE_MAST_WEB_TEST)
+  friend struct MastReplayStorageTest;
+#endif
   void aclCommand(char *command, Reply &reply);
 };
 } // namespace onchip

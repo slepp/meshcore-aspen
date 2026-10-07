@@ -25,7 +25,7 @@ bool useful(const nvs_entry_info_t &entry) {
 }
 bool stable(const nvs_entry_info_t &entry) {
   return strcmp(entry.namespace_name, "mc-mast-admin") ||
-         (strcmp(entry.key, "replay") && strcmp(entry.key, "replay-extra") && strcmp(entry.key, "owner-replay"));
+         (strcmp(entry.key, "replay-extra") && strcmp(entry.key, "owner-replay"));
 }
 class EspBackup final : public FirmwareNodeBackup {
   bool records(backup::TarWriter *archive, uint8_t digest[32], char *error, size_t capacity) {

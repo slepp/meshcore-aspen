@@ -20,6 +20,7 @@
 #include <helpers/ClientACL.h>
 #include "TelemetryService.h"
 #include <nvs.h>
+#include <SPIFFS.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -69,6 +70,54 @@ struct PasswordRecord {
   char password[16]{};
   uint8_t digest[32]{};
 };
+constexpr const char *ReplayFiles[] = {"/mast-replay-a.bin", "/mast-replay-b.bin"};
+struct ReplayReference {
+  uint8_t magic[4]{'M', 'R', 'P', 2}, slot = 0, reserved[3]{}, digest[32]{};
+  bool valid() const {
+    return !memcmp(magic, "MRP\2", 4) && slot < 2 &&
+           !reserved[0] && !reserved[1] && !reserved[2];
+  }
+};
+bool replayReference(ReplayReference &reference, bool &present, bool &legacy) {
+  present = legacy = false;
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-mast-admin", NVS_READONLY, &handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK) return false;
+  size_t size = 0;
+  result = nvs_get_blob(handle, "replay", nullptr, &size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) { nvs_close(handle); return true; }
+  legacy = size == 148;
+  if (result != ESP_OK || (!legacy && size != sizeof(reference))) {
+    nvs_close(handle); return false;
+  }
+  if (!legacy) {
+    result = nvs_get_blob(handle, "replay", &reference, &size);
+    if (size != sizeof(reference) || !reference.valid()) result = ESP_ERR_INVALID_STATE;
+  }
+  nvs_close(handle);
+  present = result == ESP_OK;
+  return present;
+}
+bool reclaimExtraReplay() {
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-mast-admin", NVS_READONLY, &handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK) return false;
+  size_t size = 0;
+  result = nvs_get_blob(handle, "replay-extra", nullptr, &size);
+  nvs_close(handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK || nvs_open("mc-mast-admin", NVS_READWRITE, &handle) != ESP_OK) return false;
+  result = nvs_erase_key(handle, "replay-extra");
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK || nvs_open("mc-mast-admin", NVS_READONLY, &handle) != ESP_OK) return false;
+  size = 0;
+  result = nvs_get_blob(handle, "replay-extra", nullptr, &size);
+  nvs_close(handle);
+  return result == ESP_ERR_NVS_NOT_FOUND;
+}
 static_assert(sizeof(PasswordRecord) == 52, "Management password record layout changed");
 bool loadPassword(PasswordRecord &record, bool &present) {
   if (!mastRecord("password", &record, sizeof(record), false, present)) return false;
@@ -778,6 +827,72 @@ void MastAdmin::wifiCommand(char *command, Reply &reply, Transport transport,
   }
   strcpy(reply.text, "Error: usage: get wifi.enabled|ssid|pwd|ip|status; set wifi.ssid|pwd TEXT; set wifi.enabled 0|1");
 }
+bool MastAdmin::loadReplay() {
+  ReplayReference reference;
+  bool present, legacy;
+  if (!replayReference(reference, present, legacy)) return false;
+  if (present && !legacy) {
+    struct Snapshot { Replay replay; ExtraReplay extra; } snapshot{};
+    auto file = SPIFFS.open(ReplayFiles[reference.slot], "r");
+    const bool complete = file && file.size() == sizeof(snapshot) &&
+        file.read(reinterpret_cast<uint8_t *>(&snapshot), sizeof(snapshot)) == sizeof(snapshot) &&
+        file.size() == sizeof(snapshot);
+    file.close();
+    uint8_t digest[32];
+    mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot));
+    if (!complete || memcmp(digest, reference.digest, sizeof(digest)) ||
+        snapshot.replay.version != 1 || !validExtraReplay(snapshot.extra)) return false;
+    if (!reclaimExtraReplay()) return false;
+    replay_ = snapshot.replay;
+    extraReplay_ = snapshot.extra;
+    return true;
+  }
+  bool replayPresent, extraPresent;
+  if (!mastRecord("replay", &replay_, sizeof(replay_), false, replayPresent) || replay_.version != 1 ||
+      !mastRecord("replay-extra", &extraReplay_, sizeof(extraReplay_), false, extraPresent) ||
+      (extraPresent && !validExtraReplay(extraReplay_))) return false;
+  if (!replayPresent && !extraPresent) return true;
+  mesh::Utils::sha256(extraReplay_.digest, sizeof(extraReplay_.digest),
+                      reinterpret_cast<const uint8_t *>(&extraReplay_), offsetof(ExtraReplay, digest));
+  return saveReplay(replay_, extraReplay_);
+}
+bool MastAdmin::saveReplay(const Replay &replay, const ExtraReplay &extra) {
+  struct Snapshot { Replay replay; ExtraReplay extra; } snapshot{replay, extra}, check{};
+  static_assert(sizeof(snapshot) == 400 && sizeof(ReplayReference) == 40,
+                "Recheck replay migration and NVS budget");
+  mesh::Utils::sha256(snapshot.extra.digest, sizeof(snapshot.extra.digest),
+                      reinterpret_cast<const uint8_t *>(&snapshot.extra), offsetof(ExtraReplay, digest));
+  if (snapshot.replay.version != 1 || !validExtraReplay(snapshot.extra)) return false;
+  ReplayReference previous, next;
+  bool present, legacy;
+  if (!replayReference(previous, present, legacy)) return false;
+  next.slot = present && !legacy ? 1 - previous.slot : 0;
+  mesh::Utils::sha256(next.digest, sizeof(next.digest),
+                      reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot));
+  const auto verifyFile = [&](const ReplayReference &reference) {
+    auto file = SPIFFS.open(ReplayFiles[reference.slot], "r");
+    const bool complete = file && file.size() == sizeof(check) &&
+        file.read(reinterpret_cast<uint8_t *>(&check), sizeof(check)) == sizeof(check) &&
+        file.size() == sizeof(check);
+    file.close();
+    uint8_t digest[32];
+    mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&check), sizeof(check));
+    return complete && !memcmp(digest, reference.digest, sizeof(digest));
+  };
+  if (present && !legacy && !verifyFile(previous)) return false;
+  auto file = SPIFFS.open(ReplayFiles[next.slot], "w");
+  if (!file) return false;
+  const bool complete = file.write(reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot)) == sizeof(snapshot);
+  file.flush();
+  file.close();
+  if (!complete || !verifyFile(next) || memcmp(&snapshot, &check, sizeof(snapshot))) return false;
+  if (!mastRecord("replay", &next, sizeof(next), true, present)) return false;
+  ReplayReference actual;
+  if (!replayReference(actual, present, legacy) || !present || legacy ||
+      memcmp(&actual, &next, sizeof(next)) || !verifyFile(actual) ||
+      memcmp(&snapshot, &check, sizeof(snapshot))) return false;
+  return reclaimExtraReplay();
+}
 bool MastAdmin::begin(WifiKissMultiplexer &mux, uint8_t mask, ProfileJournal &journal,
                       Management &management) {
   activeAdmin = this;
@@ -793,10 +908,7 @@ bool MastAdmin::begin(WifiKissMultiplexer &mux, uint8_t mask, ProfileJournal &jo
     strcpy(outcome_, "Error: settings invalid; native password/compiled-key recovery required");
     Serial.println(outcome_);
   }
-  ready_ = mastRecord("replay", &replay_, sizeof(replay_), false, present) &&
-           replay_.version == 1 &&
-           mastRecord("replay-extra", &extraReplay_, sizeof(extraReplay_), false, present) &&
-           (!present || validExtraReplay(extraReplay_)) &&
+  ready_ = loadReplay() &&
            mastRecord("owner-replay", &ownerReplay_, sizeof(ownerReplay_), false, present) &&
            ownerReplay_.version == 1;
   if (!ready_) {
@@ -871,33 +983,21 @@ bool MastAdmin::rememberTimestamp(const uint8_t key[32], uint32_t timestamp) {
   Replay next = replay_;
   ExtraReplay extra = extraReplay_;
   Replay::Peer *slot = nullptr;
-  bool inExtra = false;
   for (auto &peer : next.peers)
     if (!memcmp(peer.key, key, 32)) { slot = &peer; break; }
     else if (!peer.timestamp && !slot) slot = &peer;
   for (auto &peer : extra.peers)
-    if (!memcmp(peer.key, key, 32)) { slot = &peer; inExtra = true; break; }
-    else if (!peer.timestamp && !slot) { slot = &peer; inExtra = true; }
+    if (!memcmp(peer.key, key, 32)) { slot = &peer; break; }
+    else if (!peer.timestamp && !slot) { slot = &peer; }
   if (!slot) {
     Serial.println("Mast replay capacity exhausted (10); inspect auth peer and auth forget obsolete KEY");
     return false;
   }
   memcpy(slot->key, key, 32);
   slot->timestamp = timestamp;
-  bool present;
-  Replay actual;
-  ExtraReplay actualExtra;
-  if (inExtra)
-    mesh::Utils::sha256(extra.digest, sizeof(extra.digest), reinterpret_cast<const uint8_t *>(&extra),
-                        offsetof(ExtraReplay, digest));
-  const bool saved = inExtra
-      ? mastRecord("replay-extra", &extra, sizeof(extra), true, present) &&
-        mastRecord("replay-extra", &actualExtra, sizeof(actualExtra), false, present) &&
-        present && !memcmp(&extra, &actualExtra, sizeof(extra))
-      : mastRecord("replay", &next, sizeof(next), true, present) &&
-        mastRecord("replay", &actual, sizeof(actual), false, present) &&
-        present && !memcmp(&next, &actual, sizeof(next));
-  if (!saved) {
+  mesh::Utils::sha256(extra.digest, sizeof(extra.digest), reinterpret_cast<const uint8_t *>(&extra),
+                      offsetof(ExtraReplay, digest));
+  if (!saveReplay(next, extra)) {
     ready_ = false;
     strcpy(outcome_, "Error: replay commit/readback unknown; restart before native administration");
     Serial.println(outcome_); return false;
@@ -1764,18 +1864,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     if (foundExtra)
       mesh::Utils::sha256(extra.digest, sizeof(extra.digest), reinterpret_cast<const uint8_t *>(&extra),
                           offsetof(ExtraReplay, digest));
-    bool present;
     if (!found && !foundExtra) {
       strcpy(reply.text, "Error: principal absent"); return;
     }
-    Replay actual;
-    ExtraReplay actualExtra;
-    if ((found && (!mastRecord("replay", &next, sizeof(next), true, present) ||
-                   !mastRecord("replay", &actual, sizeof(actual), false, present) ||
-                   !present || memcmp(&next, &actual, sizeof(next)))) ||
-        (foundExtra && (!mastRecord("replay-extra", &extra, sizeof(extra), true, present) ||
-                        !mastRecord("replay-extra", &actualExtra, sizeof(actualExtra), false, present) ||
-                        !present || memcmp(&extra, &actualExtra, sizeof(extra))))) {
+    if (!saveReplay(next, extra)) {
       ready_ = false;
       strcpy(reply.text, "Error: replay forget commit/readback unknown; restart before native administration"); return;
     }

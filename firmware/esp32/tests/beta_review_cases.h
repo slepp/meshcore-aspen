@@ -11,8 +11,10 @@ static void stock_admin_routes() {
     }
   };
   const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
   for (bool scoped : {false, true}) for (uint8_t width : {1, 2, 3}) {
     identity_test::durable = baseline;
+    filesystem_test::files = files;
     BetaFixture f;
     RequestPeer peer(width, scoped);
     NativeRelay relay(scoped);
@@ -88,6 +90,7 @@ static void stock_admin_routes() {
     assert(peer.response.empty());
   }
   identity_test::durable = baseline;
+  filesystem_test::files = files;
   puts("PASS stock BaseChat admin: trusted blank login, scoped/unscoped relay, 1/2/3-byte CLI/status/telemetry, unknown/forgotten request denial");
 }
 static void web_expiry_and_host() {
@@ -132,6 +135,7 @@ static void web_expiry_and_host() {
 }
 static void replay_capacity_and_cancellation() {
   const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
   struct FixtureSeed : mesh::RNG {
     void random(uint8_t *bytes, size_t size) override {
       for (size_t i = 0; i < size; ++i) bytes[i] = uint8_t(i);
@@ -177,10 +181,12 @@ static void replay_capacity_and_cancellation() {
     assert(f.management.admin().lastTimestamp(compiledOwner.pub_key) == 1800000010);
   }
   identity_test::durable = baseline;
+  filesystem_test::files = files;
   puts("PASS replay: six ordinary sessions preserve compiled owner across reboot, authenticated forget, failed TX/retry cache and timeout cancellation");
 }
 static void invalid_rf_logins_do_not_throttle_owner() {
   const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
   {
     BetaFixture f;
     Peer invalid, owner;
@@ -191,12 +197,15 @@ static void invalid_rf_logins_do_not_throttle_owner() {
     assert(timeMs - start < 1000);
   }
   identity_test::durable = baseline;
+  filesystem_test::files = files;
   puts("PASS invalid encrypted RF login burst cannot consume owner authentication gate");
 }
 static void corrupt_replay_keeps_services() {
   const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
   for (const auto &record : {Bytes{1}, Bytes(149, 0), Bytes(148, 0)}) {
     identity_test::durable = baseline;
+    filesystem_test::files = files;
     identity_test::durable[{"mc-mast-admin", "replay"}] = record;
     BetaFixture f;
     assert(!f.management.admin().ready());
@@ -244,6 +253,7 @@ static void corrupt_replay_keeps_services() {
     assert(login.status == "503 Service Unavailable");
   }
   identity_test::durable = baseline;
+  filesystem_test::files = files;
   puts("PASS corrupt/re-sized replay: admin fails closed; bot, shared queued radio and identities survive");
 }
 static void temporary_restores_durable() {
@@ -268,6 +278,7 @@ static void temporary_restores_durable() {
 }
 static void live_source_retry() {
   const auto baseline = identity_test::durable;
+  const auto files = filesystem_test::files;
   {
     BetaFixture f;
     const std::string source = "function recovered() reply('recovered') end command('recovered','','Retry recovery')";
@@ -314,6 +325,7 @@ static void live_source_retry() {
     assert(f.action("source status").find("durably saved and active") != std::string::npos);
   }
   identity_test::durable = baseline;
+  filesystem_test::files = files;
   puts("PASS live source: injected post-commit read failure, bounded retries, prior public replies and manual recovery");
 }
 static void selected_source_boot_health() {

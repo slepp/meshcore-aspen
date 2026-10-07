@@ -850,10 +850,27 @@ files or their transient shared-secret/route state.
 An authenticated CLI session lasts 15 minutes. Six ordinary full RF principals
 and the separately reserved compiled owner can have simultaneous sessions.
 Ten noncompiled principals have durable timestamp high-water marks: the
-existing four version-1 replay slots remain intact, and six additional slots
+existing four replay slots remain intact, and six additional slots
 accommodate five ACL owners plus the retained singleton. Version-1 settings,
 WiFi, singleton trust and the reserved compiled-owner replay record retain
 their existing layouts and contents; no identity changes are made.
+The ten ordinary high-water marks use two checked 400-byte SPIFFS files and
+one 40-byte NVS reference. An older primary/extra replay pair is migrated only
+after the new file and reference read back correctly; its keys, timestamps and
+slot numbers are retained. Reclaiming the old metadata leaves the Lua storage
+reserve unchanged. A missing or corrupt authoritative file disables native
+administration rather than accepting old timestamps. Whole-node backups include
+these files.
+Wait for backup creation to finish without sending further RF administration
+commands: those commands update replay files. If replay state changes during
+snapshot creation, the backup reports changed settings/files rather than
+publishing mismatched files and references. Browser status reads do not advance
+RF replay timestamps.
+
+**Downgrade:** firmware predating this file-backed replay format cannot read
+the new authority and will disable native administration. Keep a compatible
+application when updating an initialized radio; do not erase replay records
+to restore RF access.
 Authenticated `auth forget KEY` removes a noncompiled replay record and
 session to free a slot; it does not revoke retained credentials. Use a stable companion identity rather
 than generating another identity for every command. A companion owns
