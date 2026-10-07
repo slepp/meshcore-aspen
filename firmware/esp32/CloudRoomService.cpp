@@ -69,6 +69,7 @@ struct Service {
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
   std::atomic<uint32_t> connectedAliases{0};
+  char lastError[96]{};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
   struct Connection {
@@ -104,10 +105,10 @@ struct Service {
           if (int32_t(millis() - c.retryAt) < 0) continue;
           char error[96]{};
           if (!c.socket->open(driver->peer(alias), error, sizeof(error))) {
-            // Deliberately fixed text: TLS/library diagnostics may include peer
-            // data, but no token or packet plaintext enters public diagnostics.
-            Serial.printf("Cloud room %s WSS unavailable; verify endpoint, CA, token and UTC\n",
-                          driver->peer(alias).alias);
+            xSemaphoreTake(admission, portMAX_DELAY);
+            snprintf(lastError,sizeof(lastError),"%s",error);
+            xSemaphoreGive(admission);
+            Serial.printf("Cloud room %s WSS unavailable: %s\n",driver->peer(alias).alias,error);
             lost(alias); continue;
           }
           c.connected = true; c.backoffMs = 2000;
@@ -218,6 +219,16 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
              unsigned(service.advertisements.load(std::memory_order_relaxed)));
     return;
   }
+  if (!strcmp(command, "error")) {
+    if (!service.task) {
+      snprintf(reply,capacity,"Cloud room is not configured");return;
+    }
+    if (xSemaphoreTake(service.admission,0)!=pdTRUE) {
+      snprintf(reply,capacity,"Error: cloud room status busy; try cloudroom error again");return;
+    }
+    snprintf(reply,capacity,"Cloud room last-open-error: %s",*service.lastError?service.lastError:"none");
+    xSemaphoreGive(service.admission);return;
+  }
   if (!strncmp(command, "advertise ", 10)) {
     for (unsigned alias = 0; alias < service.aliases; ++alias)
       if (!strcmp(command + 10, service.driver->peer(alias).alias)) {
@@ -229,7 +240,7 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
     snprintf(reply, capacity, "Error: cloud room alias is not active; inspect private configuration and cloudroom status");
     return;
   }
-  snprintf(reply, capacity, "Error: cloudroom status|advertise ALIAS");
+  snprintf(reply, capacity, "Error: cloudroom status|error|advertise ALIAS");
 }
 } // namespace onchip
 #else

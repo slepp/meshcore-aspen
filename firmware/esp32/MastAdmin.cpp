@@ -220,7 +220,7 @@ constexpr Help topics[] = {
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
-    {"cloudroom", "cloudroom status|advertise ALIAS; direct authenticated administration; private profile/configuration required; RF delivery unconfirmed"},
+    {"cloudroom", "cloudroom status|error|advertise ALIAS; direct authenticated administration; private profile/configuration required; RF delivery unconfirmed"},
     {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},

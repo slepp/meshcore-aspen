@@ -26,6 +26,7 @@ After an application-only private update, use authenticated Management:
 
 ```text
 cloudroom status
+cloudroom error
 cloudroom advertise ALIAS
 ```
 
@@ -34,6 +35,12 @@ and `advert-pending` marks explicit requests waiting for the network driver.
 An accepted advertisement request does not confirm RF reception. Check it
 on a companion radio. These controls reject source/bot invocations, and no
 advertisement is requested by startup or status reads.
+
+If `wss-mask` stays zero, `cloudroom error` reports the last failed connection
+attempt. TLS errors name the failed phase and report the SDK code and available
+internal heap; upgrade errors report the HTTP status and whether the v2
+subprotocol was returned. HTTP 401 means the frontend token was rejected.
+No token, certificate contents or response body is included.
 
 `CloudRoomService` runs one network task with eight-slot RX/TX/result SPSC
 queues. Dispatch-owned `LocalRadio` receives RF, filters local reflections,

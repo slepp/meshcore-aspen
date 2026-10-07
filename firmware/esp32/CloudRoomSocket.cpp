@@ -37,6 +37,7 @@ class EspWss final:public CloudRoomSocket {
   const CloudRoomPeer *peer_=nullptr;
   char address_[16]{};
   char error_[96]{};
+  unsigned upgradeHttp_=0;
   int peek_=-1;
   size_t upgradeBytes_=0;
   uint32_t upgradeStarted_=0;
@@ -53,9 +54,14 @@ class EspWss final:public CloudRoomSocket {
     if(upgradeLineSize_&&upgradeLine_[upgradeLineSize_-1]=='\r')--upgradeLineSize_;
     upgradeLine_[upgradeLineSize_]=0;
     if(!upgradeOverflow_) {
-      if(firstUpgradeLine_)
+      if(firstUpgradeLine_) {
         upgradeStatus_=strncmp(upgradeLine_,"HTTP/1.1 101",12)==0 && (upgradeLine_[12]==0||upgradeLine_[12]==' ');
-      else if(strncasecmp(upgradeLine_,"Sec-WebSocket-Protocol:",23)==0) {
+        if(strncmp(upgradeLine_,"HTTP/1.1 ",9)==0 && strlen(upgradeLine_)>=12 &&
+           upgradeLine_[9]>='1'&&upgradeLine_[9]<='5' &&
+           upgradeLine_[10]>='0'&&upgradeLine_[10]<='9' &&
+           upgradeLine_[11]>='0'&&upgradeLine_[11]<='9')
+          upgradeHttp_=unsigned(upgradeLine_[9]-'0')*100+unsigned(upgradeLine_[10]-'0')*10+unsigned(upgradeLine_[11]-'0');
+      } else if(strncasecmp(upgradeLine_,"Sec-WebSocket-Protocol:",23)==0) {
         char *value=upgradeLine_+23;
         while(*value==' '||*value=='\t')++value;
         size_t len=strlen(value);
@@ -152,6 +158,7 @@ public:
     }
     if(!tls_)tls_=createPersistentBotTlsTransport();
     if(!tls_){snprintf(error,capacity,"Cloud-room TLS transport unavailable");return false;}
+    tls_->resetDiagnostics();
     peer_=&peer;
     parent_=esp_transport_init();
     if(parent_) {
@@ -173,11 +180,23 @@ public:
     const auto configured=esp_transport_ws_set_config(ws_,&config);
     memset(headers,0,sizeof(headers));
     upgradeBytes_=upgradeLineSize_=0;upgradeOverflow_=upgradeStatus_=upgradeProtocol_=false;
+    upgradeHttp_=0;
     firstUpgradeLine_=true;upgrading_=true;
     upgradeStarted_=tls_->now();
     const int status=configured==ESP_OK?esp_transport_connect(ws_,peer.host,443,IoTimeoutMs):-1;
     upgrading_=false;peer_=nullptr;
-    if(status<0||!upgradeStatus_||!upgradeProtocol_){close();snprintf(error,capacity,"Cloud-room WSS connection/upgrade failed");return false;}
+    if(status<0||!upgradeStatus_||!upgradeProtocol_) {
+      const auto tls=tls_->diagnostics();
+      if(tls.point!=BotHttpsFailurePoint::None)
+        snprintf(error,capacity,"TLS %s sdk=%ld free=%lu block=%lu",botHttpsFailureName(tls.point),
+                 long(tls.sdk),static_cast<unsigned long>(tls.failure),static_cast<unsigned long>(tls.largestFailure));
+      else if(configured!=ESP_OK)
+        snprintf(error,capacity,"WSS configuration failed code=%ld",long(configured));
+      else
+        snprintf(error,capacity,"WSS upgrade failed http=%u protocol=%u bytes=%u",
+                 upgradeHttp_,unsigned(upgradeProtocol_),unsigned(upgradeBytes_));
+      close();return false;
+    }
     return true;
   }
   bool send(char *json,size_t size) override {

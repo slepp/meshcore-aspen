@@ -610,7 +610,10 @@ static void management_cli_core() {
       assert(std::string(reply.text) == "Cloud room aliases=0 sockets=0 wss-mask=0 advert-pending=0");
       f.management.admin().execute("cloudroom advertise TestA", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
       assert(strstr(reply.text, "disabled in this image"));
+      f.management.admin().execute("cloudroom error", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "disabled in this image"));
       assert(f.action("cloudroom status").find("direct authenticated") != std::string::npos);
+      assert(f.action("cloudroom error").find("direct authenticated") != std::string::npos);
       f.management.admin().execute("cloudroom advertise TestA", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
       assert(strstr(reply.text, "direct authenticated"));
       assert(identity_test::durable == saved && filesystem_test::files == savedFiles);
