@@ -442,6 +442,7 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
           !strncmp(text, "Command SPIFFS source read: ", 27);
       return queueDiagnostic(text, false, metrics);
     });
+  commandBot.setContactLookup(companionContactAdvert);
   if (!commandBot.begin(mux)) {
     Serial.println("On-chip command bot failed; existing services remain available");
   } else if (commandBot.publicKey() &&

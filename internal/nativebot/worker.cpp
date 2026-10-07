@@ -335,6 +335,8 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
     std::strcpy(reply, "role=bot name=persistent/live key=Go-owner/staged-apply channel-slots=1 channel-key-bits=128 RF=shared");
   } else if (!std::strcmp(command, "discovery") || !std::strncmp(command, "discovery ", 10)) {
     bot.discoveryCommand(command[9] ? command + 10 : "", reply, sizeof(reply));
+  } else if (!std::strcmp(command, "contacts")) {
+    bot.contactStatus(reply, sizeof(reply));
   } else if (!std::strcmp(command, "name")) {
     onchip::BotMeshPolicy policy;
     if (!onchip::loadBotMeshPolicy(policy)) std::strcpy(reply, "Error: saved bot name unavailable");

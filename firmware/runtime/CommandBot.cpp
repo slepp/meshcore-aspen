@@ -167,13 +167,15 @@ struct CommandBot::Core : mesh::Mesh {
     char name[33]{};
     uint32_t observedAt = 0;
     uint8_t observedWidth = 0, observedHops = 0;
-    bool local = false, measured = false;
+    bool local = false, measured = false, observed = false;
     bool ackSent = false;
     uint32_t ackAt = 0;
     uint8_t ackHash[4]{};
     float rssi = 0, snr = 0;
     PeerRoute route;
   } contacts[16];
+  uint32_t contactRecoveryAt = 0, contactsRecovered = 0, contactRecoveryRejected = 0;
+  bool contactRecoveryStarted = false;
   uint8_t matches[16]{};
   struct Seen {
     uint8_t request[16]{};
@@ -506,10 +508,10 @@ struct CommandBot::Core : mesh::Mesh {
     Contact *slot = nullptr;
     for (auto &contact : contacts) {
       if (contact.used && contact.id.matches(id)) {
-        if (timestamp <= contact.advert) return;
+        if (timestamp < contact.advert || (timestamp == contact.advert && contact.observed)) return;
         slot = &contact; break;
       }
-      if (!slot && (!contact.used ||
+      if (!slot && (!contact.used || (!contact.observed && repeaterIndex(contact.id.pub_key) < 0) ||
                     (repeaterIndex(contact.id.pub_key) < 0 &&
                      uint32_t(millis() - contact.heard) >= 600000)))
         slot = &contact;
@@ -517,6 +519,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!slot) { reject("Bot contact table full (16)"); return; }
     if (!slot->used || !slot->id.matches(id)) *slot = {};
     slot->used = true;
+    slot->observed = true;
     slot->id = id; slot->advert = timestamp; slot->heard = millis();
     snprintf(slot->name, sizeof(slot->name), "%.32s", advert.getName());
     for (char *p = slot->name; *p; ++p)
@@ -545,7 +548,7 @@ struct CommandBot::Core : mesh::Mesh {
   void neighbors(unsigned page, char *text, size_t capacity) const {
     unsigned count = 0;
     const Contact *selected = nullptr;
-    for (const auto &contact : contacts) if (contact.used) {
+    for (const auto &contact : contacts) if (contact.used && contact.observed) {
       if (++count == page) selected = &contact;
     }
     if (!count && page == 1) { snprintf(text, capacity, "No observed signed adverts; not a live neighbor scan"); return; }
@@ -567,7 +570,76 @@ struct CommandBot::Core : mesh::Mesh {
       snprintf(text, capacity, "Observed %u/%u %s age=%us rx=%s cached=%s%s",
                page, count, key, unsigned(millis() - c.observedAt) / 1000, rx, route, next);
   }
+  void recoverContacts(const uint8_t *hash) {
+    if (!owner.contactLookup_ ||
+        (contactRecoveryStarted && uint32_t(millis() - contactRecoveryAt) < 1000)) return;
+    contactRecoveryStarted = true;
+    contactRecoveryAt = millis();
+    unsigned cursor = 0;
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
+      uint8_t key[32]{}, raw[255]{}, size = 0;
+      const unsigned previous = cursor;
+      if (!owner.contactLookup_(hash, cursor, key, raw, size)) return;
+      if (cursor <= previous) {
+        ++contactRecoveryRejected;
+        owner.fault("Bot contact recovery failed: companion lookup cursor did not advance");
+        return;
+      }
+      mesh::Identity id(key);
+      if (!id.isHashMatch(hash)) {
+        ++contactRecoveryRejected;
+        owner.fault("Bot contact recovery rejected companion key: peer hash mismatch");
+        continue;
+      }
+      if (self_id.matches(key)) continue;
+      bool known = false;
+      Contact *slot = nullptr, *recyclable = nullptr;
+      for (auto &contact : contacts) {
+        if (contact.used && contact.id.matches(key)) { known = true; break; }
+        if (!slot && !contact.used) slot = &contact;
+        if (!recyclable && !contact.observed && repeaterIndex(contact.id.pub_key) < 0)
+          recyclable = &contact;
+      }
+      if (known) continue;
+      if (!slot) slot = recyclable;
+      if (!slot) {
+        ++contactRecoveryRejected;
+        owner.fault("Bot contact recovery failed: contact table full (16)");
+        return;
+      }
+      mesh::Packet packet{};
+      if (!size || !packet.readFrom(raw, size) || packet.getPayloadVer() != PAYLOAD_VER_1 ||
+          packet.getPayloadType() != PAYLOAD_TYPE_ADVERT ||
+          !mesh::Packet::isValidPathLen(packet.path_len) || packet.payload_len < 100 ||
+          packet.payload_len > 100 + MAX_ADVERT_DATA_SIZE || memcmp(packet.payload, key, 32)) {
+        ++contactRecoveryRejected;
+        owner.fault("Bot contact recovery rejected companion advert: missing data or invalid format/full key");
+        continue;
+      }
+      const size_t dataSize = packet.payload_len - 100;
+      const auto *data = packet.payload + 100;
+      uint8_t message[36 + MAX_ADVERT_DATA_SIZE]{};
+      memcpy(message, packet.payload, 36);
+      memcpy(message + 36, data, dataSize);
+      AdvertDataParser advert(data, dataSize);
+      if (!id.verify(packet.payload + 36, message, 36 + dataSize) ||
+          !advert.isValid() || !advert.hasName()) {
+        ++contactRecoveryRejected;
+        owner.fault("Bot contact recovery rejected companion advert: invalid signature or name");
+        continue;
+      }
+      *slot = {};
+      slot->used = true;
+      slot->id = id;
+      slot->advert = queued_tx::get32(packet.payload + 32);
+      snprintf(slot->name, sizeof(slot->name), "%.32s", advert.getName());
+      for (char *p = slot->name; *p; ++p)
+        if (static_cast<unsigned char>(*p) < 32 || static_cast<unsigned char>(*p) > 126) *p = '?';
+      ++contactsRecovered;
+    }
+  }
   int searchPeersByHash(const uint8_t *hash) override {
+    recoverContacts(hash);
     int count = 0;
     for (unsigned i = 0; i < 16; ++i)
       if (contacts[i].used && contacts[i].id.isHashMatch(hash))
@@ -2154,6 +2226,20 @@ void CommandBot::ownerSend(const uint8_t request[16], const uint8_t recipient[32
   if (core_) core_->ownerSend(request, recipient, text, size);
 }
 #endif
+
+void CommandBot::contactStatus(char *text, size_t capacity) const {
+  if (!core_) { snprintf(text, capacity, "Error: bot contact table unavailable; bot inactive"); return; }
+  unsigned contacts = 0, observed = 0, routed = 0;
+  for (const auto &contact : core_->contacts) if (contact.used) {
+    ++contacts;
+    observed += contact.observed;
+    routed += contact.route.length != 0xff;
+  }
+  snprintf(text, capacity,
+           "Contacts=%u/16 observed=%u routed=%u lookup=%s recovered=%u rejected=%u; recovery never learns routes/RF or grants access",
+           contacts, observed, routed, contactLookup_ ? "companion" : "none",
+           core_->contactsRecovered, core_->contactRecoveryRejected);
+}
 
 void CommandBot::admissionStatus(char *text, size_t capacity) const {
   if (!core_) { snprintf(text, capacity, "Bot inactive"); return; }

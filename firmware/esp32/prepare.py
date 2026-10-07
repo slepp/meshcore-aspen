@@ -13,6 +13,28 @@ import sys
 COMPANION_DASHBOARD_BRIDGE = """
 #include "DashboardContacts.h"
 namespace onchip {
+bool companionContactAdvert(const uint8_t* hash, unsigned& cursor,
+                            uint8_t* key, uint8_t* advert, uint8_t& size) {
+  size = 0;
+  if (!meshInstance || lifecycleBusy(Role::Companion)) return false;
+  const int total = meshInstance->getNumContacts();
+  if (total < 0 || total > MAX_CONTACTS) {
+    Serial.println("Bot contact recovery unavailable: companion contact count invalid");
+    return false;
+  }
+  while (cursor < unsigned(total)) {
+    ContactInfo contact{};
+    if (!meshInstance->getContactByIdx(MAX_ANON_CONTACTS + cursor++, contact)) {
+      Serial.println("Bot contact recovery unavailable: companion contact lookup failed");
+      return false;
+    }
+    if (!contact.id.isHashMatch(hash)) continue;
+    memcpy(key, contact.id.pub_key, 32);
+    size = meshInstance->exportContact(contact, advert);
+    return true;
+  }
+  return false;
+}
 void companionDashboardContacts(RadioDashboard::RadioStatus& status) {
 #if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
   status.contacts_available = false;

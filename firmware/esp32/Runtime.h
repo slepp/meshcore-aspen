@@ -31,6 +31,8 @@ void stopManagementForTest();
 #endif
 void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening);
 void companionDashboardContacts(RadioDashboard::RadioStatus &status);
+bool companionContactAdvert(const uint8_t *hash, unsigned &cursor,
+                            uint8_t *key, uint8_t *advert, uint8_t &size);
 bool localTransmitSource(uint8_t slot, uint32_t generation,
                          RadioDashboard::RoleStatus &status);
 void loop();

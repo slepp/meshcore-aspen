@@ -229,7 +229,7 @@ constexpr Help topics[] = {
     {"source", "source help; source status|hash|metadata|helptext|api; source begin|chunk|commit|rollback|remove ..."},
     {"source", "source 2/3: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
     {"source", "source 3/3: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it", 3},
-    {"bot", "bot help; bot status|stats|radio|policy|mesh|name|discovery|adaptive|shared|reminders|events|forward|https ..."},
+    {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|discovery|adaptive|shared|reminders|events|forward|https ..."},
     {"bot", "bot 2/2: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; reboot", 2},
     {"auth", "auth status [KEY64]; auth peer 1..10; auth forget KEY64 (not the compiled owner)"},
     {"trust", "trust KEY64|none; legacy singleton authority; compiled owner and Management ACL unchanged"},
@@ -1704,6 +1704,8 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     for (unsigned i = 0; i < 32; ++i) snprintf(reply.text + 4 + 2 * i, 3, "%02x", key[i]);
   } else if (!strcmp(command, "bot admission")) {
     commandBotService().admissionStatus(reply.text, sizeof(reply.text));
+  } else if (!strcmp(command, "bot contacts")) {
+    commandBotService().contactStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot diagnostics")) {
     commandBotService().diagnosticStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot discovery") || !strncmp(command, "bot discovery ", 14)) {

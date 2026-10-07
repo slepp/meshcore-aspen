@@ -1739,6 +1739,62 @@ static void service_names_without_app_roles() {
   filesystem_test::files = files;
   puts("PASS service names: live/readback/reboot, 31-byte bound, denied/failed writes, unchanged keys/policies/data/PHY; management advert without WiFi/app roles; no KISS/observer advert");
 }
+static void companion_contact_recovery() {
+  const auto records = identity_test::durable;
+  const auto files = filesystem_test::files;
+  assert(saveRoleProfile({7}) && saveBotEnabled(true) && saveAutomaticAdverts(false));
+  beginClocks(RoleProfile(7));
+  Peer caller;
+  const auto advert = caller.advert();
+  std::map<std::string, std::string> keys;
+  std::string source, acl;
+  for (unsigned boot = 0; boot < 2; ++boot) {
+    BetaFixture f(true);
+    f.bot.setContactLookup(companionContactAdvert);
+    if (!boot) {
+      f.mux.received(advert.data(), advert.size(), -90, 5);
+      f.step();
+      assert(companionFlush());
+      for (const char *role : {"repeater", "room", "companion", "bot", "management"})
+        keys[role] = f.action(("role key " + std::string(role)).c_str());
+      source = f.action("source hash");
+      acl = f.action("get acl");
+      f.bot.stop();
+      assert(f.bot.begin(f.mux));
+      f.step();
+    }
+    unsigned cursor = 0;
+    uint8_t key[32]{}, blob[255]{}, size = 0;
+    assert(companionContactAdvert(caller.self_id.pub_key, cursor, key, blob, size));
+    assert(cursor && !memcmp(key, caller.self_id.pub_key, 32) &&
+           Bytes(blob, blob + size) == advert);
+    assert(f.action("bot contacts").find("Contacts=0/16 observed=0 routed=0") == 0);
+    f.radio.sent.clear();
+    const auto request = caller.command(f.bot.publicKey(), "!ping");
+    f.mux.received(request.data(), request.size(), -90, 5);
+    f.step(300);
+    assert(caller.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"Pong"});
+    assert(f.action("bot contacts").find("Contacts=1/16 observed=0 routed=0") == 0);
+    assert(f.action("bot contacts").find("recovered=1 rejected=0") != std::string::npos);
+    f.radio.sent.clear();
+    const auto denied = caller.command(f.bot.publicKey(), "!admin source hash");
+    f.mux.received(denied.data(), denied.size(), -90, 5);
+    f.step(300);
+    const auto replies = caller.replies(f.bot.publicKey(), f.radio);
+    assert(replies.size() == 1 && replies[0].find("permission not granted") != std::string::npos);
+    for (const auto &wire : f.radio.sent) {
+      mesh::Packet packet{};
+      assert(packet.readFrom(wire.data(), wire.size()) && packet.getPayloadType() != PAYLOAD_TYPE_ADVERT);
+    }
+    for (const auto &entry : keys)
+      assert(f.action(("role key " + entry.first).c_str()) == entry.second);
+    assert(f.action("source hash") == source && f.action("get acl") == acl);
+  }
+  identity_test::durable = records;
+  filesystem_test::files = files;
+  assert(reloadAutomaticAdverts());
+  puts("PASS native companion contact recovery: saved signed blob, bot/full-role restart, encrypted DM without new advert, independent ACL, no routes/RF/rebroadcast and retained identities/source");
+}
 static void automatic_adverts() {
   const auto records = identity_test::durable;
   const auto files = filesystem_test::files;
@@ -3262,6 +3318,10 @@ static void adaptive_policy_admin() {
 }
 
 int main(int argc, char **argv) {
+#ifdef ONCHIP_CONTACT_RECOVERY_TEST
+  companion_contact_recovery();
+  return 0;
+#endif
 #ifdef ONCHIP_RUNTIME_CONFIG_ADMIN_TEST
   assert(saveRoleProfile({0}) && saveBotEnabled(true));
   runtime_config_admin();

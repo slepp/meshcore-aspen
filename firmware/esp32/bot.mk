@@ -48,6 +48,9 @@ bot-channel-policy-test: bot-host-runner
 .PHONY: bot-thread-policy-test
 bot-thread-policy-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --thread-policy-test
+.PHONY: bot-contact-recovery-test
+bot-contact-recovery-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --contact-recovery-test
 bot-repeater-storage-test: bot-prepare-phy
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) $(BOT_FLAGS) -I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
@@ -283,6 +286,7 @@ bot-wasm-build-test:
 		$(MAKE) bot-firmware BUILD=$(ROOT)/.tmp/onchip-wasm-firmware \
 		CONFIG=$(ROOT)/firmware/esp32/platformio.ini.example ENV=Xiao_S3_WIO_onchip_beta
 $(BOT_HOST_RUNNER): prepare bot-prepare-phy tests/bot_native.cpp tests/support/BotNativeHarness.cpp \
+		tests/bot_contact_recovery_cases.h \
 		tests/support/BotNativeHarness.h tests/support/BotReplayNetwork.cpp tests/support/BotReplayNetwork.h ../runtime/AdaptiveAdmission.h \
 		$(filter-out $(NATIVE)/Repeater.cpp $(NATIVE)/Room.cpp $(NATIVE)/Companion.cpp,$(BOT_REPLAY_RUNTIME_SOURCES)) Runtime.h \
 		$(BOT_NATIVE_SOURCES) $(BOT_NATIVE_MESH_SOURCES) $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(BOT_LUA_OBJECTS) $(BOT_WAMR_LIB)

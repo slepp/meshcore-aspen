@@ -6,10 +6,10 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.7` | `aspen-v0.1.8` |
+| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.8` | `aspen-v0.1.9` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
 
-Show users **Aspen 0.1.7 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.8 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -19,7 +19,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.7` or `birch-0.1.0-rc.1`;
+Companion device information reports `aspen-0.1.8` or `birch-0.1.0-rc.1`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
@@ -159,6 +159,20 @@ Use `help syslog` to configure logging and `stats system`, `stats memory`,
 retain identities, settings and installed programs. Initial bootloader,
 partition or filesystem writes are a separate first-install operation; back
 up the node before using them.
+
+## Aspen 0.1.8
+
+After restart, Aspen's bot can recover a DM caller's identity and name from the
+running on-device companion's saved signed advert. `bot contacts` reports
+recovered contacts and rejected lookups. Full keys and advert signatures are
+rechecked within the existing contact budget; no new persistent cache is
+written. Missing or stopped companions and missing/invalid adverts require
+a new advert from the caller.
+
+Recovered contact knowledge does not supply RF measurements, bot-specific
+routes or administrator access. `!neighbors` continues to report received
+adverts. See [contact recovery](../firmware/esp32/MAST_ADMIN.md#recover-a-bots-known-contacts-after-restart).
+Application-only updates retain identities, settings and installed programs.
 
 ## Aspen 0.1.7
 

@@ -24,6 +24,7 @@ class CommandBot {
   BotNodeSnapshot node_;
   uint32_t previousMillis_ = 0;
   bool (*diagnosticSink_)(const char *) = nullptr;
+  bool (*contactLookup_)(const uint8_t *, unsigned &, uint8_t *, uint8_t *, uint8_t &) = nullptr;
   uint32_t diagnosticsQueued_ = 0, diagnosticsDropped_ = 0;
   void diagnostic(const char *format, ...) __attribute__((format(printf, 2, 3)));
   void fault(const char *message);
@@ -48,6 +49,10 @@ public:
   static constexpr size_t DiagnosticCapacity = 160;
   // Set before begin; the dispatch-thread sink must copy without waiting.
   void setDiagnosticSink(bool (*sink)(const char *)) { diagnosticSink_ = sink; }
+  using ContactLookup = bool (*)(const uint8_t *hash, unsigned &cursor,
+                                uint8_t *key, uint8_t *advert, uint8_t &size);
+  void setContactLookup(ContactLookup lookup) { contactLookup_ = lookup; }
+  void contactStatus(char *text, size_t capacity) const;
   void diagnosticStatus(char *text, size_t capacity) const;
   struct Counters {
     uint32_t malformed = 0, duplicates = 0, rejected = 0, vmFailures = 0,

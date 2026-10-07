@@ -167,6 +167,28 @@ WiFi commands map to Management's own settings;
 repeat/delay/region settings still belong to the Relay or Room.
 See the [app endpoint compatibility table](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 
+### Recover a bot's known contacts after restart
+
+On Aspen, the bot can recover a caller's identity and name from the running
+on-device companion's saved signed adverts when a DM arrives after restart.
+Run `bot contacts` to inspect the 16-slot contact table and the recovered and
+rejected counts. The lookup rechecks the complete public key and native advert
+signature; it does not transmit the saved advert or write another contact cache.
+Recovery scans are limited to one per second and 16 matching candidates.
+
+Recovered contacts have no bot-specific route or RF observation. `!neighbors`
+continues to list received signed adverts, not restored contact knowledge.
+Routes must be learned through the bot's own native path exchange; companion
+routes, login sessions and administrator grants are never copied. A recovered
+identity does not grant owner access.
+
+The companion role must be running and retain the caller's signed advert blob.
+If the role is stopped, the blob is missing or invalid, or the bot's contact
+table is full, the caller must send a new advert that the bot receives.
+Receiving a fresh signed advert replaces restored knowledge with an actual
+observation. Other host and Pine profiles keep their existing role-local
+contact behavior; `lookup=none` means this companion recovery source is absent.
+
 ### Pine BLE application updates
 
 Use Pine's authorized native console and the

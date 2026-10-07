@@ -548,6 +548,7 @@ struct NativeRelay : Peer {
   uint32_t getDirectRetransmitDelay(const mesh::Packet *) override { return 0; }
 };
 #include "bot_discovery_cases.h"
+#include "bot_contact_recovery_cases.h"
 static void stock_chat_through_native_relay() {
   for (bool scoped : {false, true}) for (uint8_t width : {1, 2, 3}) {
     Fixture f;
@@ -4244,6 +4245,10 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
+    native_contact_recovery();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--channel-policy-regression-test")) {
     assert(saveBotEnabled(true));
     native_channel_key_configuration();
@@ -4451,6 +4456,10 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
+    native_contact_recovery();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--channel-policy-regression-test")) {
     assert(saveBotEnabled(true));
     native_channel_key_configuration();
