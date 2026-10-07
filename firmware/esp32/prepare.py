@@ -162,6 +162,8 @@ def generate(upstream, target):
             if path.suffix in (".h", ".cpp") and path.name != "wifi_kiss_main.cpp":
                 shutil.copy2(path, dest / path.name)
     shutil.copytree(source.parent / "runtime/wasm/sdk", dest / "wasm/sdk", dirs_exist_ok=True)
+    shutil.copytree(source.parent / "shared/cloudroom", dest / "cloudroom", dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("tests", "Makefile"))
     mesh_path = target / "src/Mesh.cpp"
     mesh = mesh_path.read_text()
     guard = "                if (2u + hash_size * hash_count > unsigned(len)) break;"

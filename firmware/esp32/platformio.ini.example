@@ -97,3 +97,20 @@ build_flags =
   ${env:Xiao_S3_WIO_onchip_https.build_flags}
   -D ONCHIP_BOT_HTTPS_METRICS=1
   -include ${sysenv.ONCHIP_OPERATOR_HEADER}
+
+; Direct Wi-Fi/WSS transport/task bridge compile. Startup stays disabled unless
+; an explicitly provisioned CloudRoomDriver is linked. No cloud keys/token here.
+; Two persistent alias sockets reserve two KISS client slots in the stock SDK.
+[env:Xiao_S3_WIO_onchip_cloudroom]
+extends = env:Xiao_S3_WIO_onchip_https
+build_unflags = -std=gnu++11 -DKISS_MAX_TCP_CLIENTS=4 -DKISS_MAX_TCP_CLIENTS=3 -DKISS_LOCAL_SOURCES=4 -DKISS_LOCAL_SOURCES=5
+build_src_filter = ${env:Xiao_S3_WIO_onchip.build_src_filter}
+  +<../examples/kiss_modem/onchip/cloudroom/*.cpp>
+  +<../examples/kiss_modem/onchip/cloudroom/third_party/coreJSON/*.c>
+build_flags =
+  ${env:Xiao_S3_WIO_onchip_https.build_flags}
+  -D MESHCORE_CLOUD_ROOM=1
+  -D ONCHIP_CLOUD_ROOM_CONNECTIONS=2
+  -D KISS_MAX_TCP_CLIENTS=1
+  -D KISS_LOCAL_SOURCES=6
+  -D JSON_MAX_DEPTH=8
