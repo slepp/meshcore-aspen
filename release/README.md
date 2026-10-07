@@ -157,6 +157,22 @@ image. Installing the host does not flash or provision the radio.
 Changing an RC to a final version changes the embedded product identity and
 requires a new build.
 
+## Pine legacy application download
+
+Pine retains `1.17.1-slp-pine` and uses the source/profile tag
+`pine-1.17.1-slp-pine-fleet-lua-20261007` for the `nrfmast_fleet_lua` update.
+Its manifest identifies the exact signed public source commit, pinned MeshCore
+base, board profile and application images. This does not add Pine to the
+Aspen/Birch version authority.
+
+The download updates an initialized XIAO nRF52840 + Wio SX1262 using its retained
+bootloader and saved identities/credentials. It includes app-only UF2/BIN and
+Legacy DFU ZIP, checksums, dependency notices and replaceable Arduino LGPL
+relink material. It does not commission or erase a board, replace the
+bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
+require USB recovery; keep the node physically accessible. Start with the
+[Pine update prerequisites](../firmware/nrf52840/README.md).
+
 ## Aspen 0.1.1
 
 This version adds saved Management/bot ACL entries, autonomous repeater-route

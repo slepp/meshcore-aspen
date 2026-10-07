@@ -11,11 +11,18 @@ Current Lua source builds also provide `backup help` through authenticated
 repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
 to download InternalFS identities/settings and QSPI source/data without USB
 access; retain the recipient's operator seed.
-The [public Pine bundle](https://ve6slp.ca/projects/meshcore/#downloads),
-`1.17.1-slp-pine` from earlier source `8b41d9c`, is **update-only**. It requires
+The [Pine application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-1.17.1-slp-pine-fleet-lua-20261007)
+uses the existing `1.17.1-slp-pine` identity and `nrfmast_fleet_lua` profile.
+Its signed source/profile tag is `pine-1.17.1-slp-pine-fleet-lua-20261007`;
+the attached manifest records the full public source commit and image hashes.
+This is a separate legacy Pine download, not an Aspen or Birch product version.
+The download is **update-only**. It requires
 initialized repeater/bot identities and credential records; it does not
 commission a blank board. Application-only updates retain InternalFS and
 QSPI Lua source/data. Never erase those filesystems to install an update.
+Extract the download and check its SHA256SUMS before selecting the app-only
+UF2 for USB or the inner Legacy DFU ZIP for BLE. The outer download ZIP is not
+a DFU package. Older website downloads retain their own source revisions.
 Use `stats sensors`, `stats radio` and `stats memory` in the authenticated
 repeater or local USB console to read BAT voltage, MCU temperature, radio
 counters and heap. `stats help` lists the read-only [stats API](../shared/STATS.md)
