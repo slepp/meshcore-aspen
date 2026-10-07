@@ -125,7 +125,7 @@ class SourcePolicy(unittest.TestCase):
                         "repeater", "relay", 2, public(1), dict(config))
 
     def test_commit_before_apply_pending_confirmation_and_isolation(self):
-        with RunningService(root=ROOT.parents[1]/f".source-policy-{os.getpid()}-{time.monotonic_ns():x}") as service:
+        with RunningService() as service:
             modem = service.emulator
             room, relay = RoleClient(service, 1), RoleClient(service, 0)
             modem.policy_before_apply = lambda port, factor: self.assertEqual(saved(service, port)["Preferences"]["airtime_factor"], factor)
@@ -176,7 +176,7 @@ class SourcePolicy(unittest.TestCase):
 
     def test_failure_suppresses_success_and_keeps_other_role_healthy(self):
         for mode in ("malformed", "reject", "hold", "disconnect"):
-            with self.subTest(mode=mode), RunningService(root=ROOT.parents[1]/f".source-policy-{mode}-{os.getpid()}-{time.monotonic_ns():x}") as service:
+            with self.subTest(mode=mode), RunningService() as service:
                 modem = service.emulator
                 room, relay = RoleClient(service, 1), RoleClient(service, 0)
                 modem.policy_mode = "hold" if mode == "disconnect" else mode
@@ -197,7 +197,7 @@ class SourcePolicy(unittest.TestCase):
                 self.assertEqual(len([item for item in modem.controls if item[2] == 35 and item[3].endswith(request["bits"].hex())]), 1)
 
     def test_failed_snapshot_never_applies_source_policy(self):
-        with RunningService(root=ROOT.parents[1]/f".source-policy-commit-{os.getpid()}-{time.monotonic_ns():x}") as service:
+        with RunningService() as service:
             modem = service.emulator
             room, relay = RoleClient(service, 1), RoleClient(service, 0)
             retained = (service.root/"room.state").read_bytes()
@@ -211,7 +211,7 @@ class SourcePolicy(unittest.TestCase):
             pending.unlink()
 
     def test_reconnect_policy_failure_retries_without_role_quarantine(self):
-        with RunningService(root=ROOT.parents[1]/f".source-policy-reconnect-{os.getpid()}-{time.monotonic_ns():x}") as service:
+        with RunningService() as service:
             modem = service.emulator
             room = RoleClient(service, 1)
             self.assertEqual(room.command("set af 2"), "OK")
@@ -240,7 +240,7 @@ class SourcePolicy(unittest.TestCase):
             self.assertEqual(saved(service, 1)["Preferences"], retained_clock["Preferences"])
 
     def test_runtime_ack_after_two_seconds_is_still_accepted(self):
-        with RunningService(root=ROOT.parents[1]/f".source-policy-slow-{os.getpid()}-{time.monotonic_ns():x}") as service:
+        with RunningService() as service:
             modem = service.emulator
             room, relay = RoleClient(service, 1), RoleClient(service, 0)
             modem.policy_mode = "hold"
