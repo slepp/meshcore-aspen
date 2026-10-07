@@ -1,5 +1,5 @@
 import {DurableObject} from "cloudflare:workers";
-import {aliases, ApiError, authorize, credential, errorResponse, fail, type Connection, type Env} from "./config";
+import {aliases, ApiError, authorize, credential, errorResponse, fail, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 
 interface Session {
@@ -14,6 +14,7 @@ const MESSAGE_COLUMNS = "seq, timestamp, origin_alias AS originAlias, author, cl
 const SESSION_COLUMNS = "alias, client, cursor, last_timestamp AS lastTimestamp, frontend, route";
 const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state";
 const MAX_FRAME = 4096;
+const WIRE_PROTOCOL = "aspen-room.v1.json";
 const textEncoder = new TextEncoder();
 
 function string(value: unknown, name: string, max: number): string {
@@ -27,6 +28,15 @@ function timestamp(value: unknown, name = "timestamp"): number {
 function hex(value: unknown, name: string, bytes: number): string {
   if (typeof value !== "string" || !new RegExp(`^[a-f0-9]{${bytes * 2}}$`).test(value)) fail(400, `Invalid ${name}`);
   return value as string;
+}
+function route(value: unknown): string {
+  const encoded = string(value, "return route", 340);
+  // Canonical base64 preserves opaque bytes and has a predictable wire budget.
+  try {
+    const decoded = atob(encoded);
+    if (decoded.length > 255 || btoa(decoded) !== encoded) fail(400, "Invalid base64 return route");
+  } catch {fail(400, "Invalid base64 return route");}
+  return encoded;
 }
 
 /** One canonical history. Advertised identities have separate sessions and ACKs. */
@@ -69,7 +79,11 @@ export class Room extends DurableObject<Env> {
     return this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending WHERE alias=? AND client=?`, alias, client)[0];
   }
   private send(ws: WebSocket, value: unknown): void {
-    try {ws.send(JSON.stringify(value));} catch {ws.close(1011, "Frontend connection failed");}
+    try {
+      const frame = JSON.stringify(value);
+      if (textEncoder.encode(frame).length > MAX_FRAME) throw new Error("Outgoing frame exceeds wire limit");
+      ws.send(frame);
+    } catch {ws.close(1011, "Frontend connection failed");}
   }
   private bindIdentity(alias: string): void {
     const configured = aliases(this.env)[alias];
@@ -88,6 +102,8 @@ export class Room extends DurableObject<Env> {
       this.bindIdentity(connection.alias);
       if (match[2] === "socket") {
         if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
+        const offered = request.headers.get("Sec-WebSocket-Protocol")?.split(",").map(p => p.trim());
+        if (offered && !offered.includes(WIRE_PROTOCOL)) fail(426, "Use aspen-room.v1.json");
         // A frontend has one connection per alias. Reconnect replaces the old socket.
         for (const old of this.ctx.getWebSockets()) {
           const prior = old.deserializeAttachment() as Connection;
@@ -96,9 +112,10 @@ export class Room extends DurableObject<Env> {
         const [client, server] = Object.values(new WebSocketPair());
         this.ctx.acceptWebSocket(server);
         server.serializeAttachment(connection);
-        this.send(server, {type: "ready", alias: connection.alias, publicKey: alias.publicKey, name: alias.name});
+        this.send(server, {type: "ready", version: 1, alias: connection.alias, publicKey: alias.publicKey, name: alias.name});
         await this.pump();
-        return new Response(null, {status: 101, webSocket: client});
+        return new Response(null, {status: 101, webSocket: client,
+          headers: offered ? {"Sec-WebSocket-Protocol": WIRE_PROTOCOL} : undefined});
       }
       if (request.method !== "POST") fail(405, "POST required");
       const body = await request.text();
@@ -126,7 +143,8 @@ export class Room extends DurableObject<Env> {
     try {
       if (typeof frame !== "string" || textEncoder.encode(frame).length > MAX_FRAME) fail(400, "Use JSON text frames up to 4096 bytes");
       const envelope = this.parse(frame) as unknown as {id: string; operation: Operation};
-      id = string(envelope.id, "request id", 128);
+      id = string(envelope.id, "request id", 32);
+      if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) fail(400, "Invalid request id");
       const connection = ws.deserializeAttachment() as Connection;
       // Recheck configuration after hibernation, including revoked tokens/aliases.
       const frontend = (JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]; token: string}>)[connection.frontend];
@@ -172,33 +190,57 @@ export class Room extends DurableObject<Env> {
           }
           return member;
         });
-        if (members.length > 1000) fail(413, "Use a longer member key prefix");
+        // Reserve enough for the longest correlation ID and result envelope.
+        if (members.length > 1000 || textEncoder.encode(JSON.stringify({members})).length > MAX_FRAME - 96)
+          fail(413, "Use a longer member key prefix");
         return {members};
       }
       const client = hex(operation.client, "full client key", 32);
       let session = this.session(c.alias, client);
       if (operation.op === "login") {
         const password = string(operation.password, "room password", 256);
-        if (password !== aliases(this.env)[c.alias].password) fail(403, "Incorrect room password");
+        if (password !== aliases(this.env)[c.alias].password && !(password === "" && session)) fail(403, "Incorrect room password");
         const stamp = timestamp(operation.timestamp);
         const since = timestamp(operation.since, "since");
-        const route = string(operation.route, "return route", 512);
+        const returnRoute = route(operation.route);
         if (!this.claim(c, client, "login", operation.attempt)) return {respond: false, duplicate: true};
+        // Native empty-password ACL login is an activation, not a new history
+        // request. It accepts zero/repeated timestamps and preserves delivery.
+        if (password === "" && session) {
+          const pending = this.pending(c.alias, client);
+          if (!pending || pending.frontend === c.frontend) {
+            this.sql.exec("UPDATE sessions SET frontend=?, route=? WHERE alias=? AND client=?", c.frontend, returnRoute, c.alias, client);
+          }
+          return {respond: true, cursor: session.cursor};
+        }
         if (stamp === 0 || (session && stamp <= session.lastTimestamp)) fail(409, "Login timestamp must increase");
         // A client can request replay, but cannot advance our ACK-confirmed cursor.
         const sinceSeq = this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages WHERE timestamp<=?", since)[0].seq;
         const cursor = session ? Math.min(session.cursor, sinceSeq) : 0;
         this.sql.exec(`INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(alias, client) DO UPDATE SET cursor=excluded.cursor, last_timestamp=excluded.last_timestamp,
-          frontend=excluded.frontend, route=excluded.route`, c.alias, client, cursor, stamp, c.frontend, route);
+          frontend=excluded.frontend, route=excluded.route`, c.alias, client, cursor, stamp, c.frontend, returnRoute);
         this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
         return {respond: true, cursor};
       }
       if (!session) fail(403, "Client must log in to this advertised identity");
+      if (operation.op === "path") {
+        const returnRoute = route(operation.route);
+        if (session.frontend !== c.frontend || !this.claim(c, client, "path", operation.attempt)) return {respond: false};
+        this.sql.exec("UPDATE sessions SET route=? WHERE alias=? AND client=?", returnRoute, c.alias, client);
+        if (operation.proof !== undefined) {
+          const p = this.pending(c.alias, client);
+          if (!p || p.frontend !== c.frontend || p.deliveryId !== operation.deliveryId ||
+              p.proof !== hex(operation.proof, "ACK proof", 4)) fail(403, "PATH ACK does not match this delivery");
+          this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
+          this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
+        }
+        return {};
+      }
       if (operation.op === "post") {
         const stamp = timestamp(operation.timestamp);
         const text = string(operation.text, "post text", 151);
-        if (!text.length || text.includes("\0") || operation.source !== "client") fail(400, "Only original client text posts are accepted");
+        if (!text.length || text.includes("\0") || !wellFormed(text) || operation.source !== "client") fail(400, "Only original client UTF-8 text posts are accepted");
         let message = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE origin_alias=? AND author=? AND client_timestamp=? AND text=?`, c.alias, client, stamp, text)[0];
         if (!message && stamp <= session.lastTimestamp) fail(409, "Client timestamp must increase");
         const duplicate = !!message;
@@ -215,12 +257,18 @@ export class Room extends DurableObject<Env> {
       }
       if (operation.op === "refresh") {
         const stamp = timestamp(operation.timestamp);
-        const route = string(operation.route, "return route", 512);
+        const returnRoute = route(operation.route);
         if (!this.claim(c, client, "refresh", operation.attempt)) return {respond: false, duplicate: true};
         if (stamp <= session.lastTimestamp) fail(409, "Client timestamp must increase");
-        this.sql.exec("UPDATE sessions SET last_timestamp=?, frontend=?, route=? WHERE alias=? AND client=?", stamp, c.frontend, route, c.alias, client);
+        let cursor = session.cursor;
+        if (operation.since !== undefined) {
+          const since = timestamp(operation.since, "since");
+          cursor = Math.min(cursor, this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages WHERE timestamp<=?", since)[0].seq);
+        }
+        this.sql.exec("UPDATE sessions SET last_timestamp=?, frontend=?, route=?, cursor=? WHERE alias=? AND client=?", stamp, c.frontend, returnRoute, cursor, c.alias, client);
         this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
-        return {respond: true, cursor: session.cursor};
+        const remaining = this.rows<{n: number}>("SELECT COUNT(*) AS n FROM messages WHERE seq>? AND NOT(origin_alias=? AND author=?)", cursor, c.alias, client)[0].n;
+        return {respond: true, cursor, remaining: Math.min(255, remaining)};
       }
       if (!["prepare", "receipt", "ack"].includes(operation.op)) fail(400, "Unknown operation");
       const p = this.pending(c.alias, client);

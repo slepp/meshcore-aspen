@@ -10,7 +10,7 @@ const attempt = client;
 const sockets: WebSocket[] = [];
 let requestId = 0;
 const login = (who: string, n: number, password = "room", since = 0): Operation =>
-  ({op: "login", client: who, timestamp: n, since, password, attempt: attempt(n), route: "direct:abcd"});
+  ({op: "login", client: who, timestamp: n, since, password, attempt: attempt(n), route: btoa("direct:abcd")});
 const post = (who: string, n: number, text: string, rf = n): Operation =>
   ({op: "post", client: who, timestamp: n, text, source: "client", attempt: attempt(rf)});
 async function http(alias: string, token: string, operation: unknown) {
@@ -104,7 +104,7 @@ it("keeps one pending delivery, rejects wrong ACKs, and recovers on a new client
   expect((await http("A", "remote-token", prepare)).status).toBe(403);
   await ok("A", "remote-token", login(reader, 1));
   expect(two.inbox.filter(e => e.type === "delivery")).toHaveLength(0);
-  await ok("A", "remote-token", {op: "refresh", client: reader, timestamp: 5, attempt: attempt(5), route: "direct:ef01"});
+  await ok("A", "remote-token", {op: "refresh", client: reader, timestamp: 5, attempt: attempt(5), route: btoa("direct:ef01")});
   const recovered = await two.delivery();
   expect(recovered.message.seq).toBe(first.message.seq);
   expect(recovered.deliveryId).not.toBe(first.deliveryId);
@@ -178,6 +178,7 @@ it("rejects unauthorized frontends, wrong alias membership, passwords and relaye
   await ok("A", "local-token", login(client(1), 1));
   expect((await http("B", "local-token", post(client(1), 2, "wrong identity"))).status).toBe(403);
   expect((await http("A", "local-token", {...post(client(1), 2, "relay"), source: "room"})).status).toBe(400);
+  expect((await http("A", "local-token", post(client(1), 2, "\ud800"))).status).toBe(400);
   // Full-key candidates survive a short-prefix collision.
   await ok("A", "local-token", login(client(2), 1));
   expect((await ok("A", "local-token", {op: "members", prefix: "00"})).members).toHaveLength(2);
@@ -273,4 +274,49 @@ it("reconnect releases an unanswered prepare so the shared physical TX queue can
   frontend.advertNext();
   await advertisement;
   expect(errors.map(String)).toEqual([expect.stringContaining("operation outcome may be unknown")]);
+});
+
+it("applies native PATH ACK and learned route atomically, and keeps blank-password ACL alias scoped", async () => {
+  const socket = await connect("A", "local-token");
+  const reader = client(1), author = client(2);
+  await ok("A", "local-token", login(reader, 1));
+  await ok("A", "local-token", login(author, 2));
+  await ok("A", "local-token", post(author, 3, "first"));
+  const first = await socket.delivery();
+  await ok("A", "local-token", {op: "prepare", client: reader, deliveryId: first.deliveryId, proof: "11223344"});
+  await ok("A", "local-token", post(author, 4, "second"));
+  const path = {op: "path", client: reader, attempt: attempt(5), route: btoa("learned route"), deliveryId: first.deliveryId, proof: "11223344"};
+  expect((await ok("A", "remote-token", path)).respond).toBe(false);
+  expect((await http("A", "local-token", {...path, proof: "deadbeef"})).status).toBe(403);
+  await ok("A", "local-token", path); // Failed proof rolled back route and attempt claim.
+  const second = await socket.delivery();
+  expect(second.route).toBe(path.route);
+  expect(second.message.text).toBe("second");
+  expect((await ok("A", "local-token", {...login(reader, 0, ""), attempt: attempt(6)})).respond).toBe(true);
+  expect((await http("B", "local-token", login(reader, 0, ""))).status).toBe(403);
+  const acl = (await ok("A", "local-token", {op: "members", prefix: reader})).members[0];
+  expect(acl.pending.deliveryId).toBe(second.deliveryId);
+  expect(acl.cursor).toBe(first.message.seq);
+});
+
+it("negotiates JSON v1 and keeps member replies bounded with arbitrary route bytes", async () => {
+  const response = await SELF.fetch("https://room.test/v1/aliases/A/socket", {headers: {
+    Authorization: "Bearer local-token", Upgrade: "websocket", "Sec-WebSocket-Protocol": "aspen-room.v1.json",
+  }});
+  expect(response.status).toBe(101);
+  expect(response.headers.get("Sec-WebSocket-Protocol")).toBe("aspen-room.v1.json");
+  const ws = response.webSocket!; sockets.push(ws); ws.accept();
+  const binary = String.fromCharCode(...Array.from({length: 255}, (_, i) => i + 1));
+  const route = btoa(binary);
+  for (let i = 0; i < 12; i++) {
+    const key = i.toString(16).padStart(2, "0") + "ab".repeat(31);
+    await ok("A", "local-token", {...login(key, 1), route});
+  }
+  expect((await http("A", "local-token", {op: "members"})).status).toBe(413);
+  const result = await ok("A", "local-token", {op: "members", prefix: "00"});
+  expect(atob(result.members[0].route)).toBe(binary);
+  expect((await http("A", "local-token", {...login(client(20), 1), route: "AB=="})).status).toBe(400);
+  expect((await SELF.fetch("https://room.test/v1/aliases/A/socket", {headers: {
+    Authorization: "Bearer local-token", Upgrade: "websocket", "Sec-WebSocket-Protocol": "other.v2",
+  }})).status).toBe(426);
 });

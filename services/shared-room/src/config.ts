@@ -13,6 +13,17 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) {super(message);}
 }
 export function fail(status: number, message: string): never {throw new ApiError(status, message);}
+export function wellFormed(value: string): boolean {
+  // Reject unpaired UTF-16 surrogates; native clients and coreJSON use UTF-8.
+  for (let i = 0; i < value.length; i++) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+  }
+  return true;
+}
 export function aliases(env: Env): Record<string, Alias> {
   const entries = JSON.parse(env.ALIASES) as Record<string, Alias>;
   if (!entries || typeof entries !== "object" || Array.isArray(entries)) fail(503, "Invalid ALIASES configuration");
@@ -21,7 +32,8 @@ export function aliases(env: Env): Record<string, Alias> {
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name) || !alias ||
         !/^[a-zA-Z0-9_-]{1,64}$/.test(alias.backend) ||
         !/^[a-f0-9]{64}$/.test(alias.publicKey) || typeof alias.name !== "string" || !alias.name ||
-        new TextEncoder().encode(alias.name).length > 32 || typeof alias.password !== "string" || keys.has(alias.publicKey)) {
+        new TextEncoder().encode(alias.name).length > 31 || alias.name.includes("\0") || !wellFormed(alias.name) ||
+        typeof alias.password !== "string" || keys.has(alias.publicKey)) {
       fail(503, "Invalid or duplicate advertised identity in ALIASES");
     }
     keys.add(alias.publicKey);

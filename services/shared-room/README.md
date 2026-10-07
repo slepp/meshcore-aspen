@@ -37,7 +37,7 @@ existing state is not migrated between Durable Objects.
 
 Every request carries `Authorization: Bearer <frontend token>`. Each credential
 has an explicit list of permitted aliases. Tokens go in headers, including the
-WebSocket upgrade, so use a host WebSocket client that supports headers.
+WebSocket upgrade, so use a WSS client that supports headers.
 
 Connect each advertised identity to:
 
@@ -45,7 +45,7 @@ Connect each advertised identity to:
 GET /v1/aliases/{alias}/socket
 ```
 
-The server sends `{"type":"ready","alias":"A","publicKey":"...","name":"WelcomeYEG"}`.
+The server sends `{"type":"ready","version":1,"alias":"A","publicKey":"...","name":"WelcomeYEG"}`.
 Send JSON text frames with a caller-chosen correlation ID:
 
 ```json
@@ -56,13 +56,16 @@ Replies are `{"type":"result","id":"1","result":{...}}` or
 `{"type":"error","id":"1","error":"..."}`. A HTTP client can submit the
 same operation directly to `POST /v1/aliases/{alias}/operations`, returning the
 result or an HTTP error. Keep a socket connected to receive deliveries.
-Operations and inbound frames are limited to 4096 bytes.
+Both directions are limited to 4096 UTF-8 bytes. Use the `aspen-room.v1.json`
+subprotocol; correlation IDs contain 1..32 ASCII letters, digits, `_` or `-`.
+See [wire format and encoding measurements](WIRE.md).
 
 | Operation | Fields beyond `op` | Result/use |
 | --- | --- | --- |
 | `login` | `client, timestamp, since, password, attempt, route` | Checks alias password; selects RF responder and refreshes history |
 | `post` | `client, timestamp, text, source:"client", attempt` | Commits one logical post; `respond:true` permits success ACK |
-| `refresh` | `client, timestamp, attempt, route` | New authenticated client activity selects a frontend and restarts pending delivery |
+| `refresh` | `client, timestamp, optional since, attempt, route` | New authenticated client activity selects a frontend and restarts pending delivery |
+| `path` | `client, attempt, route`, optional `deliveryId, proof` | Stores a learned native route and atomically confirms a bundled PATH ACK |
 | `prepare` | `client, deliveryId, proof` | Stores expected RF ACK proof; only `transmit:true` permits submission |
 | `receipt` | `client, deliveryId, outcome` | Records `sent`, `failed` or `unknown`; keeps cursor unchanged |
 | `ack` | `client, deliveryId, proof` | Confirms the pending message, advances cursor and pushes the next |
@@ -71,10 +74,11 @@ Operations and inbound frames are limited to 4096 bytes.
 `client` is always the full 32-byte public key in lowercase hexadecimal.
 `timestamp` and `since` are native unsigned 32-bit timestamps. `proof` is the
 nonzero native 32-bit ACK value written as eight lowercase hex digits.
-`route` is opaque codec state up to 512 UTF-8 bytes, describing how to send the
-response to this client; it must exclude keys and passwords. Posts are 1..151
-UTF-8 bytes with no NUL. `members` returns up to 1000 entries per prefix; split
-the prefix into its next hexadecimal digit when asked for a longer prefix.
+`route` is canonical standard base64 containing up to 255 opaque codec bytes,
+describing how to send the response to this client; it must exclude keys and
+passwords. Posts are 1..151 well-formed UTF-8 bytes with no NUL. `members` replies
+fit the frame budget; split the prefix into its next hexadecimal digit when
+asked for a longer prefix.
 
 An `attempt` is SHA-256 of the authenticated RF request's payload and payload
 type, excluding the mutable route/path. All frontends observing that request
@@ -119,9 +123,15 @@ hearing that request and replays from the confirmed cursor. Re-observing the
 same RF request suppresses its response; the client needs a fresh request
 timestamp to recover. Old delivery IDs cannot acknowledge a replacement.
 
-Login always catches up from the service's confirmed cursor. A lower `since`
+A normal password login catches up from the service's confirmed cursor. A lower `since`
 requests replay; a larger `since` cannot skip unconfirmed messages. A new member
-starts at the beginning of available history. A client's own committed posts
+starts at the beginning of available history. A native empty-password login for an existing alias member accepts zero/repeated
+timestamps and preserves its cursor, timestamp and pending delivery. It selects
+a new frontend only when no delivery is pending; this avoids an implicit RF
+takeover. Use a fresh password login or authenticated refresh to recover an
+uncertain pending delivery.
+
+A client's own committed posts
 are skipped for that same advertised identity. Across aliases they retain their
 origin and are eligible for delivery.
 
@@ -148,14 +158,17 @@ round-robin physical TX queue. Call `advertNext()` once per global advertisement
 slot, for example every 60 seconds plus jitter. Each successive slot advertises
 one identity, spreading advertisements instead of flooding every room together.
 
-The Worker does not terminate raw MeshCore crypto. The codec interface is the
-integration boundary; an implementation for live RF still needs native login
-responses, PATH updates, signed post encoding and bare ACK matching. Reuse the
+The intended device frontend is [native Aspen directly over Wi-Fi/WSS](NATIVE.md).
+Its portable parser is implemented; WSS connection/runtime wiring remains. The
+Worker does not terminate raw MeshCore crypto. The native-compatible reference
+[`internal/sharedroom`](../../internal/sharedroom) implements login/PATH responses,
+original posts, REQ history, signed deliveries and bare ACK matching using the
 repository's pinned `github.com/meshcore-go/meshcore-go v1.5.0` primitives and
 [`internal/roles`](../../internal/roles): expanded 64-byte Ed25519 scalar/nonce
 keys, ECDH, AES-128 ECB, truncated HMAC and `CalcAckHash`. WebCrypto Ed25519 alone
-does not implement that wire contract. The service tests use decoded fixtures
-and make no raw-radio compatibility claim.
+does not implement that wire contract. The Worker tests use decoded fixtures; two focused Go codec tests reuse the
+committed native ciphertext and ACK fixtures. Live RF interoperability remains
+to be exercised. The reference codec currently supports unscoped RF.
 
 For Birch, connect raw receive handlers to the codec and route encoded responses
 through `Link.SubmitWithReceipt` and its final TX result. Return `unknown` for
@@ -180,11 +193,13 @@ npm test
 npm run build
 ```
 
-Seven local workerd tests exercise duplicate reception, one durable logical post,
+Nine local workerd tests exercise duplicate reception, one durable logical post,
 ordered ACK/cursor behavior, uncertain dispatch recovery, hibernation and
 reconnect, authorization, distinct shared aliases, backend isolation, and a
 physical frontend exposing A/B/C with rotating advertisements and queue recovery
-when reconnect interrupts a prepare call. The build is a
+when reconnect interrupts a prepare call, native PATH/ACL behavior and bounded
+JSON/base64 replies. `go test ./internal/sharedroom` checks the native reference
+codec; [WIRE.md](WIRE.md) has the small portable parser check. The build is a
 Wrangler dry run; these commands do not deploy a service or transmit RF.
 
 Cloudflare documents the [hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
