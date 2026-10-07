@@ -9,7 +9,7 @@ This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image. Current source builds identify `aspen-0.1.3`; see the
+per-node setup image. Current source builds identify `aspen-0.1.4`; see the
 [release guide](../../release/README.md) for source builds.
 
 The application supports repeater, room, companion, Management and Lua/Wasm
