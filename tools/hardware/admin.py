@@ -252,12 +252,15 @@ class NativeClient:
                             if path >> 6 == 3 or n > 64 or len(plain) < n + 15 or plain[n + 1] != 1:
                                 continue
                             self.path, plain = plain[:n + 1], plain[n + 2:]
-                        if len(plain) >= 13 and plain[4] == 0 and plain[6:8] == b"\x01\x03":
+                        admin = len(plain) >= 13 and plain[6:8] == b"\x01\x03"
+                        member = room and len(plain) >= 13 and (
+                            (plain[6] == 0 and plain[7] & 3 == 2) or plain[6:8] == b"\x02\x00")
+                        if len(plain) >= 13 and plain[4] == 0 and (admin or member):
                             if kind == 8 and received[0] & 3 in (0, 1):
                                 response = reciprocal_path(self.secret, self.public, self.target, received, self.path)
                                 time.sleep(.5)  # Same reciprocal-PATH delay as pinned Mesh.cpp.
                                 self.connection.sendall(kiss(response))
-                            return "Authenticated native administrator"
+                            return "Authenticated native administrator" if admin else "Authenticated native room member"
                     elif kind == 2 and len(plain) > 5 and plain[4] >> 2 == 1:
                         if struct.unpack_from("<I", plain)[0] == self.timestamp:
                             continue

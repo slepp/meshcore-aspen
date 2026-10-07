@@ -756,6 +756,31 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
                 self.assertEqual(encrypt.call_args.args[1], timestamp * (2 if room else 1) + b"fixture\0")
                 client.connection.sendall.assert_called_once()
 
+    def test_room_member_login_does_not_grant_mast_administration(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            for room, permissions, accepted in (
+                    (True, b"\x00\x02", True), (True, b"\x02\x00", True),
+                    (False, b"\x00\x02", False), (True, b"\x01\x02", False)):
+                with self.subTest(room=room, permissions=permissions):
+                    client = mast_cli.NativeClient.__new__(mast_cli.NativeClient)
+                    client.tagged = True
+                    client.clock_file = Path(directory) / "clock"
+                    client.timestamp, client.tag, client.timeout, client.path = 0, 8, 9, None
+                    client.fixed_path = None
+                    client.public, client.target = bytes([21]) * 32, bytes([42]) * 32
+                    client.secret = bytes(range(32))
+                    client.connection = MagicMock()
+                    plain = struct.pack("<I", 1800000010) + b"\0\0" + permissions + b"test\x01"
+                    response = b"\x06\x00" + bytes((21, 42)) + mast_cli.encrypt(client.secret, plain)
+                    client.connection.recv.side_effect = [mast_cli.kiss(response), b""]
+                    with patch("tools.hardware.admin.time.time", return_value=1800000000):
+                        if accepted:
+                            self.assertEqual(client.exchange("fixture", login=True, room=room),
+                                             "Authenticated native room member")
+                        else:
+                            with self.assertRaisesRegex(ValueError, "Gateway disconnected"):
+                                client.exchange("fixture", login=True, room=room)
+
     def test_isolated_wifi_config_get_is_exact_and_fails_closed(self):
         import struct
         from unittest.mock import MagicMock
