@@ -42,7 +42,7 @@ globally per minute**.
 | 3 | Native DM/group command policy and named storage threads | Available; configure [channel policy](firmware/runtime/BOT_RUNTIME.md#channels-and-native-command-policy) before enabling Public commands |
 | 4 | Multiple Lua files, single-file replacement and manual recovery | Available; start with [updating one installed file](firmware/runtime/BOT_DEVELOPMENT.md#update-one-installed-lua-file) |
 | 5 | Bot key recovery and trusted-owner administration | Aspen uses its active companion's verified contact store; owner permission remains role-local |
-| 6 | Willow native-worker recovery and ordinary RF messaging | Finish saved-contact recovery from the retained Base authority; keep an unacknowledged request uncertain rather than replaying it |
+| 6 | Willow native-worker recovery and ordinary RF messaging | Available; the worker recovers signed contacts from the retained Base authority after restart. Read `bot contacts` for cache/recovery status; keep uncertain requests unreplayed |
 | 7 | Separately installable Birch and Pine downloads | [Birch RC1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0-rc.1) and [Pine's update-only profile](https://github.com/slepp/meshcore-aspen/releases/tag/pine-1.17.1-slp-pine-fleet-lua-20261007) are available; neither replaces the latest stable Aspen release |
 
 Pine wireless recovery after an interrupted transfer remains blocked on its
