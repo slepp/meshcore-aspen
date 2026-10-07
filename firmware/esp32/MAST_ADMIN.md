@@ -841,7 +841,7 @@ the saved `mc-mast-admin/acl` record and restart before retrying. A valid
 committed change may apply after restart even if its readback failed. A
 corrupt record is never replaced with default grants by these commands.
 
-The Management permission record is a checked NVS extension of the native
+The Management permission record is a checked extension of the native
 ACL semantics. Upstream `ClientInfo::isAdmin()` determines authority.
 Upstream `ClientACL::save/load` use role-local contact files, have no checked
 commit result and accept truncated reads, so Management does not share those
@@ -853,7 +853,15 @@ Ten noncompiled principals have durable timestamp high-water marks: the
 existing four replay slots remain intact, and six additional slots
 accommodate five ACL owners plus the retained singleton. Version-1 settings,
 WiFi, singleton trust and the reserved compiled-owner replay record retain
-their existing layouts and contents; no identity changes are made.
+their existing contents; no identity changes are made.
+WiFi settings and the five Management ACL entries share two checked 352-byte
+SPIFFS files and one 40-byte NVS reference. Both legacy records are validated
+before migration. The old ACL metadata is reclaimed only after the combined
+file and its reference read back correctly. Missing records retain their
+existing defaults. A missing or corrupt authoritative configuration disables
+saved WiFi credentials, singleton trust and ACL grants; the compiled owner and
+Management password remain available for recovery. Whole-node backups include
+the configuration files and reference.
 The ten ordinary high-water marks use two checked 400-byte SPIFFS files and
 one 40-byte NVS reference. An older primary/extra replay pair is migrated only
 after the new file and reference read back correctly; its keys, timestamps and
@@ -867,10 +875,10 @@ snapshot creation, the backup reports changed settings/files rather than
 publishing mismatched files and references. Browser status reads do not advance
 RF replay timestamps.
 
-**Downgrade:** firmware predating this file-backed replay format cannot read
-the new authority and will disable native administration. Keep a compatible
-application when updating an initialized radio; do not erase replay records
-to restore RF access.
+**Downgrade:** firmware predating these file-backed formats cannot read the
+new settings or replay authority. Saved WiFi credentials and native
+administration may be unavailable. Keep a compatible application when updating
+an initialized radio; do not erase settings or replay records to restore access.
 Authenticated `auth forget KEY` removes a noncompiled replay record and
 session to free a slot; it does not revoke retained credentials. Use a stable companion identity rather
 than generating another identity for every command. A companion owns

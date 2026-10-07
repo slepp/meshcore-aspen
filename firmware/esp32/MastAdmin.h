@@ -104,7 +104,9 @@ private:
   void setupCommand(const char *command, Reply &reply);
   void helpCommand(const char *argument, Reply &reply);
   void rolesCommand(const char *argument, Reply &reply);
-  bool validACL(const ACL &acl) const;
+  static bool validACL(const ACL &acl);
+  static bool configurationRecord(const char *key, void *data, size_t size, bool write, bool &present);
+  friend bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present);
   bool validExtraReplay(const ExtraReplay &replay) const;
   bool loadReplay();
   bool saveReplay(const Replay &replay, const ExtraReplay &extra);

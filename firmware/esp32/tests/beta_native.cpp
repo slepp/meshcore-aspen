@@ -2216,6 +2216,8 @@ static void runtime_role_passwords() {
       auto records = filesystem_test::files;
       records.erase("/mast-replay-a.bin");
       records.erase("/mast-replay-b.bin");
+      records.erase("/mast-config-a.bin");
+      records.erase("/mast-config-b.bin");
       // Signed role adverts can independently update the companion contact cache.
       records.erase("/companion/contacts3");
       for (auto entry = records.begin(); entry != records.end();)
@@ -2551,6 +2553,142 @@ static void bot_facing_owner_admin() {
 }
 namespace onchip {
 struct MastReplayStorageTest {
+  static void configuration() {
+    const auto baseline = identity_test::durable;
+    const auto files = filesystem_test::files;
+    const auto namespaces = identity_test::namespaces;
+    const auto capacity = identity_test::entryCapacity;
+    const auto clear = [] {
+      identity_test::failRead = identity_test::failWrite = identity_test::failCommit = false;
+      identity_test::failErase = false;
+      identity_test::afterCommit = identity_test::afterErase = nullptr;
+      filesystem_test::failOpen = false;
+      filesystem_test::writeLimit = filesystem_test::readLimit = SIZE_MAX;
+      filesystem_test::afterFlush = nullptr;
+    };
+    identity_test::durable.clear();
+    identity_test::namespaces = {"mc-mast-admin", "unrelated"};
+    filesystem_test::files.clear();
+    MastAdmin::Settings settings;
+    settings.wifiSet = settings.trustedSet = 1;
+    strcpy(settings.wifi.ssid, "retained-wifi");
+    strcpy(settings.wifi.password, "retained-password");
+    memset(settings.trustedKey, 0x45, sizeof(settings.trustedKey));
+    MastAdmin::ACL acl;
+    for (unsigned i = 0; i < MastAdmin::ACLSlots; ++i) {
+      memset(acl.entries[i].key, i + 1, 32);
+      acl.entries[i].permissions = 3;
+    }
+    mesh::Utils::sha256(acl.digest, sizeof(acl.digest), reinterpret_cast<const uint8_t *>(&acl),
+                        offsetof(MastAdmin::ACL, digest));
+    const identity_test::Key primary{"mc-mast-admin", "settings"}, secondary{"mc-mast-admin", "acl"};
+    const auto seed = [&](const identity_test::Key &key, const auto &record) {
+      const auto *bytes = reinterpret_cast<const uint8_t *>(&record);
+      identity_test::durable[key] = Bytes(bytes, bytes + sizeof(record));
+    };
+    seed(primary, settings); seed(secondary, acl);
+    const size_t paddingEntries = 328 - identity_test::usedEntries();
+    identity_test::durable[{"unrelated", "retained"}] = Bytes((paddingEntries - 3) * 32, 0x5a);
+    identity_test::entryCapacity = 630;
+    assert(identity_test::usedEntries() == 328);
+    const auto legacy = identity_test::durable;
+    const auto expect = [&](const MastAdmin::Settings &expected) {
+      MastAdmin::Settings actual;
+      MastAdmin::ACL actualACL;
+      bool present;
+      assert(MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present) && present);
+      assert(!memcmp(&actual, &expected, sizeof(actual)));
+      assert(MastAdmin::configurationRecord("acl", &actualACL, sizeof(actualACL), false, present) && present);
+      assert(!memcmp(&actualACL, &acl, sizeof(acl)));
+      assert(identity_test::durable.at({"unrelated", "retained"}) == legacy.at({"unrelated", "retained"}));
+      assert(identity_test::usedEntries() == 316 && !identity_test::durable.count(secondary));
+      assert(identity_test::durable.at(primary).size() == 40 && identity_test::handles.empty());
+    };
+    for (unsigned fault = 0; fault < 9; ++fault) {
+      identity_test::durable = legacy; filesystem_test::files.clear();
+      switch (fault) {
+        case 0: filesystem_test::failOpen = true; break;
+        case 1: filesystem_test::writeLimit = 1; break;
+        case 2: filesystem_test::afterFlush = [] { filesystem_test::files.at("/mast-config-a.bin")[20] ^= 1; }; break;
+        case 3: filesystem_test::readLimit = 1; break;
+        case 4: identity_test::failWrite = true; break;
+        case 5: identity_test::failCommit = true; break;
+        case 6: identity_test::afterCommit = [] { identity_test::failRead = true; }; break;
+        case 7: identity_test::failErase = true; break;
+        case 8: identity_test::afterErase = [] { identity_test::failCommit = true; }; break;
+      }
+      MastAdmin::Settings actual;
+      bool present;
+      assert(!MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present));
+      assert(identity_test::durable.at(primary).size() == (fault < 5 ? 140 : 40));
+      if (fault == 8) assert(!identity_test::durable.count(secondary));
+      else assert(identity_test::durable.at(secondary) == legacy.at(secondary));
+      clear(); expect(settings);
+    }
+    const auto saved = identity_test::durable;
+    const auto savedFiles = filesystem_test::files;
+    auto next = settings;
+    strcpy(next.wifi.ssid, "changed-wifi");
+    next.trustedSet = 0;
+    for (unsigned fault = 0; fault < 8; ++fault) {
+      identity_test::durable = saved; filesystem_test::files = savedFiles;
+      switch (fault) {
+        case 0: filesystem_test::failOpen = true; break;
+        case 1: filesystem_test::writeLimit = 1; break;
+        case 2: filesystem_test::afterFlush = [] { filesystem_test::files.at("/mast-config-b.bin")[20] ^= 1; }; break;
+        case 3: filesystem_test::readLimit = 1; break;
+        case 4: identity_test::failWrite = true; break;
+        case 5: identity_test::failCommit = true; break;
+        case 6: identity_test::afterCommit = [] { identity_test::failRead = true; }; break;
+        case 7: identity_test::afterCommit = [] { identity_test::durable.at({"mc-mast-admin", "settings"})[8] ^= 1; }; break;
+      }
+      bool present;
+      assert(!MastAdmin::configurationRecord("settings", &next, sizeof(next), true, present));
+      clear();
+      if (fault == 7) {
+        MastAdmin::Settings actual;
+        assert(!MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present));
+      } else expect(fault >= 5 ? next : settings);
+    }
+    identity_test::durable = saved; filesystem_test::files = savedFiles;
+    const auto commits = identity_test::commits;
+    expect(settings);
+    assert(identity_test::commits == commits);
+    bool present;
+    assert(MastAdmin::configurationRecord("settings", &next, sizeof(next), true, present));
+    expect(next);
+    assert(filesystem_test::files.size() == 2);
+    for (unsigned corrupt = 0; corrupt < 2; ++corrupt) {
+      identity_test::durable = legacy; filesystem_test::files.clear();
+      identity_test::durable.at(corrupt ? secondary : primary)[0] ^= 1;
+      MastAdmin::Settings actual;
+      assert(!MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present));
+      assert(identity_test::durable.at(primary).size() == 140 && identity_test::durable.count(secondary));
+      assert(filesystem_test::files.empty());
+    }
+    for (unsigned retained = 0; retained < 3; ++retained) {
+      identity_test::durable = legacy; filesystem_test::files.clear();
+      if (retained != 1) identity_test::durable.erase(primary);
+      if (retained != 2) identity_test::durable.erase(secondary);
+      MastAdmin::Settings actual;
+      MastAdmin::ACL actualACL;
+      assert(MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present));
+      assert(present == (retained == 1));
+      if (present) assert(!memcmp(&actual, &settings, sizeof(settings)));
+      assert(MastAdmin::configurationRecord("acl", &actualACL, sizeof(actualACL), false, present));
+      assert(present == (retained == 2));
+      if (present) assert(!memcmp(&actualACL, &acl, sizeof(acl)));
+      if (!retained) assert(!identity_test::durable.count(primary) && filesystem_test::files.empty());
+    }
+    identity_test::durable = saved; filesystem_test::files = savedFiles;
+    filesystem_test::files.clear();
+    MastAdmin::Settings actual;
+    assert(!MastAdmin::configurationRecord("settings", &actual, sizeof(actual), false, present));
+    clear();
+    identity_test::durable = baseline; filesystem_test::files = files;
+    identity_test::namespaces = namespaces; identity_test::entryCapacity = capacity;
+    puts("PASS Management configuration files: exact WiFi/trust/five ACL retention, free302->314, migration/update/reclaim interruptions, invalid legacy denial, missing-record semantics, bounded files and no boot rewrites");
+  }
   static void run() {
     const auto baseline = identity_test::durable;
     const auto files = filesystem_test::files;
@@ -2704,7 +2842,6 @@ static void management_native_acl() {
     identity_test::durable[{"mc-mast-admin", key}] = Bytes(bytes, bytes + sizeof(record));
   };
   store("settings", settings); store("replay", replay); store("owner-replay", ownerReplay);
-  const auto migrated = identity_test::durable;
   const auto key = [&](Peer &peer) { return encode(peer.self_id.pub_key, 32); };
   const auto permission = [&](BetaFixture &f, Peer &peer, unsigned value) {
     return f.action(("setperm " + key(peer) + " " + std::to_string(value)).c_str());
@@ -2724,7 +2861,10 @@ static void management_native_acl() {
     BetaFixture f;
     managementKey.assign(f.management.publicKey(), f.management.publicKey() + 32);
     botKey.assign(f.bot.publicKey(), f.bot.publicKey() + 32);
-    assert(identity_test::durable.at({"mc-mast-admin", "settings"}) == migrated.at({"mc-mast-admin", "settings"}));
+    LegacySettings actualSettings;
+    bool settingsPresent;
+    assert(mastRecord("settings", &actualSettings, sizeof(actualSettings), false, settingsPresent) &&
+           settingsPresent && !memcmp(&actualSettings, &settings, sizeof(settings)));
     assert(identity_test::durable.at({"mc-mast-admin", "replay"}).size() == 40);
     assert(!identity_test::durable.count({"mc-mast-admin", "replay-extra"}));
     assert(f.management.admin().trusted(legacy.self_id.pub_key));
@@ -2819,7 +2959,8 @@ static void management_native_acl() {
     assert(permission(f, fifth, 256).find("Error:") == 0);
     assert(f.action("get acl 0").find("Error:") == 0);
     assert(f.action("get acl 6").find("Error:") == 0);
-    assert(identity_test::durable.at({"mc-mast-admin", "settings"}) == migrated.at({"mc-mast-admin", "settings"}));
+    assert(mastRecord("settings", &actualSettings, sizeof(actualSettings), false, settingsPresent) &&
+           settingsPresent && !memcmp(&actualSettings, &settings, sizeof(settings)));
     assert(identity_test::durable.at({"mc-mast-admin", "replay"}).size() == 40);
     assert(!identity_test::durable.count({"mc-mast-admin", "replay-extra"}));
   }
@@ -2877,7 +3018,7 @@ static void management_native_acl() {
       identity_test::failCommit = failure == 1 || failure == 2;
       identity_test::eagerWrites = failure == 2;
       identity_test::afterCommit = failure == 3 ? +[] { identity_test::failRead = true; } :
-          failure == 4 ? +[] { identity_test::durable.at({"mc-mast-admin", "acl"})[8] ^= 1; } : nullptr;
+          failure == 4 ? +[] { identity_test::durable.at({"mc-mast-admin", "settings"})[8] ^= 1; } : nullptr;
       assert(permission(f, owners[4], value).find("commit/readback unknown") != std::string::npos);
       assert(!f.management.admin().trusted(owners[4].self_id.pub_key));
       assert(f.management.admin().trusted(legacy.self_id.pub_key) &&
@@ -2894,13 +3035,13 @@ static void management_native_acl() {
   for (unsigned corruption = 0; corruption < 3; ++corruption) {
     identity_test::durable = persisted;
     filesystem_test::files = persistedFiles;
-    auto &record = identity_test::durable.at({"mc-mast-admin", "acl"});
+    auto &record = identity_test::durable.at({"mc-mast-admin", "settings"});
     if (corruption == 0) record[8] ^= 1;
     else if (corruption == 1) record[0] = 2;
     else record.pop_back();
     BetaFixture f;
     for (auto &owner : owners) assert(!f.management.admin().trusted(owner.self_id.pub_key));
-    assert(f.management.admin().trusted(legacy.self_id.pub_key) &&
+    assert(!f.management.admin().trusted(legacy.self_id.pub_key) &&
            f.management.admin().trusted(compiled.self_id.pub_key));
     assert(f.action("get acl").find("ACL unavailable") != std::string::npos);
     assert(permission(f, owners[0], 3).find("ACL unavailable") != std::string::npos);
@@ -3124,6 +3265,7 @@ int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--admin-cli-core-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     MastReplayStorageTest::run();
+    MastReplayStorageTest::configuration();
     management_cli_compatibility();
     management_cli_core();
     management_native_acl();
@@ -3134,6 +3276,15 @@ int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--role-password-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     runtime_role_passwords();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--credential-admin-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    runtime_role_passwords();
+    runtime_management_password();
+    native_role_profile_owner_info();
+    bot_facing_owner_admin();
+    cross_runtime_source_credentials();
     return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--automatic-adverts-test")) {
@@ -3165,6 +3316,7 @@ int main(int argc, char **argv) {
   native_role_profile_owner_info();
   bot_facing_owner_admin();
   MastReplayStorageTest::run();
+  MastReplayStorageTest::configuration();
   management_native_acl();
   cross_runtime_source_credentials();
   packageMetadataLifecycle();

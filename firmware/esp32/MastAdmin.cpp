@@ -34,7 +34,7 @@
 #endif
 
 namespace onchip {
-bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present) {
+static bool legacyMastRecord(const char *key, void *data, size_t size, bool write, bool &present) {
   nvs_handle_t handle;
   auto result = nvs_open("mc-mast-admin", write ? NVS_READWRITE : NVS_READONLY, &handle);
   present = false;
@@ -58,6 +58,14 @@ bool mastRecord(const char *key, void *data, size_t size, bool write, bool &pres
   }
   present = true;
   return true;
+}
+bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present) {
+  if (!strcmp(key, "settings") || !strcmp(key, "acl")) {
+    const bool ok = MastAdmin::configurationRecord(key, data, size, write, present);
+    if (!ok) Serial.println("Management settings/ACL file storage read/commit failed; inspect storage and restart");
+    return ok;
+  }
+  return legacyMastRecord(key, data, size, write, present);
 }
 namespace {
 MastAdmin *activeAdmin = nullptr;
@@ -99,24 +107,54 @@ bool replayReference(ReplayReference &reference, bool &present, bool &legacy) {
   present = result == ESP_OK;
   return present;
 }
-bool reclaimExtraReplay() {
+bool reclaimLegacyRecord(const char *key) {
   nvs_handle_t handle;
   auto result = nvs_open("mc-mast-admin", NVS_READONLY, &handle);
   if (result == ESP_ERR_NVS_NOT_FOUND) return true;
   if (result != ESP_OK) return false;
   size_t size = 0;
-  result = nvs_get_blob(handle, "replay-extra", nullptr, &size);
+  result = nvs_get_blob(handle, key, nullptr, &size);
   nvs_close(handle);
   if (result == ESP_ERR_NVS_NOT_FOUND) return true;
   if (result != ESP_OK || nvs_open("mc-mast-admin", NVS_READWRITE, &handle) != ESP_OK) return false;
-  result = nvs_erase_key(handle, "replay-extra");
+  result = nvs_erase_key(handle, key);
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   if (result != ESP_OK || nvs_open("mc-mast-admin", NVS_READONLY, &handle) != ESP_OK) return false;
   size = 0;
-  result = nvs_get_blob(handle, "replay-extra", nullptr, &size);
+  result = nvs_get_blob(handle, key, nullptr, &size);
   nvs_close(handle);
   return result == ESP_ERR_NVS_NOT_FOUND;
+}
+bool reclaimExtraReplay() { return reclaimLegacyRecord("replay-extra"); }
+constexpr const char *ConfigurationFiles[] = {"/mast-config-a.bin", "/mast-config-b.bin"};
+struct ConfigurationReference {
+  uint8_t magic[4]{'M', 'C', 'F', 2}, slot = 0, reserved[3]{}, digest[32]{};
+  bool valid() const {
+    return !memcmp(magic, "MCF\2", 4) && slot < 2 &&
+           !reserved[0] && !reserved[1] && !reserved[2];
+  }
+};
+bool configurationReference(ConfigurationReference &reference, bool &present, bool &legacy) {
+  present = legacy = false;
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-mast-admin", NVS_READONLY, &handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK) return false;
+  size_t size = 0;
+  result = nvs_get_blob(handle, "settings", nullptr, &size);
+  if (result == ESP_ERR_NVS_NOT_FOUND) { nvs_close(handle); return true; }
+  legacy = size == 140;
+  if (result != ESP_OK || (!legacy && size != sizeof(reference))) {
+    nvs_close(handle); return false;
+  }
+  if (!legacy) {
+    result = nvs_get_blob(handle, "settings", &reference, &size);
+    if (size != sizeof(reference) || !reference.valid()) result = ESP_ERR_INVALID_STATE;
+  }
+  nvs_close(handle);
+  present = result == ESP_OK;
+  return present;
 }
 static_assert(sizeof(PasswordRecord) == 52, "Management password record layout changed");
 bool loadPassword(PasswordRecord &record, bool &present) {
@@ -525,6 +563,78 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
     return;
   }
   strcpy(reply.text, "Error: use role help");
+}
+bool MastAdmin::configurationRecord(const char *key, void *data, size_t size, bool write, bool &present) {
+  const bool settings = !strcmp(key, "settings");
+  present = false;
+  if (size != (settings ? sizeof(Settings) : sizeof(ACL))) return false;
+  struct Snapshot {
+    uint8_t magic[4]{'M', 'C', 'F', 1}, flags = 0, reserved[3]{};
+    Settings settings;
+    ACL acl;
+  } snapshot{}, check{};
+  static_assert(sizeof(Snapshot) == 352 && sizeof(ConfigurationReference) == 40,
+                "Recheck Management configuration layout and NVS budget");
+  const auto valid = [](const Snapshot &record) {
+    const auto &s = record.settings;
+    return !memcmp(record.magic, "MCF\1", 4) && !(record.flags & ~3) &&
+           !record.reserved[0] && !record.reserved[1] && !record.reserved[2] &&
+           (!(record.flags & 1) || (s.version == 1 && s.wifiSet <= 1 && s.trustedSet <= 1 &&
+             memchr(s.wifi.ssid, 0, sizeof(s.wifi.ssid)) &&
+             memchr(s.wifi.password, 0, sizeof(s.wifi.password)) && wifiPassword(s.wifi.password))) &&
+           (!(record.flags & 2) || validACL(record.acl));
+  };
+  ConfigurationReference previous;
+  bool referencePresent, legacy;
+  if (!configurationReference(previous, referencePresent, legacy)) return false;
+  const auto verifyFile = [&](const ConfigurationReference &reference) {
+    auto file = SPIFFS.open(ConfigurationFiles[reference.slot], "r");
+    if (!file || file.size() != sizeof(check) ||
+        file.read(reinterpret_cast<uint8_t *>(&check), sizeof(check)) != sizeof(check)) return false;
+    file.close();
+    uint8_t digest[32];
+    mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&check), sizeof(check));
+    return !memcmp(digest, reference.digest, sizeof(digest)) && valid(check);
+  };
+  if (referencePresent && !legacy) {
+    if (!verifyFile(previous) || !reclaimLegacyRecord("acl")) return false;
+    snapshot = check;
+  } else {
+    bool settingsPresent, aclPresent;
+    if (!legacyMastRecord("settings", &snapshot.settings, sizeof(snapshot.settings), false, settingsPresent) ||
+        !legacyMastRecord("acl", &snapshot.acl, sizeof(snapshot.acl), false, aclPresent)) return false;
+    snapshot.flags = (settingsPresent ? 1 : 0) | (aclPresent ? 2 : 0);
+    if (!valid(snapshot)) return false;
+  }
+  if (write) {
+    if (settings) memcpy(&snapshot.settings, data, size);
+    else memcpy(&snapshot.acl, data, size);
+    snapshot.flags |= settings ? 1 : 2;
+    if (!valid(snapshot)) return false;
+  }
+  if (write || ((legacy || !referencePresent) && snapshot.flags)) {
+    ConfigurationReference next;
+    next.slot = referencePresent && !legacy ? previous.slot ^ 1 : 0;
+    mesh::Utils::sha256(next.digest, sizeof(next.digest),
+                        reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot));
+    auto file = SPIFFS.open(ConfigurationFiles[next.slot], "w");
+    if (!file || file.write(reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot)) != sizeof(snapshot))
+      return false;
+    file.flush(); file.close();
+    if (!verifyFile(next) || memcmp(&snapshot, &check, sizeof(snapshot))) return false;
+    bool saved;
+    if (!legacyMastRecord("settings", &next, sizeof(next), true, saved)) return false;
+    ConfigurationReference actual;
+    if (!configurationReference(actual, saved, legacy) || !saved || legacy ||
+        memcmp(&next, &actual, sizeof(next)) || !verifyFile(actual) ||
+        memcmp(&snapshot, &check, sizeof(snapshot)) || !reclaimLegacyRecord("acl")) return false;
+  }
+  present = snapshot.flags & (settings ? 1 : 2);
+  if (!write && present) {
+    if (settings) memcpy(data, &snapshot.settings, size);
+    else memcpy(data, &snapshot.acl, size);
+  }
+  return true;
 }
 bool MastAdmin::loadWifi(WifiCredentials &credentials, bool &present) {
   if (!publicProvisioningReady()) {
@@ -1012,7 +1122,7 @@ bool MastAdmin::validExtraReplay(const ExtraReplay &replay) const {
                       offsetof(ExtraReplay, digest));
   return replay.version == 1 && !memcmp(digest, replay.digest, sizeof(digest));
 }
-bool MastAdmin::validACL(const ACL &acl) const {
+bool MastAdmin::validACL(const ACL &acl) {
   uint8_t digest[32];
   mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&acl),
                       offsetof(ACL, digest));
