@@ -7,7 +7,7 @@ import hostlib.binary;
 
 pub fn help(topic: string) -> string {
     match topic {
-        "" => "help get|set|wifi|radio|region|owner|stats; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot",
+        "" => "help get|set|wifi|radio|region|owner|stats; backup help; stats; ver; board; clock; advert; discover.neighbors; neighbors; reboot",
         "get" => "get name|owner.info|radio|freq|tx|lat|lon|rxdelay|txdelay|direct.txdelay|repeat|path.hash.mode|advert.interval|flood.advert.interval",
         "set" => "set SETTING VALUE; name,owner.info,passwords,delays,repeat,path/adverts,multi.acks,allow.read.only; shared RF requires the modem administrator",
         "wifi" => "Error: WiFi is managed by the external modem, not this host role; use the modem's Management console",

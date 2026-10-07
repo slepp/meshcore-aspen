@@ -608,7 +608,9 @@ pub actor Role {
         }
         var reply = "Err - unsupported by host role";
         var frames: Vec<Tx> = Vec.new();
-        if command == "help" {
+        if command == "backup" || command.starts_with("backup ") || command == "help backup" {
+            reply = "Error: host node backup service unavailable";
+        } else if command == "help" {
             reply = cli.help("");
         } else if command.starts_with("help ") {
             reply = cli.help(string.trim(command.slice(5, command.len())));

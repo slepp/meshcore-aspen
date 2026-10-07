@@ -45,6 +45,9 @@ Read commands include `help`, `help get|set|wifi|radio|region|owner|stats`,
 `board`, `ver`, `clock`, `gps advert`, `get stats`, and
 `stats [role|sensors|radio|signal|airtime]`.
 Willow identifies itself as Willow, not Birch.
+`backup`, `backup help` and `help backup` report
+`Error: host node backup service unavailable`; use the
+[frozen-state upgrade and recovery procedures](MIGRATION.md) for this host.
 
 `get` supports name, public key, role, guest password, owner information,
 radio/frequency/power, forwarding/loop/path limits, advert intervals, delays,

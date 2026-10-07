@@ -302,6 +302,7 @@ func TestHewManagementSerializedDifferential(t *testing.T) {
 			stamp := uint32(20)
 			commands := []string{
 				"help", "help get", "help wifi", "help radio", "help owner", "help stats",
+				"backup", "backup help", "help backup", "ab|backup status",
 				"get name", "get role", "get public.key", "get guest.password",
 				"get radio", "get freq", "get tx", "get af", "get dutycycle",
 				"region list allowed", "region list denied",
