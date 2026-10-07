@@ -15,7 +15,8 @@ send `bot status`, `bot limits`, then `source status`. Send ordinary encrypted
 DMs to **Pine-Bot** for `!ping` and `!help`. Bundled source also provides
 `!remember KEY TEXT` and `!recall KEY`; installed packages select their own
 custom handlers.
-Advertise the companion first so Pine learns its full public key.
+Advertise the companion first so Pine learns its full public key. Repeat this
+after Pine restarts: its contact and route caches are volatile.
 
 For a host companion using a shared modem, the existing RF administration
 tool can use Pine's native console without command tags or automatic replay:
@@ -348,9 +349,9 @@ metatable, but each retains its own backing values; writes to existing and new
 keys remain denied. Neither optimization reduces the two-job capacity,
 48 KiB Lua quota or 8 KiB physical reserve. A failed job-buffer allocation
 rejects the candidate explicitly and releases partially allocated buffers.
-The ARM initialization frame is 64 bytes. The production build runs
+The ARM initialization frame is 88 bytes. The production build runs
 `parser-stack-check` against the actual compiler `.su` files. Its conservative
-bound is 16,000 bytes of the 16 KiB VM stack, including a 2 KiB allowance for
+bound is 16,080 bytes of the 16 KiB VM stack, including a 2 KiB allowance for
 lexer/code-generator/error/allocator leaf calls and RTOS/FPU context. It covers
 named/global functions, blocks, expressions, assignments and unguarded parent
 upvalue lookup. The check reads the nRF52 task's reservation in 32-bit stack
@@ -366,6 +367,11 @@ durable timers and channel waiting. Retained initialization peaks at 35,682
 logical bytes. A concurrent custom timer job and native note read peak at
 38,424 bytes, leaving 10,728 bytes below the 48 KiB quota; the allocator model
 peaks at 46,224 bytes. These are native32 measurements, not physical free heap.
+On the XIAO, the retained package starts with 12,352 bytes of free heap.
+A suspended custom timer and a native calculation both receive companion ACKs
+and return their replies over RF; the sampled minimum free heap is 8,864 bytes.
+The 8 KiB physical reserve remains enforced. Different source tables and
+installed settings can change the available headroom; read `mem` on your node.
 
 Data-heavy Lua tables can require more RAM than their source size suggests.
 The 4 KiB, eight-export test catalogue with 32 table rows requires a
