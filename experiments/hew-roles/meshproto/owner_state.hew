@@ -1,0 +1,117 @@
+//! Checked owner v1 outcome values. Numeric encodings remain stable in the ledger.
+pub enum Phase {
+    PendingAdmission;
+    Admitted;
+    Queued;
+    LocalTxConfirmed;
+    NativeRFAck;
+    Failed;
+    Unknown;
+}
+
+pub enum Reason {
+    None;
+    InvalidText;
+    FreshDirectContactRequired;
+    CapacityOrRadioUnavailable;
+    ClockUnavailable;
+    AirtimeOrAdmissionDenied;
+    TxFailedOrUncertain;
+    AckDeadlineExpired;
+    Interrupted;
+}
+
+pub type Flags {
+    local_tx_confirmed: bool;
+    native_rf_ack: bool;
+    admitted: bool;
+}
+
+pub fn phase(code: i64) -> Option<Phase> {
+    match code {
+        0 => .Some(.PendingAdmission),
+        1 => .Some(.Admitted),
+        2 => .Some(.Queued),
+        3 => .Some(.LocalTxConfirmed),
+        4 => .Some(.NativeRFAck),
+        5 => .Some(.Failed),
+        6 => .Some(.Unknown),
+        _ => .None,
+    }
+}
+
+pub fn phase_code(value: Phase) -> i64 {
+    match value {
+        .PendingAdmission => 0,
+        .Admitted => 1,
+        .Queued => 2,
+        .LocalTxConfirmed => 3,
+        .NativeRFAck => 4,
+        .Failed => 5,
+        .Unknown => 6,
+    }
+}
+
+pub fn pending(value: Phase) -> bool {
+    phase_code(value) < 4
+}
+
+pub fn fenced(value: Phase) -> bool {
+    phase_code(value) == 5 || phase_code(value) == 6
+}
+
+pub fn reason(code: i64) -> Option<Reason> {
+    match code {
+        0 => .Some(.None),
+        1 => .Some(.InvalidText),
+        2 => .Some(.FreshDirectContactRequired),
+        3 => .Some(.CapacityOrRadioUnavailable),
+        4 => .Some(.ClockUnavailable),
+        5 => .Some(.AirtimeOrAdmissionDenied),
+        6 => .Some(.TxFailedOrUncertain),
+        7 => .Some(.AckDeadlineExpired),
+        8 => .Some(.Interrupted),
+        _ => .None,
+    }
+}
+
+pub fn reason_code(value: Reason) -> i64 {
+    match value {
+        .None => 0,
+        .InvalidText => 1,
+        .FreshDirectContactRequired => 2,
+        .CapacityOrRadioUnavailable => 3,
+        .ClockUnavailable => 4,
+        .AirtimeOrAdmissionDenied => 5,
+        .TxFailedOrUncertain => 6,
+        .AckDeadlineExpired => 7,
+        .Interrupted => 8,
+    }
+}
+
+pub fn flags(code: i64) -> Option<Flags> {
+    if code < 0 || code > 7 {
+        return .None;
+    }
+    .Some(Flags { local_tx_confirmed: (code & 1) != 0, native_rf_ack: (code & 2) != 0, admitted: (code & 4) != 0 })
+}
+
+pub fn flags_code(value: Flags) -> i64 {
+    (if value.local_tx_confirmed {
+        1
+    } else {
+        0
+    }) | (if value.native_rf_ack {
+        2
+    } else {
+        0
+    }) | (if value.admitted {
+        4
+    } else {
+        0
+    })
+}
+
+pub fn merge(left: Flags, right: Flags) -> Flags {
+    Flags { local_tx_confirmed: left.local_tx_confirmed || right.local_tx_confirmed, native_rf_ack: left.native_rf_ack || right.native_rf_ack, admitted: left.admitted || right.admitted }
+}

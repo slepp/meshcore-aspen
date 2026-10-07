@@ -11,6 +11,8 @@ import hostlib.supervised_io as duplex;
 
 import hostlib.binary;
 
+import hostlib.deadline;
+
 pub fn frame(tag: i64, body: bytes) -> bytes {
     framing.length_encode(wire.cat(wire.byte(tag), body), 4096).expect("bounded worker frame")
 }
@@ -320,6 +322,22 @@ pub type PolicyResult {
     ok: bool;
 }
 
+pub type PortState {
+    generation: i64;
+    next_id: i64;
+    policy_factor: bytes;
+    policy_pending: bytes;
+    policy_deadline: deadline.Monotonic;
+    policy_failed: bool;
+}
+
+pub fn port_state(generation: i64) -> PortState {
+    assert(generation > 0 && generation <= 4294967295);
+    PortState { generation: generation, next_id: 0,
+        policy_factor: hex.decode("0000803f"), policy_pending: bytes.new(),
+        policy_deadline: deadline.inactive(), policy_failed: false }
+}
+
 pub fn same_factor(left: bytes, right: bytes) -> bool {
     let a = match binary.finite_float32(left) { .Some(value) => value, .None => return false };
     let b = match binary.finite_float32(right) { .Some(value) => value, .None => return false };
@@ -336,8 +354,7 @@ pub fn result(token: i64, state: i64, reason: i64, metrics: bytes) -> bytes {
 
 pub actor Session {
     let fd: ChildRef<duplex.Endpoint>;
-    let generations: Vec<i64>;
-    var ids: Vec<i64>;
+    var ports: Vec<PortState>;
     var pending: Vec<Pending>;
     var online: bool = true;
     var refresh: bool = false;
@@ -346,10 +363,6 @@ pub actor Session {
     var dropped_outcomes: i64 = 0;
     var airtime: bytes = bytes.new();
     var failure_reported: bool = false;
-    var policy_factors: Vec<bytes> = [hex.decode("0000803f"), hex.decode("0000803f"), hex.decode("0000803f")];
-    var policy_pending: Vec<bytes> = [bytes.new(), bytes.new(), bytes.new()];
-    var policy_deadlines: Vec<i64> = [0, 0, 0];
-    var policy_failed: Vec<bool> = [false, false, false];
     var policy_events: Vec<PolicyResult> = Vec.new();
     mailbox 32;
     fn failed(stage: string, details: string) {
@@ -368,7 +381,7 @@ pub actor Session {
             return;
         }
         outcomes.push(Outcome { port: port, raw: raw, value: packet_log.Outcome {
-            generation: generations[port], job: id, state: state, reason: reason,
+            generation: ports[port].generation, job: id, state: state, reason: reason,
             queue_ms: wire.uint(wire.cut(metrics, 0, 4)), rf_ms: wire.uint(wire.cut(metrics, 4, 8)),
             estimated_ms: wire.uint(wire.cut(metrics, 8, 12)) } });
     }
@@ -384,32 +397,37 @@ pub actor Session {
         0
     }
     fn policy_finish(port: i64, ok: bool, condition: string) {
-        let factor = policy_pending[port];
+        if port < 0 || port >= ports.len() { return; }
+        var state = ports[port];
+        let factor = state.policy_pending;
         if factor.is_empty() { return; }
-        policy_pending.set(port, bytes.new());
-        policy_deadlines.set(port, 0);
+        state.policy_pending = bytes.new();
+        state.policy_deadline = deadline.inactive();
         if ok {
-            policy_factors.set(port, factor);
+            state.policy_factor = factor;
         } else {
-            policy_failed.set(port, true);
-            println(f"ROLE_SOURCE_POLICY_FAILED port={port} generation={generations[port]} factor_bits={hex.encode(factor)} condition={condition}; committed setting retained, role replies suppressed");
+            state.policy_failed = true;
+            println(f"ROLE_SOURCE_POLICY_FAILED port={port} generation={state.generation} factor_bits={hex.encode(factor)} condition={condition}; committed setting retained, role replies suppressed");
         }
+        ports.set(port, state);
         policy_events.push(PolicyResult { port: port, factor: factor, ok: ok });
     }
     receive fn apply_policy(port: i64, factor: bytes) -> i64 {
-        if port < 0 || port > 1 || !online || policy_failed[port] { return -1; }
+        if port < 0 || port > 1 || port >= ports.len() || !online || ports[port].policy_failed { return -1; }
         let value = match binary.finite_float32(factor) {
             .Some(value) => value,
             .None => return -1,
         };
         if value < 0.0 { return -1; }
-        if !policy_pending[port].is_empty() {
-            return if wire.equal(policy_pending[port], factor) { 0 } else { -1 };
+        var state = ports[port];
+        if !state.policy_pending.is_empty() {
+            return if wire.equal(state.policy_pending, factor) { 0 } else { -1 };
         }
-        if same_factor(policy_factors[port], factor) { return 1; }
-        policy_pending.set(port, factor);
-        policy_deadlines.set(port, transport.monotonic() + 5000);
-        let request = wire.cat(wire.cat(hex.decode("2301"), wire.le(generations[port], 4)), factor);
+        if same_factor(state.policy_factor, factor) { return 1; }
+        state.policy_pending = factor;
+        state.policy_deadline = deadline.after(deadline.Monotonic { at: transport.monotonic() }, 5000);
+        ports.set(port, state);
+        let request = wire.cat(wire.cat(hex.decode("2301"), wire.le(state.generation, 4)), factor);
         if let .Err(error) = duplex.write(fd, wire.kiss(port, 6, request)) {
             policy_finish(port, false, f"write-failed committed={error.committed} reason={to_string(error.error)}");
             online = false;
@@ -418,17 +436,20 @@ pub actor Session {
         0
     }
     receive fn policy_reply(port: i64, reply: bytes, received_at: i64) {
-        if port < 0 || port > 1 || policy_pending[port].is_empty() { return; }
-        if received_at >= policy_deadlines[port] {
+        if port < 0 || port > 1 || port >= ports.len() || ports[port].policy_pending.is_empty() { return; }
+        let state = ports[port];
+        if deadline.reached(state.policy_deadline, deadline.Monotonic { at: received_at }) {
             policy_finish(port, false, "late-response");
             return;
         }
-        let valid = reply.len() == 6 && reply[0] == 1 && reply[1] == 0 && wire.equal(wire.cut(reply, 2, 6), policy_pending[port]);
+        let valid = reply.len() == 6 && reply[0] == 1 && reply[1] == 0 && wire.equal(wire.cut(reply, 2, 6), state.policy_pending);
         policy_finish(port, valid, if valid { "confirmed" } else { "invalid-readback actual=" + hex.encode(reply) });
     }
     receive fn policy_results() -> Vec<PolicyResult> {
         for port in 0..2 {
-            if !policy_pending[port].is_empty() && transport.monotonic() >= policy_deadlines[port] {
+            if port >= ports.len() { continue; }
+            if !ports[port].policy_pending.is_empty() && deadline.reached(
+                ports[port].policy_deadline, deadline.Monotonic { at: transport.monotonic() }) {
                 policy_finish(port, false, "response-timeout");
             }
         }
@@ -437,14 +458,21 @@ pub actor Session {
         events
     }
     receive fn policy_busy() -> bool {
-        !policy_pending[0].is_empty() || !policy_pending[1].is_empty()
+        for port in 0..2 {
+            if port < ports.len() && !ports[port].policy_pending.is_empty() { return true; }
+        }
+        false
     }
     receive fn negotiated_factors(factors: Vec<bytes>) {
-        assert(factors.len() == generations.len());
-        for port in 0..3 { policy_factors.set(port, factors[port]); }
+        assert(factors.len() == ports.len());
+        for port in 0..ports.len() {
+            var state = ports[port];
+            state.policy_factor = factors[port];
+            ports.set(port, state);
+        }
     }
     receive fn submit(port: i64, packet: bytes, priority: i64, delay: i64, expiry: i64, token: i64) -> i64 {
-        if port < 0 || port >= 3 || priority < 0 || priority > 255 {
+        if port < 0 || port >= 3 || port >= ports.len() || priority < 0 || priority > 255 {
             return 0;
         }
         var count: i64 = 0;
@@ -458,15 +486,18 @@ pub actor Session {
                 return -1;
             }
         }
-        if !online || policy_failed[port] || !policy_pending[port].is_empty() || count >= 32 || ids[port] == 4294967295 || packet.is_empty() || packet.len() > 255 || delay < 0 || delay > 1073741823 || expiry < 0 || expiry > 1073741823 {
+        let state = ports[port];
+        if !online || state.policy_failed || !state.policy_pending.is_empty() || count >= 32 || state.next_id == 4294967295 || packet.is_empty() || packet.len() > 255 || delay < 0 || delay > 1073741823 || expiry < 0 || expiry > 1073741823 {
             if !packet.is_empty() && packet.len() <= 255 {
                 record(port, packet, 0, 0, 2, wire.cat(wire.le(0, 8), wire.le(estimate(packet), 4)));
             }
             return 0;
         }
-        let id = ids[port] + 1;
-        ids.set(port, id);
-        let generation = generations[port];
+        let id = state.next_id + 1;
+        var updated = state;
+        updated.next_id = id;
+        ports.set(port, updated);
+        let generation = state.generation;
         let timeout = if expiry > 0 {
             delay + expiry + 2000
         } else {
@@ -492,7 +523,7 @@ pub actor Session {
         1
     }
     receive fn owns(port: i64, generation: i64, id: i64) -> bool {
-        if port < 0 || port >= generations.len() || generations[port] != generation {
+        if port < 0 || port >= ports.len() || ports[port].generation != generation {
             return false;
         }
         for job in pending {
@@ -503,7 +534,7 @@ pub actor Session {
         false
     }
     receive fn event(port: i64, data: bytes) -> bytes {
-        if data.len() != 23 || data[0] != 1 || data[9] > 4 || port < 0 || port >= 3 || wire.uint(wire.cut(data, 1, 5)) != generations[port] {
+        if data.len() != 23 || data[0] != 1 || data[9] > 4 || port < 0 || port >= 3 || port >= ports.len() || wire.uint(wire.cut(data, 1, 5)) != ports[port].generation {
             return bytes.new();
         }
         let id = wire.uint(wire.cut(data, 5, 9));
@@ -513,7 +544,7 @@ pub actor Session {
         var out = bytes.new();
         for p in pending {
             if p.id == id && p.port == port {
-                println(f"TX port={port} generation={generations[port]} job={id} state={state} reason={reason}");
+                println(f"TX port={port} generation={ports[port].generation} job={id} state={state} reason={reason}");
                 if state == 1 {
                     var accepted = p;
                     accepted.deadline = 0;
@@ -581,8 +612,10 @@ pub actor Session {
         for item in pending {
             if item.deadline > 0 && (due == 0 || item.deadline < due) { due = item.deadline; }
         }
-        for deadline in policy_deadlines {
-            if deadline > 0 && (due == 0 || deadline < due) { due = deadline; }
+        for state in ports {
+            if state.policy_deadline.at > 0 && (due == 0 || state.policy_deadline.at < due) {
+                due = state.policy_deadline.at;
+            }
         }
         due
     }
@@ -590,7 +623,7 @@ pub actor Session {
         var out: Vec<bytes> = Vec.new();
         for port in 0..2 { policy_finish(port, false, "connection-closed"); }
         for p in pending {
-            println(f"TX port={p.port} generation={generations[p.port]} job={p.id} state=4 reason=9");
+            println(f"TX port={p.port} generation={ports[p.port].generation} job={p.id} state=4 reason=9");
             record(p.port, p.raw, p.id, 4, 9, wire.cat(wire.le(0, 8), wire.le(p.estimated_ms, 4)));
             if p.token > 0 {
                 out.push(result(p.token, 4, 9, wire.le(0, 12)));
@@ -604,7 +637,7 @@ pub actor Session {
         var keep: Vec<Pending> = Vec.new();
         for p in pending {
             if p.port == port {
-                println(f"TX port={port} generation={generations[port]} job={p.id} state=4 reason=9");
+                println(f"TX port={port} generation={ports[port].generation} job={p.id} state=4 reason=9");
                 record(p.port, p.raw, p.id, 4, 9, wire.cat(wire.le(0, 8), wire.le(p.estimated_ms, 4)));
             } else {
                 keep.push(p);
@@ -622,11 +655,10 @@ pub actor Session {
 }
 
 pub fn create(fd: ChildRef<duplex.Endpoint>, generations: Vec<i64>) -> Session {
-    var ids: Vec<i64> = Vec.new();
-    ids.push(0);
-    ids.push(0);
-    ids.push(0);
-    spawn Session(fd: fd, generations: generations, ids: ids, pending: Vec.new())
+    assert(generations.len() == 1 || generations.len() == 3 || generations.len() == 4);
+    var ports: Vec<PortState> = Vec.new();
+    for generation in generations { ports.push(port_state(generation)); }
+    spawn Session(fd: fd, ports: ports, pending: Vec.new())
 }
 
 pub type Reception {

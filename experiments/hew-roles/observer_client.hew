@@ -6,6 +6,7 @@ import hostlib.binary;
 import hostlib.mqtt;
 import hostlib.outbound;
 import hostlib.events;
+import hostlib.deadline;
 import std.encoding.hex;
 import wire;
 
@@ -64,6 +65,30 @@ pub type Snapshot {
     awaiting_pong: bool;
 }
 
+type PendingWrite {
+    outgoing: bytes;
+    written: i64;
+    deadline: i64;
+}
+
+type AuthenticationClock {
+    issued: deadline.UTC;
+    renew: deadline.UTC;
+}
+
+type ConnectionEpoch {
+    phase: Phase;
+    epoch: i64;
+    connected: bool;
+    reason: string;
+    incarnation: string;
+    token: string;
+    identifier: i64;
+    retry_at: i64;
+    last_write: i64;
+    ping_deadline: i64;
+}
+
 /// One nonblocking step per call. Admission has its own actor and cannot wait
 /// behind DNS, a handshake, a socket write or a broker acknowledgement.
 pub actor Publisher {
@@ -72,23 +97,14 @@ pub actor Publisher {
     var topic: string = "";
     var transport_url: string = "";
     var client_id: string = "";
-    var phase: Phase = Phase.Waiting;
+    var cycle: ConnectionEpoch = ConnectionEpoch { phase: .Waiting, epoch: 0,
+        connected: false, reason: "", incarnation: "", token: "", identifier: 1,
+        retry_at: 0, last_write: 0, ping_deadline: 0 };
     var connection: Option<outbound.Connection> = .None;
     var decoder: mqtt.Decoder = mqtt.decoder(4096).expect("control decoder");
-    var outgoing: bytes = bytes.new();
-    var written: i64 = 0;
-    var deadline: i64 = 0;
-    var retry_at: i64 = 0;
-    var epoch: i64 = 0;
-    var connected: bool = false;
-    var reason: string = "";
-    var incarnation: string = "";
-    var token: string = "";
-    var identifier: i64 = 1;
-    var last_write: i64 = 0;
-    var ping_deadline: i64 = 0;
-    var issued_at: i64 = 0;
-    var renew_at: i64 = 0;
+    var write: PendingWrite = PendingWrite { outgoing: bytes.new(), written: 0, deadline: 0 };
+    var authentication: AuthenticationClock = AuthenticationClock {
+        issued: deadline.UTC { at: 0 }, renew: deadline.UTC { at: 0 } };
     var last_status_time: i64 = 0;
     var stopping: bool = false;
     var stop_deadline: i64 = 0;
@@ -104,25 +120,26 @@ pub actor Publisher {
             event_group = .Some(events.share(group));
         }
         var next: i64 = 9223372036854775807;
-        if phase == Phase.Stopped || phase == Phase.Quarantined { return next; }
+        if cycle.phase == Phase.Stopped || cycle.phase == Phase.Quarantined { return next; }
         if stopping { next = stop_deadline; }
-        if phase == Phase.Waiting {
-            if !stopping && retry_at < next { next = retry_at; }
+        if cycle.phase == Phase.Waiting {
+            if !stopping && cycle.retry_at < next { next = cycle.retry_at; }
             return next;
         }
-        if phase != Phase.Ready && deadline < next { next = deadline; }
-        if !outgoing.is_empty() && deadline < next { next = deadline; }
-        if ping_deadline != 0 && ping_deadline < next { next = ping_deadline; }
-        if phase == Phase.Ready && !stopping {
+        if cycle.phase != Phase.Ready && write.deadline < next { next = write.deadline; }
+        if !write.outgoing.is_empty() && write.deadline < next { next = write.deadline; }
+        if cycle.ping_deadline != 0 && cycle.ping_deadline < next { next = cycle.ping_deadline; }
+        if cycle.phase == Phase.Ready && !stopping {
             if queued_work { next = now; }
-            if ping_deadline == 0 && last_write + 10000 < next { next = last_write + 10000; }
+            if cycle.ping_deadline == 0 && cycle.last_write + 10000 < next { next = cycle.last_write + 10000; }
         }
-        if renew_at != 0 {
-            let renewal = now + (if renew_at > utc { renew_at - utc } else { 0 });
+        if authentication.renew.at != 0 {
+            let renewal = deadline.from_utc(authentication.renew, deadline.UTC { at: utc },
+                deadline.Monotonic { at: now }).at;
             if renewal < next { next = renewal; }
         }
         if continuation_at < next { next = continuation_at; }
-        let flags: i32 = if outgoing.is_empty() { 1 } else { 3 };
+        let flags: i32 = if write.outgoing.is_empty() { 1 } else { 3 };
         let result = match connection {
             .Some(value) => outbound.watch(value, group, flags),
             .None => return next,
@@ -133,43 +150,43 @@ pub actor Publisher {
             }
             .Err(error) => {
                 fail(to_string(error), now);
-                next = if stopping { now } else { retry_at };
+                next = if stopping { now } else { cycle.retry_at };
             }
         }
         next
     }
 
     fn offline() {
-        connected = false;
+        cycle.connected = false;
         let _ = plan.outbox.connection(false);
     }
 
     fn stop_connection() {
         connection = .None;
-        outgoing = bytes.new();
-        written = 0;
-        ping_deadline = 0;
-        token = "";
+        write.outgoing = bytes.new();
+        write.written = 0;
+        cycle.ping_deadline = 0;
+        cycle.token = "";
         offline();
     }
 
     fn fail(message: string, now: i64) {
-        reason = message;
+        cycle.reason = message;
         stop_connection();
         decoder = mqtt.decoder(4096).expect("fresh control decoder");
-        phase = if stopping { Phase.Stopped } else { Phase.Waiting };
-        retry_at = now + 1000;
+        cycle.phase = if stopping { Phase.Stopped } else { Phase.Waiting };
+        cycle.retry_at = now + 1000;
     }
 
     fn quarantine(message: string) {
-        reason = message;
+        cycle.reason = message;
         stop_connection();
-        phase = Phase.Quarantined;
+        cycle.phase = Phase.Quarantined;
     }
 
     fn configure() -> bool {
         if configured {
-            return phase != Phase.Quarantined;
+            return cycle.phase != Phase.Quarantined;
         }
         configured = true;
         transport_url = match mqtt_endpoint.parse(plan.url) {
@@ -214,15 +231,15 @@ pub actor Publisher {
     }
 
     fn queue_write(data: bytes, target: Phase, now: i64) {
-        outgoing = data;
-        written = 0;
-        phase = target;
-        deadline = now + (if stopping { 1000 } else { 3000 });
+        write.outgoing = data;
+        write.written = 0;
+        cycle.phase = target;
+        write.deadline = now + (if stopping { 1000 } else { 3000 });
     }
 
     fn next_identifier() -> i64 {
-        identifier = if identifier >= 65535 { 1 } else { identifier + 1 };
-        identifier
+        cycle.identifier = if cycle.identifier >= 65535 { 1 } else { cycle.identifier + 1 };
+        cycle.identifier
     }
 
     fn publish_status(state: string, target: Phase, now: i64, utc: i64) {
@@ -233,7 +250,7 @@ pub actor Publisher {
                 return;
             }
         };
-        let frame = match mqtt.publish(topic + "/status", body, identifier, true) {
+        let frame = match mqtt.publish(topic + "/status", body, cycle.identifier, true) {
             .Ok(value) => value,
             .Err(error) => {
                 fail(to_string(error), now);
@@ -246,14 +263,14 @@ pub actor Publisher {
     fn begin(now: i64, utc: i64) {
         offline();
         if observation.public_format(plan.config.format) && utc < 1735689600000 {
-            reason = "observer MQTT requires synchronized UTC";
-            retry_at = now + 1000;
+            cycle.reason = "observer MQTT requires synchronized UTC";
+            cycle.retry_at = now + 1000;
             return;
         }
         var username = plan.username;
         var password = plan.password;
-        issued_at = 0;
-        renew_at = 0;
+        authentication.issued = deadline.UTC { at: 0 };
+        authentication.renew = deadline.UTC { at: 0 };
         if !plan.audience.is_empty() {
             let input = match observer_auth.signing_input(plan.config.identity, plan.audience, utc / 1000) {
                 .Ok(value) => value,
@@ -271,8 +288,8 @@ pub actor Publisher {
                 }
             };
             username = observer_auth.username(plan.config.identity).expect("validated identity");
-            issued_at = utc;
-            renew_at = utc + 86100000;
+            authentication.issued = deadline.UTC { at: utc };
+            authentication.renew = deadline.UTC { at: utc + 86100000 };
         }
         let will = match status("offline", utc) {
             .Ok(value) => value.to_bytes(),
@@ -281,7 +298,7 @@ pub actor Publisher {
                 return;
             }
         };
-        outgoing = match mqtt.connect(client_id, username, password, topic + "/status", will, 10) {
+        write.outgoing = match mqtt.connect(client_id, username, password, topic + "/status", will, 10) {
             .Ok(value) => value,
             .Err(error) => {
                 quarantine(to_string(error));
@@ -295,12 +312,12 @@ pub actor Publisher {
                 return;
             }
         };
-        written = 0;
-        identifier = 1;
-        phase = Phase.Connecting;
-        deadline = now + 3100;
-        epoch += 1;
-        reason = "";
+        write.written = 0;
+        cycle.identifier = 1;
+        cycle.phase = Phase.Connecting;
+        write.deadline = now + 3100;
+        cycle.epoch += 1;
+        cycle.reason = "";
     }
 
     fn received(packet: mqtt.Packet, now: i64, utc: i64) {
@@ -313,7 +330,7 @@ pub actor Publisher {
         };
         match reply {
             mqtt.Reply.Connected => {
-                if phase != Phase.ConnAck || !outgoing.is_empty() {
+                if cycle.phase != Phase.ConnAck || !write.outgoing.is_empty() {
                     fail("unexpected MQTT CONNACK", now);
                     return;
                 }
@@ -323,40 +340,40 @@ pub actor Publisher {
                 fail(f"MQTT CONNACK rejected: code={code}", now);
             }
             mqtt.Reply.Acknowledged(id) => {
-                if id != identifier || !outgoing.is_empty() {
+                if id != cycle.identifier || !write.outgoing.is_empty() {
                     return;
                 }
-                if phase == Phase.OnlineAck {
+                if cycle.phase == Phase.OnlineAck {
                     if !stopping {
-                        connected = true;
+                        cycle.connected = true;
                         let _ = plan.outbox.connection(true);
                     }
-                    phase = Phase.Ready;
-                } else if phase == Phase.PacketAck && !stopping {
-                    match plan.outbox.acknowledge(token) {
+                    cycle.phase = Phase.Ready;
+                } else if cycle.phase == Phase.PacketAck && !stopping {
+                    match plan.outbox.acknowledge(cycle.token) {
                         .Ok(true) => {
-                            token = "";
-                            phase = Phase.Ready;
+                            cycle.token = "";
+                            cycle.phase = Phase.Ready;
                         }
                         _ => fail("observer publication acknowledgement lost its queue incarnation", now),
                     }
-                } else if phase == Phase.OfflineAck {
+                } else if cycle.phase == Phase.OfflineAck {
                     queue_write(mqtt.frame(224, bytes.new()).expect("DISCONNECT"), Phase.Disconnecting, now);
                 }
             }
-            mqtt.Reply.Pong => { ping_deadline = 0; }
+            mqtt.Reply.Pong => { cycle.ping_deadline = 0; }
         }
     }
 
     receive fn step(now: i64, utc: i64) {
         continuation_at = 9223372036854775807;
         queued_work = false;
-        if !configure() || phase == Phase.Stopped {
+        if !configure() || cycle.phase == Phase.Stopped {
             return;
         }
         if stopping && now >= stop_deadline {
             stop_connection();
-            phase = Phase.Stopped;
+            cycle.phase = Phase.Stopped;
             return;
         }
         let state = match plan.outbox.state() {
@@ -374,39 +391,39 @@ pub actor Publisher {
         }
         if !stopping && state.closed {
             stop_connection();
-            phase = Phase.Stopped;
+            cycle.phase = Phase.Stopped;
             return;
         }
-        if incarnation != current {
-            if !incarnation.is_empty() {
+        if cycle.incarnation != current {
+            if !cycle.incarnation.is_empty() {
                 fail("observer admission actor was replaced", now);
             }
-            incarnation = current;
+            cycle.incarnation = current;
         }
-        if phase == Phase.Waiting {
-            if !stopping && now >= retry_at {
+        if cycle.phase == Phase.Waiting {
+            if !stopping && now >= cycle.retry_at {
                 begin(now, utc);
             }
             return;
         }
         if !stopping && observation.public_format(plan.config.format) &&
-            (utc < 1735689600000 || (issued_at != 0 && utc < issued_at) ||
-             (renew_at != 0 && utc >= renew_at)) {
+            (utc < 1735689600000 || (authentication.issued.at != 0 && utc < authentication.issued.at) ||
+             (authentication.renew.at != 0 && utc >= authentication.renew.at)) {
             fail("observer UTC or identity token requires reconnect", now);
             return;
         }
-        if phase == Phase.Connecting {
+        if cycle.phase == Phase.Connecting {
             let ready = match connection {
                 .Some(stream) => outbound.progress(stream),
                 .None => .Err(outbound.TransportError.InvalidConfiguration),
             };
             match ready {
                 .Ok(true) => {
-                    phase = Phase.ConnAck;
-                    deadline = now + 3000;
+                    cycle.phase = Phase.ConnAck;
+                    write.deadline = now + 3000;
                 }
                 .Ok(false) => {
-                    if now >= deadline {
+                    if now >= write.deadline {
                         fail("observer TCP/TLS connection deadline expired", now);
                     }
                     return;
@@ -438,7 +455,7 @@ pub actor Publisher {
                     decoder = batch.decoder;
                     for packet in batch.packets {
                         received(packet, now, utc);
-                        if phase == Phase.Waiting || phase == Phase.Stopped {
+                        if cycle.phase == Phase.Waiting || cycle.phase == Phase.Stopped {
                             return;
                         }
                     }
@@ -449,50 +466,50 @@ pub actor Publisher {
                 }
             }
         }
-        if stopping && outgoing.is_empty() && phase != Phase.OfflineAck && phase != Phase.Disconnecting {
+        if stopping && write.outgoing.is_empty() && cycle.phase != Phase.OfflineAck && cycle.phase != Phase.Disconnecting {
             let _ = next_identifier();
             publish_status("offline", Phase.OfflineAck, now, utc);
         }
-        if !outgoing.is_empty() {
-            if now >= deadline {
-                fail(f"observer MQTT write deadline expired: committed_prefix={written}", now);
+        if !write.outgoing.is_empty() {
+            if now >= write.deadline {
+                fail(f"observer MQTT write deadline expired: committed_prefix={write.written}", now);
                 return;
             }
-            let end = if outgoing.len() - written > 65536 { written + 65536 } else { outgoing.len() };
-            let suffix = binary.slice(outgoing, written, end).expect("MQTT write suffix");
+            let end = if write.outgoing.len() - write.written > 65536 { write.written + 65536 } else { write.outgoing.len() };
+            let suffix = binary.slice(write.outgoing, write.written, end).expect("MQTT write suffix");
             let result = match connection {
                 .Some(stream) => outbound.write_some(stream, suffix),
                 .None => return,
             };
             match result {
                 .Ok(count) => {
-                    written += count;
-                    if written == outgoing.len() {
-                        outgoing = bytes.new();
-                        written = 0;
-                        last_write = now;
-                        if phase == Phase.Disconnecting {
+                    write.written += count;
+                    if write.written == write.outgoing.len() {
+                        write.outgoing = bytes.new();
+                        write.written = 0;
+                        cycle.last_write = now;
+                        if cycle.phase == Phase.Disconnecting {
                             stop_connection();
-                            phase = Phase.Stopped;
+                            cycle.phase = Phase.Stopped;
                         }
                     }
                 }
                 .Err(error) => {
-                    fail(f"{to_string(error)}; committed_prefix={written}", now);
+                    fail(f"{to_string(error)}; committed_prefix={write.written}", now);
                 }
             }
             return;
         }
-        if (phase == Phase.ConnAck || phase == Phase.OnlineAck || phase == Phase.PacketAck ||
-            phase == Phase.OfflineAck) && now >= deadline {
-            fail("observer MQTT acknowledgement deadline expired: " + to_string(phase), now);
+        if (cycle.phase == Phase.ConnAck || cycle.phase == Phase.OnlineAck || cycle.phase == Phase.PacketAck ||
+            cycle.phase == Phase.OfflineAck) && now >= write.deadline {
+            fail("observer MQTT acknowledgement deadline expired: " + to_string(cycle.phase), now);
             return;
         }
-        if ping_deadline != 0 && now >= ping_deadline {
+        if cycle.ping_deadline != 0 && now >= cycle.ping_deadline {
             fail("observer MQTT PINGRESP deadline expired", now);
             return;
         }
-        if phase == Phase.Ready && !stopping {
+        if cycle.phase == Phase.Ready && !stopping {
             let next = match plan.outbox.next() {
                 .Ok(value) => value,
                 .Err(_) => {
@@ -509,18 +526,18 @@ pub actor Publisher {
                         return;
                     }
                 };
-                token = delivery.token;
+                cycle.token = delivery.token;
                 queue_write(data, Phase.PacketAck, now);
-            } else if ping_deadline == 0 && now - last_write >= 10000 {
-                ping_deadline = now + 3000;
+            } else if cycle.ping_deadline == 0 && now - cycle.last_write >= 10000 {
+                cycle.ping_deadline = now + 3000;
                 queue_write(mqtt.frame(192, bytes.new()).expect("PINGREQ"), Phase.Ready, now);
             }
         }
     }
 
     receive fn snapshot() -> Snapshot {
-        Snapshot { phase: phase, epoch: epoch, connected: connected, reason: reason,
-            writing: outgoing.len() - written, awaiting_pong: ping_deadline != 0 }
+        Snapshot { phase: cycle.phase, epoch: cycle.epoch, connected: cycle.connected, reason: cycle.reason,
+            writing: write.outgoing.len() - write.written, awaiting_pong: cycle.ping_deadline != 0 }
     }
 
     receive fn inject_failure() {
@@ -534,10 +551,10 @@ pub actor Publisher {
         stop_deadline = now + 1000;
         let _ = plan.outbox.close();
         offline();
-        if phase == Phase.Waiting || phase == Phase.Connecting || phase == Phase.ConnAck ||
-            phase == Phase.Quarantined {
+        if cycle.phase == Phase.Waiting || cycle.phase == Phase.Connecting || cycle.phase == Phase.ConnAck ||
+            cycle.phase == Phase.Quarantined {
             stop_connection();
-            phase = Phase.Stopped;
+            cycle.phase = Phase.Stopped;
         }
         if let .Some(group) = event_group { events.wake(group).expect("wake observer publisher shutdown"); }
     }

@@ -1,0 +1,51 @@
+import roles;
+
+import wire;
+
+import std.encoding.hex;
+
+fn counters(role: roles.Role, received: i64, drained: i64) {
+    let value = role.parse_counts().expect("RX parse counters");
+    assert(value.len() == 24);
+    assert(wire.uint(wire.cut(value, 0, 8)) == received);
+    assert(wire.uint(wire.cut(value, 8, 16)) == received + drained, "packet processing must reuse the ingress decode");
+    assert(wire.uint(wire.cut(value, 16, 24)) == drained);
+}
+
+fn main() {
+    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101");
+    let relay = roles.create(seed, 2, "Parse relay", "", "", 3, bytes.new(), bytes.new());
+    let direct = wire.encode(wire.packet(2, 11, wire.le(0, 2)));
+    for i in 0..8 {
+        let _ = relay.ingest(direct, 1000 + i, i % 2 == 0).expect("ordinary and reflected RX");
+    }
+    let _ = relay.ingest(bytes.new(), 1010, false).expect("malformed RX");
+    counters(relay, 9, 0);
+    relay.profile(hex.decode("c806643690d003000705020000803f010000")).expect("SF7 readback");
+    var airtime = bytes.new();
+    for _ in 0..256 {
+        airtime.append(wire.le(100, 4));
+    }
+    assert(relay.airtime(airtime).expect("RX airtime estimates"));
+    assert(relay.owner_command("set rxdelay 20", 1100).expect("RX delay") == "OK");
+    relay.signal(-40).expect("quarter-dB SNR");
+    // A signal measurement is required even when its packet score is zero.
+    var measurement = hex.decode("0000c8c2");
+    measurement.append(hex.decode("000020c1"));
+    measurement.push(0);
+    relay.measurement(measurement).expect("measured -10 dB SNR");
+    let flood = wire.encode(wire.packet(1, 11, wire.le(0, 2)));
+    assert(relay.ingest(flood, 1200, false).expect("scored flood").is_empty());
+    counters(relay, 10, 0);
+    let due = relay.next_deadline(1200).expect("held flood deadline");
+    assert(due >= 1250 && due <= 33200);
+    assert(relay.tick(due - 1).expect("before held packet").is_empty());
+    counters(relay, 10, 0);
+    let _ = relay.tick(due).expect("at held packet deadline");
+    counters(relay, 10, 1);
+    assert(relay.take_rx_commit().expect("delayed RX processed"));
+    assert(!relay.take_rx_commit().expect("consume delayed RX marker once"));
+    stop(relay);
+    stopped(relay);
+    println("RX_PARSE_CHECKS passed extra_parses_per_immediate_rx=0");
+}

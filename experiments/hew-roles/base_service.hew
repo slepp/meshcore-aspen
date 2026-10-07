@@ -81,6 +81,14 @@ type Control {
     deadline: i64;
 }
 
+type SourceState {
+    recovering: bool;
+    online: bool;
+    retry_at: i64;
+    retry_delay: i64;
+    buffered: Vec<bytes>;
+}
+
 fn required_profile(cfg: json.Value) -> bytes {
     let text = state.text(cfg, "required_profile");
     var error = "";
@@ -380,11 +388,8 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
     var source_watch = duplex.watch(fd, group).expect("watch companion modem");
     let recovery_slot = spawn companion_connection.ResultSlot(group: events.share(group));
     let connector = spawn companion_connection.Connector(endpoint: fd, profile: profile, completed: recovery_slot);
-    var recovering = false;
-    var source_online = true;
-    var retry_at: i64 = 0;
-    var retry_delay: i64 = 500;
-    var buffered = negotiated.initial_frames;
+    var source = SourceState { recovering: false, online: true, retry_at: 0,
+        retry_delay: 500, buffered: negotiated.initial_frames };
     let rf = companion_radio.create(base);
     rf.set_airtime(negotiated.airtime).expect("airtime table");
     rf.set_spreading(profile[8] as i64).expect("shared spreading factor");
@@ -432,14 +437,14 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
         let now = listener.now();
         var again = false;
         let wall = transport.now() / 1000;
-        if source_online && !modem.healthy().expect("modem health") {
-            source_online = false;
+        if source.online && !modem.healthy().expect("modem health") {
+            source.online = false;
         }
-        if source_online && !probe.healthy(now).expect("read-only modem query deadline") {
+        if source.online && !probe.healthy(now).expect("read-only modem query deadline") {
             println("BASE_SOURCE state=disconnected reason=physical-readback-or-telemetry-query-failed");
-            source_online = false;
+            source.online = false;
         }
-        if !source_online && !recovering && retry_at == 0 {
+        if !source.online && !source.recovering && source.retry_at == 0 {
             for job in modem.outstanding().expect("uncertain source jobs") {
                 let outcome = wire.cat(wire.cat(wire.byte(1), wire.le(negotiated.generations[0], 4)), wire.cat(wire.le(job.id, 4), wire.cat(wire.cat(wire.byte(4), wire.byte(9)), wire.le(0, 12))));
                 tx_status = accounting.event(tx_status, outcome);
@@ -454,14 +459,14 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 source_watch = 0;
             }
             duplex.close(fd);
-            buffered = Vec.new();
+            source.buffered = Vec.new();
             stop(decoder);
             stopped(decoder);
             stop(receivers);
             stopped(receivers);
             decoder = spawn wire.Decoder(buffer: bytes.new());
             receivers = session.receivers();
-            retry_at = now + retry_delay;
+            source.retry_at = now + source.retry_delay;
             println("BASE_SOURCE state=disconnected pending_jobs=uncertain clients=retained");
             if let .Some(pending_control) = control {
                 var failed: Vec<companion.Event> = Vec.new();
@@ -471,29 +476,29 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 control = .None;
             }
         }
-        if !source_online && !recovering && retry_at > 0 && now >= retry_at {
+        if !source.online && !source.recovering && source.retry_at > 0 && now >= source.retry_at {
             let current = json.parse(base.snapshot().expect("source recovery preferences")).expect("companion state");
             mailbox(connector, on_full: .Wait).connect(radio_host, radio_port, state.decimal(state.field(current, "Preferences"), "airtime_factor")).expect("start companion source recovery");
-            recovering = true;
+            source.recovering = true;
         }
-        if recovering {
+        if source.recovering {
             match recovery_slot.take().expect("source recovery progress") {
                 companion_connection.State.Waiting => {}
                 companion_connection.State.Failed(error) => {
-                    recovering = false;
-                    retry_delay = if retry_delay < 5000 {
-                        retry_delay * 2
+                    source.recovering = false;
+                    source.retry_delay = if source.retry_delay < 5000 {
+                        source.retry_delay * 2
                     } else {
                         5000
                     };
-                    if retry_delay > 5000 {
-                        retry_delay = 5000;
+                    if source.retry_delay > 5000 {
+                        source.retry_delay = 5000;
                     }
-                    retry_at = now + retry_delay;
-                    println(f"BASE_SOURCE state=retrying error={error} retry_ms={retry_delay}");
+                    source.retry_at = now + source.retry_delay;
+                    println(f"BASE_SOURCE state=retrying error={error} retry_ms={source.retry_delay}");
                 }
                 companion_connection.State.Connected(connection) => {
-                    recovering = false;
+                    source.recovering = false;
                     stop(modem);
                     stopped(modem);
                     negotiated = connection;
@@ -501,11 +506,11 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                     decoder.restore_parser(negotiated.parser).expect("recovered partial KISS frame");
                     probe.reset().expect("recovered physical sample");
                     rf.set_airtime(negotiated.airtime).expect("recovered airtime table");
-                    buffered = negotiated.initial_frames;
-                    source_online = true;
+                    source.buffered = negotiated.initial_frames;
+                    source.online = true;
                     source_watch = duplex.watch(fd, group).expect("watch recovered companion modem");
-                    retry_delay = 500;
-                    retry_at = 0;
+                    source.retry_delay = 500;
+                    source.retry_at = 0;
                     println("BASE_SOURCE state=connected ordinary_source=1 clients=retained");
                 }
             }
@@ -577,7 +582,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 var events: Vec<companion.Event> = Vec.new();
                 if companion_radio.is_radio_command(frame[0] as i64) {
                     let tx = rf.prepare(c.id, frame, wall, now).expect("radio command");
-                    let queued = if tx.raw.is_empty() || !source_online {
+                    let queued = if tx.raw.is_empty() || !source.online {
                         false
                     } else {
                         submit(modem, rf, tx)
@@ -588,19 +593,22 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                     events = rf.admitted(tx, queued, now).expect("transmit admission");
                 } else {
                     let old_key = base.active_key().expect("active key");
-                    let old_doc = json.parse(base.snapshot().expect("state")).expect("document");
+                    let old_factor = if frame[0] == 21 {
+                        base.source_factor().expect("source factor")
+                    } else {
+                        0.0
+                    };
                     events = base.command(c.id, frame, wall).expect("companion command");
                     let new_key = base.active_key().expect("active key");
                     if !wire.equal(old_key, new_key) {
                         rf.reset_identity(new_key).expect("identity transition");
                     }
                     if frame[0] == 21 && !events.is_empty() && events[0].frame[0] == 0 {
-                        let updated = json.parse(base.snapshot().expect("state")).expect("document");
-                        let factor = state.decimal(state.field(updated, "Preferences"), "airtime_factor");
-                        if factor != state.decimal(state.field(old_doc, "Preferences"), "airtime_factor") {
+                        let factor = base.source_factor().expect("source factor");
+                        if factor != old_factor {
                             let encoded = binary.float32(factor).expect("source factor");
                             let command = wire.cat(wire.byte(35), wire.cat(wire.cat(wire.byte(1), wire.le(negotiated.generations[0], 4)), encoded));
-                            if !source_online || duplex.write(fd, wire.kiss(0, 6, command)).is_err() {
+                            if !source.online || duplex.write(fd, wire.kiss(0, 6, command)).is_err() {
                                 base.fail_closed().expect("source policy fault");
                                 events[0] = companion.event(c.id, companion.error(4));
                             } else {
@@ -613,9 +621,9 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 clients = dispatch(owner, clients, events, now);
             }
         }
-        var source_frames = buffered;
-        buffered = Vec.new();
-        if source_online {
+        var source_frames = source.buffered;
+        source.buffered = Vec.new();
+        if source.online {
             match duplex.read(fd, 0) {
                 hostlib.duplex.Read.Data(data) => {
                     for decoded in decoder.feed(data).expect("modem framing") {
@@ -624,7 +632,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 }
                 hostlib.duplex.Read.Idle => {}
                 _ => {
-                    source_online = false;
+                    source.online = false;
                 }
             }
         }
@@ -712,7 +720,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 rx_wake = batch.next_rx;
                 clients = dispatch(owner, clients, batch.events, now);
                 for tx in batch.transmissions {
-                    if source_online && submit(modem, rf, tx) {
+                    if source.online && submit(modem, rf, tx) {
                         admitted += 1;
                     }
                 }
@@ -723,7 +731,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
             rx_wake = batch.next_rx;
             clients = dispatch(owner, clients, batch.events, now);
             for tx in batch.transmissions {
-                if source_online && submit(modem, rf, tx) {
+                if source.online && submit(modem, rf, tx) {
                     admitted += 1;
                 }
             }
@@ -733,7 +741,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
             rx_wake = batch.next_rx;
             clients = dispatch(owner, clients, batch.events, now);
             for tx in batch.transmissions {
-                if source_online && submit(modem, rf, tx) {
+                if source.online && submit(modem, rf, tx) {
                     admitted += 1;
                 }
             }
@@ -746,32 +754,32 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 base.fail_closed().expect("source policy confirmation timed out");
             }
         }
-        if source_online && control.is_none() {
+        if source.online && control.is_none() {
             let query = probe.query(now).expect("read-only modem measurements");
             if !query.is_empty() && duplex.write(fd, wire.kiss(0, 6, query)).is_err() {
-                source_online = false;
+                source.online = false;
             }
         }
         if now >= tick_at {
             for tx in rf.tick(wall, now).expect("room keepalives") {
-                if source_online && submit(modem, rf, tx) {
+                if source.online && submit(modem, rf, tx) {
                     admitted += 1;
                 }
             }
             tick_at = now + 1000;
         }
         if status_watch > 0 {
-            health_clients = serve_status(status_owner, health_clients, group, base, started, source_online, endpoint, status_role, tx_status);
+            health_clients = serve_status(status_owner, health_clients, group, base, started, source.online, endpoint, status_role, tx_status);
             events.arm(group, status_watch, 1).expect("rearm Base status listener");
         }
         events.arm(group, accept_watch, 1).expect("rearm companion listener");
         var due = tick_at;
         if end > 0 && end < due { due = end; }
-        if !recovering && retry_at > 0 && retry_at < due { due = retry_at; }
+        if !source.recovering && source.retry_at > 0 && source.retry_at < due { due = source.retry_at; }
         if rx_wake > 0 && rx_wake < due { due = rx_wake; }
         let metadata_due = receivers.next_deadline().expect("receive metadata deadline");
         if metadata_due > 0 && metadata_due < due { due = metadata_due; }
-        if source_online {
+        if source.online {
             let tx_due = modem.next_deadline().expect("transmission outcome deadline");
             if tx_due > 0 && tx_due < due { due = tx_due; }
             if control.is_none() {
@@ -779,7 +787,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
                 if query_due < due { due = query_due; }
             }
             events.arm(group, source_watch, 1).expect("rearm companion modem");
-        } else if retry_at == 0 { again = true; }
+        } else if source.retry_at == 0 { again = true; }
         if let .Some(pending_control) = control {
             if pending_control.deadline < due { due = pending_control.deadline; }
         }

@@ -242,6 +242,14 @@ type Sample {
     failure: string;
 }
 
+type HealthFetch {
+    connected: bool;
+    sent: i64;
+    incoming: bytes;
+    deadline: i64;
+    transport_due: i64;
+}
+
 actor Monitor {
     let root: string;
     let group: events.Group;
@@ -250,47 +258,40 @@ actor Monitor {
     let label: string;
     var rpc: Option<Rpc> = .None;
     var connection: Option<outbound.Connection> = .None;
-    var connected: bool = false;
-    var sent: i64 = 0;
-    var incoming: bytes = bytes.new();
-    var deadline: i64 = 0;
+    var fetch: HealthFetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(),
+        deadline: 0, transport_due: 0 };
     var next: i64 = 0;
-    var value: Option<json.Value> = .None;
-    var updated: i64 = 0;
-    var failure: string = "health connection has not returned a sample";
-    var transport_due: i64 = 0;
+    var sample: Sample = Sample { value: .None, updated: 0,
+        failure: "health connection has not returned a sample" };
     fn complete(result: Result<json.Value, string>) {
         match result {
-            .Ok(sample) => {
-                value = .Some(sample);
-                updated = listener.now();
-                failure = "";
+            .Ok(value) => {
+                sample.value = .Some(value);
+                sample.updated = listener.now();
+                sample.failure = "";
             }
             .Err(reason) => {
-                value = .None;
-                if failure != reason {
+                sample.value = .None;
+                if sample.failure != reason {
                     println(f"DASHBOARD_HEALTH_OFFLINE connection={label} reason={reason}");
                 }
-                failure = reason;
+                sample.failure = reason;
             }
         }
         if let .Some(request_actor) = rpc {
             request_actor.cancel().expect("retire health RPC");
         }
         connection = .None;
-        connected = false;
-        sent = 0;
-        incoming = bytes.new();
-        deadline = 0;
-        transport_due = 0;
+        fetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(),
+            deadline: 0, transport_due: 0 };
         next = listener.now() + 500;
     }
     receive fn poll() -> Sample {
         let now = listener.now();
         var interest: i32 = 1;
         var finished: Option<Result<json.Value, string>> = .None;
-        if deadline == 0 && now >= next {
-            deadline = now + 2000;
+        if fetch.deadline == 0 && now >= next {
+            fetch.deadline = now + 2000;
             if port == 0 {
                 if root.is_empty() {
                     complete(.Err("companion health endpoint is disabled"));
@@ -313,8 +314,8 @@ actor Monitor {
                 }
             }
         }
-        if deadline > 0 {
-            if now >= deadline {
+        if fetch.deadline > 0 {
+            if now >= fetch.deadline {
                 complete(.Err("health response deadline expired"));
             } else if let .Some(request_actor) = rpc {
                 match request_actor.poll() {
@@ -325,8 +326,8 @@ actor Monitor {
                             let text = utf8.decode(binary.slice(response, 2, response.len()).expect("health response body"));
                             let parsed: Result<json.Value, string> = match text {
                                 .Ok(body) => match json.parse(body) {
-                                    .Ok(sample) => if sample.type_of() == json.Kind.Object {
-                                        .Ok(sample)
+                                    .Ok(observed) => if observed.type_of() == json.Kind.Object {
+                                        .Ok(observed)
                                     } else {
                                         .Err("host health response must be an object")
                                     }
@@ -343,42 +344,42 @@ actor Monitor {
                     }
                 }
             } else if connection.is_some() {
-                if !connected {
+                if !fetch.connected {
                     let progress = match connection {
                         .Some(owner) => outbound.progress(owner),
                         .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
                     };
                     match progress {
                         .Ok(done) => {
-                            connected = done;
+                            fetch.connected = done;
                         }
                         .Err(_) => {
                             finished = .Some(.Err("companion health connection failed"));
                         }
                     }
                 }
-                if connected && finished.is_none() {
+                if fetch.connected && finished.is_none() {
                     let path = if selector == 0 {
                         "/status"
                     } else {
                         "/readyz"
                     };
                     let request = f"GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n".to_bytes();
-                    if sent < request.len() {
-                        let suffix = binary.slice(request, sent, request.len()).expect("health request suffix");
+                    if fetch.sent < request.len() {
+                        let suffix = binary.slice(request, fetch.sent, request.len()).expect("health request suffix");
                         let written = match connection {
                             .Some(owner) => outbound.write_some(owner, suffix),
                             .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
                         };
                         match written {
                             .Ok(count) => {
-                                sent += count;
+                                fetch.sent += count;
                             }
                             .Err(_) => {
                                 finished = .Some(.Err("companion health request write failed"));
                             }
                         }
-                        if sent < request.len() { interest = 2; }
+                        if fetch.sent < request.len() { interest = 2; }
                     } else {
                         for _ in 0..17 {
                             let received = match connection {
@@ -388,14 +389,14 @@ actor Monitor {
                             match received {
                                 .Idle => { break; }
                                 .Data(data) => {
-                                    if incoming.len() + data.len() > 65536 {
+                                    if fetch.incoming.len() + data.len() > 65536 {
                                         finished = .Some(.Err("companion health response exceeds 64 KiB"));
                                         break;
                                     }
-                                    incoming.append(data);
+                                    fetch.incoming.append(data);
                                 }
                                 .End => {
-                                    finished = .Some(http_body(incoming, selector == 1));
+                                    finished = .Some(http_body(fetch.incoming, selector == 1));
                                     break;
                                 }
                                 .Failed(_) => {
@@ -409,18 +410,18 @@ actor Monitor {
             }
         }
         if let .Some(result) = finished { complete(result); }
-        if deadline > 0 && connection.is_some() {
+        if fetch.deadline > 0 && connection.is_some() {
             let delay = match connection {
                 .Some(owner) => outbound.watch(owner, group, interest).expect("watch companion health socket"),
                 .None => panic("companion health connection unavailable while watching"),
             };
-            transport_due = if delay == 9223372036854775807 { 0 } else { listener.now() + delay };
+            fetch.transport_due = if delay == 9223372036854775807 { 0 } else { listener.now() + delay };
         }
-        Sample { value: if now - updated <= 3000 {
-            value
+        Sample { value: if now - sample.updated <= 3000 {
+            sample.value
         } else {
             .None
-        }, updated: updated, failure: failure }
+        }, updated: sample.updated, failure: sample.failure }
     }
     receive fn close() {
         if let .Some(request_actor) = rpc {
@@ -431,9 +432,9 @@ actor Monitor {
         connection = .None;
     }
     receive fn next_deadline() -> i64 {
-        if deadline == 0 { return next; }
-        var due = deadline;
-        if transport_due > 0 && transport_due < due { due = transport_due; }
+        if fetch.deadline == 0 { return next; }
+        var due = fetch.deadline;
+        if fetch.transport_due > 0 && fetch.transport_due < due { due = fetch.transport_due; }
         if let .Some(request_actor) = rpc {
             let rpc_due = request_actor.next_deadline().expect("health RPC deadline");
             if rpc_due > 0 && rpc_due < due { due = rpc_due; }

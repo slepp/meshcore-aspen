@@ -1,0 +1,61 @@
+import meshproto.owner_state as outcome;
+
+import companion_telemetry as telemetry;
+
+import wire;
+
+fn main() {
+    for code in 0..7 {
+        let phase = outcome.phase(code).expect("owner phase");
+        assert(outcome.phase_code(phase) == code);
+        assert(outcome.pending(phase) == (code < 4));
+        assert(outcome.fenced(phase) == (code == 5 || code == 6));
+    }
+    assert(outcome.phase(-1).is_none() && outcome.phase(7).is_none());
+    for code in 0..9 {
+        assert(outcome.reason_code(outcome.reason(code).expect("owner reason")) == code);
+    }
+    assert(outcome.reason(-1).is_none() && outcome.reason(9).is_none());
+    for left in 0..8 {
+        let flags = outcome.flags(left).expect("owner flags");
+        assert(outcome.flags_code(flags) == left);
+        for right in 0..8 {
+            assert(outcome.flags_code(outcome.merge(flags, outcome.flags(right).expect("owner flags"))) == (left | right));
+        }
+    }
+    assert(outcome.flags(-1).is_none() && outcome.flags(8).is_none());
+    let codes = [34, 19, 16, 13, 20, 18];
+    var stage: telemetry.Stage = .Configuration;
+    for i in 0..6 {
+        assert(telemetry.operation(stage) == codes[i]);
+        stage = telemetry.next_stage(stage);
+    }
+    assert(telemetry.operation(stage) == 34);
+    let profile = wire.le(0, 18);
+    let probe = spawn telemetry.Probe(profile: profile);
+    let configuration = wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.cat(wire.le(17, 4), profile));
+    assert(probe.healthy(0).expect("new probe"));
+    for i in 0..6 {
+        let now = 100 + i;
+        let query = probe.query(now).expect("telemetry query");
+        assert(query[0] as i64 == codes[i]);
+        assert(probe.busy().expect("one query pending"));
+        assert(probe.healthy(now + 2999).expect("before deadline"));
+        assert(!probe.healthy(now + 3000).expect("at deadline"));
+        assert(!probe.response(wire.cat(wire.byte(6), wire.byte(255)), now).expect("wrong response"));
+        let reply = if i == 0 {
+            wire.cat(wire.cat(wire.byte(6), wire.byte(162)), configuration)
+        } else {
+            wire.cat(wire.cat(wire.byte(6), wire.byte(241)), wire.byte(3))
+        };
+        assert(probe.response(reply, now).expect("ordered telemetry response"));
+        assert(!probe.busy().expect("query complete"));
+    }
+    assert(probe.report(106).expect("unavailable physical measurements").contains("\"has_battery\":false"));
+    assert(probe.query(15104).expect("before next interval").is_empty());
+    assert(probe.query(15105).expect("at next interval")[0] == 34);
+    let snapshot = probe.snapshot(45105).expect("staleness boundary");
+    assert(snapshot.len() == 9 && wire.uint(wire.cut(snapshot, 0, 8)) == 105);
+    assert(probe.report(45106).expect("stale sample") == "{}");
+    println("PROTOCOL_STATE_CHECKS passed");
+}

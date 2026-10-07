@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import statistics
 import subprocess
 import tempfile
 import threading
@@ -163,6 +164,38 @@ def slope(rows, label, field):
     mean_y = sum(y for _, y in pairs) / len(pairs)
     return sum((x - mean_x) * (y - mean_y) for x, y in pairs) / sum(
         (x - mean_x) ** 2 for x, _ in pairs)
+
+
+def noise_envelope(before, after, field):
+    def mean(value):
+        if field == "cpu_ticks":
+            return value["cpu_percent_one_core"]
+        return sum(item.get("messages_per_second", 0) for item in value["processes"].values())
+
+    rates = []
+    scale = 100 / os.sysconf("SC_CLK_TCK") if field == "cpu_ticks" else 1
+    for value in (before, after):
+        for first, last in zip(value["samples"], value["samples"][1:]):
+            duration = last["elapsed"] - first["elapsed"]
+            if duration <= 0:
+                raise ValueError("nonregression samples must advance monotonic time")
+            labels = [label for label in first["processes"]
+                      if field in first["processes"][label] and field in last["processes"][label]]
+            if not labels:
+                raise ValueError(f"nonregression requires reference {field} samples")
+            delta = sum(last["processes"][label][field] - first["processes"][label][field]
+                        for label in labels)
+            if delta < 0:
+                raise ValueError("nonregression counters cannot move backwards")
+            rates.append(scale * delta / duration)
+    if len(rates) < 2:
+        raise ValueError("nonregression requires multiple reference sample intervals")
+    first, last = mean(before), mean(after)
+    drift = abs(first - last)
+    sampling = 2 * statistics.stdev(rates) / len(rates) ** .5
+    return {"reference_before": first, "reference_after": last,
+            "observed_drift": drift, "two_standard_errors": sampling,
+            "limit": max(first, last) + max(drift, sampling)}
 
 
 def measure(binary_directory, warmup, seconds, synchronous_reference_broker=False,
@@ -380,6 +413,8 @@ def main():
                         help="finite client/RPC cache warmup before lifecycle baseline")
     parser.add_argument("--synchronous-reference-broker", action="store_true",
                         help="reference broker predates actors and cannot start the runtime profiler")
+    parser.add_argument("--nonregression", action="store_true",
+                        help="compare a cleanup with two accepted-reference samples using measured noise; no 50/80 improvement gates")
     args = parser.parse_args()
     if args.seconds < 60 or args.warmup < 15:
         raise ValueError("performance intervals require at least 60 s and 15 s warmup")
@@ -391,7 +426,9 @@ def main():
     result = {"rf_commands": 0, "fixture": "six identities, 167 contacts and 256 retained messages per Base",
               "hew_workers": 4, "profiling": "same private v0.5 profiler settings on both fleets",
               "reference": measure(args.reference.resolve(), args.warmup, args.seconds,
-                                   args.synchronous_reference_broker),
+                                   args.synchronous_reference_broker,
+                                   churn_cycles=args.churn_cycles if args.nonregression else 0,
+                                   warmup_cycles=args.warmup_cycles),
               "candidate": measure(args.candidate.resolve(), args.warmup, args.seconds,
                                    churn_cycles=args.churn_cycles,
                                    warmup_cycles=args.warmup_cycles)}
@@ -401,10 +438,25 @@ def main():
     current_messages = sum(item.get("messages_per_second", 0) for item in new["processes"].values())
     result["actor_message_reduction_fraction"] = 1 - current_messages / previous_messages
     failures = list((new["churn"] or {}).get("failures", []))
-    if result["cpu_reduction_fraction"] < .5:
-        failures.append("six-process CPU did not fall by at least 50%")
-    if result["actor_message_reduction_fraction"] < .8:
-        failures.append("profiled actor message rate did not fall by at least 80%")
+    if args.nonregression:
+        result["reference_after"] = measure(args.reference.resolve(), args.warmup, args.seconds,
+                                            args.synchronous_reference_broker,
+                                            churn_cycles=args.churn_cycles,
+                                            warmup_cycles=args.warmup_cycles)
+        failures.extend((old["churn"] or {}).get("failures", []))
+        failures.extend((result["reference_after"]["churn"] or {}).get("failures", []))
+        cpu = noise_envelope(old, result["reference_after"], "cpu_ticks")
+        messages = noise_envelope(old, result["reference_after"], "messages")
+        result["nonregression"] = {"cpu": cpu, "messages": messages}
+        if new["cpu_percent_one_core"] > cpu["limit"]:
+            failures.append("six-process CPU exceeds the measured accepted-reference noise envelope")
+        if current_messages > messages["limit"]:
+            failures.append("idle actor traffic exceeds the measured accepted-reference noise envelope")
+    else:
+        if result["cpu_reduction_fraction"] < .5:
+            failures.append("six-process CPU did not fall by at least 50%")
+        if result["actor_message_reduction_fraction"] < .8:
+            failures.append("profiled actor message rate did not fall by at least 80%")
     for label, item in new["processes"].items():
         if item["fd_growth"] > 0 or item["registration_growth"] > 0:
             failures.append(f"{label}: settled idle descriptors/registrations grew")

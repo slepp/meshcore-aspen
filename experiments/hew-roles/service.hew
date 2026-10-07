@@ -69,6 +69,31 @@ pub type Config {
     observer_options: string;
 }
 
+type ConnectionTurn {
+    healthy: bool;
+    config_deadline: i64;
+    next_config: i64;
+    next_stats: i64;
+    next_health: i64;
+}
+
+type ModemIncarnation {
+    epoch: i64;
+    failures: i64;
+}
+
+type WorkerProgress {
+    deadline: i64;
+    last: i64;
+    retry: i64;
+    backoff: i64;
+}
+
+type TelemetryCache {
+    revision: i64;
+    reported: bool;
+}
+
 fn config(root: string) -> Config {
     let data = storage.read(root + "/config");
     assert(!data.is_empty());
@@ -1365,8 +1390,7 @@ pub fn run(root: string) {
     let observer_lifetime = spawn observer_runtime.Lifetime();
     let observer_task = fork observer_runtime.drive(observer_branch.publisher, observer_queue_branch.outbox, observer_lifetime,
         end, observer_settings.enabled, events.share(observer_events), observer_input, observer_channel);
-    var epoch: i64 = 0;
-    var failures: i64 = 0;
+    var incarnation = ModemIncarnation { epoch: 0, failures: 0 };
     var worker_fd: Option<ChildRef<process.WorkerOwner>> = .None;
     var worker_key: i64 = 0;
     let native_branch = spawn process.WorkerBranch;
@@ -1399,8 +1423,8 @@ pub fn run(root: string) {
             .Ok(_) => {}
             .Err(error) => {
                 println(f"OFFLINE modem open failed reason={to_string(error)}");
-                failures = failures + 1;
-                reconnect_wait(failures);
+                incarnation.failures += 1;
+                reconnect_wait(incarnation.failures);
                 continue;
             }
         }
@@ -1415,8 +1439,8 @@ pub fn run(root: string) {
             stop(decoder);
             stopped(decoder);
             println("OFFLINE negotiation/profile rejected; no retune");
-            failures = failures + 1;
-            reconnect_wait(failures);
+            incarnation.failures += 1;
+            reconnect_wait(incarnation.failures);
             continue;
         }
         let negotiated = negotiation.expect("negotiated modem");
@@ -1427,7 +1451,7 @@ pub fn run(root: string) {
         session.announce(fd, decoder, 2, negotiated.generations[2], wire.public_key(bot_seed));
         if observer_settings.enabled {
             session.announce(fd, decoder, 3, negotiated.generations[3], observer_settings.config.identity);
-            println(f"OBSERVER_READY epoch={epoch + 1} port=3 identity={hex.encode(observer_settings.config.identity)}");
+            println(f"OBSERVER_READY epoch={incarnation.epoch + 1} port=3 identity={hex.encode(observer_settings.config.identity)}");
         }
         if use_native && !native_configured {
             if !configure_worker(bot_seed, cfg, negotiated.airtime, root + "/native") {
@@ -1435,8 +1459,8 @@ pub fn run(root: string) {
                 stop(decoder);
                 stopped(decoder);
                 println("OFFLINE native extension configuration failed");
-                failures = failures + 1;
-                reconnect_wait(failures);
+                incarnation.failures += 1;
+                reconnect_wait(incarnation.failures);
                 continue;
             }
             native_configured = true;
@@ -1456,7 +1480,7 @@ pub fn run(root: string) {
         let _ = relay_worker.source_reset(relay_factor);
         let _ = room_worker.source_reset(room_factor);
         let receivers = session.receivers();
-        epoch = epoch + 1;
+        incarnation.epoch += 1;
         if use_native && worker_fd.is_none() {
             native_management = false;
             stop(worker_decoder);
@@ -1479,11 +1503,11 @@ pub fn run(root: string) {
             let _ = owner_branch.control.ready(true);
             let _ = owner_branch.admin.management(native_management);
         }
-        let relay_advert = match relay_worker.startup_advert(transport.now() / 1000, last_relay_flood, epoch > 1) {
+        let relay_advert = match relay_worker.startup_advert(transport.now() / 1000, last_relay_flood, incarnation.epoch > 1) {
             .Ok(packet) => packet,
             .Err(_) => bytes.new(),
         };
-        let room_advert = match room_worker.startup_advert(transport.now() / 1000, last_room_flood, epoch > 1) {
+        let room_advert = match room_worker.startup_advert(transport.now() / 1000, last_room_flood, incarnation.epoch > 1) {
             .Ok(packet) => packet,
             .Err(_) => bytes.new(),
         };
@@ -1496,7 +1520,7 @@ pub fn run(root: string) {
         advert_times(root, last_relay_flood, last_room_flood);
         relay_environment.flood_stamp(last_relay_flood).expect("relay flood reservation");
         room_environment.flood_stamp(last_room_flood).expect("room flood reservation");
-        println(f"ONLINE epoch={epoch} relay={hex.encode(wire.public_key(relay_seed))} room={hex.encode(wire.public_key(room_seed))} bot={hex.encode(wire.public_key(bot_seed))}");
+        println(f"ONLINE epoch={incarnation.epoch} relay={hex.encode(wire.public_key(relay_seed))} room={hex.encode(wire.public_key(room_seed))} bot={hex.encode(wire.public_key(bot_seed))}");
         if !relay_advert.is_empty() {
             if let .Ok(frames) = relay_worker.gate([roles.Tx { raw: relay_advert, delay: 0, relayed: false }]) {
                 if !frames.is_empty() { let _ = link.submit(0, relay_advert, 3, 0, 0, 0); }
@@ -1521,21 +1545,16 @@ pub fn run(root: string) {
             worker_key = native_watch(worker_fd, event_group);
             native_ok = native_ok && worker_key != 0;
         }
-        var next_config = transport.monotonic() + 2000;
-        var next_stats = transport.monotonic();
-        var next_health = transport.monotonic();
+        var connection = ConnectionTurn { healthy: true, config_deadline: 0,
+            next_config: transport.monotonic() + 2000, next_stats: transport.monotonic(),
+            next_health: transport.monotonic() };
         var sensors = radio.create();
-        var sensor_revision: i64 = -1;
-        var sensor_reported = false;
-        var config_deadline: i64 = 0;
-        var connection_ok = true;
-        var native_deadline = transport.monotonic() + 30000;
-        var native_last = transport.monotonic();
-        var native_retry: i64 = 0;
-        var native_backoff: i64 = 500;
+        var telemetry = TelemetryCache { revision: -1, reported: false };
+        var worker_progress = WorkerProgress { deadline: transport.monotonic() + 30000,
+            last: transport.monotonic(), retry: 0, backoff: 500 };
         var pending_role: Option<owner_control.RoleRequest> = .None;
         let online_at = transport.monotonic();
-        while until(end) && connection_ok && link.healthy().expect("session health") {
+        while until(end) && connection.healthy && link.healthy().expect("session health") {
             if pending_role.is_none() {
                 if let .Ok(request) = owner_branch.admin.take_role() { pending_role = request; }
             }
@@ -1588,7 +1607,7 @@ pub fn run(root: string) {
             let incoming = transport.modem_read(fd, 0);
             let received_at = transport.monotonic();
             if incoming[0] == 2 {
-                connection_ok = false;
+                connection.healthy = false;
             }
             if incoming[0] == 1 {
                 for frame in decoder.feed(wire.cut(incoming, 1, incoming.len())).expect("modem decoder") {
@@ -1619,14 +1638,14 @@ pub fn run(root: string) {
                             if use_native && native_ok && !result.is_empty() {
                                 native_ok = native_ok && transport.native_send(worker_fd, result);
                             }
-                        } else if port == 0 && frame[1] == 162 && config_deadline != 0 {
+                        } else if port == 0 && frame[1] == 162 && connection.config_deadline != 0 {
                             let valid = frame.len() == 26 && frame[2] == 1 && frame[3] == 0 && wire.equal(wire.cut(frame, 8, 26), cfg.profile);
-                            if connection_ok && !valid {
+                            if connection.healthy && !valid {
                                 let at = transport.now();
-                                println(f"MODEM_CONTROL_FAILED epoch={epoch} stage=CONFIG_GET at_ms={at} reason=invalid-readback expected=26-bytes,version=1,reason=0,profile={hex.encode(cfg.profile)} actual={hex.encode(frame)}");
+                                println(f"MODEM_CONTROL_FAILED epoch={incarnation.epoch} stage=CONFIG_GET at_ms={at} reason=invalid-readback expected=26-bytes,version=1,reason=0,profile={hex.encode(cfg.profile)} actual={hex.encode(frame)}");
                             }
-                            connection_ok = connection_ok && valid;
-                            config_deadline = 0;
+                            connection.healthy = connection.healthy && valid;
+                            connection.config_deadline = 0;
                         } else if use_native && native_ok && port == 2 && frame[1] == 164 {
                             let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
                             if !stats.is_empty() {
@@ -1640,14 +1659,14 @@ pub fn run(root: string) {
                 }
             }
             policy_results(link, relay_worker, room_worker);
-            if use_native && native_ok && connection_ok {
+            if use_native && native_ok && connection.healthy {
                 let worker_input = transport.native_read(worker_fd, 0);
                 if worker_input[0] == 2 {
                     native_ok = false;
                 }
                 if worker_input[0] == 1 {
                     for message in worker_decoder.feed(wire.cut(worker_input, 1, worker_input.len())).expect("native extension decoder") {
-                        native_last = transport.monotonic();
+                        worker_progress.last = transport.monotonic();
                         let tag = message[0] as i64;
                         if tag == 130 || tag == 134 {
                             if message.len() != 34 || message[33] != 1 || !wire.equal(wire.cut(message, 1, 33), wire.public_key(bot_seed)) {
@@ -1703,72 +1722,72 @@ pub fn run(root: string) {
                     }
                 }
                 native_ok = native_ok && worker_decoder.healthy().expect("native extension framing");
-                if native_ready && transport.monotonic() - native_last > 5000 {
+                if native_ready && transport.monotonic() - worker_progress.last > 5000 {
                     native_ok = false;
                 }
-                if !native_ready && transport.monotonic() > native_deadline {
+                if !native_ready && transport.monotonic() > worker_progress.deadline {
                     native_ok = false;
                 }
             }
             let now = transport.monotonic();
-            if now >= next_health {
-                next_health = now + 1000;
+            if now >= connection.next_health {
+                connection.next_health = now + 1000;
                 let _ = owner_branch.admin.management(native_management && native_ok);
                 let _ = owner_branch.admin.bind_host(events.share(event_group));
-                publish_health(health_plan, connection_ok, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime);
+                publish_health(health_plan, connection.healthy, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime);
             }
-            let sampling = radio.poll(sensors, now, config_deadline != 0 || now >= next_config || link.policy_busy().expect("source policy control state"));
+            let sampling = radio.poll(sensors, now, connection.config_deadline != 0 || now >= connection.next_config || link.policy_busy().expect("source policy control state"));
             sensors = sampling.sampler;
             if sampling.command != 0 {
-                connection_ok = connection_ok && control_write(fd, wire.kiss(0, 6, wire.byte(sampling.command)), "TELEMETRY", epoch);
+                connection.healthy = connection.healthy && control_write(fd, wire.kiss(0, 6, wire.byte(sampling.command)), "TELEMETRY", incarnation.epoch);
             }
-            if sensors.revision != sensor_revision {
-                sensor_revision = sensors.revision;
+            if sensors.revision != telemetry.revision {
+                telemetry.revision = sensors.revision;
                 let _ = relay_worker.telemetry(sensors.current);
                 let _ = room_worker.telemetry(sensors.current);
                 if !use_native {
                     let _ = bot_worker.telemetry(sensors.current);
                 }
             }
-            if !sensor_reported {
+            if !telemetry.reported {
                 if let .Some(error) = sensors.failure {
-                    sensor_reported = true;
+                    telemetry.reported = true;
                     println("TELEMETRY " + radio.error_text(error));
                 }
             }
             for reception in receivers.flush(now).expect("RX metadata deadline") {
                 receptions.push(reception);
             }
-            if connection_ok {
+            if connection.healthy {
                 let received_ok = receive_packets(receptions, link, relay_worker, room_worker, bot_worker, use_native, native_ready && native_ok, worker_fd, observer_queue_branch.outbox, observer_settings.enabled);
                 native_ok = native_ok && received_ok;
             }
             var next_tick = role_timer(relay_worker, room_worker, bot_worker, use_native);
-            if connection_ok && transport.monotonic() >= next_tick {
+            if connection.healthy && transport.monotonic() >= next_tick {
                 let (relay_flood, room_flood) = tick_roles(link, relay_worker, room_worker, bot_worker,
                     use_native, root, relay_environment, room_environment, last_relay_flood, last_room_flood);
                 last_relay_flood = relay_flood;
                 last_room_flood = room_flood;
                 next_tick = role_timer(relay_worker, room_worker, bot_worker, use_native);
             }
-            sync_role_policy(link, relay_worker, 0, config_deadline != 0 || sensors.expected != 0);
+            sync_role_policy(link, relay_worker, 0, connection.config_deadline != 0 || sensors.expected != 0);
             sync_role_policy(link, room_worker, 1, false);
-            if config_deadline != 0 && now >= config_deadline {
-                if connection_ok {
+            if connection.config_deadline != 0 && now >= connection.config_deadline {
+                if connection.healthy {
                     let at = transport.now();
-                    let overdue = now - config_deadline;
-                    println(f"MODEM_CONTROL_FAILED epoch={epoch} stage=CONFIG_GET at_ms={at} reason=deadline expected_opcode=a2 timeout_ms=2000 overdue_ms={overdue}");
+                    let overdue = now - connection.config_deadline;
+                    println(f"MODEM_CONTROL_FAILED epoch={incarnation.epoch} stage=CONFIG_GET at_ms={at} reason=deadline expected_opcode=a2 timeout_ms=2000 overdue_ms={overdue}");
                 }
-                connection_ok = false;
+                connection.healthy = false;
             }
-            if now >= next_stats {
-                connection_ok = connection_ok && control_write(fd, wire.kiss(2, 6, hex.decode("2401")), "STATS", epoch);
-                next_stats = now + 1000;
+            if now >= connection.next_stats {
+                connection.healthy = connection.healthy && control_write(fd, wire.kiss(2, 6, hex.decode("2401")), "STATS", incarnation.epoch);
+                connection.next_stats = now + 1000;
             }
-            if config_deadline == 0 && now >= next_config && sensors.expected == 0 && !link.policy_busy().expect("source policy control state") {
-                connection_ok = connection_ok && control_write(fd, wire.kiss(0, 6, hex.decode("220100")), "CONFIG_GET", epoch);
-                config_deadline = now + 2000;
-                next_config = now + 2000;
+            if connection.config_deadline == 0 && now >= connection.next_config && sensors.expected == 0 && !link.policy_busy().expect("source policy control state") {
+                connection.healthy = connection.healthy && control_write(fd, wire.kiss(0, 6, hex.decode("220100")), "CONFIG_GET", incarnation.epoch);
+                connection.config_deadline = now + 2000;
+                connection.next_config = now + 2000;
             }
             if use_native && !native_ok {
                 if worker_fd.is_some() {
@@ -1780,10 +1799,10 @@ pub fn run(root: string) {
                     link.fence_worker().expect("retire old worker jobs");
                     native_ready = false;
                     native_management = false;
-                    native_retry = now + native_backoff;
+                    worker_progress.retry = now + worker_progress.backoff;
                     println("BOT_OFFLINE worker failed; relay and room remain online");
                 }
-                if now >= native_retry {
+                if now >= worker_progress.retry {
                     stop(worker_decoder);
                     stopped(worker_decoder);
                     worker_decoder = spawn session.WorkerDecoder(buffer: bytes.new());
@@ -1797,39 +1816,39 @@ pub fn run(root: string) {
                         native_airtime = negotiated.airtime;
                         worker_key = native_watch(worker_fd, event_group);
                         native_ok = native_ok && worker_key != 0;
-                        native_deadline = now + 30000;
-                        native_last = now;
+                        worker_progress.deadline = now + 30000;
+                        worker_progress.last = now;
                     } else {
-                        println(f"BOT_OFFLINE native worker launch failed retry_ms={native_backoff}");
+                        println(f"BOT_OFFLINE native worker launch failed retry_ms={worker_progress.backoff}");
                     }
-                    native_retry = now + native_backoff;
-                    native_backoff = if native_backoff < 15000 {
-                        native_backoff * 2
+                    worker_progress.retry = now + worker_progress.backoff;
+                    worker_progress.backoff = if worker_progress.backoff < 15000 {
+                        worker_progress.backoff * 2
                     } else {
                         30000
                     };
                 }
             }
             log_outcomes(link, relay_worker, room_worker);
-            if connection_ok && until(end) {
+            if connection.healthy && until(end) {
                 let wait_at = transport.monotonic();
                 var deadline = earlier(wait_at + 1000, end);
                 deadline = earlier(deadline, next_tick);
-                deadline = earlier(deadline, next_health);
-                deadline = earlier(deadline, next_stats);
-                deadline = earlier(deadline, config_deadline);
+                deadline = earlier(deadline, connection.next_health);
+                deadline = earlier(deadline, connection.next_stats);
+                deadline = earlier(deadline, connection.config_deadline);
                 let policy_busy = link.policy_busy().expect("source policy deadline state");
-                if config_deadline == 0 && sensors.expected == 0 && !policy_busy {
-                    deadline = earlier(deadline, next_config);
+                if connection.config_deadline == 0 && sensors.expected == 0 && !policy_busy {
+                    deadline = earlier(deadline, connection.next_config);
                 }
                 deadline = earlier(deadline, radio.next_deadline(sensors, wait_at,
-                    config_deadline != 0 || wait_at >= next_config || policy_busy));
+                    connection.config_deadline != 0 || wait_at >= connection.next_config || policy_busy));
                 deadline = earlier(deadline, link.next_deadline().expect("session pending deadline"));
                 deadline = earlier(deadline, receivers.next_deadline().expect("receive metadata deadline"));
                 if use_native {
                     if native_ok {
-                        deadline = earlier(deadline, if native_ready { native_last + 5001 } else { native_deadline + 1 });
-                    } else { deadline = earlier(deadline, native_retry); }
+                        deadline = earlier(deadline, if native_ready { worker_progress.last + 5001 } else { worker_progress.deadline + 1 });
+                    } else { deadline = earlier(deadline, worker_progress.retry); }
                 }
                 events.arm(event_group, modem_key, 1).expect("arm host modem socket");
                 if worker_key != 0 { events.arm(event_group, worker_key, 1).expect("arm native worker socket"); }
@@ -1872,14 +1891,14 @@ pub fn run(root: string) {
         stop(decoder);
         stopped(decoder);
         let disconnected_at = transport.now();
-        println(f"OFFLINE epoch={epoch} pending outcomes unknown; not replaying at_ms={disconnected_at}");
+        println(f"OFFLINE epoch={incarnation.epoch} pending outcomes unknown; not replaying at_ms={disconnected_at}");
         if until(end) {
-            failures = if transport.monotonic() - online_at >= 60000 {
+            incarnation.failures = if transport.monotonic() - online_at >= 60000 {
                 1
             } else {
-                failures + 1
+                incarnation.failures + 1
             };
-            reconnect_wait(failures);
+            reconnect_wait(incarnation.failures);
         }
     }
     if worker_fd.is_some() {

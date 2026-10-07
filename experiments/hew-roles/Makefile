@@ -35,6 +35,14 @@ build/role-timers: tests/role_timers.hew roles.hew wire.hew storage.hew $(HOSTLI
 	$(HEW) build $< -o $@ $(LINK)
 build/role-timers-release: tests/role_timers.hew roles.hew wire.hew storage.hew $(HOSTLIB) $(MESHPROTO) build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 	$(HEW) build $< --release -o $@ $(LINK)
+build/rx-parse-checks: tests/rx_parse.hew roles.hew wire.hew storage.hew $(HOSTLIB) $(MESHPROTO) build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+	$(HEW) build $< -o $@ $(LINK)
+build/rx-parse-checks-release: tests/rx_parse.hew roles.hew wire.hew storage.hew $(HOSTLIB) $(MESHPROTO) build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+	$(HEW) build $< --release -o $@ $(LINK)
+.PHONY: rx-parse-test
+rx-parse-test: build/rx-parse-checks build/rx-parse-checks-release
+	./build/rx-parse-checks
+	./build/rx-parse-checks-release
 build/broker-oracle: tests/broker_oracle/main.go ../../internal/observer/broker.go | build
 	go build -buildvcs=false -o $@ ./tests/broker_oracle
 broker-test: compiler-version build/hew-broker build/hew-broker-release build/broker-checks build/broker-checks-release build/broker-oracle
@@ -201,6 +209,16 @@ build/hew-host: service_main.hew service.hew session.hew transport.hew wire.hew 
 	$(HEW) build service_main.hew -o $@ $(LINK)
 build/session-checks: session_checks.hew session.hew transport.hew wire.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 	$(HEW) build session_checks.hew -o $@ $(LINK)
+build/protocol-state-checks: tests/protocol_state.hew companion_telemetry.hew wire.hew $(HOSTLIB) $(MESHPROTO) build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+	$(HEW) build $< -o $@ $(LINK)
+build/protocol-state-checks-release: tests/protocol_state.hew companion_telemetry.hew wire.hew $(HOSTLIB) $(MESHPROTO) build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+	$(HEW) build $< --release -o $@ $(LINK)
+.PHONY: protocol-state-test
+protocol-state-test: build/session-checks build/session-checks-release build/protocol-state-checks build/protocol-state-checks-release
+	./build/session-checks
+	./build/session-checks-release
+	./build/protocol-state-checks
+	./build/protocol-state-checks-release
 build/worker-checks: worker_checks.hew transport.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 	$(HEW) build worker_checks.hew -o $@ $(LINK)
 build/roles build/roles-release build/roles-interrupt build/hew-host build/hew-host-release build/hew-host-supervision build/hew-host-supervision-release build/session-checks build/worker-checks: $(HOSTLIB) $(MESHPROTO)

@@ -12,6 +12,7 @@ import std.encoding.utf8;
 import std.encoding.hex;
 import host_admin;
 import host_health;
+import meshproto.owner_state as outcome;
 
 extern "C" {
     fn mc_owner_listen(path: bytes) -> i32;
@@ -29,7 +30,7 @@ impl Listener {
         unsafe { mc_owner_close(self.fd, self.path, self.inode); };
     }
 }
-type Send { id: bytes; digest: bytes; phase: i64; flags: i64; reason: i64; }
+type Send { id: bytes; digest: bytes; phase: outcome.Phase; flags: outcome.Flags; reason: outcome.Reason; }
 type Message { sequence: i64; body: bytes; }
 pub type Plan { root: string; lock: i32; worker: ChildRef<process.WorkerOwner>; }
 pub type RoleRequest { id: i64; role: i64; command: string; }
@@ -86,7 +87,9 @@ pub actor Control {
         blob.push(sends.len() as u8);
         for item in sends {
             blob.append(item.id); blob.append(item.digest);
-            blob.push(item.phase as u8); blob.push(item.flags as u8); blob.push(item.reason as u8);
+            blob.push(outcome.phase_code(item.phase) as u8);
+            blob.push(outcome.flags_code(item.flags) as u8);
+            blob.push(outcome.reason_code(item.reason) as u8);
         }
         if storage.commit(plan.root + "/owner.state", blob) != 0 {
             panic("owner control ledger commit failed; submissions stopped");
@@ -103,10 +106,12 @@ pub actor Control {
             for i in 0..count {
                 let at = 13 + i * 51;
                 var item = Send { id: wire.cut(blob, at, at + 16), digest: wire.cut(blob, at + 16, at + 48),
-                    phase: blob[at + 48] as i64, flags: blob[at + 49] as i64, reason: blob[at + 50] as i64 };
-                assert(item.phase <= 6 && item.flags <= 7 && item.reason <= 8 && find(item.id) < 0);
+                    phase: outcome.phase(blob[at + 48] as i64).expect("owner ledger phase"),
+                    flags: outcome.flags(blob[at + 49] as i64).expect("owner ledger flags"),
+                    reason: outcome.reason(blob[at + 50] as i64).expect("owner ledger reason") };
+                assert(find(item.id) < 0);
                 assert(!wire.equal(item.id, wire.le(0, 16)));
-                if item.phase < 4 { item.phase = 6; item.reason = 8; }
+                if outcome.pending(item.phase) { item.phase = .Unknown; item.reason = .Interrupted; }
                 sends.push(item);
             }
         }
@@ -125,8 +130,9 @@ pub actor Control {
     fn result(index: i64) -> bytes {
         let item = sends[index];
         var response = wire.cat(wire.byte(1), wire.byte(0));
-        response.append(item.id); response.push(item.phase as u8);
-        response.push(item.flags as u8); response.push(item.reason as u8);
+        response.append(item.id); response.push(outcome.phase_code(item.phase) as u8);
+        response.push(outcome.flags_code(item.flags) as u8);
+        response.push(outcome.reason_code(item.reason) as u8);
         response
     }
     fn error(code: i64) -> bytes { wire.cat(wire.byte(1), wire.byte(code)) }
@@ -175,11 +181,12 @@ pub actor Control {
         }
         if !available { return error(2); }
         if sends.len() == 128 { return error(3); }
-        sends.push(Send { id: id, digest: digest, phase: 0, flags: 0, reason: 0 });
+        sends.push(Send { id: id, digest: digest, phase: .PendingAdmission,
+            flags: outcome.flags(0).expect("empty flags"), reason: .None });
         save();
         let at = sends.len() - 1;
         if !transport.native_send(.Some(plan.worker), session.frame(7, wire.cut(data, 2, data.len()))) {
-            var item = sends[at]; item.phase = 6; item.reason = 8; sends.set(at, item); save();
+            var item = sends[at]; item.phase = .Unknown; item.reason = .Interrupted; sends.set(at, item); save();
         }
         result(at)
     }
@@ -224,9 +231,9 @@ pub actor Control {
         var changed = false;
         for i in 0..sends.len() {
             var item = sends[i];
-            if item.phase < 4 {
-                if (item.flags & 1) == 0 { pending = true; }
-                item.phase = 6; item.reason = 8; sends.set(i, item); changed = true;
+            if outcome.pending(item.phase) {
+                if !item.flags.local_tx_confirmed { pending = true; }
+                item.phase = .Unknown; item.reason = .Interrupted; sends.set(i, item); changed = true;
             }
         }
         if changed { save(); }
@@ -235,14 +242,17 @@ pub actor Control {
     receive fn event(frame: bytes) -> bool {
         if frame.is_empty() { return false; }
         if frame[0] == 136 {
-            if frame.len() != 20 || frame[17] > 6 || frame[18] > 7 || frame[19] > 8 { return false; }
+            if frame.len() != 20 { return false; }
+            let phase = match outcome.phase(frame[17] as i64) { .Some(value) => value, .None => return false };
+            let flags = match outcome.flags(frame[18] as i64) { .Some(value) => value, .None => return false };
+            let reason = match outcome.reason(frame[19] as i64) { .Some(value) => value, .None => return false };
             let index = find(wire.cut(frame, 1, 17));
             if index < 0 { return false; }
             var item = sends[index];
-            if item.phase == 6 || item.phase == 5 { return true; }
-            item.flags |= frame[18] as i64;
-            item.phase = if (item.flags & 2) != 0 { 4 } else { frame[17] as i64 };
-            item.reason = frame[19] as i64; sends.set(index, item); save();
+            if outcome.fenced(item.phase) { return true; }
+            item.flags = outcome.merge(item.flags, flags);
+            item.phase = if item.flags.native_rf_ack { .NativeRFAck } else { phase };
+            item.reason = reason; sends.set(index, item); save();
             return true;
         }
         if frame[0] != 137 { return false; }

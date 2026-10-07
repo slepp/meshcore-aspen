@@ -3,6 +3,37 @@ import wire;
 
 import std.encoding.json;
 
+pub enum Stage {
+    Configuration;
+    Battery;
+    Noise;
+    RSSI;
+    Temperature;
+    Counters;
+}
+
+pub fn operation(stage: Stage) -> i64 {
+    match stage {
+        .Configuration => 34,
+        .Battery => 19,
+        .Noise => 16,
+        .RSSI => 13,
+        .Temperature => 20,
+        .Counters => 18,
+    }
+}
+
+pub fn next_stage(stage: Stage) -> Stage {
+    match stage {
+        .Configuration => .Battery,
+        .Battery => .Noise,
+        .Noise => .RSSI,
+        .RSSI => .Temperature,
+        .Temperature => .Counters,
+        .Counters => .Configuration,
+    }
+}
+
 pub actor Probe {
     let profile: bytes;
     var sample_at: i64 = 0;
@@ -16,7 +47,7 @@ pub actor Probe {
     var draft_rssi: bytes = bytes.new();
     var draft_temperature: bytes = bytes.new();
     var draft_counters: bytes = bytes.new();
-    var stage: i64 = 0;
+    var stage: Stage = .Configuration;
     var pending: bool = false;
     var deadline: i64 = 0;
     var next: i64 = 0;
@@ -30,7 +61,7 @@ pub actor Probe {
         rssi = bytes.new();
         temperature = bytes.new();
         counters = bytes.new();
-        stage = 0;
+        stage = .Configuration;
         pending = false;
         next = 0;
         fault = false;
@@ -105,11 +136,10 @@ pub actor Probe {
         if fault || pending || now < next {
             return bytes.new();
         }
-        let operations = [34, 19, 16, 13, 20, 18];
         pending = true;
         deadline = now + 3000;
-        var command = wire.byte(operations[stage]);
-        if stage == 0 {
+        var command = wire.byte(operation(stage));
+        if stage == Stage.Configuration {
             command.append(wire.cat(wire.byte(1), wire.byte(0)));
         }
         command
@@ -118,15 +148,14 @@ pub actor Probe {
         if !pending || frame.len() < 2 || frame[0] != 6 {
             return false;
         }
-        let operations = [34, 19, 16, 13, 20, 18];
-        let expected = operations[stage] | 128;
+        let expected = operation(stage) | 128;
         if frame[1] as i64 != expected && frame[1] != 241 {
             return false;
         }
         pending = false;
         let unavailable = frame.len() == 3 && frame[1] == 241 && (frame[2] == 3 || frame[2] == 5);
         let data = wire.cut(frame, 2, frame.len());
-        if stage == 0 {
+        if stage == Stage.Configuration {
             if data.len() != 24 || data[0] != 1 || data[1] != 0 || wire.uint(wire.cut(data, 2, 6)) == 0 || !wire.equal(wire.cut(data, 6, 24), profile) {
                 fault = true;
                 return true;
@@ -137,9 +166,9 @@ pub actor Probe {
             draft_temperature = bytes.new();
             draft_counters = bytes.new();
         } else if !unavailable {
-            let minimum = if stage == 3 {
+            let minimum = if stage == Stage.RSSI {
                 1
-            } else if stage == 5 {
+            } else if stage == Stage.Counters {
                 12
             } else {
                 2
@@ -149,29 +178,28 @@ pub actor Probe {
                 return true;
             }
             let value = wire.cut(data, 0, minimum);
-            if stage == 1 {
+            if stage == Stage.Battery {
                 draft_battery = value;
-            } else if stage == 2 {
+            } else if stage == Stage.Noise {
                 draft_noise = value;
-            } else if stage == 3 {
+            } else if stage == Stage.RSSI {
                 draft_rssi = value;
-            } else if stage == 4 {
+            } else if stage == Stage.Temperature {
                 draft_temperature = value;
             } else {
                 draft_counters = value;
             }
         }
-        stage += 1;
-        if stage == 6 {
+        if stage == Stage.Counters {
             sample_at = now;
             battery = draft_battery;
             noise = draft_noise;
             rssi = draft_rssi;
             temperature = draft_temperature;
             counters = draft_counters;
-            stage = 0;
             next = now + 15000;
         }
+        stage = next_stage(stage);
         true
     }
 }

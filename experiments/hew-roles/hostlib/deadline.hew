@@ -1,0 +1,29 @@
+//! Scheduling deadlines are monotonic; protocol and retained timestamps are UTC.
+pub type Monotonic {
+    at: i64;
+}
+
+pub type UTC {
+    at: i64;
+}
+
+pub fn inactive() -> Monotonic {
+    Monotonic { at: 0 }
+}
+
+pub fn after(now: Monotonic, milliseconds: i64) -> Monotonic {
+    assert(now.at >= 0 && milliseconds >= 0 && milliseconds <= 9223372036854775807 - now.at);
+    Monotonic { at: now.at + milliseconds }
+}
+
+pub fn reached(due: Monotonic, now: Monotonic) -> bool {
+    due.at > 0 && now.at >= due.at
+}
+
+pub fn from_utc(due: UTC, wall: UTC, now: Monotonic) -> Monotonic {
+    after(now, if due.at > wall.at {
+        due.at - wall.at
+    } else {
+        0
+    })
+}

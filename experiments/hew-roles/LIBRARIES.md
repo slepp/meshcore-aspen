@@ -27,10 +27,38 @@ Fixtures use private loopback connections and generated identities only.
 | `hostlib.process` | `start(absolute_path, Vec<string>)` returns an owned child actor; exit status distinguishes exit code, signal and an already-reaped child. | No shell; 32 arguments, 16384 encoded bytes, NUL rejected. Empty arguments, spaces and Unicode are retained. Channel and PID have one resource owner; mailbox 32. |
 | `hostlib.supervised_io` | Stable supervised TCP endpoint; restart retires the socket without an implicit redial. | Independent two-restart/60-second budget; the caller must fence and negotiate another protocol epoch. |
 | `hostlib.events` | Socket readiness and explicit notifications enter bounded Hew streams; `select` waits until an absolute monotonic deadline. | Reference-counted Linux epoll/eventfd groups, up to 1024 registrations per group; one-shot read/write interests and nonreused registration keys. Watches own duplicate descriptors until removal. |
+| `hostlib.deadline` | Distinct UTC and monotonic millisecond values with an explicit UTC-to-monotonic conversion. | Zero monotonic deadline is inactive; a deadline is reached at its exact boundary. Past UTC deadlines convert to the current monotonic time. |
 | `meshproto.management` | Pure typed status/LPP/neighbour encoders, native numeric formatting, UTC and UTF-8 limits. | 50 neighbour entries, 130 bytes of page entries; no packet authentication or I/O hidden in the codecs. |
 | `meshproto.preferences` | Validate/change/encode/decode complete role-local preference values. | At most 330 encoded bytes; no mutation on decode failure; binary32 delays; bounded names, credentials and owner text. |
+| `meshproto.owner_state` | Checked owner phase, flag and reason codecs retain the v1 ledger values. | Phases 0–6, flags 0–7 and reasons 0–8; failed and uncertain sends remain fenced against late events. A local TX confirmation is distinct from a native recipient RF ACK. |
 | `meshproto.radio` | Pure optional-request state machine with typed timeout/malformed/rejected failures. | One outstanding read, two-second deadline, 45-second cache; uncorrelated failure pauses sampling until a new connection. |
 | `meshproto.cli` | Native RF text and measurement formatting from typed values. | Explicit unavailable readings and bounded command replies; authentication and commits remain in the role actor. |
+
+`Role` keeps one `Preferences` authority and plain-data RX, delivery, scope,
+discovery and diagnostic records in the same actor. HEW2–HEW6 snapshots retain
+their existing layouts and ownership. Session port records bind each job ID and
+pending source-policy readback to its negotiated generation; ordinary Base
+sources have one port, while the host negotiates three or four.
+Connection epochs, pending writes and cached measurements use plain-data records.
+Socket watches, stream readers, child channels and actor references keep their
+existing resource owners; grouping state does not open another connection or
+create another identity.
+
+```sh
+make protocol-state-test
+make rx-parse-test
+```
+
+This checks owner numeric codecs, invalid values, the six telemetry query stages,
+one-port and host sessions, stale outcomes and exact deadline boundaries in debug
+and release. Fixtures use generated values and closed or loopback connections;
+the command does not transmit over RF.
+
+RX checks count ingress and held-packet decodes. Immediate processing reuses the
+validated ingress packet, so it adds no second parse; a held packet is decoded
+once when its deadline arrives. Cases include local reflection, malformed input,
+SF7 and a measured zero-score flood delay. These counters are in-memory only and
+do not change role snapshots or radio packets.
 
 The framing modules are direct std promotion candidates. The stream and child
 modules are Linux adapters with reusable Hew policy: timeout handling,
@@ -133,6 +161,14 @@ The CPU/message reductions and 500-message/second limit apply to idle samples,
 not active client/RPC work. Native-worker RSS, descriptors and threads are
 recorded separately: RSS includes allocator arenas and is not a live-heap
 measurement. Reports remain private mode-0600 files.
+
+For later state/type cleanup, pass `--nonregression` and select the deployed
+accepted build as `--reference`. The checker runs matched finite warmup/churn
+for reference, candidate and reference again. CPU and idle message limits use
+the larger reference mean plus the larger of observed reference drift and two
+standard errors of the sampled rates. The report retains both reference samples
+and the resulting noise envelope. Heap, actor and ownership bounds remain the
+same; the original 50%/80% improvement gates do not apply to this mode.
 
 ### Compare a finite Go/Hew packet workload
 

@@ -2,9 +2,34 @@ import session;
 
 import hostlib.supervised_io as duplex;
 
+import hostlib.deadline;
+
 import wire;
 
+fn ports(generations: Vec<i64>) -> Vec<session.PortState> {
+    var states: Vec<session.PortState> = Vec.new();
+    for generation in generations { states.push(session.port_state(generation)); }
+    states
+}
+
+fn policy_ports(generations: Vec<i64>) -> Vec<session.PortState> {
+    var states = ports(generations);
+    var state = states[1];
+    state.policy_pending = wire.le(1073741824, 4);
+    state.policy_deadline = deadline.Monotonic { at: 100 };
+    states.set(1, state);
+    states
+}
+
 fn main() {
+    let due = deadline.after(deadline.Monotonic { at: 10 }, 5);
+    assert(!deadline.reached(due, deadline.Monotonic { at: 14 }));
+    assert(deadline.reached(due, deadline.Monotonic { at: 15 }));
+    assert(!deadline.reached(deadline.inactive(), deadline.Monotonic { at: 15 }));
+    assert(deadline.from_utc(deadline.UTC { at: 200 }, deadline.UTC { at: 100 },
+        deadline.Monotonic { at: 10 }).at == 110);
+    assert(deadline.from_utc(deadline.UTC { at: 99 }, deadline.UTC { at: 100 },
+        deadline.Monotonic { at: 10 }).at == 10);
     assert(session.response_command(25) == 154);
     assert(session.response_command(32) == 160);
     assert(session.response_command(15) == 143);
@@ -57,13 +82,11 @@ fn main() {
     let branch = spawn duplex.Branch;
     let closed = branch.endpoint;
     assert(session.same_factor(wire.le(0, 4), wire.le(2147483648, 4)));
-    let timely = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: Vec.new(),
-        policy_pending: [bytes.new(), wire.le(1073741824, 4), bytes.new()], policy_deadlines: [0, 100, 0]);
+    let timely = spawn session.Session(fd: closed, ports: policy_ports(generations), pending: Vec.new());
     timely.policy_reply(1, wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(1073741824, 4)), 99).expect("frame received before deadline");
     let confirmed_policy = timely.policy_results().expect("receipt-time acknowledgement");
     assert(confirmed_policy.len() == 1 && confirmed_policy[0].ok);
-    let late = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: Vec.new(),
-        policy_pending: [bytes.new(), wire.le(1073741824, 4), bytes.new()], policy_deadlines: [0, 100, 0]);
+    let late = spawn session.Session(fd: closed, ports: policy_ports(generations), pending: Vec.new());
     late.policy_reply(1, wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(1073741824, 4)), 100).expect("frame received at deadline");
     let late_policy = late.policy_results().expect("late response refused");
     assert(late_policy.len() == 1 && !late_policy[0].ok);
@@ -78,7 +101,7 @@ fn main() {
     assert(offline.outcomes().expect("outcome consumed once").is_empty());
     var pending: Vec<session.Pending> = Vec.new();
     pending.push(session.Pending { port: 0, id: 7, token: 8, deadline: 1, raw: "packet".to_bytes(), estimated_ms: 200 });
-    let queued = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: pending);
+    let queued = spawn session.Session(fd: closed, ports: ports(generations), pending: pending);
     let admission = wire.cat(wire.cat(wire.byte(1), wire.le(1, 4)), wire.cat(wire.le(7, 4), wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.le(0, 12))));
     assert(queued.event(0, admission).expect("modem queue admission").is_empty());
     assert(queued.healthy().expect("accepted job has no guessed completion deadline"));
@@ -86,7 +109,7 @@ fn main() {
     assert(retired.len() == 1 && retired[0][9] == 4);
     var overdue_pending: Vec<session.Pending> = Vec.new();
     overdue_pending.push(session.Pending { port: 0, id: 7, token: 8, deadline: 1, raw: "packet".to_bytes(), estimated_ms: 200 });
-    let overdue = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: overdue_pending);
+    let overdue = spawn session.Session(fd: closed, ports: ports(generations), pending: overdue_pending);
     assert(!overdue.healthy().expect("outcome deadline"));
     assert(!overdue.healthy().expect("diagnostic only once"));
     let unknown = overdue.disconnect().expect("expired outcome remains uncertain");
@@ -95,7 +118,7 @@ fn main() {
     assert(timeout_log.len() == 1 && timeout_log[0].value.estimated_ms == 200);
     var jobs: Vec<session.Pending> = Vec.new();
     jobs.push(session.Pending { port: 1, id: 42, token: 0, deadline: 1000000000, raw: "outcome".to_bytes(), estimated_ms: 200 });
-    let tracking = spawn session.Session(fd: closed, generations: generations, ids: [0, 0, 0], pending: jobs);
+    let tracking = spawn session.Session(fd: closed, ports: ports(generations), pending: jobs);
     var event = wire.cat(wire.byte(1), wire.cat(wire.le(2, 4), wire.le(42, 4)));
     event.append(wire.byte(1)); event.append(wire.byte(0));
     event.append(wire.le(17, 4)); event.append(wire.le(31, 4)); event.append(wire.le(200, 4));
@@ -113,7 +136,14 @@ fn main() {
     var old_jobs: Vec<session.Pending> = Vec.new();
     old_jobs.push(session.Pending { port: 0, id: 7, token: 0, deadline: 0, raw: "old role".to_bytes(), estimated_ms: 123 });
     old_jobs.push(session.Pending { port: 1, id: 8, token: 0, deadline: 0, raw: "healthy role".to_bytes(), estimated_ms: 456 });
-    let incarnations = spawn session.Session(fd: closed, generations: generations, ids: [7, 8, 0], pending: old_jobs);
+    var prior_ports = ports(generations);
+    var prior_relay = prior_ports[0];
+    prior_relay.next_id = 7;
+    prior_ports.set(0, prior_relay);
+    var prior_room = prior_ports[1];
+    prior_room.next_id = 8;
+    prior_ports.set(1, prior_room);
+    let incarnations = spawn session.Session(fd: closed, ports: prior_ports, pending: old_jobs);
     incarnations.fence_role(0).expect("role-only transmission retirement");
     let remaining_jobs = incarnations.queued().expect("other role stays queued");
     assert(remaining_jobs[0] == 0 && remaining_jobs[1] == 1 && remaining_jobs[2] == 0);
@@ -129,5 +159,10 @@ fn main() {
     }
     assert(offline.outcomes().expect("bounded terminal queue").len() == 96);
     assert(offline.outcomes().expect("drained terminal queue").is_empty());
+    let ordinary = session.create(closed, [11]);
+    assert(!ordinary.policy_busy().expect("one-source policy state"));
+    assert(ordinary.apply_policy(1, wire.le(1073741824, 4)).expect("absent role refused") == -1);
+    assert(ordinary.submit(1, "packet".to_bytes(), 0, 0, 0, 0).expect("absent role refused") == 0);
+    assert(ordinary.disconnect().expect("one-source retirement").is_empty());
     println("SESSION_CHECKS passed");
 }

@@ -88,6 +88,23 @@ fn self_advert(key: bytes, doc: json.Value, now: i64) -> bytes {
     wire.encode(wire.packet(1, 4, wire.cat(wire.cat(prefix, wire.signature(key, wire.cat(prefix, app))), app)))
 }
 
+type Callbacks {
+    identity_export: bool;
+    identity_import: bool;
+    restart: bool;
+    reset: bool;
+    source_policy: bool;
+    physical_provider: bool;
+}
+
+type Measurements {
+    at: i64;
+    battery: bytes;
+    counters: bytes;
+    usage: bytes;
+    report: string;
+}
+
 pub actor Base {
     var document: json.Value;
     var authority: json.Value;
@@ -98,18 +115,11 @@ pub actor Base {
     var spreading: i64 = 7;
     var coding: i64 = 5;
     var power: i64 = 2;
-    var identity_export: bool = false;
-    var identity_import: bool = false;
-    var restart_allowed: bool = false;
-    var reset_allowed: bool = false;
+    var callbacks: Callbacks = Callbacks { identity_export: false, identity_import: false,
+        restart: false, reset: false, source_policy: false, physical_provider: false };
     var lifecycle_pending: i64 = 0;
-    var source_policy: bool = false;
-    var physical_provider: bool = false;
-    var physical_at: i64 = 0;
-    var measured_battery: bytes = bytes.new();
-    var measured_counters: bytes = bytes.new();
-    var filesystem_usage: bytes = bytes.new();
-    var physical_json: string = "{}";
+    var measurements: Measurements = Measurements { at: 0, battery: bytes.new(),
+        counters: bytes.new(), usage: bytes.new(), report: "{}" };
     var clients: Vec<Client> = Vec.new();
     var transient: json.Value = json.array();
     var heard: Vec<Heard> = Vec.new();
@@ -141,6 +151,9 @@ pub actor Base {
     receive fn snapshot() -> string {
         document.stringify().expect("document")
     }
+    receive fn source_factor() -> f64 {
+        state.decimal(state.field(document, "Preferences"), "airtime_factor")
+    }
     receive fn public_key() -> bytes {
         wire.public_key(key)
     }
@@ -151,20 +164,17 @@ pub actor Base {
         fault = true;
     }
     receive fn enable_source_policy() {
-        source_policy = true;
+        callbacks.source_policy = true;
     }
     receive fn enable_physical_provider() {
-        physical_provider = true;
+        callbacks.physical_provider = true;
     }
     receive fn measurements(sample_at: i64, battery_mv: bytes, counters: bytes, usage: bytes, report: string) {
-        physical_at = sample_at;
-        measured_battery = battery_mv;
-        measured_counters = counters;
-        filesystem_usage = usage;
-        physical_json = report;
+        measurements = Measurements { at: sample_at, battery: battery_mv, counters: counters,
+            usage: usage, report: report };
     }
     fn measurement_fresh() -> bool {
-        physical_at > 0 && transport.monotonic() - physical_at <= 45000
+        measurements.at > 0 && transport.monotonic() - measurements.at <= 45000
     }
     receive fn telemetry_error() -> string {
         if measurement_fresh() {
@@ -175,7 +185,7 @@ pub actor Base {
     }
     receive fn telemetry_snapshot() -> string {
         if measurement_fresh() {
-            physical_json
+            measurements.report
         } else {
             "{}"
         }
@@ -184,21 +194,21 @@ pub actor Base {
         sensor_data(permissions)
     }
     fn sensor_data(permissions: i64) -> bytes {
-        if !measurement_fresh() || permissions & 1 == 0 || measured_battery.len() != 2 || wire.uint(measured_battery) == 0 {
+        if !measurement_fresh() || permissions & 1 == 0 || measurements.battery.len() != 2 || wire.uint(measurements.battery) == 0 {
             return bytes.new();
         }
-        let volts = (wire.uint(measured_battery) as f32) / (1000.0 as f32);
+        let volts = (wire.uint(measurements.battery) as f32) / (1000.0 as f32);
         let centivolts = (volts * (100.0 as f32)) as i64;
         wire.cat(wire.cat(wire.byte(1), wire.byte(116)), wire.cat(wire.byte((centivolts >> 8) & 255), wire.byte(centivolts & 255)))
     }
     receive fn identity_callbacks(export_allowed: bool, import_allowed: bool) {
         assert(!import_allowed || !path.is_empty());
-        identity_export = export_allowed;
-        identity_import = import_allowed;
+        callbacks.identity_export = export_allowed;
+        callbacks.identity_import = import_allowed;
     }
     receive fn lifecycle_callbacks(restart: bool, reset: bool) {
-        restart_allowed = restart;
-        reset_allowed = reset;
+        callbacks.restart = restart;
+        callbacks.reset = reset;
     }
     receive fn lifecycle_operation() -> i64 {
         lifecycle_pending
@@ -751,7 +761,7 @@ pub actor Base {
                 if wire.uint(wire.cut(b, 1, 5)) > 20000 {
                     return reply(id, error(6));
                 }
-                if factor != state.decimal(pref(document), "airtime_factor") && !source_policy {
+                if factor != state.decimal(pref(document), "airtime_factor") && !callbacks.source_policy {
                     return reply(id, error(1));
                 }
                 var p = pref(next);
@@ -849,31 +859,31 @@ pub actor Base {
                 if b.len() != 1 {
                     return reply(id, error(6));
                 }
-                if !physical_provider {
+                if !callbacks.physical_provider {
                     return reply(id, error(1));
                 }
-                if !measurement_fresh() || measured_battery.len() != 2 || wire.uint(measured_battery) == 0 || filesystem_usage.len() != 8 {
+                if !measurement_fresh() || measurements.battery.len() != 2 || wire.uint(measurements.battery) == 0 || measurements.usage.len() != 8 {
                     return reply(id, error(4));
                 }
-                return reply(id, wire.cat(wire.cat(wire.byte(12), measured_battery), filesystem_usage));
+                return reply(id, wire.cat(wire.cat(wire.byte(12), measurements.battery), measurements.usage));
             }
             56 => {
                 if b.len() != 2 || b[1] > 2 {
                     return reply(id, error(6));
                 }
-                if !physical_provider || b[1] != 2 {
+                if !callbacks.physical_provider || b[1] != 2 {
                     return reply(id, error(1));
                 }
                 if !measurement_fresh() {
                     return reply(id, error(4));
                 }
-                if measured_counters.len() != 12 {
+                if measurements.counters.len() != 12 {
                     return reply(id, error(1));
                 }
                 var out = wire.cat(wire.byte(24), wire.byte(2));
-                out.append(wire.cut(measured_counters, 0, 8));
+                out.append(wire.cut(measurements.counters, 0, 8));
                 out.append(wire.le(0, 16));
-                out.append(wire.cut(measured_counters, 8, 12));
+                out.append(wire.cut(measurements.counters, 8, 12));
                 return reply(id, out);
             }
             19 | 51 => {
@@ -885,7 +895,7 @@ pub actor Base {
                 if !state.cstring(wire.cut(b, 1, b.len())).starts_with(marker) {
                     return reply(id, error(6));
                 }
-                if (cmd == 19 && !restart_allowed) || (cmd == 51 && !reset_allowed) {
+                if (cmd == 19 && !callbacks.restart) || (cmd == 51 && !callbacks.reset) {
                     return reply(id, error(1));
                 }
                 if lifecycle_pending != 0 || fault || closed {
@@ -902,7 +912,7 @@ pub actor Base {
                 if b.len() != 1 {
                     return reply(id, error(6));
                 }
-                output.push(event(id, if identity_export {
+                output.push(event(id, if callbacks.identity_export {
                     wire.cat(wire.byte(14), state.expanded(key))
                 } else {
                     wire.byte(15)
@@ -912,7 +922,7 @@ pub actor Base {
                 if b.len() < 65 {
                     return reply(id, error(6));
                 }
-                if !identity_import {
+                if !callbacks.identity_import {
                     output.push(event(id, wire.byte(15)));
                 } else {
                     let imported = wire.cut(b, 1, 65);
