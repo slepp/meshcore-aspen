@@ -158,6 +158,9 @@ FORCE:
 worker_identity.hew: FORCE | build
 	PYTHONDONTWRITEBYTECODE=1 python3 build_worker.py
 native-worker: worker_identity.hew
+.PHONY: native-contacts-test
+native-contacts-test: build/hew-host-release build/oracle
+	HEW_WORKERS=4 MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/native_contacts.py
 all: compiler-version build/roles build/hew-host
 compiler-version:
 	@test "$$($(HEW) --version)" = 'hew 0.6.0-rc7' || { echo 'Willow requires hew 0.6.0-rc7 (FFI ABI).'; exit 1; }

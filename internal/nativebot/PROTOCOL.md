@@ -34,11 +34,26 @@ The file must be an owned mode-0600 regular file with one link. A bad file or
 uncertain name commit stops startup. A host importing native state can use this
 override without running a setup worker or resetting radio/source/grant policy.
 
-The optional second argument `--dormant` prepares a candidate for identity
+The optional argument `--dormant` prepares a candidate for identity
 apply. It restores and validates the selected source but keeps RF command
 admission, reminders and startup adverts disabled. Go drops RF receptions
 and rejects any TX request until activation; dormant READY alone does not
 make the host role ready.
+
+Willow supplies `--willow-contacts` to recover public signed contacts from its
+existing Base authorities. For state `VERSION/willow/native`, the worker reads
+`VERSION/base` and `VERSION/secondary` using an owned mode0700 directory and
+owned mode0600 committed document. An existing `identity-state.json` takes
+precedence over `companion.json`; an invalid active envelope never falls back
+to a stale companion document. No identity, route, source or data is imported
+or written. Full keys and signed adverts feed the existing 16-slot Core
+recovery callback before encrypted-message authentication. More than16
+distinct valid keys with one peer hash reject the lookup. `bot contacts`
+reports cache occupancy and recovery counts.
+
+Without this argument, the worker retains advert-based discovery. The two
+optional arguments may appear in either order; duplicates and unknown
+arguments fail startup. These arguments do not change IPC v1 frames.
 
 Every frame is `length:u32le | tag:u8 | body`, where `length` includes the tag
 but not the 4-byte length field, and **1 <= length <= 4096**. Integers are

@@ -6,6 +6,7 @@
 #include "nvs.h"
 #include "NativeClock.h"
 #include "Scopes.h"
+#include "SavedContacts.h"
 #include <QueuedTxProtocol.h>
 #include <Utils.h>
 #include <array>
@@ -46,6 +47,12 @@ using Clock = std::chrono::steady_clock;
 constexpr uint32_t MaxFrame = 4096;
 constexpr size_t HelloSize = 1 + 2 + 64 + 4 + 4 + 3 + 2 + 256 * 4;
 bool output_fault = false;
+onchip::SavedContacts saved_contacts;
+
+bool saved_contact_lookup(const uint8_t *hash, unsigned &cursor, uint8_t *key,
+                          uint8_t *advert, uint8_t &size) {
+  return saved_contacts.lookup(hash, cursor, key, advert, size);
+}
 
 bool load_scopes(const char *root) {
   const std::string path = std::string(root) + "/scopes";
@@ -253,6 +260,8 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
     std::snprintf(reply + used, sizeof(reply) - used, " runtime_epoch=%u source_generation=%u",
                   bot.sourceWorker().generation(), bot.sourceWorker().sourceGeneration());
 #endif
+  } else if (!std::strcmp(command, "contacts")) {
+    bot.contactStatus(reply, sizeof(reply));
   } else if (!std::strcmp(command, "clock")) {
     onchip::NativeClockSample clock;
     bool scheduler = onchip::nativeBotClockSample(clock);
@@ -647,9 +656,14 @@ bool nativebot_send_tx(uint32_t token, uint8_t priority, uint32_t delay,
 
 int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
-  if ((argc != 2 && !(argc == 3 && !std::strcmp(argv[2], "--dormant"))) ||
-      !set_nonblocking(STDIN_FILENO) || !set_nonblocking(STDOUT_FILENO)) {
-    std::fputs("Host bot: usage worker ABSOLUTE_PRIVATE_STATE_DIRECTORY [--dormant]\n", stderr);
+  bool dormant = false, willow_contacts = false, valid = argc >= 2 && argc <= 4;
+  for (int i = 2; i < argc; ++i) {
+    if (!strcmp(argv[i], "--dormant") && !dormant) dormant = true;
+    else if (!strcmp(argv[i], "--willow-contacts") && !willow_contacts) willow_contacts = true;
+    else valid = false;
+  }
+  if (!valid || !set_nonblocking(STDIN_FILENO) || !set_nonblocking(STDOUT_FILENO)) {
+    std::fputs("Host bot: usage worker ABSOLUTE_PRIVATE_STATE_DIRECTORY [--dormant] [--willow-contacts]\n", stderr);
     return 2;
   }
   struct stat state{};
@@ -669,8 +683,11 @@ int main(int argc, char **argv) {
   int noise = 0;
   uint32_t airtime[256]{};
   bool started = false, ready_sent = false;
-  bool dormant = argc == 3;
   auto &bot = onchip::commandBotService();
+  if (willow_contacts) {
+    saved_contacts.configure(argv[1]);
+    bot.setContactLookup(saved_contact_lookup);
+  }
   struct StopBot {
     onchip::CommandBot &bot;
     ~StopBot() { bot.stop(); }

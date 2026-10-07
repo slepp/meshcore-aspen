@@ -239,11 +239,31 @@ The host sends as its existing native bot, through that worker's contact
 routing, admission, airtime budget and the host's tracked modem queue.
 No bot program, grants or command policy change is required.
 
+For incoming encrypted DMs after a native worker restart, Willow recovers
+known full public keys from the retained Base authorities. With the shared
+state layout `VERSION/willow/native/`, it reads `VERSION/base/` and
+`VERSION/secondary/`: `identity-state.json` is authoritative when present,
+otherwise `companion.json` is used. Keep these directories mode0700 and their
+committed documents mode0600. The host supplies the worker's
+`--willow-contacts` option automatically; other native-worker callers retain
+their existing behavior unless they select it.
+
+Only contacts with a matching full key and valid signed advert are eligible.
+Both authorities share the existing 16-slot native cache; more than16 distinct
+signed keys with the same peer hash reject that lookup. Recovery does not copy
+an identity, a route or an RF observation, and does not grant command access.
+Unknown peers still need a signed advert. Inspect the running worker with:
+
+```sh
+printf '%s\n' 'bot contacts' | python3 -B willow.py command --state "$STATE"
+```
+
 The recipient must be a **full 32-byte public key** with a fresh native direct
 contact: a signed advert plus an authenticated learned path, both retained in
 the worker's volatile contact table for at most ten minutes. After worker or
-host restart, complete that exchange again. `fresh-direct-contact-required`
-refuses a send without it; this interface does not invent a route or flood.
+host restart, complete that exchange again before an owner-initiated send.
+Recovered saved contacts alone do not satisfy `fresh-direct-contact-required`,
+which refuses a send without it; this interface does not invent a route or flood.
 
 ```sh
 cd /path/to/pinned-root/experiments/hew-roles

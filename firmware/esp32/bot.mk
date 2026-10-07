@@ -327,6 +327,7 @@ bot-native-worker-install: bot-native-worker
 BOT_HOST_NETWORK_FLAGS = -DONCHIP_BOT_HTTPS=1 -DONCHIP_BOT_NATIVE_HTTPS=1 -I. -I$(BOT_JSON_INCLUDE)
 BOT_HOST_ADMIN_FLAGS = $(BOT_FLAGS) -DMESHCORE_HOST_BOT_SOURCE=1 -DMESHCORE_MAST_ADMIN=1 $(BOT_HOST_NETWORK_FLAGS)
 $(BOT_BUILD)/host-worker.o: $(ROOT)/internal/nativebot/worker.cpp $(ROOT)/internal/nativebot/NativeClock.h \
+		$(ROOT)/internal/nativebot/SavedContacts.h \
 		../runtime/MastSource.h ../runtime/CommandBot.h ../runtime/BotWorker.h ../runtime/BotSignal.h bot.mk
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) $(BOT_HOST_ADMIN_FLAGS) $(BOT_NATIVE_FLAGS) -I$(ROOT)/internal/nativebot $(BOT_NATIVE_INCLUDES) -c $< -o $@

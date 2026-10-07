@@ -236,6 +236,7 @@ fn launch_native(owner: ChildRef<process.WorkerOwner>, executable: string, root:
     verify_native(executable);
     var arguments: Vec<string> = Vec.new();
     arguments.push(root);
+    arguments.push("--willow-contacts");
     match owner.launch(executable, arguments) {
         .Ok(result) => {
             if result.is_ok() {
