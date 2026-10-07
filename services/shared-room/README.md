@@ -110,12 +110,26 @@ There are no Worker keepalive timers, periodic alarms or proactive replicas.
 Existing clients can use Reset Path/relogin; seamless roaming and exactly-once
 client display are not promised.
 
-Bare native ACKs have only a 32-bit proof. The Worker tries all four native
-attempt-bit variants to avoid active proofs owned by that frontend, reserving
-new choices in the room transaction. If all variants are occupied, delivery
-waits. Separate backends use snapshots: simultaneous identical deliveries in
-different backends can still collide. Such ambiguous ACKs fail closed; a fresh
-client request recovers. There is no separate coordinator or lease system.
+When all configured aliases share one backend, history uses learned
+direct routes. Bare ACKs have only a 32-bit proof; the Worker tries all four
+native attempt-bit variants and reserves distinct active proofs atomically
+across all frontends, since each modem can hear the others' bare ACKs.
+If all four are occupied, that delivery waits for an ACK or fresh request.
+
+When the service configures multiple independent backends, all frontends receive history by
+flood, even after learning a direct route. Native clients reply with an
+encrypted PATH carrying the ACK, authenticated to that room/client identity.
+Bare ACKs cannot advance those deliveries. Identical simultaneous history in
+different backends therefore works without a cross-room coordinator. This
+costs flood airtime; login/post responses still use normal learned routes.
+This also protects modems with separate alias grants that share the RF network.
+After adding a second backend to the service, a fresh client login or
+refresh replaces any old direct pending delivery with this PATH ACK mode.
+
+The codec accepts unscoped flood/direct RF packets. Region-scoped packets
+carry additional transport authentication codes and are rejected with
+`accepted:false` until region-key configuration is implemented. This applies
+equally to one identity, shared-backend aliases and independent backends.
 
 `HISTORY_LIMIT=0` defaults to unlimited catch-up. A positive value limits the
 visible window to that many latest posts. It deletes no messages, attempts or
@@ -147,7 +161,7 @@ npm run build
 
 The focused checks cover two-front reception, one durable post, native login
 and PATH replies, pushed encrypted history, cursor/receipt behavior,
-hibernation/reconnect, catch-up, shared-alias ACK isolation and unauthorized or
+hibernation/reconnect, catch-up, shared-alias and independent-backend ACK isolation and unauthorized or
 forged decoded requests. The native crypto test uses the committed C++ packet
 and ACK fixture; login/post/PATH/REQ fixtures come from pinned meshcore-go.
 `make -C firmware/shared/cloudroom test` checks the portable driver and parser.

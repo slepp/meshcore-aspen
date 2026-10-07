@@ -138,7 +138,7 @@ export class RadioCodec {
       const found: Decoded[] = [];
       for (const identity of identities)
         for (const member of await lookup(identity.alias, ""))
-          if (member.pending?.proof === value)
+          if (member.pending?.proof === value && !member.pending.requirePathAck)
             found.push({
               identity,
               packet: p,

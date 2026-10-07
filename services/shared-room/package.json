@@ -7,7 +7,7 @@
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && vitest run --config vitest.native.config.ts"
+    "test": "vitest run && vitest run --config vitest.native.config.ts && vitest run --config vitest.independent.config.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",

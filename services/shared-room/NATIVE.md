@@ -47,6 +47,9 @@ persistent transport.
 The Worker codec supports unscoped ANON login, original TXT, directed REQ
 history, PATH, bare/multipart ACK and signed room advertisements. Region-scoped
 transport requires actual region-key authentication and is rejected here.
+Services with independent backends use flooded history and authenticated
+native PATH ACKs through every frontend. A service with one backend can use
+learned direct routes across its aliases and frontends.
 Native TXT signed format identifies the original author's prefix; it is not
 an extra Ed25519 signature on each history message. Existing clients still use
 Reset Path/relogin when moving between radios.
@@ -73,7 +76,8 @@ Portable checks cover parser bounds, opaque packet handling, ready identity,
 final receipts under RX backpressure, local-reflection rejection and stale
 connection generations. Worker fixtures cover two frontends sharing a room,
 login/catch-up, native ciphertext and ACKs, ordered history, reconnect and
-hibernation. The Go reference uses pinned native-compatible primitives for
+hibernation, including identical concurrent history from independent backends.
+The Go reference uses pinned native-compatible primitives for
 independent fixture generation. A live two-device RF test remains an operator
 step after private configuration and deployment; there is no host daemon or
 proactive history replica required by the native frontend.

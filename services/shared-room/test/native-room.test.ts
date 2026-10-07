@@ -1,114 +1,8 @@
-import {
-  SELF,
-  env,
-  reset,
-  runInDurableObject,
-  evictDurableObject,
-} from "cloudflare:test";
-import { afterEach, expect, it } from "vitest";
-import fixture from "./native-fixtures.json";
-import {
-  NativeCrypto,
-  base64,
-  unbase64,
-  fromHex,
-  join,
-  toHex,
-} from "../src/native-crypto";
+import { expect, it } from "vitest";
+import { runInDurableObject, evictDurableObject } from "cloudflare:test";
+import { bindings, fixture, crypto, http, rf, connect, state, history } from "./native-helpers";
+import { base64, unbase64, fromHex, join, toHex } from "../src/native-crypto";
 import { packet, le32 } from "../src/native";
-import type { Env } from "../src/config";
-import type { Transmit } from "../src/room";
-
-const bindings = env as unknown as Env,
-  sockets: WebSocket[] = [];
-const crypto = new NativeCrypto();
-const secret = crypto.secret(
-  fromHex(fixture.reader.key),
-  fromHex(fixture.room.publicKey),
-)!;
-afterEach(async () => {
-  for (const ws of sockets.splice(0)) ws.close();
-  await reset();
-});
-async function http(token: string, operation: unknown, alias = "A") {
-  return SELF.fetch(`https://room.test/v1/aliases/${alias}/operations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(operation),
-  });
-}
-async function rf(token: string, wire: string) {
-  const r = await http(token, { op: "rf", packet: wire });
-  const result = await r.json<any>();
-  expect(r.status, JSON.stringify(result)).toBe(200);
-  return result;
-}
-async function connect(token: string, alias = "A") {
-  const r = await SELF.fetch(`https://room.test/v1/aliases/${alias}/socket`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Upgrade: "websocket",
-      "Sec-WebSocket-Protocol": "aspen-room.v2.json",
-    },
-  });
-  expect(r.status).toBe(101);
-  const ws = r.webSocket!;
-  sockets.push(ws);
-  const inbox: any[] = [],
-    waiting: Array<(e: any) => void> = [];
-  ws.addEventListener("message", (e) => {
-    const value = JSON.parse(e.data as string);
-    if (waiting.length) waiting.shift()!(value);
-    else inbox.push(value);
-  });
-  ws.accept();
-  const next = async (label = "ready"): Promise<any> =>
-    inbox.length
-      ? inbox.shift()
-      : new Promise((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error(`Missing ${label} frame`)),
-            1000,
-          );
-          waiting.push((e) => {
-            clearTimeout(timer);
-            resolve(e);
-          });
-        });
-  expect(await next()).toMatchObject({
-    type: "ready",
-    version: 2,
-    publicKey:
-      alias === "A" ? fixture.room.publicKey : fixture.otherRoom.publicKey,
-  });
-  return { ws, inbox, next };
-}
-async function state() {
-  return runInDurableObject(bindings.ROOMS.getByName("native"), (_room, s) => ({
-    messages: s.storage.sql
-      .exec("SELECT * FROM messages ORDER BY seq")
-      .toArray(),
-    sessions: s.storage.sql
-      .exec("SELECT * FROM sessions ORDER BY client")
-      .toArray(),
-    pending: s.storage.sql.exec("SELECT * FROM pending").toArray(),
-  }));
-}
-function history(tx: Transmit) {
-  expect(tx.type).toBe("transmit");
-  const p = packet(unbase64(tx.packet))!;
-  expect(p.kind).toBe(2);
-  const plain = crypto.crypt(secret, p.payload.slice(2), true)!;
-  const text = plain.slice(9);
-  const end = text.indexOf(0);
-  const exact = plain.slice(0, 9 + (end < 0 ? text.length : end));
-  const hash = crypto.sha(join(exact, fromHex(fixture.reader.publicKey)));
-  return {
-    text: new TextDecoder().decode(exact.slice(9)),
-    timestamp: new DataView(plain.buffer, plain.byteOffset).getUint32(0, true),
-    ack: base64(join(new Uint8Array([13, 0x80]), hash.slice(0, 4))),
-  };
-}
 
 it("verifies native logins/posts from two frontends, pushes ordered ciphertext and restores pending state", async () => {
   const one = await connect("one"),
@@ -167,6 +61,10 @@ it("verifies native logins/posts from two frontends, pushes ordered ciphertext a
   expect(receipt.status).toBe(200);
   await receipt.text();
   expect((await state()).pending).toHaveLength(1);
+  // Reopen the pre-PATH-mode schema without discarding its pending state.
+  await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, s) => {
+    s.storage.sql.exec("ALTER TABLE pending DROP COLUMN require_path_ack");
+  });
   await evictDurableObject(bindings.ROOMS.getByName("native"));
   expect((await state()).pending[0].state).toBe("unknown");
   two.ws.close();
@@ -211,7 +109,7 @@ it("catches up on login and rejects decoded claims, bad crypto and unauthorized 
   await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, s) => {
     for (let n = 0; n < 4; n++)
       s.storage.sql.exec(
-        "INSERT INTO pending VALUES (?, ?, ?, 1, 'two', ?, 'unknown')",
+        "INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state) VALUES (?, ?, ?, 1, 'two', ?, 'unknown')",
         `revoked${n}`,
         fixture.reader.publicKey,
         `old${n}`,
@@ -225,9 +123,9 @@ it("catches up on login and rejects decoded claims, bad crypto and unauthorized 
   await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, s) => {
     s.storage.sql.exec("DELETE FROM pending WHERE alias LIKE 'revoked%'");
   });
-  const shared = await connect("two", "SharedB");
+  const shared = await connect("one", "SharedB");
   const login = await http(
-    "two",
+    "one",
     { op: "rf", packet: fixture.sharedReaderLogin },
     "SharedB",
   );
@@ -237,6 +135,8 @@ it("catches up on login and rejects decoded claims, bad crypto and unauthorized 
   const active = (await state()).pending;
   expect(active).toHaveLength(2);
   expect(new Set(active.map((p) => p.proof)).size).toBe(2);
+  // A different modem hearing this bare ACK must not consume SharedB.
+  expect((await rf("one", history(first).ack)).accepted).toBe(false);
   await rf("two", history(first).ack);
   expect((await state()).pending.map((p) => p.alias)).toEqual(["SharedB"]);
   for (const op of ["login", "post", "members", "ack", "prepare"])

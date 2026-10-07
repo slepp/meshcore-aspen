@@ -17,8 +17,11 @@ Path encoding uses the upper two bits for hash width and lower six for hop
 count, bounded by native's 64 path bytes and 184 payload bytes. Region-scoped
 transport is rejected until a region-key contract is supplied. The Worker
 tries every permitted room/client prefix and requires exactly one native
-MAC-authenticated decode. Bare ACKs are resolved against owned pending proofs;
-ambiguous proofs are rejected. Mutable packet paths do not affect RF-attempt
+MAC-authenticated decode. Bare ACKs are resolved against owned pending proofs
+when all configured aliases share one backend; ambiguous proofs are rejected.
+Services configuring multiple backends send flooded history through all frontends and require the native
+encrypted PATH+ACK. Its room/client MAC resolves even identical short proofs.
+Mutable packet paths do not affect RF-attempt
 deduplication. Only original TXT format enters durable history.
 
 `firmware/shared/cloudroom/CloudRoomWire` uses unchanged MIT FreeRTOS
