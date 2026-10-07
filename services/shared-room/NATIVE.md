@@ -43,7 +43,11 @@ subprotocol was returned. HTTP 401 means the frontend token was rejected.
 `stack-min` reports the network task's minimum remaining stack in bytes after a
 connection attempt. No token, certificate contents or response body is included.
 
-`CloudRoomService` runs one network task with eight-slot RX/TX/result SPSC
+`CloudRoomService` shares Aspen's existing 16KiB HTTPS task with telemetry and
+configured HTTP calls, rather than allocating another task stack. Each bounded
+room poll follows pending HTTP work; a TLS reconnect can delay other network
+work up to the existing connection timeout while radio dispatch continues.
+The service has eight-slot RX/TX/result SPSC
 queues. Dispatch-owned `LocalRadio` receives RF, filters local reflections,
 submits dispatches and polls final receipts. The network task owns WSS and the
 bounded `OpaqueFrontend` driver. Payload/frame/operation queues use PSRAM;

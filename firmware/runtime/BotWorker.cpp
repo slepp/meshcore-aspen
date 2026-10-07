@@ -51,6 +51,7 @@ struct BotWorker::Control {
   BotSignal<bool> ioInitialized{false};
 #endif
 #if ONCHIP_BOT_HTTPS
+  std::atomic<BotNetworkService *> networkService{nullptr};
   BotSignal<State> network[BotJobLimit];
   BotSignal<State> telemetry{Idle};
   BotSignal<bool> telemetryCancelled{false};
@@ -884,6 +885,15 @@ bool BotWorker::ensureNativeHttps() {
   return storage_ ? control_ && !control_->netStopped.load() :
                     begin(nullptr, nullptr, nullptr, true);
 }
+bool BotWorker::attachNetworkService(BotNetworkService &service) {
+  if (!control_ || control_->netStopped.load() || control_->stopping.load()) return false;
+  BotNetworkService *empty=nullptr;
+  const bool attached=control_->networkService.compare_exchange_strong(empty,&service);
+#if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
+  if (attached) BotWake::shared().notify();
+#endif
+  return attached;
+}
 bool BotWorker::submitTelemetry(const char *body, size_t size) {
   if (!storage_ || !control_ || control_->netStopped || control_->stopping ||
       control_->telemetry.load() != Idle || !body || !size || size > TelemetryBodyLimit) return false;
@@ -1227,12 +1237,15 @@ void BotWorker::runNet() {
           fetch.state->compare_exchange_strong(done, Idle);
         }
       }
+      auto *service=control_->networkService.load();
+      if (service) service->poll();
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
-      BotWake::shared().wait(revision);
+      BotWake::shared().wait(revision,service ? 10 : UINT32_MAX);
 #else
       pauseWorker();
 #endif
     }
+    if (auto *service=control_->networkService.load()) service->close();
   }
 #endif
   control_->netStopped = true;

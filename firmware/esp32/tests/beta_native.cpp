@@ -847,6 +847,28 @@ static void origin_path_policy() {
   puts("PASS durable management origin width independent of native role selection; "
        "requester-width return PATH preserved, no role-journal change");
 }
+static void network_service_lifecycle() {
+#if ONCHIP_BOT_HTTPS
+  struct Service final : BotNetworkService {
+    std::atomic<unsigned> polls{0}, closed{0};
+    void poll() override { ++polls; }
+    void close() override { ++closed; }
+  } service, replacement;
+  BotWorker worker;
+  assert(!worker.attachNetworkService(service));
+  assert(worker.begin(nullptr,nullptr,nullptr,true));
+  assert(worker.attachNetworkService(service));
+  assert(!worker.attachNetworkService(service));
+  assert(!worker.attachNetworkService(replacement));
+  for (unsigned i=0;i<1000&&!service.polls.load();++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  assert(service.polls.load() && !service.closed.load());
+  worker.stop();
+  assert(service.closed.load()==1 && replacement.polls.load()==0 && replacement.closed.load()==0);
+  assert(!worker.attachNetworkService(service));
+  puts("PASS one shared HTTPS background service, polling and network-thread close on stop");
+#endif
+}
 static void source_copy_limits() {
   BotWorker worker;
   assert(worker.begin());
@@ -3280,6 +3302,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--admin-cli-core-test")) {
+    network_service_lifecycle();
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     MastReplayStorageTest::run();
     MastReplayStorageTest::configuration();

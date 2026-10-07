@@ -21,6 +21,15 @@ constexpr char BotStagedSourcePath[] = "/command-bot/staged.lua";
 constexpr uint32_t BotSourceReadBudgetMs = 100;
 constexpr uint32_t BotSourceCopyBudgetMs = 2000;
 
+#if ONCHIP_BOT_HTTPS
+class BotNetworkService {
+public:
+  virtual ~BotNetworkService() = default;
+  virtual void poll() = 0;
+  virtual void close() = 0;
+};
+#endif
+
 class BotWorker {
 public:
   static const size_t StorageBytes;
@@ -96,6 +105,9 @@ public:
   void cancelJobs(uint32_t except = 0);
 #if ONCHIP_BOT_HTTPS
   bool ensureNativeHttps();
+  // Dispatch-thread registration, once before stop. Service outlives the worker;
+  // poll/close run only on its HTTPS task, after pending HTTP work.
+  bool attachNetworkService(BotNetworkService &service);
   bool submitTelemetry(const char *body, size_t size);
   bool pollTelemetry(TelemetryCompletion &result);
   void cancelTelemetry();

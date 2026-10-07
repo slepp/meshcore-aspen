@@ -461,7 +461,7 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
   roleMux = &mux;
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
   static_assert(KISS_LOCAL_SOURCES >= 6, "Cloud room needs one source beside the five native services");
-  if (!beginCloudRoom(mux)) Serial.println("Cloud-room driver not configured; service disabled");
+  if (!beginCloudRoom(mux,commandBot)) Serial.println("Cloud-room driver or HTTPS worker unavailable; service disabled");
 #endif
   if (!refreshRolePresence()) {
     Serial.println("On-chip role presence reporting unavailable");

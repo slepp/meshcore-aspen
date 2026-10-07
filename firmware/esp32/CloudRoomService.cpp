@@ -6,6 +6,7 @@
 #include "LocalRadio.h"
 #include "RoleStorage.h"
 #include "Capacity.h"
+#include "CommandBot.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -51,25 +52,24 @@ CloudRoomDriver *__attribute__((weak)) createCloudRoomDriver(cloudroom::RadioBri
 namespace {
 constexpr unsigned MaxJobs = cloudroom::QueueDepth;
 constexpr uint32_t TxExpiryMs = 30000;
-constexpr unsigned NetworkStackBytes = 8192;
 struct Buffers {
   cloudroom::RadioBuffers radio;
   char inbound[cloudroom::FrameLimit], outbound[cloudroom::FrameLimit];
 };
 // Only payloads/dispatch-owned radio live in PSRAM. SPSC atomics and the task
 // stack remain in internal memory; no shared LocalRadio calls cross tasks.
-struct Service {
+struct Service final : BotNetworkService {
   cloudroom::RadioBridge bridge;
   Buffers *buffers = nullptr;
   LocalRadio *radio = nullptr;
   CloudRoomDriver *driver = nullptr;
-  TaskHandle_t task = nullptr;
+  std::atomic<bool> active{false};
   StaticSemaphore_t admissionControl;
   SemaphoreHandle_t admission = nullptr;
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
   std::atomic<uint32_t> connectedAliases{0};
-  std::atomic<uint32_t> stackMinimumBytes{NetworkStackBytes};
+  std::atomic<uint32_t> stackMinimumBytes{0};
   char lastError[96]{};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
@@ -91,8 +91,8 @@ struct Service {
     c.retryAt = millis() + c.backoffMs;
     c.backoffMs = c.backoffMs < 16000 ? c.backoffMs * 2 : 30000;
   }
-  void network() {
-    for (;;) {
+  void poll() override {
+      if (!active.load(std::memory_order_acquire)) return;
       cloudroom::Reception packet;
       // Bounded work per iteration lets every alias drain its incoming socket.
       for (unsigned n = 0; n < cloudroom::QueueDepth && bridge.rx.pop(packet); ++n)
@@ -129,18 +129,20 @@ struct Service {
         if (out > sizeof(buffers->outbound) || (out && !c.socket->send(buffers->outbound, out)))
           lost(alias);
       }
-      vTaskDelay(pdMS_TO_TICKS(10)); // Local task idle; sends no keepalive/DO wake-up.
-    }
   }
-  static void run(void *self) { static_cast<Service *>(self)->network(); }
+  void close() override {
+    active.store(false,std::memory_order_release);
+    for (unsigned alias=0;alias<aliases;++alias) lost(alias);
+  }
   void discard() { // Only before starting the network task.
     if (radio) radio->detach();
     for (auto &c : connections) { delete c.socket; c.socket = nullptr; }
     delete driver; driver = nullptr;
     releaseRoleStorage(radio); releaseRoleStorage(buffers); aliases = 0;
   }
-  bool begin(WifiKissMultiplexer &mux) {
-    if (task) return true;
+  bool begin(WifiKissMultiplexer &mux,CommandBot &worker) {
+    if (active.load()) return true;
+    if (!worker.ensureNativeHttps()) return false;
     driver = createCloudRoomDriver(bridge);
     if (!driver) return false;
     aliases = driver->aliases();
@@ -158,13 +160,15 @@ struct Service {
     bridge.bind(buffers->radio);
     admission = xSemaphoreCreateMutexStatic(&admissionControl);
     if (!admission) { discard(); return false; }
-    if (xTaskCreate(run, "cloud-room", NetworkStackBytes, this, 1, &task) != pdPASS) {
+    active.store(true,std::memory_order_release);
+    if (!worker.attachNetworkService(*this)) {
+      active.store(false,std::memory_order_release);
       discard(); return false;
     }
     return true;
   }
   void dispatch() {
-    if (!task) return;
+    if (!active.load(std::memory_order_acquire)) return;
     uint8_t packet[cloudroom::RadioLimit];
     for (unsigned n = 0; n < cloudroom::QueueDepth; ++n) {
       const int size = radio->recvRaw(packet, sizeof(packet));
@@ -206,7 +210,7 @@ struct Service {
 };
 Service service;
 } // namespace
-bool beginCloudRoom(WifiKissMultiplexer &mux) { return service.begin(mux); }
+bool beginCloudRoom(WifiKissMultiplexer &mux,CommandBot &worker) { return service.begin(mux,worker); }
 void loopCloudRoom() { service.dispatch(); }
 unsigned cloudRoomAliases() { return service.aliases; }
 const uint8_t *cloudRoomPublicKey(unsigned alias) { return alias < service.aliases ? service.keys[alias] : nullptr; }
@@ -223,7 +227,7 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
     return;
   }
   if (!strcmp(command, "error")) {
-    if (!service.task) {
+    if (!service.active.load()) {
       snprintf(reply,capacity,"Cloud room is not configured");return;
     }
     if (xSemaphoreTake(service.admission,0)!=pdTRUE) {
@@ -252,7 +256,7 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
 namespace onchip {
 const CloudRoomConfiguration *cloudRoomConfiguration() { return nullptr; }
 CloudRoomDriver *createCloudRoomDriver(cloudroom::RadioBridge &) { return nullptr; }
-bool beginCloudRoom(WifiKissMultiplexer &) { return false; }
+bool beginCloudRoom(WifiKissMultiplexer &,CommandBot &) { return false; }
 void loopCloudRoom() {}
 unsigned cloudRoomAliases() { return 0; }
 const uint8_t *cloudRoomPublicKey(unsigned) { return nullptr; }
