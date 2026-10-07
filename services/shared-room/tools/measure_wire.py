@@ -9,11 +9,11 @@ from pathlib import Path
 import time
 import tracemalloc
 import uuid
-import cbor2
 
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument("--out", type=Path, default=root / ".tmp/wire-frames")
+parser.add_argument("--json-only", action="store_true", help="generate native parser fixtures without CBOR measurements")
 args = parser.parse_args()
 args.out.mkdir(parents=True, exist_ok=True)
 client = "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
@@ -38,6 +38,14 @@ frames = {
 frames["maximum-delivery"] = {**frames["history-delivery"], "route":base64.b64encode(bytes(range(255))).decode(),
  "message":{**message, "text":"\x01"*151}}
 
+for name, frame in frames.items():
+ (args.out / (name + ".json")).write_bytes(json.dumps(frame, separators=(",",":"),ensure_ascii=False).encode())
+if args.json_only:
+ print(f"Generated {len(frames)} JSON parser fixtures.")
+ raise SystemExit(0)
+
+import cbor2
+
 def compact(value, key=""):
  if isinstance(value, dict): return {k:compact(v,k) for k,v in value.items()}
  if isinstance(value, list): return [compact(v) for v in value]
@@ -51,7 +59,6 @@ for name, frame in frames.items():
  data = json.dumps(frame, separators=(",",":"),ensure_ascii=False).encode()
  binary = b"\x01" + cbor2.dumps(compact(frame), canonical=True)
  assert cbor2.loads(binary[1:]) == compact(frame)
- (args.out / (name + ".json")).write_bytes(data)
  (args.out / (name + ".cbor")).write_bytes(binary)
  print(f"{name},{len(data)},{1+len(cbor2.dumps(frame, canonical=True))},{len(binary)}")
 # The native fixture supplies measured ciphertext bytes, not an imagined packet.

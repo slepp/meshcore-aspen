@@ -1,13 +1,11 @@
 # Direct native Aspen frontend
 
-The target frontend is an Aspen ESP32 connected directly to this Worker over
-Wi-Fi/WSS. Birch is optional reference/development code. The Worker, bounded
-JSON contract, native WSS transport and radio/network task bridge are implemented.
-The opt-in `Xiao_S3_WIO_onchip_cloudroom` profile builds against the pinned ESP32
-SDK. Its codec driver defaults to disabled, and no device has been flashed.
-Read [the trust boundary](TRUST.md): the approved target keeps room keys in the
-Worker. The current decoded API/reference codec is an intermediate prototype;
-it does not yet supply that Worker-side native crypto/opaque RF path.
+An Aspen ESP32 can build the optional Wi-Fi/WSS transport and radio task bridge
+with `Xiao_S3_WIO_onchip_cloudroom`. **The profile cannot serve a room yet:**
+its codec driver is disabled. Worker-owned room keys require a Worker-native
+MeshCore codec and opaque RF API before a radio can connect and advertise.
+Read [the trust boundary](TRUST.md) before configuring credentials. The existing
+decoded API and Birch reference codec instead require keys at the frontends.
 
 ## Native transport and task bridge
 
@@ -61,10 +59,9 @@ This reference currently supports **unscoped RF**. Region-scoped flooding needs
 payload-dependent transport authentication with the configured region key;
 a static transport code is insufficient.
 
-Two focused Go tests reuse the committed native C++ ciphertext/ACK fixture and
-exercise native login/PATH encoding, signed delivery proofs, invalid MACs,
-ambiguous bare ACK rejection and relay-loop rejection. Those establish codec
-behavior for the fixtures; live ESP32/RF interoperability is still outstanding.
+Two focused Go tests reuse the native C++ ciphertext/ACK fixture and exercise
+native login/PATH encoding, signed delivery proofs, invalid MACs, ambiguous bare
+ACK rejection and relay-loop rejection. Live ESP32/RF operation remains unchecked.
 
 ## Codec boundary and remaining integration
 
@@ -83,11 +80,9 @@ RF API before enabling the approved central-key target. Provision no existing
 local-room identity as part of this work.
 The real frontend's public keys must match server ALIASES before advertising.
 
-The demonstrable outcome is one Aspen logging a client into an alias, receiving
-catch-up through WSS, submitting its physical RF response via the existing
-scheduler, and committing a post that a second frontend sees in the same order.
-A subsequent scoped deployment/flash decision can use that concrete build;
-there is no extra release ceremony or history-replication subsystem.
+Before enabling a room, check that a companion can log in over RF, receive
+catch-up through WSS and the radio scheduler, and post a message that a second
+frontend receives in the same order.
 
 ## Focused validation
 
@@ -97,8 +92,7 @@ Arduino 2.0.17 and ESP-IDF4.4.7 using public placeholder settings and WAMR off.
 The disabled-driver image used 145,744 static RAM bytes and 2,017,377 flash bytes.
 Those are compile sizes, not live TLS/queue heap measurements or an RF test.
 
-`make -C firmware/shared/cloudroom test` checks bounded JSON parsing/decoding and
-a real host-thread SPSC transfer, including stale generations and local RF
-reflection rejection. The independent review found/fixed SDK foundation setup,
-disconnect/admission synchronization and a per-byte upgrade timeout. No public
-credentials, new radio advertisements or hardware changes were needed.
+`make -C firmware/shared/cloudroom test` generates its JSON fixtures and checks
+bounded parsing/decoding and a host-thread SPSC transfer, including stale
+generations and local RF reflection rejection. It needs Python 3 and C/C++
+compilers, uses no credentials and does not contact a radio.
