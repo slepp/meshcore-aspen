@@ -1,91 +1,71 @@
-# Room crypto and frontend authority
+# Room keys and private setup
 
-The implemented v1 API trusts radio frontends to verify native MeshCore crypto.
-This differs from the original proposal where a Worker owns the room private key
-and an opaque radio frontend only carries received/transmitted packet bytes.
-The approved target remains **Worker-owned room keys and opaque radio frontends**.
-The current decoded API is an intermediate trusted-frontend prototype, not a
-change to that target. The deployed alias/frontend maps remain empty.
+The default `MODE="opaque"` API keeps expanded native room private keys in
+`ROOM_KEYS` Worker secrets. Radio frontends hold only their restricted bearer
+token, alias public keys/names and endpoint/CA settings. The Worker verifies
+native ECDH/MAC ciphertext, resolves short prefixes against full membership,
+signs advertisements, encodes history and derives its expected client ACKs.
+[Native crypto source](native/README.md) explains the pinned implementation.
 
-| Boundary | Current decoded-operation prototype | Original opaque frontend design |
-| --- | --- | --- |
-| Room expanded private key | Each frontend advertising that identity | Worker/native-compatible codec |
-| Native RF MAC/decryption/signing | Frontend codec | Worker codec |
-| Frontend receives | Plain durable operations/history and packet keys | Opaque RF bytes and dispatch instructions |
-| Worker checks | Frontend bearer grant, alias membership/password, sequence/dedup/cursors | Those checks plus native packet authentication |
-| Same room identity at several frontends | Securely provision the same expanded key/name to each | Frontends share the allowed alias, not its private key |
+A frontend token can forward or replay native packets and request signed
+advertisements for its permitted aliases. It cannot assert a client identity,
+post plaintext, list members or choose an ACK proof through this API. A
+compromised radio frontend can still drop, replay or misreport its radio work.
+Native MeshCore has a short two-byte MAC and bare 32-bit ACKs; the service
+preserves those protocol limits rather than claiming stronger authentication.
+TLS protects the frontend connection. Revoke a lost frontend token; replace the
+advertised identity if its Worker room key is compromised.
 
-## What the current source enforces
+An optional frontend `region` is a public routing name, not a secret or client
+authorization boundary. It validates scoped packets and determines outgoing
+flood scope. Native direct packets have no transport codes and still use room
+authentication. Unknown scopes never fall back to unscoped handling. Private
+`$` regions need operator-provided 16-byte transport keys and are unsupported
+by this public-name configuration. Existing test setup files omit `region`.
 
-`src/config.ts` restricts each token to configured aliases. Alias-to-backend
-mapping and full public keys are server controlled, and an alias's first-use
-public key is pinned in SQLite. Distinct aliases keep separate client
-membership/password, pending proof, route and cursor namespaces even when they
-share a backend's ordered history.
+The legacy `MODE="decoded"` development path trusts frontend assertions and
+exposes plaintext/member operations. Its adapters need room keys on the host.
+Do not enable that mode for the central-key deployment or provision those
+reference adapters with the new Worker keys.
 
-`src/room.ts` owns full-key membership and checks a room password for new
-membership. An existing member can use native empty-password ACL login. The
-service assumes that frontend-supplied `client`, timestamp, text, attempt and
-proof came from authenticated radio activity. The `source:"client"` field is a
-frontend assertion; it is not a cryptographic proof. The TypeScript adapter and
-Go reference codec use authoritative member lookups to resolve prefixes, but
-the HTTP/WebSocket API itself cannot prove that those codec checks occurred.
+## Operator-run handoff
 
-A compromised allowed token can list existing full member keys, forge decoded
-posts/refreshes for them, select itself as their frontend and replay shared
-history through its own pending delivery/ACK sequence. It can choose a proof
-when preparing its own delivery. It can therefore read or manipulate content in
-its allowed aliases' backends, including history originating in another alias
-that intentionally shares that backend. Tokens cannot remap an alias or grant
-access to an unrelated backend through an alias outside their configured list.
+Prepare new test identities without reading existing radio identity storage:
 
-A frontend holding an expanded room key can additionally generate signed room
-adverts and valid native packets as that room, and derive the per-client shared
-secrets used by the native protocol. Revoke a compromised frontend token to
-remove its API grant; a leaked room key also requires a new advertised identity
-and coordinated frontend/client replacement. The service's pinned key rule
-requires a new alias ID for that replacement. Token rotation alone cannot
-remove a stolen key's RF authority.
+```sh
+GOMODCACHE=/tmp/aspen-go-mod GOCACHE=/tmp/aspen-go-build \
+  go run services/shared-room/tools/create-test-setup.go --directory PRIVATE_DIRECTORY
+```
 
-Existing native identity storage is an NVS blob (`RoleIdentity.cpp`); the current
-cloud work does not provision cloud identities there or claim hardware-backed
-key protection. Private key duplication and secure handoff are additional
-operator responsibilities in the frontend-crypto design.
+The generator creates exclusive 0700/0600 files for two new test rooms and two
+restricted frontend credentials. It never uploads or advertises them. Its
+`service-config.json` contains ALIASES/FRONTENDS; `worker-room-keys.json` holds
+expanded keys targeted at the Worker. Preserve those private files. Do not
+commit them, paste them into a conversation, or copy room keys to a frontend.
 
-## Decision and supported handoff
+Validate and upload with an operator-run local process:
 
-Frontend crypto deliberately reuses the existing native MeshCore primitives and
-keeps the durable Worker small. It is **not necessary** to the architecture, nor
-should it be treated as implicit approval of the original central-key proposal.
-Preserving opaque frontends requires a pinned native-compatible Worker crypto
-module and an opaque packet API; the current decoded API is insufficient for
-that trust model. Do not advertise the current prototype as that implementation.
-Approval to generate two new test identities/credentials does not authorize
-duplicating room private keys onto frontends. New test keys are designated for
-the Worker; keep their local preparation separate until that codec/key store is
-implemented. Only a separate explicit choice of frontend crypto would change
-that location.
+```sh
+node services/shared-room/tools/configure.mjs \
+  --file PRIVATE_DIRECTORY/service-config.json \
+  --keys PRIVATE_DIRECTORY/worker-room-keys.json --validate
 
-WSS connection, bounded packet queues and physical radio receipts are independent
-of this decision. They can be implemented before either key setup. Leave native
-startup disabled and no room key provider installed while the boundary is open.
+node services/shared-room/tools/configure.mjs \
+  --file PRIVATE_DIRECTORY/service-config.json \
+  --keys PRIVATE_DIRECTORY/worker-room-keys.json --account YOUR_ACCOUNT_ID
+```
 
-Credential approval does not make ordinary tool stdin a secret handoff channel.
-For setup, use a user-run script reading a private secret-manager mount/file,
-or an approved supported secret mechanism. Wrangler's `secret bulk` consumes
-stdin/file; force `WRANGLER_LOG_SANITIZE=true`, keep debug logging disabled, and
-never include values in tool arguments, stdout or model-visible logs. Native
-expanded keys stay in the chosen private store and are never needed by the
-current Worker; a central-key implementation would require a separately approved
-supported upload to that Worker. A user-run handoff can configure only the
-`aspen-shared-room` ALIASES/FRONTENDS secrets and preserve the existing Cloudflare
-OAuth login without creating any account-wide API credentials.
+Validation checks private file ownership/permissions, grants, expanded-key
+format and native public-key pairing without printing values. Upload reads
+files locally and pipes ALIASES/FRONTENDS/ROOM_KEYS to Wrangler `secret bulk`.
+It reuses the operator's Cloudflare login and forces log sanitization with
+error-only logging. This is an operator secret handoff, not ordinary tool stdin
+or a new account-wide credential. Keep account IDs, endpoints and private
+configuration in local ignored files or secret-manager mounts.
 
-`tools/create-test-setup.go` prepares only two fresh test identities, two room
-passwords and two frontend tokens in a new private local directory. It never
-reads existing radio identities, uploads values or provisions a frontend. The
-separate Worker-key file stays local; `tools/configure.mjs` cannot upload it.
-That operator-run handoff currently supports only the decoded prototype and
-requires `--accept-frontend-crypto`. Do not run it for the approved opaque
-frontend target. Extend the handoff for the reviewed central codec before
-activating these identities; the current service stays locked.
+Deploy the opaque Worker code before uploading these secrets and enabling
+frontends. Choose the Cloudflare account privately, then run the normal
+Wrangler deployment from this package. Supply only endpoint, CA, restricted
+token and public metadata to `cloudRoomConfiguration()` in the private native
+build. The default provider is disabled. No deployment, secret upload, flash
+or RF advertisement is performed by a build or the validation command.

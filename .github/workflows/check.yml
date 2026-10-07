@@ -13,6 +13,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shared-room:
+    name: Shared room Worker and opaque frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/shared-room/package-lock.json
+      - name: Check Worker
+        working-directory: services/shared-room
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+          WRANGLER_LOG_PATH: .wrangler/check.log
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Check portable opaque frontend
+        run: |
+          make -C firmware/shared/cloudroom "$(pwd)/.tmp/cloudroom-wire/opaque"
+          .tmp/cloudroom-wire/opaque
   offline:
     name: Linux offline checks
     runs-on: ubuntu-24.04

@@ -1,3 +1,5 @@
-# Synthetic local configuration. Replace public keys and secrets for your own setup.
-ALIASES='{"A":{"backend":"welcome","publicKey":"1111111111111111111111111111111111111111111111111111111111111111","name":"WelcomeYEG","password":"local-example"},"B":{"backend":"welcome","publicKey":"1122222222222222222222222222222222222222222222222222222222222222","name":"WelcomeYYC","password":"local-example-b"},"C":{"backend":"private","publicKey":"5555555555555555555555555555555555555555555555555555555555555555","name":"LocalRoom","password":"local-example-c"}}'
-FRONTENDS='{"local-radio":{"token":"local-example-token","aliases":["A","B","C"]},"remote-radio":{"token":"remote-example-token","aliases":["A","B"]}}'
+# PUBLIC local fixtures only. Never advertise these identities on a real RF network.
+MODE="opaque"
+ALIASES='{"A":{"backend":"local-shared","publicKey":"22351e22105a19aabb42589162ad7f1ea0df1c25cebf0e4a9fcd261301274862","name":"A","password":"room"},"B":{"backend":"local-shared","publicKey":"e68e0cf7f26c59f963b5846202d2327cc8bc0c4eff8cb9abd4012f9a71decf00","name":"B","password":"room"}}'
+FRONTENDS='{"one":{"token":"public-local-fixture-token-00000001","aliases":["A","B"]},"two":{"token":"public-local-fixture-token-00000002","aliases":["A","B"]}}'
+ROOM_KEYS='{"A":"18bf5297036bf9a0bdce8f050f58e57e50413a49ae37e7fb74a044e8b48363632a2ce0aed069264b9a988490fb6cca0cce7285994ad29f6ad23c2920fbb76f47","B":"68154edc372e66ead12313d34b3f36ff1281656392797e795f3d56fc4c71396e315bd79147fee22d3dc7e8d9cf99d1cdfceaef76dc2ed57b19fe4fc052d9bbb9"}'
