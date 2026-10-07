@@ -53,7 +53,8 @@ For MQTT packet collection, choose the host or on-device
 For shared room history across radio frontends, the
 [shared room Worker/API](services/shared-room/README.md) provides one canonical
 backend with several advertised room identities, login catch-up and live push.
-Its thin adapter example documents the native radio codec integration boundary.
+The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
+frontend carries opaque radio bytes and final transmission receipts.
 Additional role instances can run on a host, but each enabled built-in ESP32
 role runs at most once. A second repeater can duplicate forwarding and consume
 extra airtime; choose placement deliberately.

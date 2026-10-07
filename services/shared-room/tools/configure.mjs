@@ -7,16 +7,24 @@ import {fileURLToPath} from "node:url";
 const args = process.argv.slice(2);
 const file = args[args.indexOf("--file") + 1];
 const account = args[args.indexOf("--account") + 1];
+const keyFile = args[args.indexOf("--keys") + 1];
 const validate = args.includes("--validate");
-const accept = args.includes("--accept-frontend-crypto");
 function reject(message) {throw new Error(message);}
 function record(value) {return value && typeof value === "object" && !Array.isArray(value);}
 const id = /^[a-zA-Z0-9_-]{1,64}$/;
+function publicRegion(value) {
+  if (value === undefined) return true;
+  if (typeof value !== "string" || !value.isWellFormed()) return false;
+  const name=value.replace(/^#/, ""), bytes=Buffer.from(name);
+  return bytes.length>0 && bytes.length<=30 && !name.startsWith("$") && !name.startsWith("#") &&
+    bytes.every(c=>c===45||c===35||c===36||(c>=48&&c<=57)||c>=65);
+}
 
 try {
   if (!args.includes("--file") || !file || file.startsWith("--") ||
-      (!validate && (!args.includes("--account") || !/^[a-f0-9]{32}$/.test(account ?? "") || !accept)))
-    reject("Use --file PRIVATE_JSON --account ACCOUNT_ID --accept-frontend-crypto, or --file PRIVATE_JSON --validate.");
+      !args.includes("--keys") || !keyFile || keyFile.startsWith("--") ||
+      (!validate && (!args.includes("--account") || !/^[a-f0-9]{32}$/.test(account ?? ""))))
+    reject("Use --file PRIVATE_JSON --keys PRIVATE_WORKER_KEYS --account ACCOUNT_ID, or add --validate without --account.");
   const info = await stat(file);
   if (!info.isFile() || info.size > 128 * 1024 || (info.mode & 0o077) ||
       (process.getuid && info.uid !== process.getuid()))
@@ -45,11 +53,35 @@ try {
         !Array.isArray(frontend.aliases) || !frontend.aliases.length ||
         new Set(frontend.aliases).size !== frontend.aliases.length ||
         frontend.aliases.some(alias => !Object.hasOwn(config.ALIASES, alias)) ||
-        Object.keys(frontend).sort().join(",") !== "aliases,token")
+        !publicRegion(frontend.region) ||
+        !["aliases,token", "aliases,region,token"].includes(Object.keys(frontend).sort().join(",")))
       reject("Invalid/duplicate frontend token or alias grant.");
     tokens.add(frontend.token);
   }
-  if (validate) {console.log("Private configuration validated; no upload performed.");}
+  const keyInfo = await stat(keyFile);
+  if (!keyInfo.isFile() || keyInfo.size > 128 * 1024 || (keyInfo.mode & 0o077) ||
+      (process.getuid && keyInfo.uid !== process.getuid()))
+    reject("Configuration must use operator-owned private key files (0600 or 0400).");
+  let keyConfig;
+  try {keyConfig = JSON.parse(await readFile(keyFile, "utf8"));}
+  catch {reject("Cannot read a valid private Worker-key JSON file.");}
+  if (!record(keyConfig) || keyConfig.worker !== "aspen-shared-room" || keyConfig.keyLocation !== "worker" ||
+      !record(keyConfig.expandedKeys) || Object.keys(keyConfig).sort().join(",") !== "expandedKeys,keyLocation,worker" ||
+      Object.keys(keyConfig.expandedKeys).sort().join(",") !== Object.keys(config.ALIASES).sort().join(","))
+    reject("Invalid/duplicate Worker-key target or alias set.");
+  const wasm = new WebAssembly.Instance(new WebAssembly.Module(await readFile(new URL("../src/native-crypto.wasm", import.meta.url))), {}).exports;
+  const memory = new Uint8Array(wasm.memory.buffer, wasm.mc_arena(), 2048);
+  for (const [alias, raw] of Object.entries(keyConfig.expandedKeys)) {
+    if (typeof raw !== "string" || !/^[a-f0-9]{128}$/.test(raw)) reject("Invalid/duplicate expanded Worker key.");
+    const key = Buffer.from(raw, "hex");
+    try {
+      if ((key[0] & 7) || (key[31] & 0xc0) !== 0x40) reject("Invalid/duplicate expanded Worker key.");
+      memory.set(key); wasm.mc_pub();
+      if (Buffer.from(memory.slice(64,96)).toString("hex") !== config.ALIASES[alias].publicKey)
+        reject("Invalid/duplicate Worker key and advertised public key pairing.");
+    } finally {memory.fill(0);key.fill(0);}
+  }
+  if (validate) {console.log("Private opaque configuration and Worker key pairings validated; no upload performed.");}
   else {
     // Ordinary tool stdin is not a secret handoff. This process is run by the
     // operator and reads their private mount/file locally, outside model input.
@@ -61,9 +93,9 @@ try {
     });
     child.stdin.on("error", () => {});
     const done = new Promise((resolve, fail) => {child.once("error", fail); child.once("exit", code => resolve(code));});
-    child.stdin.end(JSON.stringify({ALIASES: JSON.stringify(config.ALIASES), FRONTENDS: JSON.stringify(config.FRONTENDS)}));
+    child.stdin.end(JSON.stringify({ALIASES: JSON.stringify(config.ALIASES), FRONTENDS: JSON.stringify(config.FRONTENDS), ROOM_KEYS: JSON.stringify(keyConfig.expandedKeys)}));
     if (await done !== 0) reject("Wrangler did not confirm the secret upload.");
-    console.log("ALIASES/FRONTENDS uploaded to aspen-shared-room. No room private keys or account credentials created.");
+    console.log("ALIASES/FRONTENDS/ROOM_KEYS uploaded to aspen-shared-room. Deploy the opaque Worker before enabling frontend connections.");
   }
 } catch (error) {
   // Only our fixed validation messages are printable; never echo parser input,

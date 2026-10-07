@@ -7,5 +7,5 @@
     "bindings": [{"name": "ROOMS", "class_name": "Room"}]
   },
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["Room"]}],
-  "vars": {"HISTORY_LIMIT": "0"}
+  "vars": {"HISTORY_LIMIT": "0", "MODE": "opaque"}
 }

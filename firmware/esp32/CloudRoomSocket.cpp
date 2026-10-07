@@ -60,7 +60,7 @@ class EspWss final:public CloudRoomSocket {
         while(*value==' '||*value=='\t')++value;
         size_t len=strlen(value);
         while(len&&(value[len-1]==' '||value[len-1]=='\t'))value[--len]=0;
-        upgradeProtocol_=strcmp(value,"aspen-room.v1.json")==0;
+        upgradeProtocol_=strcmp(value,"aspen-room.v2.json")==0;
       }
     }
     firstUpgradeLine_=false;upgradeLineSize_=0;upgradeOverflow_=false;
@@ -95,7 +95,7 @@ class EspWss final:public CloudRoomSocket {
     if(upgrading_) {upgradeBytes_+=size_t(have);upgradeByte(out[0]);}
     if(!upgrading_&&headerStart_) {
       headerStart_=false;
-      // Worker v1 sends one bounded text frame. The SDK4.4 API omits FIN, so
+      // Worker sends one bounded text frame. The SDK4.4 API omits FIN, so
       // inspect its initial header here and reject fragments/extensions/masks.
       if(want!=2||(uint8_t(out[0])&0xf0)!=0x80||(uint8_t(out[1])&0x80))return -1;
     }
@@ -168,7 +168,7 @@ public:
     // SDK transport debug/error paths can print the upgrade header. Suppress
     // this tag entirely; our diagnostics contain fixed text, never credentials.
     esp_log_level_set("TRANSPORT_WS",ESP_LOG_NONE);
-    esp_transport_ws_config_t config{};config.ws_path=path;config.sub_protocol="aspen-room.v1.json";
+    esp_transport_ws_config_t config{};config.ws_path=path;config.sub_protocol="aspen-room.v2.json";
     config.user_agent="AspenSharedRoom/0.1";config.headers=headers;config.propagate_control_frames=true;
     const auto configured=esp_transport_ws_set_config(ws_,&config);
     memset(headers,0,sizeof(headers));

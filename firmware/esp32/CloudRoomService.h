@@ -2,10 +2,11 @@
 #pragma once
 #include "CloudRoomSocket.h"
 #include "cloudroom/RadioBridge.h"
+#include "cloudroom/OpaqueFrontend.h"
 
 class WifiKissMultiplexer;
 namespace onchip {
-// Chosen codec/trust implementation supplies this interface. All callbacks run
+// Opaque transport implementation supplies this interface. All callbacks run
 // on the network task. Config/public keys remain immutable for its lifetime.
 // No local history, membership replica or credentials are supplied by default.
 class CloudRoomDriver {
@@ -20,14 +21,23 @@ public:
   // Reject malformed/version-mismatched API frames by returning false.
   virtual bool frame(unsigned alias, const char *, size_t) = 0;
   virtual void receipt(const cloudroom::Receipt &) = 0;
+  virtual bool advertise(unsigned alias) { (void)alias; return false; }
   // Return a single next operation; socket loss must not replay it automatically.
   virtual size_t operation(unsigned alias, char *, size_t capacity) = 0;
 };
-// Optional private implementation. The weak default returns nullptr: even the
-// opt-in compile profile cannot connect, advertise or import keys on its own.
+// The built-in opaque driver requires a private configuration provider.
 CloudRoomDriver *createCloudRoomDriver(cloudroom::RadioBridge &);
+struct CloudRoomConfiguration {
+  unsigned count = 0;
+  CloudRoomPeer peers[cloudroom::AliasLimit];
+  cloudroom::OpaqueAlias aliases[cloudroom::AliasLimit];
+};
+// Operator's private build supplies public alias metadata and frontend tokens.
+// The default nullptr keeps both radio identities and connections disabled.
+const CloudRoomConfiguration *cloudRoomConfiguration();
 bool beginCloudRoom(WifiKissMultiplexer &);
 void loopCloudRoom(); // Dispatch task only, like LocalRadio.
 unsigned cloudRoomAliases();
 const uint8_t *cloudRoomPublicKey(unsigned alias);
+bool requestCloudRoomAdvertisement(unsigned alias); // Explicit operator action.
 } // namespace onchip

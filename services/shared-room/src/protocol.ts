@@ -31,7 +31,7 @@ export interface Member {
   cursor: number;
   // Only the selected frontend receives route/pending dispatch metadata.
   route?: string;
-  pending?: {deliveryId: string; proof: string | null; state: string};
+  pending?: {deliveryId: string; proof: string | null; state: string; requirePathAck?: boolean};
 }
 
 export interface Result {

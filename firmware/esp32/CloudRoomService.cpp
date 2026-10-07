@@ -11,7 +11,41 @@
 #include <new>
 
 namespace onchip {
-CloudRoomDriver *__attribute__((weak)) createCloudRoomDriver(cloudroom::RadioBridge &) { return nullptr; }
+const CloudRoomConfiguration *__attribute__((weak)) cloudRoomConfiguration() { return nullptr; }
+namespace {
+class OpaqueDriver final : public CloudRoomDriver {
+  const CloudRoomConfiguration &config_;
+  cloudroom::OpaqueBuffers *buffers_;
+  cloudroom::OpaqueFrontend frontend_;
+public:
+  OpaqueDriver(cloudroom::RadioBridge &radio, const CloudRoomConfiguration &config, cloudroom::OpaqueBuffers *buffers)
+    : config_(config), buffers_(buffers), frontend_(radio,config.aliases,config.count,*buffers) {}
+  ~OpaqueDriver() override { releaseRoleStorage(buffers_); }
+  unsigned aliases() const override { return config_.count; }
+  const CloudRoomPeer &peer(unsigned a) const override { return config_.peers[a]; }
+  const uint8_t *publicKey(unsigned a) const override { return config_.aliases[a].publicKey; }
+  void opened(unsigned a,uint32_t g) override { frontend_.opened(a,g); }
+  void disconnected(unsigned a) override { frontend_.disconnected(a); }
+  void received(const cloudroom::Reception &r) override { frontend_.received(r); }
+  bool frame(unsigned a,const char *p,size_t n) override { return frontend_.frame(a,p,n); }
+  void receipt(const cloudroom::Receipt &r) override { frontend_.receipt(r); }
+  bool advertise(unsigned a) override { return frontend_.advertise(a); }
+  size_t operation(unsigned a,char *p,size_t n) override { return frontend_.operation(a,p,n); }
+};
+}
+CloudRoomDriver *__attribute__((weak)) createCloudRoomDriver(cloudroom::RadioBridge &radio) {
+  const auto *config=cloudRoomConfiguration();
+  if (!config || !config->count || config->count>cloudroom::AliasLimit || config->count>CLOUD_ROOM_SOCKETS) return nullptr;
+  for (unsigned a=0;a<config->count;++a) {
+    const auto &alias=config->aliases[a];
+    if (!alias.id || !alias.name || !config->peers[a].alias || strcmp(alias.id,config->peers[a].alias)) return nullptr;
+  }
+  auto *buffers=allocateRoleStorage<cloudroom::OpaqueBuffers>("cloud-room operations");
+  if (!buffers) return nullptr;
+  auto *driver=new(std::nothrow) OpaqueDriver(radio,*config,buffers);
+  if (!driver) releaseRoleStorage(buffers);
+  return driver;
+}
 namespace {
 constexpr unsigned MaxJobs = cloudroom::QueueDepth;
 constexpr uint32_t TxExpiryMs = 30000;
@@ -31,6 +65,7 @@ struct Service {
   StaticSemaphore_t admissionControl;
   SemaphoreHandle_t admission = nullptr;
   unsigned aliases = 0;
+  std::atomic<uint32_t> advertisements{0};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
   struct Connection {
@@ -77,6 +112,9 @@ struct Service {
         if (size < 0 || (size && !driver->frame(alias, buffers->inbound, size_t(size)))) {
           lost(alias); continue;
         }
+        const uint32_t bit=1u<<alias;
+        if ((advertisements.load(std::memory_order_relaxed)&bit) && driver->advertise(alias))
+          advertisements.fetch_and(~bit,std::memory_order_relaxed);
         const size_t out = driver->operation(alias, buffers->outbound, sizeof(buffers->outbound));
         if (out > sizeof(buffers->outbound) || (out && !c.socket->send(buffers->outbound, out)))
           lost(alias);
@@ -162,13 +200,19 @@ bool beginCloudRoom(WifiKissMultiplexer &mux) { return service.begin(mux); }
 void loopCloudRoom() { service.dispatch(); }
 unsigned cloudRoomAliases() { return service.aliases; }
 const uint8_t *cloudRoomPublicKey(unsigned alias) { return alias < service.aliases ? service.keys[alias] : nullptr; }
+bool requestCloudRoomAdvertisement(unsigned alias) {
+  if (alias>=service.aliases) return false;
+  service.advertisements.fetch_or(1u<<alias,std::memory_order_relaxed);return true;
+}
 } // namespace onchip
 #else
 namespace onchip {
+const CloudRoomConfiguration *cloudRoomConfiguration() { return nullptr; }
 CloudRoomDriver *createCloudRoomDriver(cloudroom::RadioBridge &) { return nullptr; }
 bool beginCloudRoom(WifiKissMultiplexer &) { return false; }
 void loopCloudRoom() {}
 unsigned cloudRoomAliases() { return 0; }
 const uint8_t *cloudRoomPublicKey(unsigned) { return nullptr; }
+bool requestCloudRoomAdvertisement(unsigned) { return false; }
 }
 #endif

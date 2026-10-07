@@ -7,7 +7,7 @@
 namespace cloudroom {
 constexpr size_t FrameLimit = 4096;
 constexpr size_t RadioLimit = 255;
-constexpr const char *Subprotocol = "aspen-room.v1.json";
+constexpr const char *Subprotocol = "aspen-room.v2.json";
 // Views remain valid only while the caller owns the input frame. No DOM,
 // retained history, malloc or whole-frame copy is needed by this parser.
 struct View {
@@ -26,8 +26,11 @@ public:
   static View field(View object, const char *key);
 };
 struct Event {
-  enum Type { Invalid, Ready, Result, Error, Delivery } type = Invalid;
+  enum Type { Invalid, Ready, Result, Error, Delivery, Transmit } type = Invalid;
   View id, alias, client, deliveryId, route, body;
+  View dispatchId, packet;
+  uint32_t delayMs = 0;
+  uint8_t priority = 0;
   bool parse(const char *frame, size_t size);
 };
 // Decode base64 directly into a caller-owned bounded destination, preserving
