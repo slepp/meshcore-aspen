@@ -40,7 +40,8 @@ If `wss-mask` stays zero, `cloudroom error` reports the last failed connection
 attempt. TLS errors name the failed phase and report the SDK code and available
 internal heap; upgrade errors report the HTTP status and whether the v2
 subprotocol was returned. HTTP 401 means the frontend token was rejected.
-No token, certificate contents or response body is included.
+`stack-min` reports the network task's minimum remaining stack in bytes after a
+connection attempt. No token, certificate contents or response body is included.
 
 `CloudRoomService` runs one network task with eight-slot RX/TX/result SPSC
 queues. Dispatch-owned `LocalRadio` receives RF, filters local reflections,

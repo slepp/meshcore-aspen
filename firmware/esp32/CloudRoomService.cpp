@@ -51,7 +51,7 @@ CloudRoomDriver *__attribute__((weak)) createCloudRoomDriver(cloudroom::RadioBri
 namespace {
 constexpr unsigned MaxJobs = cloudroom::QueueDepth;
 constexpr uint32_t TxExpiryMs = 30000;
-constexpr unsigned NetworkStackBytes = 6144;
+constexpr unsigned NetworkStackBytes = 8192;
 struct Buffers {
   cloudroom::RadioBuffers radio;
   char inbound[cloudroom::FrameLimit], outbound[cloudroom::FrameLimit];
@@ -69,6 +69,7 @@ struct Service {
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
   std::atomic<uint32_t> connectedAliases{0};
+  std::atomic<uint32_t> stackMinimumBytes{NetworkStackBytes};
   char lastError[96]{};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
@@ -104,7 +105,9 @@ struct Service {
         if (!c.connected) {
           if (int32_t(millis() - c.retryAt) < 0) continue;
           char error[96]{};
-          if (!c.socket->open(driver->peer(alias), error, sizeof(error))) {
+          const bool opened=c.socket->open(driver->peer(alias),error,sizeof(error));
+          stackMinimumBytes.store(uxTaskGetStackHighWaterMark(nullptr),std::memory_order_relaxed);
+          if (!opened) {
             xSemaphoreTake(admission, portMAX_DELAY);
             snprintf(lastError,sizeof(lastError),"%s",error);
             xSemaphoreGive(admission);
@@ -226,7 +229,9 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
     if (xSemaphoreTake(service.admission,0)!=pdTRUE) {
       snprintf(reply,capacity,"Error: cloud room status busy; try cloudroom error again");return;
     }
-    snprintf(reply,capacity,"Cloud room last-open-error: %s",*service.lastError?service.lastError:"none");
+    snprintf(reply,capacity,"Cloud room stack-min=%u last-open-error: %s",
+             unsigned(service.stackMinimumBytes.load(std::memory_order_relaxed)),
+             *service.lastError?service.lastError:"none");
     xSemaphoreGive(service.admission);return;
   }
   if (!strncmp(command, "advertise ", 10)) {
