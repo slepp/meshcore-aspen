@@ -203,7 +203,8 @@ struct CommandBot::Core : mesh::Mesh {
   BotRepeaterPolicy repeaterPolicy;
   struct RepeaterState {
     BotRepeaterSnapshot snapshot{};
-    uint64_t sampledMs = 0;
+    uint64_t sampledMs = 0, requestedMs = 0;
+    uint32_t requestedUtc = 0;
     uint32_t due = 0, floodAt = 0, loginTimestamp = 0;
     uint8_t failures = 0;
     bool flooded = false;
@@ -623,11 +624,42 @@ struct CommandBot::Core : mesh::Mesh {
           (owner.node_.uptimeMs - repeaters[index].sampledMs) / 1000, UINT32_MAX));
     snapshot.fresh = snapshot.available && snapshot.error == BotRepeaterError::None &&
         snapshot.ageSeconds <= repeaterPolicy.intervalSeconds * 2;
-    if (!repeaterPolicy.enabled) { snapshot.error = BotRepeaterError::Disabled; snapshot.fresh = false; }
+    const auto &state = repeaters[index];
+    const int32_t remainingMs = int32_t(state.due - millis());
+    snapshot.nextPollSeconds = remainingMs > 0 ? (uint32_t(remainingMs) + 999) / 1000 : 0;
+    snapshot.wait = snapshot.nextPollSeconds ? BotRepeaterWait::Interval : BotRepeaterWait::Ready;
+    uint32_t earliest = 0, latest = 0;
+    const bool clock = trustedNetworkTime(earliest, latest);
+    if (clock && target.lastFloodUtc && uint64_t(earliest) <
+        uint64_t(target.lastFloodUtc) + repeaterPolicy.discoverySeconds) {
+      snapshot.nextDiscoverySeconds = uint32_t(std::min<uint64_t>(repeaterPolicy.discoverySeconds,
+          uint64_t(target.lastFloodUtc) + repeaterPolicy.discoverySeconds - earliest));
+    } else if (!clock) snapshot.wait = BotRepeaterWait::Clock;
+    const uint32_t discoveryMs = repeaterPolicy.discoverySeconds * 1000;
+    const uint32_t sinceFlood = uint32_t(millis() - state.floodAt);
+    if (state.flooded && sinceFlood < discoveryMs)
+      snapshot.nextDiscoverySeconds = std::max(snapshot.nextDiscoverySeconds,
+          (discoveryMs - sinceFlood + 999) / 1000);
+    if (clock && snapshot.nextDiscoverySeconds && repeaterNeedsFlood(index)) {
+      snapshot.nextPollSeconds = std::max(snapshot.nextPollSeconds, snapshot.nextDiscoverySeconds);
+      snapshot.wait = BotRepeaterWait::Discovery;
+    }
+    if (!repeaterPolicy.enabled) {
+      snapshot.error = BotRepeaterError::Disabled; snapshot.fresh = false;
+      snapshot.wait = BotRepeaterWait::Disabled;
+    }
     else if (target.frequencyHz && target.frequencyHz != owner.radio_.configuration().freq_hz) {
       snapshot.error = BotRepeaterError::Frequency; snapshot.fresh = false;
+      snapshot.wait = BotRepeaterWait::Frequency;
     }
     return snapshot;
+  }
+  bool repeaterNeedsFlood(unsigned index) const {
+    const auto &target = repeaterPolicy.targets[index];
+    if (repeaters[index].failures >= 3) return true;
+    for (const auto &contact : contacts)
+      if (contact.used && contact.id.matches(target.key)) return contact.route.length == 0xff;
+    return !target.path.known;
   }
   bool repeaterAuthority(const Invocation &job) const {
     return repeaterPolicy.enabled &&
@@ -646,7 +678,8 @@ struct CommandBot::Core : mesh::Mesh {
       ++state.snapshot.failures;
       state.failures = std::min<unsigned>(state.failures + 1, 6);
       state.due = millis() + std::max(repeaterPolicy.intervalSeconds,
-          std::min<uint32_t>(3600, repeaterPolicy.intervalSeconds << state.failures)) * 1000;
+          std::min(repeaterPolicy.discoverySeconds,
+                   repeaterPolicy.intervalSeconds << state.failures)) * 1000;
       job.result.repeater = repeaterSnapshot(unsigned(job.repeaterIndex));
     }
     finishRadio(job, message);
@@ -725,14 +758,16 @@ struct CommandBot::Core : mesh::Mesh {
       failRepeater(job, BotRepeaterError::Unavailable, "Repeater identity is unavailable or belongs to this bot"); return;
     }
     auto &state = repeaters[unsigned(index)];
-    const bool flood = contact->route.length == 0xff || state.failures >= 3;
-    if (flood && state.flooded && uint32_t(millis() - state.floodAt) < 3600000) {
-      state.due = state.floodAt + 3600000;
-      failRepeater(job, BotRepeaterError::NotDue, "Repeater flood discovery is limited to once per hour"); return;
+    const bool flood = repeaterNeedsFlood(unsigned(index));
+    const uint32_t discoveryMs = repeaterPolicy.discoverySeconds * 1000;
+    if (flood && state.flooded && uint32_t(millis() - state.floodAt) < discoveryMs) {
+      state.due = state.floodAt + discoveryMs;
+      failRepeater(job, BotRepeaterError::NotDue, "Repeater flood discovery cooldown is not due"); return;
     }
     const uint32_t lastFlood = repeaterPolicy.targets[unsigned(index)].lastFloodUtc;
-    if (flood && lastFlood && uint64_t(tag) < uint64_t(lastFlood) + 3600) {
-      const uint32_t remaining = uint32_t(std::min<uint64_t>(3600, uint64_t(lastFlood) + 3600 - tag));
+    if (flood && lastFlood && uint64_t(tag) < uint64_t(lastFlood) + repeaterPolicy.discoverySeconds) {
+      const uint32_t remaining = uint32_t(std::min<uint64_t>(repeaterPolicy.discoverySeconds,
+          uint64_t(lastFlood) + repeaterPolicy.discoverySeconds - tag));
       state.due = millis() + remaining * 1000;
       failRepeater(job, BotRepeaterError::NotDue, "Repeater flood cooldown persists across restarts"); return;
     }
@@ -765,6 +800,8 @@ struct CommandBot::Core : mesh::Mesh {
     job.repeaterResponse = false; job.io.grant = repeaterGrant; job.outbound = packet;
     job.result.repeater.error = BotRepeaterError::None;
     ++state.snapshot.attempts;
+    state.requestedMs = owner.node_.uptimeMs;
+    state.requestedUtc = earliest;
     state.due = millis() + repeaterPolicy.intervalSeconds * 1000;
     repeaterSent = true; repeaterAt = millis();
     if (flood) {
@@ -804,6 +841,8 @@ struct CommandBot::Core : mesh::Mesh {
           }
           state.snapshot.stats = stats; state.snapshot.available = true;
           state.sampledMs = owner.node_.uptimeMs;
+          state.snapshot.sampledUtc = state.requestedUtc +
+              uint32_t((state.sampledMs - state.requestedMs) / 1000);
         } else {
           if (data[4] || !(data[7] & 3)) {
             failRepeater(job, BotRepeaterError::Permission, "Repeater login did not grant read access"); return false;
@@ -2708,9 +2747,10 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     if (!alias) {
       unsigned count = 0;
       for (const auto &target : core_->repeaterPolicy.targets) count += target.used;
-      snprintf(reply, capacity, "Repeaters on=%u peers=%u/%u interval=%us grant=%u; bot events 16 enables recurring Lua",
+      snprintf(reply, capacity, "Repeaters on=%u peers=%u/%u interval=%us discovery=%us grant=%u; bot events 16 enables recurring Lua",
                core_->repeaterPolicy.enabled, count, BotRepeaterLimit,
-               core_->repeaterPolicy.intervalSeconds, core_->repeaterGrant);
+               core_->repeaterPolicy.intervalSeconds, core_->repeaterPolicy.discoverySeconds,
+               core_->repeaterGrant);
     } else {
       for (unsigned i = 0; i < BotRepeaterLimit; ++i)
         if (core_->repeaterPolicy.targets[i].used && !strcmp(alias, core_->repeaterPolicy.targets[i].alias)) {
@@ -2726,6 +2766,19 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       error("repeater alias is not configured");
     }
     return;
+  }
+  if (!strcmp(action, "timing")) {
+    const char *alias = strtok_r(nullptr, " ", &cursor);
+    if (!alias || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters timing ALIAS"); return; }
+    for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+      if (core_->repeaterPolicy.targets[i].used && !strcmp(alias, core_->repeaterPolicy.targets[i].alias)) {
+        const auto s = core_->repeaterSnapshot(i);
+        snprintf(reply, capacity, "%s wait=%s poll-in=%us discovery-in=%us sampled-utc=%u",
+                 alias, botRepeaterWaitName(s.wait), s.nextPollSeconds,
+                 s.nextDiscoverySeconds, s.sampledUtc);
+        return;
+      }
+    error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "storage")) {
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters storage"); return; }
@@ -2770,20 +2823,21 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "bot repeaters on|off|interval SECONDS|status [ALIAS]|config ALIAS|route ALIAS|storage|remove ALIAS|add ALIAS KEY64 FREQ_HZ [WIDTH:HEX]");
+    snprintf(reply, capacity, "bot repeaters on|off|interval SEC|discovery SEC|status [ALIAS]|timing ALIAS|config ALIAS|route ALIAS|storage|remove ALIAS|add ALIAS KEY FREQ [W:HEX]");
     return;
   }
   auto candidate = core_->repeaterPolicy;
   if (!strcmp(action, "on") || !strcmp(action, "off")) candidate.enabled = !strcmp(action, "on");
-  else if (!strcmp(action, "interval")) {
+  else if (!strcmp(action, "interval") || !strcmp(action, "discovery")) {
     const char *text = strtok_r(nullptr, " ", &cursor);
     uint32_t seconds = 0;
-    if (!text || strlen(text) > 5) { error("repeater interval requires 60..86400 seconds"); return; }
+    if (!text || strlen(text) > 5) { error("repeater interval/discovery requires 60..86400 seconds"); return; }
     for (const char *p = text; *p; ++p) {
-      if (*p < '0' || *p > '9') { error("repeater interval must be numeric"); return; }
+      if (*p < '0' || *p > '9') { error("repeater interval/discovery must be numeric"); return; }
       seconds = seconds * 10 + unsigned(*p - '0');
     }
-    candidate.intervalSeconds = seconds;
+    if (!strcmp(action, "interval")) candidate.intervalSeconds = seconds;
+    else candidate.discoverySeconds = seconds;
   } else if (!strcmp(action, "add") || !strcmp(action, "remove")) {
     const char *alias = strtok_r(nullptr, " ", &cursor);
     if (!alias || strlen(alias) > 16) { error("repeater alias requires 1..16 lowercase identifier bytes"); return; }
@@ -2853,8 +2907,8 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     core_->repeaters[i].due = millis() + i * 30000;
   }
   core_->repeaterPolicy = candidate;
-  snprintf(reply, capacity, "Saved/applied repeater policy; interval=%us; modem frequency unchanged",
-           candidate.intervalSeconds);
+  snprintf(reply, capacity, "Saved/applied repeater policy; interval=%us discovery=%us; modem frequency unchanged",
+           candidate.intervalSeconds, candidate.discoverySeconds);
 }
 const uint8_t *CommandBot::publicKey() const { return core_ ? core_->self_id.pub_key : nullptr; }
 const CommandBot::Counters &CommandBot::counters() const {

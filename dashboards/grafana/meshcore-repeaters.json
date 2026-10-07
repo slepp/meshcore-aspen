@@ -13,7 +13,7 @@
   "tags": ["meshcore", "repeaters", "victoriametrics"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -26,7 +26,7 @@
     {
       "id": 1, "type": "text", "title": "Monitor and radio setup",
       "gridPos": {"x": 0, "y": 0, "w": 24, "h": 4},
-      "options": {"mode": "markdown", "content": "Select the **Monitor device** and **Remote repeater**. The monitor uses authenticated read-only native status requests. Stock 1.17.1 supplies voltage when supported, uptime, queue, packet counters, airtime and its last received RSSI/SNR/noise. Battery percentage is not calculated.\n\n**Frequency mismatch** sends no RF request: the target and shared modem must use the same PHY. Aspen remains on 912.525 MHz; targets configured for 910.525 MHz remain fenced until an operator chooses a compatible setup.\n\nThe publisher rotates up to three peers per 60-second report. Remote polls normally run every 300 seconds. Check both **report age** and **RF sample age**; cached status is not a new RF response. Live panels suppress reports older than 360 seconds. Graphs retain history and gaps. Rates require multiple remote polls; zero and missing data are different."}
+      "options": {"mode": "markdown", "content": "Select the **Monitor device** and **Remote repeater**. The monitor collects authenticated status, supported battery voltage and remote radio statistics. Target and monitor must use the same radio profile; **Frequency mismatch** sends no request.\n\nPolls normally run every 300 seconds. Flood discovery defaults to 900 seconds between requests; change it with `bot repeaters discovery SECONDS`. **Poll wait** and **Next eligible poll** explain delays. Adverts do not supply status samples.\n\nThe publisher rotates three peers per 60-second report. **Remote report age** measures upload activity; **RF sample age** measures collection. Measurements retain their RF sample timestamp across failed polls and repeated uploads. **Sample hold** draws last-known gauge values for a bounded window, not new RF readings. Current voltage still requires fresh status; rates use the original counter observations. Missing data is not zero."}
     },
     {
       "id": 2, "type": "stat", "title": "Remote report age",
@@ -36,18 +36,18 @@
         {"refId": "A", "expr": "time() - tlast_over_time(meshcore_repeater_available{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history])", "legendFormat": "{{device}} / {{peer}}", "instant": true}
       ],
       "fieldConfig": {"defaults": {"unit": "s", "decimals": 0, "noValue": "No report", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 240}, {"color": "red", "value": 360}]}}, "overrides": []},
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "colorMode": "value", "graphMode": "none"}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
     },
     {
       "id": 3, "type": "stat", "title": "RF sample age",
-      "description": "Cached age at publication plus elapsed time since that report. Absent until the first successful RF response; no extrapolated remote uptime.",
+      "description": "Age of the last RF measurement retained in the selected History window, including across monitor restarts. Older firmware uses its published sample-age field.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
       "gridPos": {"x": 8, "y": 4, "w": 8, "h": 6},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_sample_age_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} + time() - timestamp(meshcore_repeater_sample_age_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"})", "legendFormat": "{{device}} / {{peer}}", "instant": true}
+        {"refId": "A", "expr": "(time() - last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history])) or (meshcore_repeater_sample_age_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} + time() - timestamp(meshcore_repeater_sample_age_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}))", "legendFormat": "{{device}} / {{peer}}", "instant": true}
       ],
       "fieldConfig": {"defaults": {"unit": "s", "decimals": 0, "noValue": "No RF sample"}, "overrides": []},
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "graphMode": "none"}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "graphMode": "none", "textMode": "value_and_name"}
     },
     {
       "id": 4, "type": "stat", "title": "Monitor result",
@@ -71,72 +71,101 @@
         "11": {"text": "Transmission failed", "color": "red"},
         "12": {"text": "Frequency mismatch", "color": "yellow"}
       }}]}, "overrides": []},
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "colorMode": "value", "graphMode": "none"}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "id": 21, "type": "stat", "title": "Poll wait",
+      "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
+      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 4},
+      "targets": [
+        {"refId": "A", "expr": "meshcore_repeater_wait_code{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} and (time() - timestamp(meshcore_repeater_wait_code{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)", "legendFormat": "{{device}} / {{peer}}", "instant": true}
+      ],
+      "fieldConfig": {"defaults": {"noValue": "No current timing report", "mappings": [{"type": "value", "options": {
+        "0": {"text": "Eligible", "color": "green"},
+        "1": {"text": "Poll interval / backoff", "color": "yellow"},
+        "2": {"text": "Discovery cooldown", "color": "yellow"},
+        "3": {"text": "Clock unavailable", "color": "red"},
+        "4": {"text": "Disabled", "color": "yellow"},
+        "5": {"text": "Frequency mismatch", "color": "yellow"}
+      }}]}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "id": 22, "type": "stat", "title": "Next eligible poll",
+      "description": "Countdown from the latest timing report. Eligibility still depends on clock, permissions and shared airtime. Disabled or frequency-fenced targets have no countdown.",
+      "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
+      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 4},
+      "targets": [
+        {"refId": "A", "expr": "clamp_min(meshcore_repeater_next_poll_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} - (time() - timestamp(meshcore_repeater_next_poll_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"})), 0) and (meshcore_repeater_wait_code{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} < 3) and (time() - timestamp(meshcore_repeater_wait_code{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)", "legendFormat": "{{device}} / {{peer}}", "instant": true}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 0, "noValue": "Not eligible"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "graphMode": "none", "textMode": "value_and_name"}
     },
     {
       "id": 5, "type": "stat", "title": "Current battery voltage",
       "description": "Supported voltage only, gated by native fresh state and a report received within 360 seconds. No battery percentage or assumed discharge curve.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 6},
+      "gridPos": {"x": 0, "y": 14, "w": 12, "h": 6},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)", "legendFormat": "{{device}} / {{peer}}", "instant": true}
+        {"refId": "A", "expr": "((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)", "legendFormat": "{{device}} / {{peer}}", "instant": true}
       ],
       "fieldConfig": {"defaults": {"unit": "volt", "decimals": 3, "noValue": "No fresh voltage"}, "overrides": []},
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "graphMode": "none"}
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": true}, "graphMode": "none", "textMode": "value_and_name"}
     },
     {
       "id": 6, "type": "timeseries", "title": "Battery voltage history",
+      "description": "Last RF voltage held for Sample hold, then a gap. A held segment is not a new RF response; inspect RF sample age and freshness.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 6},
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 6},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}}"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}}"}
       ],
-      "fieldConfig": {"defaults": {"unit": "volt", "decimals": 3, "custom": {"spanNulls": false}}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "volt", "decimals": 3, "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"]}, "tooltip": {"mode": "multi"}}
     },
     {
       "id": 7, "type": "timeseries", "title": "Sample availability and freshness",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_available{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · available"},
-        {"refId": "B", "expr": "meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · fresh"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_available{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s])", "legendFormat": "{{device}} / {{peer}} · available"},
+        {"refId": "B", "expr": "last_over_time(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s])", "legendFormat": "{{device}} / {{peer}} · fresh"}
       ],
       "fieldConfig": {"defaults": {"min": 0, "max": 1, "decimals": 0, "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []}
     },
     {
       "id": 8, "type": "timeseries", "title": "Returned uptime",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_uptime_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}}"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_uptime_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}}"}
       ],
-      "fieldConfig": {"defaults": {"unit": "s", "custom": {"spanNulls": false}}, "overrides": []}
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []}
     },
     {
       "id": 9, "type": "timeseries", "title": "Repeater receive signal and noise",
       "description": "Remote radio's last received packet and noise floor, not the monitor's reception of the reply or a directed-link probe.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_last_rssi_dbm{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · RSSI"},
-        {"refId": "B", "expr": "meshcore_repeater_noise_dbm{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · noise"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_last_rssi_dbm{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}} · RSSI"},
+        {"refId": "B", "expr": "last_over_time(meshcore_repeater_noise_dbm{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}} · noise"}
       ],
-      "fieldConfig": {"defaults": {"unit": "dBm", "custom": {"spanNulls": false}}, "overrides": []}
+      "fieldConfig": {"defaults": {"unit": "dBm", "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []}
     },
     {
       "id": 10, "type": "timeseries", "title": "Repeater last received SNR",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_last_snr_db{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}}"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_last_snr_db{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}}"}
       ],
-      "fieldConfig": {"defaults": {"unit": "dB", "custom": {"spanNulls": false}}, "overrides": []}
+      "fieldConfig": {"defaults": {"unit": "dB", "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []}
     },
     {
       "id": 11, "type": "timeseries", "title": "Packet counters",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "{__name__=~\"meshcore_repeater_(rx_packets|tx_packets|rx_flood|rx_direct|tx_flood|tx_direct)_total\",device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · {{__name__}}"}
       ],
@@ -146,7 +175,7 @@
       "id": 12, "type": "timeseries", "title": "Packet rates",
       "description": "Reset-aware rates of remote counters. Five-minute minimum step gives a rate window spanning at least four normal polls; cached exports do not represent additional RF polls.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "rate(meshcore_repeater_rx_packets_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · RX packets", "interval": "300s"},
         {"refId": "B", "expr": "rate(meshcore_repeater_tx_packets_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · TX packets", "interval": "300s"},
@@ -160,7 +189,7 @@
     {
       "id": 13, "type": "timeseries", "title": "Duplicates and receive errors",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 40, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 44, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "{__name__=~\"meshcore_repeater_(direct_duplicates|flood_duplicates|rx_errors)_total\",device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · {{__name__}}"}
       ],
@@ -169,7 +198,7 @@
     {
       "id": 14, "type": "timeseries", "title": "Duplicate and receive error rates",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 40, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 44, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "rate(meshcore_repeater_direct_duplicates_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · direct duplicates", "interval": "300s"},
         {"refId": "B", "expr": "rate(meshcore_repeater_flood_duplicates_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · flood duplicates", "interval": "300s"},
@@ -180,7 +209,7 @@
     {
       "id": 15, "type": "timeseries", "title": "Returned TX and RX airtime",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 48, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 52, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "meshcore_repeater_tx_airtime_seconds_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · TX"},
         {"refId": "B", "expr": "meshcore_repeater_rx_airtime_seconds_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · RX"}
@@ -190,7 +219,7 @@
     {
       "id": 16, "type": "timeseries", "title": "TX and RX airtime fraction",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 48, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 52, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "rate(meshcore_repeater_tx_airtime_seconds_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · TX", "interval": "300s"},
         {"refId": "B", "expr": "rate(meshcore_repeater_rx_airtime_seconds_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · RX", "interval": "300s"}
@@ -200,17 +229,17 @@
     {
       "id": 17, "type": "timeseries", "title": "Remote transmit queue",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 56, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 60, "w": 12, "h": 8},
       "targets": [
-        {"refId": "A", "expr": "meshcore_repeater_queued_packets{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}}"}
+        {"refId": "A", "expr": "last_over_time(meshcore_repeater_queued_packets{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])", "legendFormat": "{{device}} / {{peer}}"}
       ],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "decimals": 0, "custom": {"spanNulls": false}}, "overrides": []}
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "decimals": 0, "custom": {"spanNulls": false, "lineInterpolation": "stepAfter"}}, "overrides": []}
     },
     {
       "id": 18, "type": "timeseries", "title": "Returned error flags",
       "description": "Raw firmware status flags, not a monotonic counter or monitor error code.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 56, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 60, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "meshcore_repeater_error_flags{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}}"}
       ],
@@ -220,7 +249,7 @@
       "id": 19, "type": "timeseries", "title": "Monitor request attempts and failures",
       "description": "Local monitor counters, not the remote radio's packet counters. Frequency-fenced targets send no requests.",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 0, "y": 64, "w": 12, "h": 8},
+      "gridPos": {"x": 0, "y": 68, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "meshcore_repeater_attempts_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · attempts"},
         {"refId": "B", "expr": "meshcore_repeater_failures_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}", "legendFormat": "{{device}} / {{peer}} · failures"}
@@ -230,7 +259,7 @@
     {
       "id": 20, "type": "timeseries", "title": "Monitor request and failure rates",
       "datasource": {"type": "prometheus", "uid": "${DS_VM}"},
-      "gridPos": {"x": 12, "y": 64, "w": 12, "h": 8},
+      "gridPos": {"x": 12, "y": 68, "w": 12, "h": 8},
       "targets": [
         {"refId": "A", "expr": "rate(meshcore_repeater_attempts_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · attempts", "interval": "300s"},
         {"refId": "B", "expr": "rate(meshcore_repeater_failures_total{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$__rate_interval])", "legendFormat": "{{device}} / {{peer}} · failures", "interval": "300s"}
@@ -255,6 +284,11 @@
         "definition": "label_values(meshcore_repeater_available{device=~\"${device:regex}\"}, peer)",
         "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".*",
         "current": {"selected": true, "text": "All", "value": "$__all"}, "options": []
+      },
+      {
+        "name": "sample_hold", "label": "Sample hold", "type": "custom", "query": "10m,15m,30m,1h,6h,24h",
+        "current": {"selected": true, "text": "15m", "value": "15m"},
+        "options": [{"text": "10m", "value": "10m", "selected": false}, {"text": "15m", "value": "15m", "selected": true}, {"text": "30m", "value": "30m", "selected": false}, {"text": "1h", "value": "1h", "selected": false}, {"text": "6h", "value": "6h", "selected": false}, {"text": "24h", "value": "24h", "selected": false}]
       },
       {
         "name": "history", "label": "History (report age)", "type": "custom", "query": "24h,7d,30d",

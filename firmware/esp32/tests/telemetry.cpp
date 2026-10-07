@@ -112,6 +112,9 @@ static void encoding() {
     peer.configured = peer.available = peer.fresh = true;
     strcpy(peer.alias, "abcdefghijklmnop");
     peer.ageSeconds = peer.attempts = peer.failures = UINT32_MAX;
+    peer.sampledUtc = UINT32_MAX;
+    peer.nextPollSeconds = peer.nextDiscoverySeconds = 86400;
+    peer.wait = BotRepeaterWait::Discovery;
     auto &v = peer.stats;
     v.batteryMv = v.queued = v.errors = v.directDuplicates = v.floodDuplicates = UINT16_MAX;
     v.noise = v.rssi = v.snrQuarterDb = INT16_MIN;
@@ -127,10 +130,27 @@ static void encoding() {
   auto &peer = s.repeaters[0];
   peer.configured = peer.available = true; peer.fresh = false;
   strcpy(peer.alias, "offline"); peer.ageSeconds = 700;
+  peer.sampledUtc = 1800000000;
+  peer.nextPollSeconds = 600; peer.nextDiscoverySeconds = 900;
+  peer.wait = BotRepeaterWait::Discovery;
   peer.error = BotRepeaterError::Timeout; peer.stats.batteryMv = 3811;
   assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
   assert(strstr(body, "available=1i,fresh=0i,error_code=7i"));
-  assert(strstr(body, "sample_age_seconds=700i") && !strstr(body, "battery_volts"));
+  assert(strstr(body, "sample_age_seconds=700i") && strstr(body, "battery_volts=3.811"));
+  assert(strstr(body, "wait_code=2i,next_poll_seconds=600i,next_discovery_seconds=900i"));
+  assert(strstr(body, "peer=offline sample_time_seconds=1800000000i,"));
+  assert(strstr(body, " 1800000000000000000\n"));
+  const std::string retained(body);
+  peer.ageSeconds = 900;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+  assert(strstr(body, "sample_age_seconds=900i") &&
+         retained.substr(retained.find("peer=offline sample_time_seconds=")) ==
+             std::string(body).substr(std::string(body).find("peer=offline sample_time_seconds=")));
+  peer.available = false;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+  assert(!strstr(body, "battery_volts") && !strstr(body, "sample_time_seconds") &&
+         !strstr(body, "sample_age_seconds"));
+  puts("PASS last-good measurements survive poll failure at their original RF timestamp; no invented sample on retransmission or unavailable target");
 }
 static void settings() {
   identity_test::durable.clear();
@@ -155,6 +175,19 @@ static void settings() {
   assert(!loadTelemetryConfig(reloaded) && !reloaded.enabled);
   assert(identity_test::handles.empty());
   puts("PASS persisted opt-in, disable, bounds, corruption, commit/readback failure, NVS cleanup");
+}
+static void rotation() {
+  TelemetryRepeaterCursor cursor;
+  assert(cursor.select(7, 0) == 0);
+  assert(cursor.select(7, 0) == 0);
+  assert(cursor.select(7, 1) == 3);
+  assert(cursor.select(7, 1) == 3);
+  assert(cursor.select(7, 2) == 6);
+  assert(cursor.select(7, 3) == 2);
+  assert(cursor.select(0, 3) == 0);
+  assert(cursor.select(2, 4) == 0);
+  assert(cursor.select(2, 5) == 0);
+  puts("PASS peer rotation advances only after receiver acceptance; failed/dropped batches keep their peers for the next current snapshot");
 }
 static void publisher() {
   Sink sink;
@@ -315,5 +348,5 @@ int main(int argc, char **argv) {
     fwrite(body, 1, size, stdout);
     return 0;
   }
-  encoding(); settings(); publisher(); counters(); administration();
+  encoding(); settings(); rotation(); publisher(); counters(); administration();
 }

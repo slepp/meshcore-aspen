@@ -121,13 +121,17 @@ The publisher uses the existing in-process RadioDashboard totals and native
 hardware/role/Lua statistics, not HTTP scraping or a second packet observer.
 It emits one bounded batch (at most 6144 bytes) per period. Up to three configured remote peers rotate
 through each batch as `meshcore_repeater` lines, alongside local metrics.
-Only fresh successful remote samples include numeric stats and battery voltage;
-failures emit availability/freshness/error fields instead. See the
+Remote numeric stats and supported battery voltage use the original RF sample
+timestamp, including when the latest poll fails. Availability, freshness,
+waiting and error fields describe the current monitor state. Peer rotation
+advances after receiver acceptance, not after a dropped upload. See the
 [remote field contract](../runtime/REMOTE_REPEATERS.md#receiver-fields).
 There is no flash
-history, unbounded queue or replay of failed samples. If WiFi, clock, endpoint
-or admission is unavailable, that sample is dropped; the next period captures
-current values. Counter differences still describe activity during a gap.
+history or unbounded queue. If WiFi, clock, endpoint or admission is unavailable,
+that publication is dropped; the next period captures current state and the
+latest retained RF measurements. An outage spanning several polls can still
+lose intermediate measurements. Counter differences describe activity between
+the retained observations, not exact traffic timing during the gap.
 An outstanding request retains its worker slot until completion/cancellation
 is acknowledged. Disable frees the sampling workspace after that acknowledgment.
 The worker checks one lower-priority telemetry slot after at most one
@@ -142,9 +146,11 @@ borrows `bot home` permission.
 Only the shared native HTTPS worker performs networking. Telemetry does not
 open another socket or send through Lua. Requests validate the CA, hostname
 and certificate dates, use `POST` with `Content-Type: text/plain`, and do not
-follow redirects. No Influx timestamp is supplied: VictoriaMetrics uses
-**server receipt time**. `uptime_seconds` describes when the snapshot was
-captured; receipt time is not presented as a trusted device wall-clock sample.
+follow redirects. Local metrics and remote monitor state use **server receipt
+time**. Remote RF measurements include their UTC timestamp in nanoseconds;
+configure the Influx receiver for its normal nanosecond precision. Republishing
+a cached measurement preserves that point's time rather than creating a new
+reading. Older firmware's remote numeric points used receipt time.
 
 `telemetry counts` reports admissions (`attempts`), completed 2xx responses
 (`ok`), failed admitted requests (`failed`), and samples discarded before

@@ -14,11 +14,25 @@ enum class BotRepeaterError : uint8_t {
   None, Unavailable, Disabled, NotDue, Busy, Clock, Capacity, Timeout,
   Malformed, Cancelled, Permission, Transmission, Frequency
 };
+enum class BotRepeaterWait : uint8_t { Ready, Interval, Discovery, Clock, Disabled, Frequency };
+inline const char *botRepeaterWaitName(BotRepeaterWait wait) {
+  switch (wait) {
+    case BotRepeaterWait::Ready: return "ready";
+    case BotRepeaterWait::Interval: return "interval";
+    case BotRepeaterWait::Discovery: return "discovery";
+    case BotRepeaterWait::Clock: return "clock";
+    case BotRepeaterWait::Disabled: return "disabled";
+    case BotRepeaterWait::Frequency: return "frequency";
+  }
+  return "invalid";
+}
 struct BotRepeaterSnapshot {
   char alias[17]{};
   bool configured = false, available = false, fresh = false;
   BotRepeaterError error = BotRepeaterError::Unavailable;
   uint32_t ageSeconds = 0, attempts = 0, failures = 0;
+  uint32_t sampledUtc = 0, nextPollSeconds = 0, nextDiscoverySeconds = 0;
+  BotRepeaterWait wait = BotRepeaterWait::Ready;
   BotRepeaterStats stats{};
 };
 } // namespace onchip

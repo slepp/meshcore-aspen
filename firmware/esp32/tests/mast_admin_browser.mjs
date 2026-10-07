@@ -216,13 +216,19 @@ try {
     assert.match(await text('result'),/HTTP|unavailable/);
   }
   for(const command of ['bot https','bot https  status','password','password help','wifi status','role channel bot 0','key bot pending',
-    'stats','stats sensors','stats  memory','stats observer','stats companion','get stats','help stats']) {
+    'stats','stats sensors','stats  memory','stats observer','stats companion','get stats','help stats',
+    'bot repeaters','bot repeaters status d1','bot repeaters timing d1','bot repeaters route d1',
+    'bot repeaters config d1','bot repeaters storage','bot repeaters help','cloudroom status','cloudroom error']) {
     const sent=requests.length, confirms=await evaluate('window.__confirms.length');
     await evaluate(`document.getElementById('command').value=${JSON.stringify(command)};document.getElementById('command-form').requestSubmit()`);
     await idle();
     assert.equal(requests.length,sent+1,'Safe status/help command should reach native authenticated HTTP');
     assert.equal(await evaluate('window.__confirms.length'),confirms,'Safe reads must not need write confirmation');
   }
+  assert.equal(await evaluate(`nativeRead('bot repeaters discovery 900')`),false);
+  assert.equal(await evaluate(`nativeRead('bot repeaters interval 300')`),false);
+  assert.equal(await evaluate(`nativeRead('bot repeaters on')`),false);
+  assert.equal(await evaluate(`nativeRead('cloudroom advertise TestA')`),false);
   timeout=true;
   await evaluate(`$('command').value='stats memory';$('command-form').requestSubmit()`);await idle();
   assert.equal(await evaluate('uncertain'),false,'An uncertain diagnostic read must not create a mutation fence');

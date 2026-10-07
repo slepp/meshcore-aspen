@@ -118,7 +118,8 @@ bool saveBotReminderAccess(bool enabled) {
          failed("reminder grant readback", ESP_ERR_INVALID_STATE);
 }
 bool BotRepeaterPolicy::valid() const {
-  if (intervalSeconds < 60 || intervalSeconds > 86400) return false;
+  if (intervalSeconds < 60 || intervalSeconds > 86400 ||
+      discoverySeconds < 60 || discoverySeconds > 86400) return false;
   for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
     const auto &target = targets[i];
     if (!target.used) continue;
@@ -147,9 +148,11 @@ struct RepeaterReference {
   bool valid() const { return !memcmp(magic, "BRF\1", 4) && slot < 2; }
 };
 struct RepeaterRecord {
-  char magic[4]{'B', 'R', 'M', 1};
+  char magic[4]{'B', 'R', 'M', 2};
   BotRepeaterPolicy policy;
 };
+constexpr size_t LegacyRepeaterSize =
+    offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, discoverySeconds);
 struct RepeaterWorkspace { RepeaterRecord record, check; };
 struct RepeaterWorkspaceDeleter {
   void operator()(RepeaterWorkspace *workspace) const { releaseRoleStorage(workspace); }
@@ -171,22 +174,27 @@ bool readRepeaterReference(RepeaterReference &reference, bool &present) {
   present = true;
   return true;
 }
-void repeaterDigest(const RepeaterRecord &record, uint8_t digest[32]) {
-  mesh::Utils::sha256(digest, 32, reinterpret_cast<const uint8_t *>(&record), sizeof(record));
+void repeaterDigest(const RepeaterRecord &record, uint8_t digest[32],
+                    size_t size = sizeof(RepeaterRecord)) {
+  mesh::Utils::sha256(digest, 32, reinterpret_cast<const uint8_t *>(&record), size);
 }
 bool readRepeaterFile(const RepeaterReference &reference, RepeaterRecord &record) {
   auto file = SPIFFS.open(RepeaterSlots[reference.slot], "r");
   if (!file) return failed("repeater monitor file open", ESP_ERR_INVALID_STATE);
-  const bool complete = file.size() == sizeof(record) &&
-      file.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) == sizeof(record) &&
-      file.size() == sizeof(record);
+  record = {};
+  const size_t size = file.size();
+  const bool legacy = size == LegacyRepeaterSize;
+  const bool complete = (legacy || size == sizeof(record)) &&
+      file.read(reinterpret_cast<uint8_t *>(&record), size) == size && file.size() == size;
   file.close();
   uint8_t digest[32];
   if (!complete) return failed("repeater monitor file read", ESP_ERR_INVALID_STATE);
-  repeaterDigest(record, digest);
+  repeaterDigest(record, digest, size);
   if (memcmp(digest, reference.digest, sizeof(digest)) ||
-      memcmp(record.magic, "BRM\1", 4) || !record.policy.valid())
+      memcmp(record.magic, legacy ? "BRM\1" : "BRM\2", 4) || !record.policy.valid())
     return failed("repeater monitor file validation", ESP_ERR_INVALID_STATE);
+  // Version 1 ends before discoverySeconds; retain its targets and flood times.
+  memcpy(record.magic, "BRM\2", 4);
   return true;
 }
 }

@@ -78,9 +78,9 @@ existing installation. Aspen, Birch and Pine retain their own setup guides.
 | Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
 
 Aspen and Birch use independent product versions. The current source reports
-`aspen-0.1.3` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
-Show releases as **Aspen 0.1.3 · based on MeshCore 1.17.1** and tag them
-`aspen-v0.1.3` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
+`aspen-0.1.6` or `birch-0.1.0-rc.1`, separately from the MeshCore base.
+Show releases as **Aspen 0.1.6 · based on MeshCore 1.17.1** and tag them
+`aspen-v0.1.6` or `birch-v0.1.0-rc.1`. Birch releases contain one matching
 host, native worker and modem bundle. Pine retains `1.17.1-slp-pine`.
 The [release guide](release/README.md) lists compatibility contracts, candidate
 build commands and publication steps. Existing website downloads and the

@@ -30,6 +30,7 @@ On the monitor's authenticated management connection:
 ```text
 bot repeaters add ridge REMOTE_FULL_PUBLIC_KEY 912525000 3:
 bot repeaters interval 300
+bot repeaters discovery 900
 bot repeaters on
 ```
 
@@ -64,6 +65,7 @@ bot repeaters status
 bot repeaters status ridge
 bot repeaters config ridge
 bot repeaters route ridge
+bot repeaters timing ridge
 bot repeaters storage
 bot events
 telemetry status
@@ -79,8 +81,11 @@ voltage as current. Battery percentage is not inferred from voltage.
 `route=unknown` needs flood discovery, while `route=3:cc268a` uses that
 three-byte hop. Routes learned from authenticated status/PATH responses
 replace the previous path automatically. `repair=1` means three consecutive
-failures require flood discovery on the next eligible poll; the saved hourly
-flood limit still applies. Learned routes are rebuilt after a restart.
+failures require flood discovery on the next eligible poll; the saved discovery
+cooldown still applies. `timing ridge` reports the waiting reason, seconds until
+the next eligible poll/discovery and the last sample's UTC timestamp. Eligibility
+does not reserve airtime or bypass another pending request. Learned routes are
+rebuilt after a restart; adverts do not supply status or an outbound route.
 See [Aspen telemetry setup](../esp32/TELEMETRY.md) if publishing is not already
 configured. HTTP 2xx confirms receiver acceptance; query the receiver to
 check ingestion.
@@ -156,6 +161,12 @@ metric export described here belongs to Aspen's telemetry service.
 ## Airtime, failures and restart behavior
 
 The owner interval is 60..86400 seconds per target, default **300**.
+`bot repeaters discovery SECONDS` sets the flood-discovery cooldown to
+60..86400 seconds, default **900**. Both settings are saved. Existing monitor
+records retain all targets and last-discovery times when read by this firmware,
+and use the new 900-second default until explicitly changed. A subsequent save
+uses the new record format; older firmware cannot read it without restoring or
+reprovisioning the monitor policy.
 Targets are initially staggered by 30 seconds, and there is at most one
 monitor request per 30 seconds globally and one pending monitor RF request.
 Requests use the shared queue and the bot's existing static/adaptive airtime
@@ -170,9 +181,9 @@ PATH response can repair the outbound route. Status decoding uses the
 `d92964352441e53b93e8667b802e04f6e072b39e`; other wire layouts are not negotiated.
 
 Timeout, malformed response or TX failure backs off from twice the owner
-interval, up to the larger of that interval and one hour. Three failed direct
+interval, up to the larger of that interval and the discovery cooldown. Three failed direct
 requests permit flood route repair. An unknown route also needs a flood.
-Each target may flood at most once per hour: the trusted-UTC cooldown is saved
+Each target may flood at most once per configured discovery period: its trusted-UTC timestamp is saved
 **before** queue admission and survives reboot. Restart does not recover
 volatile samples, attempt counters or pending requests, and cannot replay an
 uncertain transmission. Future periodic polls remain eligible under the saved
@@ -197,8 +208,19 @@ Each `meshcore_repeater` line has bounded `device` and `peer` alias tags, with
 `available`, `fresh`, `error_code`, `attempts_total`, `failures_total`, and
 `sample_age_seconds` when a sample exists. Fresh means a successful last
 sample no older than twice the owner poll interval and no subsequent error.
-Only fresh samples include voltage and remote numeric stats. On timeout or
-disable, stale voltage is not emitted as a new observation.
+Last-good voltage and remote numeric stats retain their original RF sample
+timestamp, including after a timeout or disable. Repeated uploads use the
+same timestamp and values; they are not additional RF observations.
+`sample_time_seconds` is derived from the trusted UTC clock at request time plus
+the local elapsed time until its authenticated response. The Influx line uses
+that time in nanoseconds. A peer without a successful sample has no numeric
+stats. Samples are cached in RAM, not written to flash after every poll.
+
+Current availability, freshness, poll errors, `wait_code`,
+`next_poll_seconds` and `next_discovery_seconds` use receiver receipt time.
+Wait codes are 0 eligible, 1 interval/backoff, 2 discovery cooldown, 3 clock
+unavailable, 4 disabled and 5 frequency mismatch. Countdown fields describe
+eligibility, not a promised transmission.
 
 Stats include remote uptime, queue length, RX/TX packet and airtime counters,
 direct/flood counts, duplicates, error flags/RX errors, noise, RSSI and SNR.
@@ -206,7 +228,10 @@ Zero battery millivolts means unsupported and omits `battery_volts`;
 there is no battery charge percentage field. No keys, passwords or messages
 are metrics. Three remote peers rotate through each existing 6,144-byte
 publication alongside local metrics; 12 targets appear within four successful
-batches. Receipt timestamps do not mean a new RF sample occurred.
+batches. Rotation advances only after receiver acceptance. A failed publication
+keeps that peer group for the next period's current snapshot; it does not replay
+the previous request. Control-field receipt timestamps do not mean a new RF
+sample occurred.
 
 | `error_code` | Condition |
 | --- | --- |

@@ -133,9 +133,16 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
     out.tag(peer.alias, 16);
     out.append(" available=%ui,fresh=%ui,error_code=%ui,attempts_total=%ui,failures_total=%ui",
                unsigned(peer.available), unsigned(peer.fresh), unsigned(peer.error), peer.attempts, peer.failures);
+    out.append(",wait_code=%ui,next_poll_seconds=%ui,next_discovery_seconds=%ui",
+               unsigned(peer.wait), peer.nextPollSeconds, peer.nextDiscoverySeconds);
     if (peer.available) out.append(",sample_age_seconds=%ui", peer.ageSeconds);
-    if (peer.available && peer.fresh) {
+    out.append("\n");
+    if (peer.available && peer.sampledUtc) {
+      out.measurement("meshcore_repeater", device);
+      out.append(",peer=");
+      out.tag(peer.alias, 16);
       const auto &v = peer.stats;
+      out.append(" sample_time_seconds=%ui", peer.sampledUtc);
       if (v.batteryMv) out.append(",battery_volts=%.3f", double(v.batteryMv) / 1000);
       out.append(",queued_packets=%ui,uptime_seconds=%ui,rx_packets_total=%ui,tx_packets_total=%ui,"
                  "tx_airtime_seconds_total=%ui,rx_airtime_seconds_total=%ui,"
@@ -146,8 +153,8 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
                  v.sentFlood, v.sentDirect, v.receivedFlood, v.receivedDirect, unsigned(v.errors),
                  unsigned(v.directDuplicates), unsigned(v.floodDuplicates), v.receiveErrors,
                  int(v.noise), int(v.rssi), double(v.snrQuarterDb) / 4);
+      out.append(" %" PRIu64 "\n", uint64_t(peer.sampledUtc) * 1000000000);
     }
-    out.append("\n");
   }
   return out.finish();
 }

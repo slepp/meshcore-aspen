@@ -834,7 +834,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strcmp(input, "api repeaters")) {
     if (wasmRuntime_) { respond("Error: Repeater monitoring requires Lua"); return; }
-    snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s global-min=30s flood-min=3600s", BotRepeaterLimit);
+    snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s global-min=30s discovery=60..86400s default=900s", BotRepeaterLimit);
     return;
   }
   if (!strcmp(input, "api mesh")) {

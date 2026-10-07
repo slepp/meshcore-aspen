@@ -7,6 +7,19 @@
 namespace onchip {
 constexpr size_t TelemetryBodyLimit = 6144;
 constexpr unsigned TelemetryRepeaterLimit = 3;
+class TelemetryRepeaterCursor {
+public:
+  unsigned select(unsigned peers, uint64_t successes) {
+    if (successes != successes_) cursor_ += count_;
+    successes_ = successes;
+    cursor_ = peers ? cursor_ % peers : 0;
+    count_ = peers < TelemetryRepeaterLimit ? peers : TelemetryRepeaterLimit;
+    return cursor_;
+  }
+private:
+  unsigned cursor_ = 0, count_ = 0;
+  uint64_t successes_ = 0;
+};
 
 struct TelemetryConfig {
   bool enabled = false;

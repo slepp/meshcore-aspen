@@ -8,7 +8,10 @@ data. The dashboard reads it from VictoriaMetrics.
 Import [`meshcore-repeaters.json`](meshcore-repeaters.json) for repeaters polled
 over RF by an on-device Lua monitor. Select **Monitor device / Remote repeater**
 to see battery voltage, RF sample age, monitor errors, uptime, queues, signal,
-packet counters, duplicates, receive errors and airtime. Configure the
+packet counters, duplicates, receive errors and airtime. **Poll wait** and
+**Next eligible poll** distinguish discovery cooldown from interval/backoff.
+**Sample hold** shows last-known gauge values for a bounded window, default
+15 minutes, instead of breaking a line at every missed poll. Configure the
 [remote repeater monitor](../../firmware/runtime/REMOTE_REPEATERS.md) first.
 The fleet dashboard links to this focused view.
 
@@ -69,10 +72,19 @@ bot and Go host roles share a radio.
   Change these thresholds for your publishing/poll cadence; no sample is
   **No sample**, not zero or healthy. Ages cannot find devices outside History.
   The JSON defines no alerts.
-- Ordinary graphs preserve gaps. Grafana's legend shows the last value **in
+- Repeater gauge graphs hold the last reading for **Sample hold**, then leave
+  a gap. The held segment is not a new RF response or an extrapolated voltage,
+  signal or uptime. Availability/freshness graphs hold reports for at most six
+  minutes to cover normal peer rotation, then show an upload gap. Remote rates
+  use counter observations at their RF sample times, not held gauge values.
+- Other graphs preserve gaps. Grafana's legend shows the last value **in
   the selected range**, which may be old. Check report age before interpreting
   connection, readiness, source state, signal or sensor values as current.
   A publisher disconnected from the receiver cannot report its failure live.
+- Current repeater voltage still requires native freshness and a recent
+  monitor report. RF sample age can retain the last measurement across a
+  monitor restart within **History**; a current `No RF sample` result means
+  this boot has not collected one, not that the receiver has no older history.
 - Only actual monotonic counters use reset-aware `rate()`. Native/source
   counters reset at reboot or source attachment; some wrap at 32 bits.
   Bot counters reset at process restart, and edge-hook counters also reset on

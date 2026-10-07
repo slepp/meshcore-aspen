@@ -32,6 +32,7 @@ struct BotRepeaterPolicy {
   } targets[BotRepeaterLimit];
   uint32_t intervalSeconds = 300;
   bool enabled = false;
+  uint32_t discoverySeconds = 900;
   bool valid() const;
 };
 bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy);

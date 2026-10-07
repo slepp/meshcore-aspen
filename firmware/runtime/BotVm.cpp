@@ -811,6 +811,10 @@ int finishIo(lua_State *s, int, lua_KContext) {
     boolean(s, "queued", r.queued); boolean(s, "transmitted", r.transmitted);
     boolean(s, "available", p.available); boolean(s, "fresh", p.fresh);
     integer(s, "age_seconds", p.ageSeconds);
+    integer(s, "sample_time_seconds", p.sampledUtc);
+    integer(s, "next_poll_seconds", p.nextPollSeconds);
+    integer(s, "next_discovery_seconds", p.nextDiscoverySeconds);
+    text(s, "wait", onchip::botRepeaterWaitName(p.wait));
     integer(s, "permissions", r.repeaterPermissions);
     if (r.ok && call.io->kind == onchip::BotIoRequest::RepeaterStatus) {
       const auto &v = p.stats;

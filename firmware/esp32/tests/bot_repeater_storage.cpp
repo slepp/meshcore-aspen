@@ -3,6 +3,7 @@
 #include "BotJournal.h"
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
+#include <Utils.h>
 #include <cassert>
 #include <cstring>
 
@@ -35,7 +36,8 @@ static BotRepeaterPolicy fixture() {
 static void expect(const BotRepeaterPolicy &policy) {
   BotRepeaterPolicy actual;
   assert(loadBotRepeaterPolicy(actual));
-  assert(actual.enabled == policy.enabled && actual.intervalSeconds == policy.intervalSeconds);
+  assert(actual.enabled == policy.enabled && actual.intervalSeconds == policy.intervalSeconds &&
+         actual.discoverySeconds == policy.discoverySeconds);
   for (unsigned i = 0; i < BotRepeaterLimit; ++i)
     assert(!strcmp(actual.targets[i].alias, policy.targets[i].alias) &&
            !memcmp(actual.targets[i].key, policy.targets[i].key, 32) &&
@@ -45,7 +47,10 @@ static void expect(const BotRepeaterPolicy &policy) {
 int main() {
   char status[162]{}, error[128]{};
   BotRepeaterPolicy empty;
-  assert(loadBotRepeaterPolicy(empty) && !empty.enabled);
+  assert(loadBotRepeaterPolicy(empty) && !empty.enabled && empty.discoverySeconds == 900);
+  empty.discoverySeconds = 59; assert(!empty.valid());
+  empty.discoverySeconds = 86401; assert(!empty.valid());
+  empty.discoverySeconds = 86400; assert(empty.valid());
   botRepeaterStorageStatus(status, sizeof(status));
   assert(strstr(status, "required=313 authority=none"));
   auto old = fixture(), next = old;
@@ -55,6 +60,7 @@ int main() {
   assert(identity_test::durable.at(Key).size() == 37);
   expect(old);
   next.intervalSeconds = 600;
+  next.discoverySeconds = 1800;
   for (unsigned fault = 0; fault < 8; ++fault) {
     const auto authority = identity_test::durable.at(Key);
     switch (fault) {
@@ -96,6 +102,20 @@ int main() {
   assert(strstr(error, "312 free, 313 required"));
   identity_test::freeEntries++;
   assert(saveBotRepeaterPolicy(old, error, sizeof(error)) && !error[0]);
+  identity_test::durable.clear(); filesystem_test::files.clear();
+  const size_t legacySize = 4 + offsetof(BotRepeaterPolicy, discoverySeconds);
+  auto &legacy = filesystem_test::files["/repeaters-a.bin"];
+  legacy.resize(legacySize);
+  memcpy(legacy.data(), "BRM\1", 4);
+  memcpy(legacy.data() + 4, &old, legacySize - 4);
+  auto &reference = identity_test::durable[Key];
+  reference.resize(37);
+  memcpy(reference.data(), "BRF\1", 4); reference[4] = 0;
+  mesh::Utils::sha256(reference.data() + 5, 32, legacy.data(), legacy.size());
+  expect(old);
+  assert(!memcmp(legacy.data(), "BRM\1", 4));
+  assert(saveBotRepeaterPolicy(next)); expect(next);
+  assert(!memcmp(filesystem_test::files.at("/repeaters-b.bin").data(), "BRM\2", 4));
   assert(psram_test::allocations.empty());
-  puts("PASS repeater storage: 37-byte authority, two verified slots, full policy/cooldown retention, explicit storage faults and unchanged Lua reserve");
+  puts("PASS repeater storage: version-1 migration/default 900s, configurable cooldown retention, 37-byte authority, verified slots, explicit faults and unchanged Lua reserve");
 }

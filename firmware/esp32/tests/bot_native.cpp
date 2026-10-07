@@ -2249,7 +2249,14 @@ static void native_repeater_monitor() {
   f.bot.repeaterCommand("storage", reply, sizeof(reply));
   assert(strstr(reply, "nvs-free=") && strstr(reply, "authority=saved"));
   f.bot.repeaterCommand("help", reply, sizeof(reply));
-  assert(strlen(reply) <= 162 && strstr(reply, "config ALIAS") && strstr(reply, "storage"));
+  assert(strlen(reply) <= 162 && strstr(reply, "config ALIAS") && strstr(reply, "storage") &&
+         strstr(reply, "discovery SEC") && strstr(reply, "timing ALIAS"));
+  f.bot.repeaterCommand("discovery 1800", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13) && strstr(reply, "discovery=1800s"));
+  f.bot.repeaterCommand("discovery 59", reply, sizeof(reply));
+  assert(!strncmp(reply, "Error:", 6));
+  f.bot.repeaterCommand("discovery 900", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
   f.bot.repeaterCommand("on", reply, sizeof(reply));
   assert(!strncmp(reply, "Saved/applied", 13));
   const char *source =
@@ -2298,7 +2305,10 @@ static void native_repeater_monitor() {
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && !snapshots[0].available);
   f.deliver(response(peer, tag, true)); f.step();
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && snapshots[0].fresh &&
-         snapshots[0].stats.batteryMv == 3811 && snapshots[0].stats.uptimeSeconds == 12345);
+         snapshots[0].stats.batteryMv == 3811 && snapshots[0].stats.uptimeSeconds == 12345 &&
+         snapshots[0].sampledUtc >= tag && snapshots[0].nextPollSeconds);
+  f.bot.repeaterCommand("timing pilot", reply, sizeof(reply));
+  assert(strlen(reply) <= 162 && strstr(reply, "wait=interval") && strstr(reply, "sampled-utc="));
   assert(f.bot.counters().eventsCompleted && !f.bot.jobsInUse());
   const auto before = f.radio.sent.size();
   timeMs += 16000; f.step();
@@ -2386,13 +2396,34 @@ static void native_repeater_monitor() {
     }
     assert(floods == (boot ? 0u : 1u));
     BotRepeaterPolicy persisted;
-    assert(loadBotRepeaterPolicy(persisted) && persisted.targets[0].lastFloodUtc);
+    assert(loadBotRepeaterPolicy(persisted) && persisted.targets[0].lastFloodUtc &&
+           persisted.discoverySeconds == 900);
     if (!boot) floodUtc = persisted.targets[0].lastFloodUtc;
-    else assert(persisted.targets[0].lastFloodUtc == floodUtc && !restart.bot.jobsInUse());
+    else {
+      assert(persisted.targets[0].lastFloodUtc == floodUtc && !restart.bot.jobsInUse());
+      assert(restart.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+             snapshots[0].wait == BotRepeaterWait::Discovery && snapshots[0].nextDiscoverySeconds &&
+             snapshots[0].nextPollSeconds >= snapshots[0].nextDiscoverySeconds);
+      restart.bot.repeaterCommand("timing pilot", reply, sizeof(reply));
+      assert(strstr(reply, "wait=discovery") && strstr(reply, "sampled-utc=0"));
+      timeMs += (snapshots[0].nextDiscoverySeconds - 1) * 1000;
+      receiveNetworkTime(floodUtc + 899); restart.step();
+      assert(!restart.bot.jobsInUse());
+      timeMs += 16000; receiveNetworkTime(floodUtc + 915); restart.step();
+      assert(restart.bot.jobsInUse() && loadBotRepeaterPolicy(persisted) &&
+             persisted.targets[0].lastFloodUtc >= floodUtc + 900);
+      unsigned newFloods = 0;
+      for (const auto &raw : restart.radio.sent) {
+        mesh::Packet packet;
+        assert(packet.readFrom(raw.data(), raw.size()));
+        if (packet.getPayloadType() == PAYLOAD_TYPE_REQ) ++newFloods;
+      }
+      assert(newFloods == 1);
+    }
     assert(restart.bot.setEventAccess(0)); restart.step();
   }
   assert(saveBotRepeaterPolicy({}));
-  puts("PASS native repeater flood: first unknown-route request and durable hourly cooldown across restart without replay");
+  puts("PASS native repeater flood: persisted 900-second boundary across restart, visible discovery wait and exactly one new eligible request");
 
   BotRadioPolicy recoveryPolicy;
   recoveryPolicy.pathWidth = 3;
@@ -2456,7 +2487,8 @@ static void native_repeater_monitor() {
   assert(loadBotRepeaterPolicy(discoveredPolicy));
   const auto discoveryUtc = discoveredPolicy.targets[0].lastFloodUtc;
   for (unsigned failure = 1; failure <= 3; ++failure) {
-    request(false, originalPath, failure == 1 ? 317 : (300u << (failure - 1)) + 17);
+    request(false, originalPath, failure == 1 ? 317 :
+        std::min<uint32_t>(900, 300u << (failure - 1)) + 17);
     advance(31);
     assert(!recovery.bot.jobsInUse());
     assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
@@ -2466,9 +2498,9 @@ static void native_repeater_monitor() {
   }
   recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
   assert(!strcmp(reply, "pilot route=3:cc268a repair=1"));
-  const auto repairTag = request(true, {}, 2417);
+  const auto repairTag = request(true, {}, 917);
   assert(loadBotRepeaterPolicy(discoveredPolicy) &&
-         discoveredPolicy.targets[0].lastFloodUtc >= discoveryUtc + 3600);
+         discoveredPolicy.targets[0].lastFloodUtc >= discoveryUtc + 900);
   recovery.deliver(routedResponse(stranger, repairTag, alternatePath)); recovery.step();
   recovery.deliver(routedResponse(peer, discoveryTag, alternatePath)); recovery.step();
   recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
@@ -2487,7 +2519,7 @@ static void native_repeater_monitor() {
   assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
          snapshots[0].fresh && snapshots[0].attempts == 6);
   assert(recovery.bot.setEventAccess(0) && saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
-  puts("PASS native repeater recovery: learned three-byte hop, three direct failures, hourly flood repair, stale/foreign rejection and alternate multihop recovery without owner route updates");
+  puts("PASS native repeater recovery: learned three-byte hop, bounded direct-failure backoff, configurable flood repair, stale/foreign rejection and alternate multihop recovery");
 }
 static void event_collector_capacity() {
   for (unsigned mode = 0; mode < 3; ++mode) {

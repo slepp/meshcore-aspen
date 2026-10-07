@@ -27,7 +27,7 @@ struct Workspace {
   BotRepeaterSnapshot repeaters[BotRepeaterLimit]{};
   char body[TelemetryBodyLimit + 1]{};
 };
-unsigned repeaterCursor = 0;
+TelemetryRepeaterCursor repeaterCursor;
 Workspace *workspace = nullptr;
 uint64_t uptime() { return uint64_t(esp_timer_get_time()) / 1000; }
 void initialize() {
@@ -129,9 +129,9 @@ void telemetryLoop(RadioDashboard &dashboard, const RadioDashboard::RadioStatus 
   if (!kissName(name)) { publisher.drop(now, TelemetryError::Snapshot); return; }
   collect(workspace->sample, radio, mux, board);
   const unsigned peers = commandBotService().repeaterSnapshots(workspace->repeaters, BotRepeaterLimit);
+  const unsigned cursor = repeaterCursor.select(peers, publisher.status().successes);
   for (unsigned i = 0; i < std::min(peers, TelemetryRepeaterLimit); ++i)
-    workspace->sample.repeaters[i] = workspace->repeaters[(repeaterCursor + i) % peers];
-  if (peers) repeaterCursor = (repeaterCursor + TelemetryRepeaterLimit) % peers;
+    workspace->sample.repeaters[i] = workspace->repeaters[(cursor + i) % peers];
   const auto size = encodeTelemetry(workspace->sample, device, name,
                                     publisher.status(), workspace->body, sizeof(workspace->body));
   publisher.publish(now, workspace->body, size);

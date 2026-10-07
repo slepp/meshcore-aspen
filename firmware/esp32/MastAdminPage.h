@@ -520,9 +520,10 @@ async function restoreData() {
 }
 const readonly=/^(?:status|ver|board|job|help(?: \S+)?|get (?:name|owner\.info|radio|freq|tx|cad|wifi\.(?:enabled|ssid|ip|status))|password(?: help)?|roles|role-path|room access|companion (?:stats|errors|help)|wifi (?:status|help)|auth (?:status(?: [0-9a-f]{64})?|peer [1-4])|bot (?:status|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|name|destination(?: [1-4])?|channel-wait|shared|home|https(?: status)?|reminders|events|discovery(?: status)?|forward(?: from|to)?|help)|role (?:help|config \S+|name \S+|key \S+(?: pending)?|channel \S+ \d+)|key (?:help|\S+(?: pending)?)|source (?:status|hash|metadata|help|helptext|api(?: [a-z]+)?|read \d+)|data (?:status|help|read [0-9a-f]{16} \d+)|telemetry(?: (?:status|counts|times|tls|tls-heap|tls-blocks|help|endpoint (?:status|host|address|path|port)))?)$/;
 const readonlyStats=/^(?:get stats|stats(?: (?:help|radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion))?)$/;
+const readonlyMonitor=/^(?:bot repeaters(?: (?:status(?: [a-z][a-z0-9_-]{0,15})?|(?:config|route|timing) [a-z][a-z0-9_-]{0,15}|storage|help))?|cloudroom (?:status|error))$/;
 function nativeRead(text) {
   const normalized=text.trim().replace(/ +/g,' ').replace(/^source wasm /,'source ');
-  return readonly.test(normalized) || readonlyStats.test(normalized) || /^backup (?:help|status|read [0-9a-f]{16} \d+)$/.test(normalized);
+  return readonly.test(normalized) || readonlyStats.test(normalized) || readonlyMonitor.test(normalized) || /^backup (?:help|status|read [0-9a-f]{16} \d+)$/.test(normalized);
 }
 async function nativeWrite(text,warning) {
   validateCommand(text);
