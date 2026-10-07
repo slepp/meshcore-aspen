@@ -3,6 +3,7 @@ import {afterEach, expect, it} from "vitest";
 import type {Env} from "../src/config";
 import type {Delivery, Operation, ServerEvent} from "../src/protocol";
 import {Frontend, type RadioCodec, type Socket} from "../examples/frontend";
+import worker from "../src/index";
 
 const bindings = env as unknown as Env;
 const client = (n: number) => n.toString(16).padStart(64, "0");
@@ -66,6 +67,27 @@ async function acknowledge(alias: string, token: string, delivery: Delivery, pro
   return ok(alias, token, {op: "ack", client: delivery.client, deliveryId: delivery.deliveryId, proof});
 }
 afterEach(async () => {for (const ws of sockets.splice(0)) ws.close(); await reset();});
+
+it("rejects requests during placeholder removal and resumes with private bindings without losing room state", async () => {
+  const who = client(99);
+  await ok("A", "local-token", login(who, 1));
+  await ok("A", "local-token", post(who, 2, "retained through configuration"));
+  const missing: Env = {...bindings, ALIASES: undefined, FRONTENDS: undefined, ROOM_KEYS: undefined};
+  const placeholders: Env = {...missing, ALIASES: "{}", FRONTENDS: "{}"};
+  for (const unconfigured of [placeholders, missing]) {
+    for (const headers of [{}, {Authorization: "Bearer local-token"},
+      {Authorization: "Bearer invalid"}, {Upgrade: "websocket", Authorization: "Bearer local-token"}]) {
+      const response = await worker.fetch(new Request("https://room.test/v1/aliases/A/operations", {headers}), unconfigured);
+      expect(response.status).toBe(401);
+    }
+  }
+  const restored = await worker.fetch(new Request("https://room.test/v1/aliases/A/operations", {
+    method: "POST", headers: {Authorization: "Bearer local-token"}, body: JSON.stringify({op: "members"}),
+  }), bindings);
+  expect(restored.status).toBe(200);
+  expect((await restored.json<any>()).members.some((entry: any) => entry.client === who)).toBe(true);
+  expect(await count("shared")).toBe(1);
+});
 
 it("elects one frontend for duplicate logins/posts and commits one logical message before success", async () => {
   const one = await connect("A", "local-token");

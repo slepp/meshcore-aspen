@@ -4,8 +4,8 @@ export interface Alias {backend: string; publicKey: string; name: string; passwo
 export interface Frontend {token: string; aliases: string[]; region?: string}
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
-  ALIASES: string;
-  FRONTENDS: string;
+  ALIASES?: string;
+  FRONTENDS?: string;
   HISTORY_LIMIT?: string;
   MODE?: string;
   ROOM_KEYS?: string;
@@ -37,11 +37,11 @@ export function publicRegion(value: unknown): string | undefined {
   return name;
 }
 export function frontendRegion(env: Env, frontend: string): string | undefined {
-  const entries = JSON.parse(env.FRONTENDS) as Record<string, Frontend>;
+  const entries = JSON.parse(env.FRONTENDS ?? "{}") as Record<string, Frontend>;
   return publicRegion(entries[frontend]?.region);
 }
 export function aliases(env: Env): Record<string, Alias> {
-  const entries = JSON.parse(env.ALIASES) as Record<string, Alias>;
+  const entries = JSON.parse(env.ALIASES ?? "{}") as Record<string, Alias>;
   if (!entries || typeof entries !== "object" || Array.isArray(entries)) fail(503, "Invalid ALIASES configuration");
   const keys = new Set<string>();
   for (const [name, alias] of Object.entries(entries)) {
@@ -68,7 +68,7 @@ export async function credential(token: string): Promise<string> {
 export async function authorize(request: Request, env: Env, alias: string): Promise<Connection> {
   const token = request.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
   if (!token || token.length > 512) fail(401, "Frontend bearer token required");
-  const frontends = JSON.parse(env.FRONTENDS) as Record<string, Frontend>;
+  const frontends = JSON.parse(env.FRONTENDS ?? "{}") as Record<string, Frontend>;
   for (const [name, entry] of Object.entries(frontends)) {
     if (entry.token && equalToken(entry.token, token)) {
       if (!entry.aliases.includes(alias)) fail(403, "Frontend is not allowed to serve this alias");

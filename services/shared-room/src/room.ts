@@ -174,7 +174,7 @@ export class Room extends DurableObject<Env> {
       if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) fail(400, "Invalid request id");
       const connection = ws.deserializeAttachment() as Connection;
       // Recheck configuration after hibernation, including revoked tokens/aliases.
-      const frontend = (JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]; token: string}>)[connection.frontend];
+      const frontend = (JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>)[connection.frontend];
       const alias = aliases(this.env)[connection.alias];
       if (!frontend?.aliases.includes(connection.alias) || !frontend.token || await credential(frontend.token) !== connection.credential || !alias ||
           !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Frontend alias authorization changed");
@@ -198,7 +198,7 @@ export class Room extends DurableObject<Env> {
   /** Internal DO RPC: prefix resolution stays behind the Worker binding. */
   nativeMembers(alias: string, prefix: string, frontend: string): Member[] {
     const config = aliases(this.env)[alias];
-    const grants = JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]}>;
+    const grants = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]}>;
     if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend)) ||
         !grants[frontend]?.aliases.includes(alias) || !/^[a-f0-9]{0,64}$/.test(prefix)) fail(403, "Invalid native lookup");
     const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", alias)[0];
@@ -246,7 +246,7 @@ export class Room extends DurableObject<Env> {
     let wire: Uint8Array;
     try {wire = unbase64(string(op.packet, "native packet", 340));} catch {return fail(400, "Invalid native packet base64");}
     const configured = aliases(this.env);
-    const grant = (JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]}>)[c.frontend];
+    const grant = (JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]}>)[c.frontend];
     const identities = grant.aliases.map(alias => this.codec.identity(alias, frontendRegion(this.env, c.frontend)));
     const decoded = await this.codec.decode(wire, identities, async (alias, prefix) => {
       const backend = configured[alias].backend;
@@ -399,7 +399,7 @@ export class Room extends DurableObject<Env> {
   private async pump(): Promise<void> {
     const sockets = new Map<string, WebSocket>();
     const configuredAliases = aliases(this.env);
-    const configuredFrontends = JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]; token: string}>;
+    const configuredFrontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
     for (const ws of this.ctx.getWebSockets()) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       const c = ws.deserializeAttachment() as Connection;
