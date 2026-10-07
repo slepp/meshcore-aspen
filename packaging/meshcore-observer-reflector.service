@@ -1,0 +1,18 @@
+[Unit]
+Description=Durable MeshCore observer MQTT reflector
+After=network-online.target meshcore-mqtt.service
+Wants=network-online.target meshcore-mqtt.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/libexec/meshcore-observer-reflector -config %h/.config/meshcore-observer-reflector/config.json
+EnvironmentFile=%h/.config/meshcore-mqtt/environment
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=default.target

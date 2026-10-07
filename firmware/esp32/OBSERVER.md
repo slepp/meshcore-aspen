@@ -217,6 +217,77 @@ On-device `mqtt filter` is a decimal 16-bit allowed-payload-type mask, default
 The observer never subscribes to remote commands or transmits an identity
 advert.
 
+## Reflect one radio feed to approved receivers
+
+`meshcore-observer-reflector` subscribes to one observer's public-format
+`packets` and `status` topics on the local MQTT broker. It verifies identity,
+UTC, RF direction, signal values, packet lengths, content hash and direct path
+against the raw MeshCore packet. Unknown fields and internal role topics are
+rejected; neither local transmissions nor modem reflection are forwarded.
+The service never opens a radio connection or accepts remote commands.
+
+Configure Aspen's local feed with format 1, a three-letter IATA and the desired
+public observer name. Retain its static local-broker credentials. Give the host
+only the Management password and the observer **public** key; Aspen 0.1.3 signs
+broker-specific tokens through the authenticated token endpoint above.
+
+```sh
+install -d -m 700 "$HOME/.local/libexec" "$HOME/.config/systemd/user"
+go build -o "$HOME/.local/libexec/meshcore-observer-reflector" \
+  ./cmd/meshcore-observer-reflector
+install -d -m 700 "$HOME/.config/meshcore-observer-reflector"
+install -m 600 packaging/observer-reflector.json.example \
+  "$HOME/.config/meshcore-observer-reflector/config.json"
+```
+
+Edit that private JSON: absolute queue/password paths, local source URL,
+credential environment-variable names, node URL, observer key, IATA, name
+and explicitly authorized WSS receiver URLs. Store the existing Management
+password in the named owner-only file as 1..15 ASCII bytes **without a newline**.
+Use HTTPS or a protected management tunnel. Plain HTTP requires
+`trusted_management_lan=true`; its session and returned tokens cross that LAN
+without encryption. Remote WSS uses system CA roots and hostname verification.
+Tokens remain in memory; the observer's private key never leaves the radio.
+
+Each destination has one connection. Its URL list is ordered failover, not
+duplicate publication: configure a primary and backup for the same service
+under one destination. Different destinations receive the same RF receptions.
+No public receiver is selected by default. The service unit reads local broker
+credentials from the existing `~/.config/meshcore-mqtt/environment`; adjust its
+`EnvironmentFile` for a different local broker deployment.
+
+```sh
+"$HOME/.local/libexec/meshcore-observer-reflector" -check \
+  -config "$HOME/.config/meshcore-observer-reflector/config.json"
+install -m 644 packaging/meshcore-observer-reflector.service \
+  "$HOME/.config/systemd/user/meshcore-observer-reflector.service"
+systemctl --user daemon-reload
+systemctl --user enable --now meshcore-observer-reflector.service
+journalctl --user -u meshcore-observer-reflector.service -n 20 --no-pager
+```
+
+Look for `local observer feed subscribed`, a retained-status acknowledgement
+for each destination, then `observer RF packets acknowledged`. These are MQTT
+broker acknowledgements, not confirmation that a receiver's website indexed
+the messages. No packet bytes, passwords or tokens are logged.
+
+Accepted receptions are atomically saved before forwarding. Each destination
+is removed from a packet's pending list only after its QoS 1 PUBACK; restart and
+broker outages retain the remaining deliveries. At most 4096 pending packets
+and one latest status are kept. A full queue reports incoming reception drops;
+the radio's QoS 0 local feed cannot recover traffic missed before the host
+saved it. Identical pending payloads coalesce. A crash after a receiver's ACK
+but before its saved acknowledgement can redeliver that reception, so receivers
+must tolerate duplicates. Keep queued destinations in the configuration while
+draining them; corrupt state or unknown queued destinations stop startup rather
+than discarding deliveries.
+
+Reconnect sends the latest saved status. An online source status older than
+three minutes becomes offline; the service does not invent online presence
+while its local feed is unavailable. Shutdown and remote connection loss send
+retained offline presence. Periodic source status continues to carry the radio's
+actual firmware and committed PHY.
+
 ## Developer validation
 
 The Aspen hardware check has an opt-in private WSS receiver:

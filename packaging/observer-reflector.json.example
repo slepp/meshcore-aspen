@@ -1,0 +1,18 @@
+{
+  "state_dir": "/home/OPERATOR/.local/state/meshcore-observer-reflector",
+  "source_url": "tcp://127.0.0.1:11883",
+  "username_env": "MESHCORE_MQTT_USERNAME",
+  "password_env": "MESHCORE_MQTT_PASSWORD",
+  "node_url": "https://aspen.example",
+  "node_password_file": "/home/OPERATOR/.config/meshcore-observer-reflector/node-password",
+  "trusted_management_lan": false,
+  "identity": "REPLACE_WITH_64_UPPERCASE_HEX_OBSERVER_PUBLIC_KEY",
+  "iata": "YYC",
+  "origin": "My observer",
+  "destinations": [
+    {
+      "name": "approved-receiver",
+      "urls": ["wss://APPROVED_RECEIVER:443/mqtt"]
+    }
+  ]
+}
