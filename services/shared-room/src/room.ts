@@ -22,6 +22,7 @@ const SESSION_COLUMNS = "alias, client, cursor, last_timestamp AS lastTimestamp,
 const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state, require_path_ack AS requirePathAck";
 const MAX_FRAME = 4096;
 const WIRE_PROTOCOL = "aspen-room.v1.json";
+const HISTORY_TURNAROUND_MS = 1500;
 const textEncoder = new TextEncoder();
 
 function string(value: unknown, name: string, max: number): string {
@@ -452,7 +453,8 @@ export class Room extends DurableObject<Env> {
           proofs.add(encoded.proof);
           this.sql.exec("INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state, require_path_ack) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?)",
             s.alias, s.client, deliveryId, message.seq, s.frontend, encoded.proof, requirePathAck ? 1 : 0);
-          dispatches.push({ws, delivery: this.dispatch(ws.deserializeAttachment() as Connection, encoded.wire, 0, s.client, deliveryId)});
+          dispatches.push({ws, delivery: this.dispatch(ws.deserializeAttachment() as Connection, encoded.wire,
+            HISTORY_TURNAROUND_MS, s.client, deliveryId)});
         } else {
           this.sql.exec("INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state) VALUES (?, ?, ?, ?, ?, NULL, 'queued')", s.alias, s.client, deliveryId, message.seq, s.frontend);
           dispatches.push({ws, delivery});

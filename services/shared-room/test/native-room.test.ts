@@ -12,6 +12,7 @@ it("verifies native logins/posts from two frontends, pushes ordered ciphertext a
     rf("two", fixture.authorLogin),
   ]);
   expect(login.filter((r) => r.transmission)).toHaveLength(1);
+  expect(login.find((r) => r.transmission).transmission.delayMs).toBe(300);
   const response = packet(
     unbase64(login.find((r) => r.transmission).transmission.packet),
   )!;
@@ -30,6 +31,7 @@ it("verifies native logins/posts from two frontends, pushes ordered ciphertext a
     rf("two", fixture.post),
   ]);
   expect(posts.filter((r) => r.transmission)).toHaveLength(1);
+  expect(posts.find((r) => r.transmission).transmission.delayMs).toBe(0);
   expect(
     toHex(
       packet(unbase64(posts.find((r) => r.transmission).transmission.packet))!

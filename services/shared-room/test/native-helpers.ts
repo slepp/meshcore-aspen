@@ -94,6 +94,7 @@ export async function state(backend = "native") {
 }
 export function history(tx: Transmit, room = fixture.room) {
   expect(tx.type).toBe("transmit");
+  expect(tx.delayMs).toBe(1500);
   const p = packet(unbase64(tx.packet))!;
   expect(p.kind).toBe(2);
   const roomSecret = crypto.secret(fromHex(fixture.reader.key), fromHex(room.publicKey))!;
@@ -115,4 +116,3 @@ export function seal(room: typeof fixture.room, peer: typeof fixture.reader, kin
   return base64(join(new Uint8Array([(kind << 2) | (kind === 7 ? 1 : 2), 0x80, roomPub[0]]),
     kind === 7 ? peerPub : peerPub.slice(0, 1), sealed));
 }
-

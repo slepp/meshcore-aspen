@@ -77,6 +77,11 @@ with that dispatch ID. There is no plaintext history or ACK proof in the event.
 The Worker commits a post before permitting its success ACK, and stores the
 expected history ACK proof before dispatching that history packet.
 
+History dispatches use a 1,500 ms delay so a companion radio can finish its
+login PATH return or history ACK before the next message arrives. Honor
+`delayMs` in the shared TX queue; login responses retain their 300 ms delay
+and post ACKs have no added delay.
+
 HTTP callers can submit the same operation to
 `POST /v1/aliases/{alias}/operations`. Its result includes an optional
 `transmission` object for the immediate response. Keep a socket for pushed
