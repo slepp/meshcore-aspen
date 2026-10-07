@@ -16,6 +16,7 @@
 #include "Management.h"
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
+#include "CloudRoomService.h"
 #include <Utils.h>
 #include <helpers/ClientACL.h>
 #include "TelemetryService.h"
@@ -219,6 +220,7 @@ constexpr Help topics[] = {
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
+    {"cloudroom", "cloudroom status|advertise ALIAS; direct authenticated administration; private profile/configuration required; RF delivery unconfirmed"},
     {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
@@ -1544,6 +1546,15 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: setup migration requires authenticated Management RF or Web administration"); return;
     }
     setupCommand(input[5] ? input + 6 : "", reply);
+    return;
+  }
+  if (!strcmp(input, "cloudroom") || !strncmp(input, "cloudroom ", 10)) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: cloud room controls require direct authenticated Management RF or Web administration");
+      return;
+    }
+    cloudRoomCommand(input[9] ? input + 10 : "", reply.text, std::min(replyCapacity, sizeof(reply.text)));
     return;
   }
   if (!strcmp(input, "mqtt") || !strncmp(input, "mqtt ", 5) || !strcmp(input, "help mqtt")) {

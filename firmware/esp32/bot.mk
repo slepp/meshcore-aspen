@@ -70,7 +70,7 @@ BOT_NATIVE_MESH_SOURCES := $(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROO
 BOT_HOST_WORKER_SOURCES := $(filter-out $(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp,$(BOT_NATIVE_MESH_SOURCES))
 BOT_NATIVE_OBJECTS = $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(wildcard $(PHY_BUILD)/crypto/*.o) \
 	$(wildcard $(PHY_BUILD)/ed/*.o) $(BOT_LUA_OBJECTS)
-BOT_REPLAY_RUNTIME_SOURCES = Runtime.cpp Syslog.cpp Management.cpp MastAdmin.cpp ../runtime/MastSource.cpp MastWeb.cpp \
+BOT_REPLAY_RUNTIME_SOURCES = Runtime.cpp Syslog.cpp Management.cpp MastAdmin.cpp CloudRoomService.cpp ../runtime/MastSource.cpp MastWeb.cpp \
 	Lifecycle.cpp CompanionSessions.cpp Observer.cpp ObserverWire.cpp ObserverConfig.cpp Provisioning.cpp \
 	$(NATIVE)/Repeater.cpp $(NATIVE)/Room.cpp $(NATIVE)/Companion.cpp
 BOT_REPLAY_HELPERS = $(filter-out $(BOT_NATIVE_MESH_SOURCES),$(addprefix $(BUILD)/src/helpers/,$(addsuffix .cpp,$(NATIVE_HELPERS))))

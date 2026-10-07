@@ -40,4 +40,5 @@ void loopCloudRoom(); // Dispatch task only, like LocalRadio.
 unsigned cloudRoomAliases();
 const uint8_t *cloudRoomPublicKey(unsigned alias);
 bool requestCloudRoomAdvertisement(unsigned alias); // Explicit operator action.
+void cloudRoomCommand(const char *command, char *reply, size_t capacity);
 } // namespace onchip

@@ -114,3 +114,10 @@ build_flags =
   -D KISS_MAX_TCP_CLIENTS=1
   -D KISS_LOCAL_SOURCES=6
   -D JSON_MAX_DEPTH=8
+
+; Operator-owned configuration/header is sealed in memory by https_profile.py.
+[env:Xiao_S3_WIO_onchip_cloudroom_probe]
+extends = env:Xiao_S3_WIO_onchip_cloudroom
+build_flags =
+  ${env:Xiao_S3_WIO_onchip_cloudroom.build_flags}
+  -include ${sysenv.ONCHIP_OPERATOR_HEADER}

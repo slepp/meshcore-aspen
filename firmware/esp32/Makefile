@@ -259,7 +259,7 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 		$(NATIVE)/Lifecycle.cpp $(NATIVE)/RoleIdentity.cpp $(NATIVE)/RoleProfile.cpp $(NATIVE)/Provisioning.cpp $(NATIVE)/Management.cpp \
 		$(NATIVE)/CompanionSessions.cpp $(NATIVE)/Runtime.cpp $(NATIVE)/Syslog.cpp \
 		$(NATIVE)/Observer.cpp $(NATIVE)/ObserverConfig.cpp $(NATIVE)/ObserverWire.cpp $(NATIVE)/Clock.cpp \
-		$(NATIVE)/MastAdmin.cpp $(NATIVE)/MastSource.cpp $(NATIVE)/MastWeb.cpp \
+		$(NATIVE)/MastAdmin.cpp $(NATIVE)/CloudRoomService.cpp $(NATIVE)/MastSource.cpp $(NATIVE)/MastWeb.cpp \
 		$(ROOT)/firmware/shared/WifiKissMultiplexer.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp \
 		$(BUILD)/src/Dispatcher.cpp $(BUILD)/src/Mesh.cpp $(BUILD)/src/Packet.cpp \
 		$(addprefix $(BUILD)/src/helpers/,$(addsuffix .cpp,$(NATIVE_HELPERS))) \

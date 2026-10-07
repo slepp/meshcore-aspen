@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CloudRoomService.h"
+#include <stdio.h>
+#include <string.h>
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
 #include "LocalRadio.h"
 #include "RoleStorage.h"
@@ -66,6 +68,7 @@ struct Service {
   SemaphoreHandle_t admission = nullptr;
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
+  std::atomic<uint32_t> connectedAliases{0};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
   struct Connection {
@@ -79,6 +82,7 @@ struct Service {
     // this tiny mutex without waiting; LocalRadio itself never crosses tasks.
     xSemaphoreTake(admission, portMAX_DELAY);
     bridge.disconnect(alias);
+    connectedAliases.fetch_and(~(1u << alias), std::memory_order_relaxed);
     xSemaphoreGive(admission);
     c.socket->close(); c.connected = false;
     driver->disconnected(alias);
@@ -102,10 +106,12 @@ struct Service {
           if (!c.socket->open(driver->peer(alias), error, sizeof(error))) {
             // Deliberately fixed text: TLS/library diagnostics may include peer
             // data, but no token or packet plaintext enters public diagnostics.
-            Serial.println("Cloud-room connection unavailable");
+            Serial.printf("Cloud room %s WSS unavailable; verify endpoint, CA, token and UTC\n",
+                          driver->peer(alias).alias);
             lost(alias); continue;
           }
           c.connected = true; c.backoffMs = 2000;
+          connectedAliases.fetch_or(1u << alias, std::memory_order_relaxed);
           driver->opened(alias, bridge.generation(alias));
         }
         const int size = c.socket->receive(buffers->inbound, sizeof(buffers->inbound));
@@ -204,6 +210,27 @@ bool requestCloudRoomAdvertisement(unsigned alias) {
   if (alias>=service.aliases) return false;
   service.advertisements.fetch_or(1u<<alias,std::memory_order_relaxed);return true;
 }
+void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
+  if (!*command || !strcmp(command, "status")) {
+    snprintf(reply, capacity, "Cloud room aliases=%u sockets=%u wss-mask=%u advert-pending=%u",
+             service.aliases, CLOUD_ROOM_SOCKETS,
+             unsigned(service.connectedAliases.load(std::memory_order_relaxed)),
+             unsigned(service.advertisements.load(std::memory_order_relaxed)));
+    return;
+  }
+  if (!strncmp(command, "advertise ", 10)) {
+    for (unsigned alias = 0; alias < service.aliases; ++alias)
+      if (!strcmp(command + 10, service.driver->peer(alias).alias)) {
+        const bool queued = requestCloudRoomAdvertisement(alias);
+        snprintf(reply, capacity, queued ? "Queued room advert %s; RF delivery unconfirmed" :
+                 "Error: room advert %s unavailable", command + 10);
+        return;
+      }
+    snprintf(reply, capacity, "Error: cloud room alias is not active; inspect private configuration and cloudroom status");
+    return;
+  }
+  snprintf(reply, capacity, "Error: cloudroom status|advertise ALIAS");
+}
 } // namespace onchip
 #else
 namespace onchip {
@@ -214,5 +241,10 @@ void loopCloudRoom() {}
 unsigned cloudRoomAliases() { return 0; }
 const uint8_t *cloudRoomPublicKey(unsigned) { return nullptr; }
 bool requestCloudRoomAdvertisement(unsigned) { return false; }
+void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
+  snprintf(reply, capacity, !*command || !strcmp(command, "status") ?
+           "Cloud room aliases=0 sockets=0 wss-mask=0 advert-pending=0" :
+           "Error: cloud room is disabled in this image; use the privately configured cloudroom profile");
+}
 }
 #endif

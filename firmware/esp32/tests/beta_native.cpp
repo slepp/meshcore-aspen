@@ -602,6 +602,20 @@ static void management_cli_core() {
     assert(readOnly("roles") == readOnly("roles list") && readOnly("roles") == readOnly("roles list 1"));
     assert(readOnly("roles list 2") ==
            "roles 2/2: Management=available bot applied=1 saved=1; KISS=shared modem service (no mask bit); apply reboots");
+    {
+      const auto saved = identity_test::durable;
+      const auto savedFiles = filesystem_test::files;
+      MastAdmin::Reply reply;
+      f.management.admin().execute("cloudroom status", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+      assert(std::string(reply.text) == "Cloud room aliases=0 sockets=0 wss-mask=0 advert-pending=0");
+      f.management.admin().execute("cloudroom advertise TestA", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "disabled in this image"));
+      assert(f.action("cloudroom status").find("direct authenticated") != std::string::npos);
+      f.management.admin().execute("cloudroom advertise TestA", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "direct authenticated"));
+      assert(identity_test::durable == saved && filesystem_test::files == savedFiles);
+    }
+    assert(rf(tag + "cloudroom status") == tag + "Cloud room aliases=0 sockets=0 wss-mask=0 advert-pending=0");
     assert(rf(tag + "roles") == tag + readOnly("roles"));
     for (const char *command : {"roles list 0", "roles list 3", "roles list extra", "roles list 1 extra"})
       assert(readOnly(command).find("Error:") == 0);

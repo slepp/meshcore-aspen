@@ -11,6 +11,24 @@ CA, token and alias records, plus matching public keys and names. Both aliases
 use one physical radio source and one existing TX scheduler. Room expanded
 private keys stay in the Worker. Configuration remains immutable for the
 service's lifetime. Follow [private setup](TRUST.md) before enabling a provider.
+The private `ONCHIP_CLOUD_ROOM_CONFIG_HEADER` may define the strong
+`onchip::cloudRoomConfiguration()` provider; `CloudRoomConfig.cpp` includes it
+only in the opt-in profile. Keep that header and the resulting image private.
+The `Xiao_S3_WIO_onchip_cloudroom_probe` profile accepts the existing sealed
+operator header path rather than putting credentials in compiler arguments.
+
+After an application-only private update, use authenticated Management:
+
+```text
+cloudroom status
+cloudroom advertise ALIAS
+```
+
+`aliases` reports configured aliases, `wss-mask` marks connected WSS sockets,
+and `advert-pending` marks explicit requests waiting for the network driver.
+An accepted advertisement request does not confirm RF reception. Check it
+on a companion radio. These controls reject source/bot invocations, and no
+advertisement is requested by startup or status reads.
 
 `CloudRoomService` runs one network task with eight-slot RX/TX/result SPSC
 queues. Dispatch-owned `LocalRadio` receives RF, filters local reflections,
