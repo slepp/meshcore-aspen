@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <utility/debug.h>
 #include <cmath>
-#include <inttypes.h>
 #include "MyMesh.h"
 #include "CommandBot.h"
 #include "RuntimeConfig.h"
@@ -439,8 +438,9 @@ static bool statsCommand(const char* command, char* reply) {
     format("schema=1 scope=modem tx_rf_ms=%lu rx_estimated_ms=%lu",
            (unsigned long)sharedRadio.aggregateRfMs(), (unsigned long)sharedRadio.receivedAirtimeMs());
   } else if (!strcmp(topic, "admission")) {
-    format("schema=1 scope=modem uptime_ms=%" PRIu64 " tx_started=%lu tx_rejected=%lu",
-           statsUptime(), (unsigned long)sharedRadio.txStarted, (unsigned long)sharedRadio.txRejected);
+    format("schema=1 scope=modem uptime_ms=%llu tx_started=%lu tx_rejected=%lu",
+           static_cast<unsigned long long>(statsUptime()),
+           (unsigned long)sharedRadio.txStarted, (unsigned long)sharedRadio.txRejected);
 #if NRFMAST_PRODUCTION_LUA
   } else if (!strcmp(topic, "bot") || !strcmp(topic, "vm")) {
     auto &service = onchip::commandBotService();
@@ -450,8 +450,9 @@ static bool statsCommand(const char* command, char* reply) {
       format("schema=1 scope=bot jobs=%u replies=%lu rejected=%lu vm_failures=%lu",
              service.jobsInUse(), (unsigned long)s.replies, (unsigned long)s.rejected, (unsigned long)s.vmFailures);
     else if (s.lastVm.peakBytes)
-      format("schema=1 scope=last_vm peak_bytes=%u instructions=%lu elapsed_us=%" PRIu64 " stack_free_bytes=%lu",
-             unsigned(s.lastVm.peakBytes), (unsigned long)s.lastVm.instructions, s.lastVm.elapsedUs,
+      format("schema=1 scope=last_vm peak_bytes=%u instructions=%lu elapsed_us=%llu stack_free_bytes=%lu",
+             unsigned(s.lastVm.peakBytes), (unsigned long)s.lastVm.instructions,
+             static_cast<unsigned long long>(s.lastVm.elapsedUs),
              (unsigned long)s.lastVm.stackHighWaterBytes);
     else strcpy(reply, "Error: Lua execution measurements unavailable before first execution");
 #endif

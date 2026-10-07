@@ -144,7 +144,7 @@ void RoleClock::tick() {
   seconds_ += total / 1000; remainder_ = total % 1000;
 }
 bool clockSnapshot(ClockSnapshot &value) {
-  value = {};
+  value = ClockSnapshot{};
   if (clockGate.test_and_set(std::memory_order_acquire)) return false;
   const uint32_t now = millis();
   trustedTime.poll(now);
