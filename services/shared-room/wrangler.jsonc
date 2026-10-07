@@ -3,6 +3,7 @@
   "name": "aspen-shared-room",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-07",
+  "keep_vars": true,
   "durable_objects": {
     "bindings": [{"name": "ROOMS", "class_name": "Room"}]
   },
