@@ -3,6 +3,7 @@
 import {readFile, stat} from "node:fs/promises";
 import {spawn} from "node:child_process";
 import {fileURLToPath} from "node:url";
+import {checkSecretSlots} from "./bindings.mjs";
 
 const args = process.argv.slice(2);
 const file = args[args.indexOf("--file") + 1];
@@ -87,20 +88,36 @@ try {
     // operator and reads their private mount/file locally, outside model input.
     const wrangler = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
     const workerConfig = fileURLToPath(new URL("../wrangler.jsonc", import.meta.url));
+    const childEnv = {...process.env, CLOUDFLARE_ACCOUNT_ID: account, WRANGLER_LOG_SANITIZE: "true", WRANGLER_LOG: "error", WRANGLER_SEND_METRICS: "false"};
+    // Inspect live binding names/types before sending any private JSON.
+    // Capture Wrangler's response locally; never echo it to logs.
+    await checkSecretSlots(async args => {
+      const child = spawn(process.execPath, [wrangler, ...args, "--config", workerConfig], {
+        stdio: ["ignore", "pipe", "pipe"], env: {...childEnv, WRANGLER_LOG: "log"},
+      });
+      let output = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", data => {output += data;});
+      child.stderr.resume();
+      const code = await new Promise((resolve, fail) => {child.once("error", fail); child.once("exit", resolve);});
+      if (code !== 0) reject("Cannot inspect live Worker binding names/types; no secret upload performed.");
+      try {return JSON.parse(output);}
+      catch {reject("Cannot inspect live Worker binding names/types; no secret upload performed.");}
+    });
     const child = spawn(process.execPath, [wrangler, "secret", "bulk", "--name", "aspen-shared-room", "--config", workerConfig], {
       stdio: ["pipe", "inherit", "inherit"],
-      env: {...process.env, CLOUDFLARE_ACCOUNT_ID: account, WRANGLER_LOG_SANITIZE: "true", WRANGLER_LOG: "error", WRANGLER_SEND_METRICS: "false"},
+      env: childEnv,
     });
     child.stdin.on("error", () => {});
     const done = new Promise((resolve, fail) => {child.once("error", fail); child.once("exit", code => resolve(code));});
     child.stdin.end(JSON.stringify({ALIASES: JSON.stringify(config.ALIASES), FRONTENDS: JSON.stringify(config.FRONTENDS), ROOM_KEYS: JSON.stringify(keyConfig.expandedKeys)}));
     if (await done !== 0) reject("Wrangler did not confirm the secret upload.");
-    console.log("ALIASES/FRONTENDS/ROOM_KEYS uploaded to aspen-shared-room. Deploy the opaque Worker before enabling frontend connections.");
+    console.log("ALIASES/FRONTENDS/ROOM_KEYS uploaded to aspen-shared-room. The existing opaque Worker now has the private room configuration; enable frontends only when ready.");
   }
 } catch (error) {
   // Only our fixed validation messages are printable; never echo parser input,
   // external process errors, environment or configuration object values.
-  const message = error instanceof Error && /^(Use |Configuration must |Cannot read |Invalid\/duplicate |Wrangler did not )/.test(error.message)
+  const message = error instanceof Error && /^(Use |Configuration must |Cannot read |Cannot inspect |Remove conflicting |Invalid\/duplicate |Wrangler did not )/.test(error.message)
     ? error.message : "Private configuration handoff failed; inspect local file/access and Wrangler installation.";
   console.error(message); process.exitCode = 1;
 }

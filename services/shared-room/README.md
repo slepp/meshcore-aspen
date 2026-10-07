@@ -16,6 +16,8 @@ The example uses **public local fixture keys**. Use it for simulated packets;
 never advertise those identities on a real RF network. For a deployment,
 configure private `ALIASES`, `FRONTENDS` and `ROOM_KEYS` secrets. Keep
 `MODE="opaque"`, the default. [TRUST.md](TRUST.md) describes private setup.
+An unconfigured Worker rejects requests with 401; it needs no empty credential
+variables. Keep those three names out of Wrangler's public `vars`.
 
 | Configuration | Purpose |
 | --- | --- |

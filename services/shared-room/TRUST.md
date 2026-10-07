@@ -58,14 +58,30 @@ node services/shared-room/tools/configure.mjs \
 Validation checks private file ownership/permissions, grants, expanded-key
 format and native public-key pairing without printing values. Upload reads
 files locally and pipes ALIASES/FRONTENDS/ROOM_KEYS to Wrangler `secret bulk`.
-It reuses the operator's Cloudflare login and forces log sanitization with
-error-only logging. This is an operator secret handoff, not ordinary tool stdin
+Before upload it checks live binding names/types without printing values.
+It stops if a private name is already a plaintext binding. It reuses the
+operator's Cloudflare login, captures preflight output and sanitizes Wrangler's
+error-only upload logging. This is an operator secret handoff, not ordinary tool stdin
 or a new account-wide credential. Keep account IDs, endpoints and private
 configuration in local ignored files or secret-manager mounts.
 
 Deploy the opaque Worker code before uploading these secrets and enabling
 frontends. Choose the Cloudflare account privately, then run the normal
-Wrangler deployment from this package. Supply only endpoint, CA, restricted
+Wrangler deployment from this package. Do not add empty `ALIASES`, `FRONTENDS`
+or `ROOM_KEYS` entries to `vars`: an absent credential binding rejects requests
+with 401, while a plaintext binding blocks creation of a same-name secret.
+
+The checked-in configuration uses `keep_vars=true` to retain existing public
+operator settings on future code deployments. Wrangler also
+[preserves secrets across deployments](https://developers.cloudflare.com/workers/wrangler/configuration/#source-of-truth).
+An older deployment with plaintext credential placeholders needs one code
+deployment that omits just those placeholders and temporarily sets
+`keep_vars=false` in its private deployment configuration. Preserve the other
+bindings and existing DO namespace; do not delete secrets to resolve this
+collision. The next normal code deployment uses the checked-in configuration.
+
+The secret handoff updates the existing Worker configuration; another code
+deployment is unnecessary after a successful upload. Supply only endpoint, CA, restricted
 token and public metadata to `cloudRoomConfiguration()` in the private native
 build. The default provider is disabled. No deployment, secret upload, flash
 or RF advertisement is performed by a build or the validation command.
