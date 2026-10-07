@@ -854,6 +854,8 @@ private:
 #endif
   FixedPeerClient *client_ = nullptr;
   bool measuring_ = false;
+  bool metricsEnabled_ = true;
+  void phase(const char *name) { if (metricsEnabled_) phaseBotHttpsMetrics(name); }
   bool certificates_ = false;
   Failure failure_ = Failure::Transport;
   CertificateWindow validity_;
@@ -883,13 +885,13 @@ private:
     mbedtls_x509_crt_init(&parsed);
     const int code = mbedtls_x509_crt_parse(&parsed,
         reinterpret_cast<const unsigned char *>(ca), strlen(ca) + 1);
-    phaseBotHttpsMetrics("ca-parsed");
+    phase("ca-parsed");
     diagnostics_.ca = heap_caps_get_free_size(HeapCaps);
     validity_ = {};
     const bool valid = code == 0 && validity_.add(&parsed);
     if (!valid) failedAt(BotHttpsFailurePoint::CaParse, code);
     mbedtls_x509_crt_free(&parsed);
-    phaseBotHttpsMetrics("ca-freed");
+    phase("ca-freed");
     if (!valid) {
       if (tlsAllocationFailed(code)) {
         failure_ = Failure::Heap;
@@ -905,6 +907,7 @@ private:
     return true;
   }
 public:
+  explicit SecureTransport(bool metrics = true) : metricsEnabled_(metrics) {}
   ~SecureTransport() override { close(); releaseRoleStorage(anchors_); }
   bool online() const override { return WiFi.status() == WL_CONNECTED; }
   Failure failure() const override { return failure_; }
@@ -945,9 +948,8 @@ public:
       return false;
     }
     if (!validate(error, capacity)) return false;
-    startBotHttpsMetrics();
-    measuring_ = true;
-    phaseBotHttpsMetrics("before-client");
+    if (metricsEnabled_) { startBotHttpsMetrics(); measuring_ = true; }
+    phase("before-client");
     if (WiFi.status() != WL_CONNECTED) {
       snprintf(error, capacity, "WiFi is offline"); return false;
     }
@@ -965,11 +967,11 @@ public:
                    "TLS memory unavailable: 68KiB internal work, 32KiB radio reserve");
           return false;
         }
-        if (!waiting) { phaseBotHttpsMetrics("admission-wait"); waiting = true; }
+        if (!waiting) { phase("admission-wait"); waiting = true; }
         if (!validate(error, capacity)) return false;
         vTaskDelay(1);
       }
-      if (waiting) phaseBotHttpsMetrics("admission-recovered");
+      if (waiting) phase("admission-recovered");
       return true;
     };
     if (!admit()) return false;
@@ -993,14 +995,14 @@ public:
       failedAt(BotHttpsFailurePoint::Client);
       snprintf(error, capacity, "TLS client allocation failed"); return false;
     }
-    phaseBotHttpsMetrics("client-created");
+    phase("client-created");
     client_->setTimeout(1);
     client_->setHandshakeTimeout(8);
     client_->setCACert(config.ca);
     // Fixed native address avoids the SDK's potentially 31-second blocking DNS.
     // Supplying host explicitly retains SNI and certificate hostname validation.
     if (!client_->connect(address, config.port, config.host, config.ca, nullptr, nullptr)) {
-      phaseBotHttpsMetrics("connect-failed");
+      phase("connect-failed");
       char detail[80]{};
       const int code = client_->lastError(detail, sizeof(detail));
       failure_ = tlsAllocationFailed(code) ? Failure::Heap : Failure::Transport;
@@ -1009,7 +1011,7 @@ public:
                failure_ == Failure::Heap ? "allocation" : "connection/verification", code, detail);
       return false;
     }
-    phaseBotHttpsMetrics("connected");
+    phase("connected");
     diagnostics_.connected = heap_caps_get_free_size(HeapCaps);
     diagnostics_.cipher = client_->cipher();
     for (auto *peer = client_->getPeerCertificate(); peer && diagnostics_.peerCount < 8; peer = peer->next) {
@@ -1037,11 +1039,11 @@ public:
   void close() override {
     if (measuring_) sampleBotHttpsMetrics();
     if (client_) {
-      phaseBotHttpsMetrics("before-close");
+      phase("before-close");
       client_->stop();
-      phaseBotHttpsMetrics("stopped");
+      phase("stopped");
       delete client_; client_ = nullptr;
-      phaseBotHttpsMetrics("client-freed");
+      phase("client-freed");
     }
     if (measuring_) { finishBotHttpsMetrics(); measuring_ = false; }
     certificates_ = false;
@@ -1070,18 +1072,22 @@ bool beginBotHttpsMemory() {
 #endif
 }
 BotHttpsTransport *createBotHttpsTransport() { return new (std::nothrow) SecureTransport; }
+BotHttpsTransport *createPersistentBotTlsTransport() { return new (std::nothrow) SecureTransport(false); }
 #elif defined(ONCHIP_BOT_NATIVE_HTTPS)
 bool beginBotHttpsMemory() { return true; }
 BotHttpsTransport *createNativeBotHttpsTransport();
 BotHttpsTransport *createBotHttpsTransport() { return createNativeBotHttpsTransport(); }
+BotHttpsTransport *createPersistentBotTlsTransport() { return createNativeBotHttpsTransport(); }
 #else
 bool beginBotHttpsMemory() { return true; }
 BotHttpsTransport *createBotHttpsTransport() { return nullptr; }
+BotHttpsTransport *createPersistentBotTlsTransport() { return nullptr; }
 #endif
 #else
 bool beginBotHttpsMemory() { return true; }
 BotHttps::~BotHttps() = default;
 BotHttpsTransport *createBotHttpsTransport() { return nullptr; }
+BotHttpsTransport *createPersistentBotTlsTransport() { return nullptr; }
 bool BotHttps::decode(const BotIoRequest &, const char *, size_t, BotIoResult &result) {
   failure(result, "unavailable", "Home HTTPS is not built into this profile"); return false;
 }

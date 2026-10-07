@@ -11,6 +11,9 @@
 #include "Management.h"
 #include "ServiceName.h"
 #include "Syslog.h"
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+#include "CloudRoomService.h"
+#endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "CommandBot.h"
 #endif
@@ -161,7 +164,11 @@ RolePasswordUpdate setNativeRolePassword(Role role, const char *password) {
 }
 
 struct NativePresenceKeys {
-  static constexpr uint8_t Capacity = 3 + queued_tx::ROLE_COUNT;
+  static constexpr uint8_t Capacity = 3 + queued_tx::ROLE_COUNT
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+    + cloudroom::AliasLimit
+#endif
+    ;
   uint8_t keys[Capacity][queued_tx::ROLE_KEY_SIZE]{};
   uint8_t count = 0;
   bool add(const uint8_t *key) {
@@ -212,6 +219,10 @@ static bool refreshRolePresence() {
       if (!keys.add(status.public_key)) return false;
     }
   }
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+  for (unsigned alias = 0; alias < cloudRoomAliases(); ++alias)
+    if (!keys.add(cloudRoomPublicKey(alias))) return false;
+#endif
   if (!roleMux->setNativeRolePresence(bootProfile.enabled, &keys.keys[0][0],
                                       keys.count))
     return false;
@@ -448,6 +459,10 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
     Serial.println("On-chip observer unavailable; native roles remain active");
   }
   roleMux = &mux;
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+  static_assert(KISS_LOCAL_SOURCES >= 6, "Cloud room needs one source beside the five native services");
+  if (!beginCloudRoom(mux)) Serial.println("Cloud-room driver not configured; service disabled");
+#endif
   if (!refreshRolePresence()) {
     Serial.println("On-chip role presence reporting unavailable");
     return false;
@@ -551,6 +566,9 @@ void loop() {
 #endif
   management.loop();
   loopLifecycles();
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+  loopCloudRoom();
+#endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   commandBot.loop();
 #endif
