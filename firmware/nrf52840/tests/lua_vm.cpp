@@ -139,6 +139,10 @@ static void fragmentedJobBuffers() {
   BotSession session;
   BotVmStats stats;
   char error[128]{};
+  const size_t beforeInvalid = nothrowCalls;
+  const char *invalid = "function broken(";
+  assert(!session.load(invalid, strlen(invalid), 1, stats, error, sizeof(error)) &&
+         !session.manifest().count && nothrowCalls == beforeInvalid);
   assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 1, stats, error, sizeof(error)));
   assert(session.start(1, event("!ping"), error, sizeof(error)));
   assert(session.start(2, event("!ping"), error, sizeof(error)));
@@ -152,7 +156,7 @@ static void fragmentedJobBuffers() {
   failedNothrowCall = 0;
   assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 3, stats, error, sizeof(error)));
   nothrowBlockLimit = SIZE_MAX;
-  puts("Pine fragmented heap: separate job-sized blocks retain both slots; partial allocation failure cleans up and reloads");
+  puts("Pine fragmented heap: no idle buffers during parsing; separate job-sized blocks retain both slots; partial allocation failure cleans up and reloads");
 }
 
 int main() {

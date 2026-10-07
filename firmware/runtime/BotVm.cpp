@@ -2550,7 +2550,7 @@ struct BotSession::Impl {
   };
   using Jobs = std::array<Job, BotJobLimit>;
 #if ONCHIP_BOT_COMPACT_PROFILE
-  // Reserve individual buffers before parser allocations fragment the heap.
+  // Separate blocks avoid requiring one contiguous buffer for all jobs.
   std::array<std::unique_ptr<Job>, BotJobLimit> jobStorage;
   Job &job(unsigned index) { return *jobStorage[index]; }
 #else
@@ -2891,23 +2891,6 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   impl_ = new (memory) Impl;
   auto &s = *impl_;
   s.generation = generation; s.heap.limits = limits;
-#if ONCHIP_BOT_COMPACT_PROFILE
-#ifdef NRF52_PLATFORM
-  if (sizeof(Impl::Jobs) + 8192u + BotJobLimit * 16u >
-      unsigned(std::max(dbgHeapFree(), 0))) {
-    snprintf(error, errorSize, "Lua job buffers need %uB; free=%uB reserve=8192B",
-             unsigned(sizeof(Impl::Jobs)), unsigned(std::max(dbgHeapFree(), 0)));
-    clear(); return false;
-  }
-#endif
-  for (auto &job : s.jobStorage) {
-    job.reset(new (std::nothrow) Impl::Job);
-    if (!job) {
-      snprintf(error, errorSize, "Lua job buffer %uB unavailable", unsigned(sizeof(Impl::Job)));
-      clear(); return false;
-    }
-  }
-#endif
   s.loader = {source, size, nullptr, nullptr};
   s.loader.manifest = &s.program;
   s.loader.budget = &s.heap; s.loader.retained = true;
@@ -2944,6 +2927,24 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   }
   stats = s.heap.stats;
   s.heap.running = false;
+#if ONCHIP_BOT_COMPACT_PROFILE
+  // Parser temporaries have been collected before reserving idle job buffers.
+#ifdef NRF52_PLATFORM
+  if (ok && sizeof(Impl::Jobs) + 8192u + BotJobLimit * 16u >
+      unsigned(std::max(dbgHeapFree(), 0))) {
+    snprintf(error, errorSize, "Lua job buffers need %uB; free=%uB reserve=8192B",
+             unsigned(sizeof(Impl::Jobs)), unsigned(std::max(dbgHeapFree(), 0)));
+    ok = false;
+  }
+#endif
+  if (ok) for (auto &job : s.jobStorage) {
+    job.reset(new (std::nothrow) Impl::Job);
+    if (!job) {
+      snprintf(error, errorSize, "Lua job buffer %uB unavailable", unsigned(sizeof(Impl::Job)));
+      ok = false; break;
+    }
+  }
+#endif
   s.loader.source = nullptr; s.loader.size = 0;
   if (!ok) clear();
   return ok;

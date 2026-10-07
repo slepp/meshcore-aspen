@@ -341,8 +341,9 @@ Regenerate it after changing native declarations using
 `PINE_DUMP_REGISTRY=1 firmware/nrf52840/.build/native/lua-vm`.
 Declarations are checked individually against the sorted flash catalogue, with
 a bounded registration mask; no whole-manifest temporary is allocated.
-The compact session reserves two separate job-sized buffers before parser
-allocations fragment the heap. Read-only API and event proxies share one
+The compact session reserves two separate job-sized buffers after source
+validation and parser garbage collection, so idle buffers do not consume the
+parser's physical heap headroom. Read-only API and event proxies share one
 metatable, but each retains its own backing values; writes to existing and new
 keys remain denied. Neither optimization reduces the two-job capacity,
 48 KiB Lua quota or 8 KiB physical reserve. A failed job-buffer allocation
