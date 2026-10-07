@@ -134,6 +134,32 @@ not active client/RPC work. Native-worker RSS, descriptors and threads are
 recorded separately: RSS includes allocator arenas and is not a live-heap
 measurement. Reports remain private mode-0600 files.
 
+### Compare a finite Go/Hew packet workload
+
+Build both hosts, then run the same 72-request workload against one loopback
+modem fixture:
+
+```sh
+go build -o build/meshcore-reference ../../cmd/meshcore-host
+HEW_WORKERS=4 python3 -B tests/matched_load.py \
+  --go-binary build/meshcore-reference \
+  --report build/matched-load-results.json
+```
+
+Go uses four ordinary sources; Hew uses one source with four logical ports.
+Both use the same identities, retained native program, role names, PHY readback,
+MQTT broker and request bursts. The checker first requires Go's actual
+`per_role` startup and four-role readiness on that fixture. It compares
+authenticated reply text, counts terminal transmissions and emulated recipient
+ACKs, and records queue waits, CPU, descriptors, actors and Hew live heap.
+
+The fixture models half-duplex RX/TX airtime from actual packet lengths at
+SF7, 250 kHz bandwidth and CR 4:5. Its queue holds at most 64 submissions.
+These modeled airtimes and peer ACKs are not physical RF measurements, and the
+finite workload does not establish maximum capacity. Native-worker and Go RSS
+remain allocator/arena proxies, not live-heap measurements. Reports are private;
+failed fixture state is retained for inspection.
+
 `hostlib.binary` reuses `std.encoding.binary` for fixed-width bit patterns.
 Its adapter checks lengths and pads short integers before calling std getters,
 whose own short-buffer contract aborts rather than returns `Option`.
