@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aspen-shared-room",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-07",
+  "durable_objects": {
+    "bindings": [{"name": "ROOMS", "class_name": "Room"}]
+  },
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Room"]}],
+  "vars": {"HISTORY_LIMIT": "0"}
+}
