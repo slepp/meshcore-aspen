@@ -2,10 +2,12 @@
 #include "BotSettings.h"
 #include "BotJournal.h"
 #include "RoleStorage.h"
+#include "BotRegistry.h"
 #include "Config.h"
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <Utils.h>
+#include <Mesh.h>
 #include <nvs.h>
 #include <string.h>
 #include <memory>
@@ -320,23 +322,170 @@ bool saveBotForwardPolicy(const BotForwardPolicy &policy) {
   return (loadBotForwardPolicy(actual) && !memcmp(actual.from, policy.from, 32) &&
           !memcmp(actual.to, policy.to, 32)) || failed("forward readback; outcome unknown", ESP_ERR_INVALID_STATE);
 }
-bool BotRadioPolicy::valid() const {
-  const size_t length = strnlen(channel, sizeof(channel));
-  if (length == sizeof(channel) || (length && !channelKeySet && (length < 2 || channel[0] != '#')) ||
-      pathWidth < 1 || pathWidth > 3 || airtimeMs < 360 || airtimeMs > 3600) return false;
+BotRadioPolicy::Membership BotRadioPolicy::membership(unsigned slot) const {
+  if (slot >= ChannelLimit) return {};
+  if (slot) return additional[slot - 1];
+  Membership result;
+  memcpy(result.name, channel, sizeof(channel));
+  memcpy(result.key, channelKey, sizeof(channelKey));
+  result.keySet = channelKeySet;
+  return result;
+}
+bool BotRadioPolicy::setMembership(unsigned slot, const Membership &value) {
+  if (slot >= ChannelLimit) return false;
+  const auto previous = membership(slot);
+  if (strcmp(previous.name, value.name) || previous.keySet != value.keySet ||
+      memcmp(previous.key, value.key, sizeof(value.key))) {
+    access[slot + 1] = !strcmp(value.name, "Public") ? 0 : All;
+    for (auto &rule : rules) if (rule.context == slot + 1) rule = {};
+  }
+  if (slot) additional[slot - 1] = value;
+  else {
+    memcpy(channel, value.name, sizeof(channel));
+    memcpy(channelKey, value.key, sizeof(channelKey));
+    channelKeySet = value.keySet;
+  }
+  return true;
+}
+void BotRadioPolicy::nativeChannel(const Membership &value, mesh::GroupChannel &result) {
+  result = {};
+  static const uint8_t publicKey[16] =
+      {0x8b,0x33,0x87,0xe9,0xc5,0xcd,0xea,0x6a,0xc9,0xe5,0xed,0xba,0xa1,0x15,0xcd,0x72};
+  if (value.keySet) memcpy(result.secret, value.key, sizeof(value.key));
+  else if (!strcmp(value.name, "Public")) memcpy(result.secret, publicKey, sizeof(publicKey));
+  else mesh::Utils::sha256(result.secret, 16,
+      reinterpret_cast<const uint8_t *>(value.name), strlen(value.name));
+  mesh::Utils::sha256(result.hash, sizeof(result.hash), result.secret, 16);
+}
+namespace {
+bool validMembership(const BotRadioPolicy::Membership &value) {
+  const size_t length = strnlen(value.name, sizeof(value.name));
+  const bool publicChannel = length < sizeof(value.name) && !strcmp(value.name, "Public");
+  if (length == sizeof(value.name) ||
+      (length && !value.keySet && !publicChannel && (length < 2 || value.name[0] != '#')))
+    return false;
   bool keyPresent = false;
-  for (auto byte : channelKey) keyPresent = keyPresent || byte;
-  if (channelKeySet != keyPresent || (channelKeySet && !length)) return false;
-  if (channelKeySet) {
+  for (auto byte : value.key) keyPresent = keyPresent || byte;
+  if (value.keySet != keyPresent || (value.keySet && (!length || publicChannel))) return false;
+  if (value.keySet) {
     for (size_t i = 0; i < length; ++i)
-      if (channel[i] < 32 || channel[i] > 126) return false;
+      if (value.name[i] < 32 || value.name[i] > 126) return false;
     return true;
   }
+  if (publicChannel) return true;
   for (size_t i = 1; i < length; ++i)
-    if (!((channel[i] >= 'a' && channel[i] <= 'z') ||
-          (channel[i] >= '0' && channel[i] <= '9') || channel[i] == '-' || channel[i] == '_'))
+    if (!((value.name[i] >= 'a' && value.name[i] <= 'z') ||
+          (value.name[i] >= '0' && value.name[i] <= '9') || value.name[i] == '-' || value.name[i] == '_'))
       return false;
   return true;
+}
+constexpr const char *RadioSlots[] = {"/command-bot/radio-a.bin", "/command-bot/radio-b.bin"};
+struct RadioReference {
+  uint8_t magic[4]{'B','R','P',3}, slot = 0, digest[32]{};
+  bool valid() const { return !memcmp(magic, "BRP\3", 4) && slot < 2; }
+};
+struct RadioRecord {
+  uint8_t magic[4]{'B','R','C',1};
+  BotRadioPolicy policy;
+};
+struct RadioWorkspace { RadioRecord record, check; };
+struct RadioWorkspaceDeleter {
+  void operator()(RadioWorkspace *value) const { releaseRoleStorage(value); }
+};
+using RadioStorage = std::unique_ptr<RadioWorkspace, RadioWorkspaceDeleter>;
+static_assert(sizeof(RadioReference) == 37, "Keep native policy authority bounded");
+bool readRadioFile(const RadioReference &reference, RadioRecord &record) {
+  auto file = SPIFFS.open(RadioSlots[reference.slot], "r");
+  const bool complete = file && file.size() == sizeof(record) &&
+      file.read(reinterpret_cast<uint8_t *>(&record), sizeof(record)) == sizeof(record) &&
+      file.size() == sizeof(record);
+  file.close();
+  uint8_t digest[32];
+  mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&record), sizeof(record));
+  return (complete && !memcmp(record.magic, "BRC\1", 4) &&
+          !memcmp(reference.digest, digest, sizeof(digest)) && record.policy.valid()) ||
+         failed("radio policy file read/validation", ESP_ERR_INVALID_STATE);
+}
+}
+bool BotRadioPolicy::valid() const {
+  if (pathWidth < 1 || pathWidth > 3 || airtimeMs < 360 || airtimeMs > 3600) return false;
+  for (auto flags : access) if (flags > All) return false;
+  for (unsigned i = 0; i < ChannelLimit; ++i) {
+    const auto value = membership(i);
+    if (!validMembership(value)) return false;
+    if (!value.name[0]) continue;
+    mesh::GroupChannel current;
+    nativeChannel(value, current);
+    for (unsigned j = 0; j < i; ++j) {
+      const auto other = membership(j);
+      if (!other.name[0]) continue;
+      mesh::GroupChannel previous;
+      nativeChannel(other, previous);
+      if (!strcmp(value.name, other.name) ||
+          !memcmp(current.secret, previous.secret, sizeof(current.secret))) return false;
+    }
+  }
+  for (unsigned i = 0; i < RuleLimit; ++i) {
+    const auto &rule = rules[i];
+    if (!rule.name[0]) continue;
+    if (!memchr(rule.name, 0, sizeof(rule.name)) || rule.kind > 1 ||
+        !(rule.kind ? botThreadName(rule.name, strlen(rule.name)) : botCommandName(rule.name)) ||
+        rule.context > NativeContext || rule.access > All ||
+        (rule.kind && (rule.access & ~(Read | Write)))) return false;
+    unsigned threads = rule.kind;
+    for (unsigned j = 0; j < i; ++j)
+      if (rules[j].name[0] && rules[j].context == rule.context && rules[j].kind == rule.kind) {
+        if (!strcmp(rules[j].name, rule.name)) return false;
+        if (rule.kind && ++threads > BotThreadRuleLimit) return false;
+      }
+  }
+  return true;
+}
+bool BotRadioPolicy::extended() const {
+  if (!strcmp(channel, "Public")) return true;
+  for (const auto &value : additional) if (value.name[0]) return true;
+  for (auto flags : access) if (flags != All) return true;
+  for (const auto &rule : rules) if (rule.name[0]) return true;
+  return false;
+}
+int BotRadioPolicy::context(const BotEvent &event) const {
+  if (event.kind != BotEvent::Command && event.kind != BotEvent::Message) return NativeContext;
+  if (event.channel[0]) {
+    if (!event.channelVerified || event.authenticated) return -1;
+    for (unsigned i = 0; i < ChannelLimit; ++i) {
+      const auto value = membership(i);
+      if (!value.name[0]) continue;
+      mesh::GroupChannel native;
+      nativeChannel(value, native);
+      uint8_t digest[32];
+      static const uint8_t domain[] = "meshcore-bot-channel-v1";
+      mesh::Utils::sha256(digest, sizeof(digest), domain, sizeof(domain) - 1,
+                          native.secret, sizeof(native.secret));
+      if (!memcmp(digest, event.channelId, sizeof(digest))) {
+        return int(i + 1);
+      }
+    }
+    return -1;
+  }
+  return event.authenticated && !event.local ? 0 : -1;
+}
+uint8_t BotRadioPolicy::flags(const BotEvent &event, const char *name) const {
+  const int origin = context(event);
+  if (origin < 0) return 0;
+  for (const auto &rule : rules)
+    if (rule.name[0] && !rule.kind && rule.context == origin && !strcmp(rule.name, name)) return rule.access;
+  return access[origin];
+}
+void BotRadioPolicy::bindStorage(BotEvent &event) const {
+  event.policyFlags = flags(event, event.name);
+  for (auto &rule : event.threadRules) rule = {};
+  const int origin = context(event);
+  unsigned count = 0;
+  for (const auto &rule : rules)
+    if (rule.name[0] && rule.kind == 1 && rule.context == origin && count < BotThreadRuleLimit) {
+      auto &bound = event.threadRules[count++];
+      strcpy(bound.name, rule.name); bound.access = rule.access;
+    }
 }
 bool loadBotRadioPolicy(BotRadioPolicy &policy) {
   policy = {};
@@ -350,6 +499,15 @@ bool loadBotRadioPolicy(BotRadioPolicy &policy) {
   nvs_close(handle);
   if (result == ESP_ERR_NVS_NOT_FOUND) return true;
   if (result != ESP_OK) return failed("policy read", result);
+  if (size == sizeof(RadioReference) && !memcmp(record, "BRP\3", 4)) {
+    RadioReference reference;
+    memcpy(&reference, record, sizeof(reference));
+    RadioStorage storage(allocateRoleStorage<RadioWorkspace>("radio policy read"));
+    if (!reference.valid() || !storage || !readRadioFile(reference, storage->record))
+      return failed("radio policy authority/file", ESP_ERR_INVALID_STATE);
+    policy = storage->record.policy;
+    return true;
+  }
   const bool storedHashtag = size == 40 && !memcmp(record, "BRP\1", 4);
   if (!storedHashtag && (size != sizeof(record) || memcmp(record, "BRP\2", 4) || record[40] > 1))
     return failed("policy shape", ESP_ERR_INVALID_STATE);
@@ -360,11 +518,56 @@ bool loadBotRadioPolicy(BotRadioPolicy &policy) {
     policy.channelKeySet = record[40];
     memcpy(policy.channelKey, record + 41, 16);
   }
+  if (!strcmp(policy.channel, "Public"))
+    return failed("legacy Public policy has no native access masks", ESP_ERR_INVALID_STATE);
   if (!policy.valid()) return failed("policy validation", ESP_ERR_INVALID_STATE);
   return true;
 }
 bool saveBotRadioPolicy(const BotRadioPolicy &policy) {
   if (!policy.valid()) return failed("policy validation", ESP_ERR_INVALID_ARG);
+  // Validate the current authority before replacing either its file or its reference.
+  RadioStorage storage(allocateRoleStorage<RadioWorkspace>("radio policy save"));
+  if (!storage || !loadBotRadioPolicy(storage->check.policy))
+    return failed("radio policy saved authority unavailable", ESP_ERR_INVALID_STATE);
+  RadioReference next;
+  bool extended = policy.extended();
+  if (extended) {
+    bool present = false;
+    nvs_handle_t previousHandle;
+    auto result = nvs_open("mc-onchip", NVS_READONLY, &previousHandle);
+    if (result != ESP_OK && result != ESP_ERR_NVS_NOT_FOUND) return failed("policy open", result);
+    if (result == ESP_OK) {
+      uint8_t previous[57]{};
+      size_t size = sizeof(previous);
+      result = nvs_get_blob(previousHandle, "bot-radio", previous, &size);
+      nvs_close(previousHandle);
+      if (result != ESP_OK && result != ESP_ERR_NVS_NOT_FOUND) return failed("policy read", result);
+      present = result == ESP_OK;
+      if (result == ESP_OK && size == sizeof(RadioReference) && !memcmp(previous, "BRP\3", 4))
+        next.slot = 1 - previous[4];
+    }
+    nvs_stats_t stats{};
+    const size_t required = BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u);
+    result = nvs_get_stats(nullptr, &stats);
+    if (result != ESP_OK) return failed("radio policy NVS headroom read", result);
+    if (stats.free_entries < required) {
+      Serial.printf("Native command policy NVS headroom: %u free, %u required; policy not published\n",
+                    unsigned(stats.free_entries), unsigned(required));
+      return failed("radio policy NVS headroom; existing Lua data reserve required",
+                    ESP_ERR_NVS_NOT_ENOUGH_SPACE);
+    }
+    storage->record.policy = policy;
+    mesh::Utils::sha256(next.digest, sizeof(next.digest),
+        reinterpret_cast<const uint8_t *>(&storage->record), sizeof(storage->record));
+    auto file = SPIFFS.open(RadioSlots[next.slot], "w");
+    if (!file) return failed("radio policy inactive file open", ESP_ERR_INVALID_STATE);
+    const bool complete = file.write(reinterpret_cast<const uint8_t *>(&storage->record),
+                                    sizeof(storage->record)) == sizeof(storage->record);
+    file.flush(); file.close();
+    if (!complete || !readRadioFile(next, storage->check) ||
+        memcmp(&storage->record, &storage->check, sizeof(storage->record)))
+      return failed("radio policy inactive file readback", ESP_ERR_INVALID_STATE);
+  }
   uint8_t record[57]{};
   memcpy(record, "BRP\2", 4);
   memcpy(record + 4, policy.channel, strlen(policy.channel));
@@ -374,15 +577,175 @@ bool saveBotRadioPolicy(const BotRadioPolicy &policy) {
   nvs_handle_t handle;
   auto result = nvs_open("mc-onchip", NVS_READWRITE, &handle);
   if (result != ESP_OK) return failed("policy open", result);
-  result = nvs_set_blob(handle, "bot-radio", record, sizeof(record));
+  result = nvs_set_blob(handle, "bot-radio", extended ? static_cast<const void *>(&next) : record,
+                        extended ? sizeof(next) : sizeof(record));
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   if (result != ESP_OK) return failed("policy commit", result);
-  BotRadioPolicy readback;
+  auto &readback = storage->check.policy;
   if (!loadBotRadioPolicy(readback) || strcmp(readback.channel, policy.channel) ||
       readback.pathWidth != policy.pathWidth || readback.airtimeMs != policy.airtimeMs ||
-      readback.channelKeySet != policy.channelKeySet || memcmp(readback.channelKey, policy.channelKey, 16))
+      readback.channelKeySet != policy.channelKeySet || memcmp(readback.channelKey, policy.channelKey, 16) ||
+      memcmp(readback.additional, policy.additional, sizeof(policy.additional)) ||
+      memcmp(readback.access, policy.access, sizeof(policy.access)) ||
+      memcmp(readback.rules, policy.rules, sizeof(policy.rules)))
     return failed("policy readback", ESP_ERR_INVALID_STATE);
+  return true;
+}
+bool botRadioPolicyCommand(BotRadioPolicy &policy, const char *command,
+                          char *reply, size_t capacity, bool &changed) {
+  changed = false;
+  const auto error = [&](const char *text) {
+    snprintf(reply, capacity, "Error: %s", text); return false;
+  };
+  const auto number = [](const char *text, unsigned maximum, unsigned &value) {
+    value = 0;
+    if (!text || !*text) return false;
+    for (const char *p = text; *p; ++p) {
+      if (*p < '0' || *p > '9' || value > maximum / 10) return false;
+      value = value * 10 + unsigned(*p - '0');
+      if (value > maximum) return false;
+    }
+    return true;
+  };
+  const auto hex = [](const char *text, uint8_t *output, size_t limit, size_t &size) {
+    size = text ? strlen(text) : 0;
+    if (!size || size % 2 || size > limit * 2) return false;
+    for (size_t i = 0; i < size; ++i) {
+      const char c = text[i];
+      const int digit = c >= '0' && c <= '9' ? c - '0' :
+                        c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                        c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+      if (digit < 0) return false;
+      if (!(i % 2)) output[i / 2] = uint8_t(digit << 4);
+      else output[i / 2] |= uint8_t(digit);
+    }
+    size /= 2;
+    return true;
+  };
+  if (!command || strlen(command) > 160) return error("native policy command exceeds 160 bytes");
+  char copy[161];
+  strcpy(copy, command);
+  char *parts[6]{}, *save = nullptr;
+  unsigned count = 0;
+  for (char *part = strtok_r(copy, " ", &save); part; part = strtok_r(nullptr, " ", &save)) {
+    if (count == 6) return error("too many native policy arguments");
+    parts[count++] = part;
+  }
+  if (!count || (strcmp(parts[0], "membership") && strcmp(parts[0], "access") && strcmp(parts[0], "thread")))
+    return error("use membership SLOT; access dm|native|SLOT; thread dm|native|SLOT NAME [0|16|32|48|inherit]");
+  const bool membership = !strcmp(parts[0], "membership");
+  const bool thread = !strcmp(parts[0], "thread");
+  if (count < 2) {
+    snprintf(reply, capacity, membership ?
+        "membership SLOT 0..7 [off|public|#tag|private NAMEHEX KEY32]; slot 0 is legacy; one Public; PSKs hidden" :
+        thread ? "thread dm|native|SLOT NAME [0|16|32|48|inherit]; list OFFSET; at most 8 thread overrides/context" :
+        "access dm|native|SLOT [default|COMMAND|action_NAME [MASK|inherit]]; list OFFSET; mask 0..63");
+    return true;
+  }
+  unsigned context = 0;
+  if (!membership && !strcmp(parts[1], "native")) context = BotRadioPolicy::NativeContext;
+  else if (membership || strcmp(parts[1], "dm")) {
+    if (!number(parts[1], BotRadioPolicy::ChannelLimit - 1, context))
+      return error("membership slot requires 0..7; access/thread also accept dm or native");
+    if (!membership) ++context;
+  }
+  if (membership) {
+    const auto previous = policy.membership(context);
+    if (count == 2) {
+      snprintf(reply, capacity, "Membership %u name=%s type=%s; access %u default=%u",
+          context, previous.name[0] ? previous.name : "off",
+          previous.keySet ? "private" : !strcmp(previous.name, "Public") ? "public" : "hashtag",
+          context, policy.access[context + 1]);
+      return true;
+    }
+    BotRadioPolicy::Membership value;
+    if (count == 3) {
+      if (!strcmp(parts[2], "public")) strcpy(value.name, "Public");
+      else if (strcmp(parts[2], "off")) {
+        if (parts[2][0] != '#' || strlen(parts[2]) >= sizeof(value.name))
+          return error("use off, public, #tag or private NAMEHEX KEY32");
+        strcpy(value.name, parts[2]);
+      }
+    } else if (count == 5 && !strcmp(parts[2], "private")) {
+      size_t size;
+      if (!hex(parts[3], reinterpret_cast<uint8_t *>(value.name), sizeof(value.name) - 1, size))
+        return error("private membership needs a printable NAMEHEX up to 32 bytes");
+      for (size_t i = 0; i < size; ++i)
+        if (value.name[i] < 32 || value.name[i] > 126)
+          return error("private channel name must be printable");
+      if (!hex(parts[4], value.key, sizeof(value.key), size) || size != sizeof(value.key))
+        return error("private membership needs NAMEHEX up to 32 bytes and KEY32 exactly 16 bytes");
+      value.keySet = true;
+    } else return error("use membership SLOT off|public|#tag|private NAMEHEX KEY32");
+    if (!validMembership(value)) return error("invalid channel name or zero private key");
+    policy.setMembership(context, value);
+    if (!policy.valid()) return error("duplicate channel name/key or Public membership");
+    changed = true;
+    return true;
+  }
+  if (count == 2) {
+    unsigned rules = 0;
+    for (const auto &rule : policy.rules)
+      rules += rule.name[0] && rule.context == context && rule.kind == unsigned(thread);
+    snprintf(reply, capacity, "Access context=%s default=%u overrides=%u; list OFFSET; bits execute/reply bare=1/2 addressed=4/8 read/write=16/32",
+             parts[1], policy.access[context], rules);
+    return true;
+  }
+  if (!strcmp(parts[2], "list")) {
+    unsigned offset;
+    if (count != 4 || !number(parts[3], BotRadioPolicy::RuleLimit, offset))
+      return error("use access CONTEXT list OFFSET 0..64");
+    unsigned seen = 0, returned = 0;
+    snprintf(reply, capacity, "Access %s default=%u", parts[1], policy.access[context]);
+    for (const auto &rule : policy.rules)
+      if (rule.name[0] && rule.context == context && rule.kind == unsigned(thread)) {
+      if (seen++ < offset || returned == 4) continue;
+      const size_t used = strlen(reply);
+      snprintf(reply + used, capacity > used ? capacity - used : 0, " %s=%u", rule.name, rule.access);
+      ++returned;
+    }
+    const size_t used = strlen(reply);
+    snprintf(reply + used, capacity > used ? capacity - used : 0, "; next=%u", offset + returned);
+    return true;
+  }
+  const bool defaults = !thread && !strcmp(parts[2], "default");
+  if (!defaults && !(thread ? botThreadName(parts[2], strlen(parts[2])) : botCommandName(parts[2])))
+    return error("invalid command/action or thread name");
+  BotRadioPolicy::Rule *found = nullptr, *empty = nullptr;
+  unsigned threadCount = 0;
+  for (auto &rule : policy.rules) {
+    if (!rule.name[0] && !empty) empty = &rule;
+    if (rule.name[0] && rule.context == context && rule.kind == unsigned(thread)) {
+      threadCount += thread;
+      if (!strcmp(rule.name, parts[2])) found = &rule;
+    }
+  }
+  if (count == 3) {
+    snprintf(reply, capacity, "Access %s %s=%u %s", parts[1], parts[2],
+             found ? found->access : thread ? (policy.access[context] & 48) : policy.access[context],
+             found ? "override" : "default");
+    return true;
+  }
+  if (count != 4) return error("use access CONTEXT default|COMMAND MASK|inherit");
+  if (!strcmp(parts[3], "inherit")) {
+    if (defaults) return error("default requires an explicit mask");
+    if (found) *found = {};
+  } else {
+    unsigned flags;
+    if (!number(parts[3], BotRadioPolicy::All, flags)) return error("access mask requires 0..63");
+    if (thread && (flags & ~48u)) return error("thread mask requires 0,16,32 or 48");
+    if (defaults) policy.access[context] = uint8_t(flags);
+    else {
+      if (!found && thread && threadCount == BotThreadRuleLimit)
+        return error("thread override limit is 8/context; remove one with inherit");
+      if (!found) found = empty;
+      if (!found) return error("native policy command override limit is 64; remove an override with inherit");
+      strcpy(found->name, parts[2]); found->context = uint8_t(context);
+      found->access = uint8_t(flags); found->kind = uint8_t(thread);
+    }
+  }
+  changed = true;
   return true;
 }
 bool BotMeshPolicy::allows(const uint8_t key[32]) const {

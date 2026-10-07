@@ -49,11 +49,16 @@ bool BotTimers::read(char *error, size_t capacity) {
     for (unsigned i = 0; i < BotTimerSlots + BotTimerReservedSlots; ++i) {
       const auto &r = records[i];
       if (!memcmp(&r, &empty, sizeof(r))) continue;
-      if (!validRecord(r) || (i >= BotTimerSlots && r.scope != BotIoRequest::Bot)) return false;
+      if (!validRecord(r) || (i >= BotTimerSlots && botBaseScope(r.scope) != BotIoRequest::Bot)) return false;
+      unsigned pending = r.state == uint8_t(BotTimerState::Pending);
       for (unsigned j = 0; j < i; ++j) {
         const auto &other = records[j];
         if (other.revision && r.scope == other.scope && !memcmp(r.bot, other.bot, 32) &&
             !memcmp(r.principal, other.principal, 32) && !strcmp(r.name, other.name)) return false;
+        if (other.revision && r.state == uint8_t(BotTimerState::Pending) &&
+            other.state == uint8_t(BotTimerState::Pending) &&
+            botBaseScope(r.scope) == botBaseScope(other.scope) && !memcmp(r.bot, other.bot, 32) &&
+            !memcmp(r.principal, other.principal, 32) && ++pending > BotTimersPerScope) return false;
       }
     }
     return true;
@@ -64,8 +69,9 @@ bool BotTimers::validRecord(const Record &record) {
   uint8_t digest[32];
   mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(&record), offsetof(Record, digest));
   return !memcmp(record.magic, "BTM\1", 4) && !memcmp(record.digest, digest, 32) &&
-      !record.reserved && record.revision && record.scope <= BotIoRequest::Channel &&
+      !record.reserved && record.revision && record.scope <= BotIoRequest::ChannelThread &&
       record.name[0] && memchr(record.name, 0, sizeof(record.name)) &&
+      botStorageKey(record.scope, record.name) &&
       record.state >= uint8_t(BotTimerState::Pending) && record.state <= uint8_t(BotTimerState::Overdue) &&
       record.due >= 1715770351u && record.due <= 4102444800u;
 }
@@ -148,7 +154,7 @@ void BotTimers::restore(const uint8_t bot[32], const BotStore::Snapshot &data, B
     for (unsigned j = 0; j < BotTimerSlots + BotTimerReservedSlots; ++j) {
       const auto &live = plan.records[j];
       if (!plan.occupied[j]) {
-        if ((j >= BotTimerSlots) == (data.scope == BotIoRequest::Bot) && free < 0) free = int(j);
+        if ((j >= BotTimerSlots) == (botBaseScope(data.scope) == BotIoRequest::Bot) && free < 0) free = int(j);
       } else if (live.scope == data.scope && !memcmp(live.bot, bot, 32) &&
                  !memcmp(live.principal, data.principal, 32) && !strcmp(live.name, record.name)) matched = int(j);
     }
@@ -160,7 +166,7 @@ void BotTimers::restore(const uint8_t bot[32], const BotStore::Snapshot &data, B
     mesh::Utils::sha256(record.digest, 32, reinterpret_cast<const uint8_t *>(&record), offsetof(Record, digest));
     plan.records[slot] = record; plan.occupied[slot] = true;
   }
-  if (!admitScheduleRestore(BotScheduleAuthorityEntries, data.scope != BotIoRequest::Bot, result.error, sizeof(result.error))) {
+  if (!admitScheduleRestore(BotScheduleAuthorityEntries, botBaseScope(data.scope) != BotIoRequest::Bot, result.error, sizeof(result.error))) {
     fail(result.error); return;
   }
   const auto current = [&] { return epoch == generation.load(); };
@@ -185,8 +191,9 @@ void BotTimers::perform(const uint8_t bot[32], const BotIoRequest &request, BotI
   };
   if (!bot || !current()) { fail("Timer cancelled or shared grant revoked"); return; }
   if (request.kind < BotIoRequest::TimerSet || request.kind > BotIoRequest::TimerWait ||
-      request.scope > BotIoRequest::Channel || !request.key[0] ||
+      request.scope > BotIoRequest::ChannelThread || !request.key[0] ||
       !memchr(request.key, 0, sizeof(request.key)) ||
+      !botStorageKey(request.scope, request.key) ||
       (request.kind == BotIoRequest::TimerSet &&
        (!request.delaySeconds || request.delaySeconds > BotTimerMaximumSeconds))) {
     fail("Invalid bounded durable timer operation"); return;
@@ -204,7 +211,7 @@ void BotTimers::perform(const uint8_t bot[32], const BotIoRequest &request, BotI
       fail("Timer cancelled/deadline during read"); return;
     }
     const bool reserved = i >= BotTimerSlots;
-    const bool allocatable = reserved == (request.scope == BotIoRequest::Bot);
+    const bool allocatable = reserved == (botBaseScope(request.scope) == BotIoRequest::Bot);
     record = storage_->records[i];
     if (!record.revision) {
       if (allocatable && free < 0) free = i;
@@ -213,9 +220,10 @@ void BotTimers::perform(const uint8_t bot[32], const BotIoRequest &request, BotI
     latestRevision = std::max(latestRevision, record.revision);
     const bool pending = record.state == uint8_t(BotTimerState::Pending);
     if (allocatable && !pending && reusable < 0) reusable = i;
-    if (record.scope == request.scope && !memcmp(record.bot, bot, 32) &&
+    if (botBaseScope(record.scope) == botBaseScope(request.scope) && !memcmp(record.bot, bot, 32) &&
         !memcmp(record.principal, request.principal, 32)) {
       if (pending) ++owned;
+      if (record.scope != request.scope) continue;
       if (!strcmp(record.name, request.key)) {
         if (matched >= 0) { fail("Timer contains duplicate durable names"); return; }
         matched = i; saved = record;
@@ -257,7 +265,7 @@ void BotTimers::perform(const uint8_t bot[32], const BotIoRequest &request, BotI
   }
   record = saved;
   if (request.kind == BotIoRequest::TimerSet) {
-    if (request.scope != BotIoRequest::Bot && !admitPublicBotStorage(result.error, sizeof(result.error))) {
+    if (botBaseScope(request.scope) != BotIoRequest::Bot && !admitPublicBotStorage(result.error, sizeof(result.error))) {
       Serial.printf("On-chip bot timer: %s\n", result.error); return;
     }
     if (!result.timeTrusted) { fail(reason); return; }

@@ -205,6 +205,36 @@ func TestHostAdminOwnerPersistenceAndErrors(t *testing.T) {
 	}
 }
 
+func TestHostAdminNativeChannelPolicyCommands(t *testing.T) {
+	for _, command := range []string{
+		"bot membership", "bot membership 7", "bot membership 0 #lab",
+		"bot membership 1 public", "bot membership 3 off",
+		"bot membership 2 private 4f7073 0102030405060708090a0b0c0d0e0f10",
+		"bot access", "bot access dm", "bot access 1 list 0",
+		"bot access 2 ping", "bot access 2 ping 12", "bot access dm action_send 0",
+		"bot access dm ping inherit", "bot access 7 default 63",
+		"bot access native default 16", "bot thread dm notes 16", "bot thread native monitor 48",
+		"bot thread 2 notes inherit", "bot thread dm list 0",
+		"data export kv conversation-thread " + strings.Repeat("a", 64),
+		"source api threads",
+	} {
+		if !hostAdminCommandAllowed(command) {
+			t.Errorf("native channel policy command denied: %q", command)
+		}
+	}
+	for _, command := range []string{
+		"bot membership 8 public", "bot membership 0 #Bad", "bot membership 0\nreboot",
+		"bot membership 1 private Ops 12", "bot access 8 ping 12",
+		"bot access dm ping 64", "bot access dm ping -1", "bot access dm list 65",
+		"bot access dm ping 12\nsource remove",
+		"bot thread dm notes 63", "bot thread dm notes 17", "bot thread dm a/b 16",
+		"bot thread 8 notes 16", "bot thread dm notes 48\nreboot",
+	} {
+		if hostAdminCommandAllowed(command) {
+			t.Errorf("invalid native policy command accepted: %q", command)
+		}
+	}
+}
 func TestHostAdminTimeoutIsUnknown(t *testing.T) {
 	cfg := adminTestConfig(t)
 	ctx, cancel := context.WithCancel(context.Background())

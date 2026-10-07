@@ -95,9 +95,10 @@ bool BotStore::validateRecords(char *error, size_t capacity, bool logical) {
     const auto &e = r.entry;
     const bool identical = empty && !memcmp(&r, empty, sizeof(r));
     if (memcmp(r.magic, "BKV\1", 4) || (!identical && !checkedRecord(&r, sizeof(r))) ||
-        e.used > 1 || e.scope > BotIoRequest::Channel ||
+        e.used > 1 || e.scope > BotIoRequest::ChannelThread || (!e.used && e.scope > BotIoRequest::Channel) ||
         !memchr(e.key, 0, sizeof(e.key)) || !memchr(e.value, 0, sizeof(e.value)) ||
-        (e.used && (!e.key[0] || (i >= PrivateSlots && e.scope != BotIoRequest::Bot))))
+        (e.used && (!botStorageKey(e.scope, e.key) ||
+                   (i >= PrivateSlots && botBaseScope(e.scope) != BotIoRequest::Bot))))
       return storageError(error, capacity, "KV record corrupt/unavailable; storage blocked");
     if (!e.used) { empty = &r; continue; }
     if (!logical) continue;
@@ -105,8 +106,9 @@ bool BotStore::validateRecords(char *error, size_t capacity, bool logical) {
     for (unsigned j = 0; j < i; ++j) {
       const auto &other = files_->records[j];
       if (!other.entry.used || memcmp(r.bot, other.bot, 32) ||
-          e.scope != other.entry.scope || memcmp(e.principal, other.entry.principal, 32)) continue;
-      if (!strcmp(e.key, other.entry.key))
+          botBaseScope(e.scope) != botBaseScope(other.entry.scope) ||
+          memcmp(e.principal, other.entry.principal, 32)) continue;
+      if (e.scope == other.entry.scope && !strcmp(e.key, other.entry.key))
         return storageError(error, capacity, "KV duplicate durable key; storage blocked");
       if (++owned > BotKeysPerScope)
         return storageError(error, capacity, "KV scope exceeds bounded capacity; storage blocked");
@@ -327,7 +329,7 @@ bool BotStore::recover(char *error, size_t capacity) {
     const auto &record = journal.records[i];
     if (journal.slots[i] >= Slots || memcmp(record.magic, "BKV\1", 4) ||
         !checkedRecord(&record, sizeof(record)) || record.entry.used > 1 ||
-        record.entry.scope > BotIoRequest::Channel ||
+        record.entry.scope > BotIoRequest::ChannelThread ||
         !memchr(record.entry.key, 0, sizeof(record.entry.key)) ||
         !memchr(record.entry.value, 0, sizeof(record.entry.value)) ||
         (record.entry.used && (!record.entry.key[0] ||
@@ -365,7 +367,7 @@ bool BotStore::transact(const uint8_t bot[32], const BotIoRequest &request, BotI
                                          "KV transaction requires 1..4 distinct operations");
   for (unsigned i = 0; i < request.mutations; ++i) {
     const auto &op = request.mutation[i];
-    if (!op.key[0] || !memchr(op.key, 0, sizeof(op.key)) ||
+    if (!botStorageKey(request.scope, op.key) ||
         !memchr(op.value, 0, sizeof(op.value)) || !memchr(op.expected, 0, sizeof(op.expected)))
       return fail("KV transaction text exceeds bounds");
     for (unsigned j = 0; j < i; ++j)
@@ -374,7 +376,6 @@ bool BotStore::transact(const uint8_t bot[32], const BotIoRequest &request, BotI
   auto &journal = *journal_;
   journal = {}; memcpy(journal.magic, "BTX\1", 4);
   int matched[BotTransactionLimit]; unsigned free[Slots], available = 0, owned = 0;
-  char ownedKeys[BotKeysPerScope][BotKeyLimit + 1]{};
   for (auto &slot : matched) slot = -1;
   const auto current = [&] {
     return botEventCurrent(request, eventEpoch) && request.token.generation == generation.load() &&
@@ -387,13 +388,12 @@ bool BotStore::transact(const uint8_t bot[32], const BotIoRequest &request, BotI
     }
     const auto &entry = record.entry;
     if (!entry.used) {
-      if ((slot >= PrivateSlots) == (request.scope == BotIoRequest::Bot)) free[available++] = slot;
-    } else if (!memcmp(record.bot, bot, 32) && entry.scope == request.scope &&
+      if ((slot >= PrivateSlots) == (botBaseScope(request.scope) == BotIoRequest::Bot)) free[available++] = slot;
+    } else if (!memcmp(record.bot, bot, 32) && botBaseScope(entry.scope) == botBaseScope(request.scope) &&
                !memcmp(entry.principal, request.principal, 32)) {
       if (owned == BotKeysPerScope) return fail("KV transaction scope exceeds bounded capacity");
-      for (unsigned i = 0; i < owned; ++i)
-        if (!strcmp(ownedKeys[i], entry.key)) return fail("KV transaction duplicate durable key");
-      strcpy(ownedKeys[owned++], entry.key);
+      ++owned;
+      if (entry.scope != request.scope) continue;
       for (unsigned i = 0; i < request.mutations; ++i) if (!strcmp(entry.key, request.mutation[i].key)) {
         if (matched[i] >= 0) return fail("KV transaction duplicate durable key");
         matched[i] = slot; journal.records[i] = record;
@@ -440,7 +440,7 @@ bool BotStore::transact(const uint8_t bot[32], const BotIoRequest &request, BotI
     if (!current() || uint32_t(millis() - started) >= 2000) return fail("KV transaction cancelled before no-op commit");
     result.ok = true; result.outcome = BotIoResult::Committed; return true;
   }
-  if (!admitJournal(request.scope != BotIoRequest::Bot, result.error, sizeof(result.error))) {
+  if (!admitJournal(botBaseScope(request.scope) != BotIoRequest::Bot, result.error, sizeof(result.error))) {
     return false;
   }
   if (!current()) return fail("KV transaction cancelled before publication");
@@ -462,12 +462,12 @@ bool BotStore::validSnapshotEnvelope(const Snapshot &data, const uint8_t bot[32]
   static_assert(sizeof(Snapshot) == 2422, "KV backup wire format changed");
   const auto fail = [&](const char *message) { return storageError(error, capacity, message); };
   if (memcmp(data.magic, magic, 4) || memcmp(data.bot, bot, 32) ||
-      data.scope > BotIoRequest::Channel || data.count > limit ||
+      data.scope > BotIoRequest::ChannelThread || data.count > limit ||
       data.count * itemSize > sizeof(data.entries) ||
       !checkedRecord(&data, sizeof(data))) return fail("Bot-data version, identity, bounds or SHA256 invalid");
   uint8_t bits = 0;
   for (auto byte : data.principal) bits |= byte;
-  if ((data.scope == BotIoRequest::Bot) != !bits) return fail("Bot-data scope/principal invalid");
+  if ((botBaseScope(data.scope) == BotIoRequest::Bot) != !bits) return fail("Bot-data scope/principal invalid");
   const auto *bytes = reinterpret_cast<const uint8_t *>(data.entries);
   for (size_t i = data.count * itemSize; i < sizeof(data.entries); ++i)
     if (bytes[i]) return fail("Bot-data noncanonical unused records");
@@ -480,7 +480,8 @@ bool BotStore::validSnapshot(const Snapshot &data, const uint8_t bot[32], char *
   for (unsigned i = 0; i < BotKeysPerScope; ++i) {
     const auto &entry = data.entries[i];
     if (!memchr(entry.key, 0, sizeof(entry.key)) || !memchr(entry.value, 0, sizeof(entry.value)) ||
-        (i < data.count && (!entry.key[0] || (i && strcmp(data.entries[i - 1].key, entry.key) >= 0))))
+        (i < data.count && (!botStorageKey(data.scope, entry.key) ||
+                           (i && strcmp(data.entries[i - 1].key, entry.key) >= 0))))
       return fail("Bot-data keys/values invalid or not strictly sorted");
     const size_t keySize = i < data.count ? strlen(entry.key) : 0;
     const size_t valueSize = i < data.count ? strlen(entry.value) : 0;
@@ -534,12 +535,13 @@ void BotStore::restore(const uint8_t bot[32], const Snapshot &data, BotIoResult 
   const uint32_t started = millis();
   auto &journal = *journal_;
   journal = {}; memcpy(journal.magic, "BTX\1", 4);
-  uint8_t free[Slots]{}; unsigned available = 0;
+  uint8_t free[Slots]{}; unsigned available = 0, retained = 0;
   for (unsigned slot = 0; slot < Slots; ++slot) {
     const auto &record = files_->records[slot];
     const auto &entry = record.entry;
     if (!entry.used) {
-      if ((slot >= PrivateSlots) == (data.scope == BotIoRequest::Bot)) free[available++] = uint8_t(slot);
+      if ((slot >= PrivateSlots) == (botBaseScope(data.scope) == BotIoRequest::Bot))
+        free[available++] = uint8_t(slot);
     } else if (!memcmp(record.bot, bot, 32) && entry.scope == data.scope &&
                !memcmp(entry.principal, data.principal, 32)) {
       if (journal.count == BotKeysPerScope) { fail("Bot-data scope capacity exceeded"); return; }
@@ -549,7 +551,13 @@ void BotStore::restore(const uint8_t bot[32], const Snapshot &data, BotIoResult 
         }
       journal.records[journal.count] = record;
       journal.slots[journal.count++] = uint8_t(slot);
+    } else if (!memcmp(record.bot, bot, 32) && botBaseScope(entry.scope) == botBaseScope(data.scope) &&
+               !memcmp(entry.principal, data.principal, 32)) {
+      ++retained;
     }
+  }
+  if (retained + data.count > BotKeysPerScope) {
+    fail("Bot-data restore exceeds origin quota across default and named threads"); return;
   }
   while (journal.count < data.count) {
     if (!available) { fail("Bot-data restore capacity exhausted"); return; }
@@ -572,7 +580,7 @@ void BotStore::restore(const uint8_t bot[32], const Snapshot &data, BotIoResult 
     }
     result.ok = true; result.outcome = BotIoResult::Committed; return;
   }
-  if (!admitJournal(data.scope != BotIoRequest::Bot, result.error, sizeof(result.error))) {
+  if (!admitJournal(botBaseScope(data.scope) != BotIoRequest::Bot, result.error, sizeof(result.error))) {
     return;
   }
   if (epoch != generation.load() || uint32_t(millis() - started) >= 2000) {
@@ -610,7 +618,7 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
   if ((request.kind != BotIoRequest::Get && request.kind != BotIoRequest::Put &&
        request.kind != BotIoRequest::Delete && request.kind != BotIoRequest::List &&
        request.kind != BotIoRequest::Cas && request.kind != BotIoRequest::Transaction) ||
-      request.scope > BotIoRequest::Channel ||
+      request.scope > BotIoRequest::ChannelThread ||
       (request.kind != BotIoRequest::List && request.kind != BotIoRequest::Cas &&
        request.kind != BotIoRequest::Transaction && !request.key[0]) ||
       !memchr(request.key, 0, sizeof(request.key)) ||
@@ -619,6 +627,10 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
   }
   if (strlen(request.value) > BotValueLimit) {
     fail("KV value exceeds this platform's byte limit"); return;
+  }
+  if (request.kind != BotIoRequest::Cas && request.kind != BotIoRequest::Transaction &&
+      !botStorageKey(request.scope, request.key, request.kind == BotIoRequest::List)) {
+    fail("Invalid bounded KV thread/key"); return;
   }
   if (!record_) record_ = allocateRoleStorage<Record>("bot durable KV");
   if (!record_) { fail("KV storage RAM unavailable"); return; }
@@ -640,13 +652,14 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
       fail("KV read cancelled/deadline"); return;
     }
     const bool reserved = i >= PrivateSlots;
-    const bool allocatable = reserved == (request.scope == BotIoRequest::Bot);
+    const bool allocatable = reserved == (botBaseScope(request.scope) == BotIoRequest::Bot);
     record = files_->records[i];
     const auto &entry = record.entry;
     if (!entry.used) { if (allocatable && free < 0) free = i; continue; }
-    if (!memcmp(record.bot, bot, 32) && entry.scope == request.scope &&
+    if (!memcmp(record.bot, bot, 32) && botBaseScope(entry.scope) == botBaseScope(request.scope) &&
         !memcmp(entry.principal, request.principal, 32)) {
       ++owned;
+      if (entry.scope != request.scope) continue;
       if (listing) {
         if (owned > BotKeysPerScope) {
           fail("KV scope exceeds bounded key capacity"); return;
@@ -674,9 +687,10 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
   if (listing) {
     auto &keys = result.keys;
     unsigned count = 0;
+    const size_t prefix = request.scope >= BotIoRequest::CallerThread ? botThreadPrefix(request.key) : 0;
     for (unsigned i = 0; i < keys.count; ++i)
       if (!strncmp(keys.keys[i], request.key, strlen(request.key))) {
-        if (count != i) strcpy(keys.keys[count], keys.keys[i]);
+        memmove(keys.keys[count], keys.keys[i] + prefix, strlen(keys.keys[i] + prefix) + 1);
         ++count;
       }
     for (unsigned i = count; i < keys.count; ++i) memset(keys.keys[i], 0, sizeof(keys.keys[i]));
@@ -701,7 +715,7 @@ void BotStore::perform(const uint8_t bot[32], const BotIoRequest &request, BotIo
   } else if (request.kind == BotIoRequest::Delete) {
     if (matched < 0) { result.ok = true; return; }
   } else { fail("Unknown KV operation"); return; }
-  if (!admitJournal(request.kind != BotIoRequest::Delete && request.scope != BotIoRequest::Bot,
+  if (!admitJournal(request.kind != BotIoRequest::Delete && botBaseScope(request.scope) != BotIoRequest::Bot,
                     result.error, sizeof(result.error))) return;
   seal(&record, sizeof(record));
   files_->verified = false;

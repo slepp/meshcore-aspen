@@ -116,7 +116,7 @@ Message the bot with <code>!plugins</code> or <code>!help</code> to list its com
 <button data-write="data clear" data-warning="Discard the current backup transfer? Saved bot data will stay unchanged.">Clear transfer</button>
 <pre id="storage-status"></pre></details>
 <div class="fields"><label>Data<select id="data-kind"><option value="kv">Key-value data</option><option value="timers">Named timers</option><option value="reminders">Personal reminders</option></select></label>
-<label>Scope<select id="data-scope"><option value="caller">User</option><option value="conversation">Conversation</option><option value="bot">Bot</option><option value="channel">Channel</option></select></label>
+<label>Scope<select id="data-scope"><option value="caller">User</option><option value="conversation">Conversation</option><option value="bot">Bot</option><option value="channel">Channel</option><option value="caller-thread">User threads</option><option value="conversation-thread">Conversation threads</option><option value="bot-thread">Bot threads</option><option value="channel-thread">Channel threads</option></select></label>
 <label>User public key or channel digest<input id="principal" maxlength="64" placeholder="64 lowercase hex characters"></label></div>
 <p class="muted">For bot scope, enter 64 zeros. Reminders use a user's public key.</p>
 <button id="data-export" disabled>Download backup</button>
@@ -440,12 +440,12 @@ function download(bytes,name,type='application/octet-stream') {
   const url=URL.createObjectURL(new Blob([bytes],{type})), a=document.createElement('a');
   a.href=url; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-const scopes=['caller','conversation','bot','channel'], kinds={BKD:'kv',BTD:'timers',BRD:'reminders'};
+const scopes=['caller','conversation','bot','channel','caller-thread','conversation-thread','bot-thread','channel-thread'], kinds={BKD:'kv',BTD:'timers',BRD:'reminders'};
 function backupEnvelope(bytes) {
   const magic=String.fromCharCode(...bytes.slice(0,3)), kind=kinds[magic], scope=scopes[bytes[36]], principal=hex(bytes.slice(37,69));
   if(bytes.length!==2422 || bytes[3]!==1 || !kind || !scope || sha256(bytes.slice(0,-32))!==hex(bytes.slice(-32)))
     throw Error('Backup must be a valid 2422-byte BKD/BTD/BRD v1 file with matching content digest.');
-  if((scope==='bot')!==(principal==='0'.repeat(64)) || (kind==='reminders' && scope!=='caller')) throw Error('Backup scope/principal is invalid.');
+  if((scope==='bot'||scope==='bot-thread')!==(principal==='0'.repeat(64)) || (kind==='reminders' && scope!=='caller')) throw Error('Backup scope/principal is invalid.');
   return {kind,scope,principal,bot:hex(bytes.slice(4,36)),count:bytes[69],hash:sha256(bytes)};
 }
 function backupDescription(meta) { return meta.kind+' · '+meta.scope+' · '+meta.count+' records\nPrincipal '+meta.principal+'\nBot '+meta.bot+'\nSHA256 '+meta.hash; }
@@ -462,7 +462,7 @@ async function dataOutcome(expected,id) {
 }
 async function exportData() {
   const kind=$('data-kind').value, scope=$('data-scope').value, principal=$('principal').value;
-  if(!/^[0-9a-f]{64}$/.test(principal) || (scope==='bot')!==(principal==='0'.repeat(64)) || (kind==='reminders' && scope!=='caller'))
+  if(!/^[0-9a-f]{64}$/.test(principal) || (scope==='bot'||scope==='bot-thread')!==(principal==='0'.repeat(64)) || (kind==='reminders' && scope!=='caller'))
     throw Error('Select caller for reminders. Use full nonzero user/channel identity, or 64 zeros only for bot-global.');
   if(!confirmed('Export private '+kind+' data for '+scope+' principal '+principal+' over plaintext HTTP and download an unencrypted file? Protect the downloaded file; no credentials/identity are included. This replaces the RAM transfer buffer, allowing readback after an uncertain restore.',true)) return 'Cancelled; no export sent.';
   const key=await botKey(), result=await cmd(`data export ${kind} ${scope} ${principal}`);
@@ -779,11 +779,11 @@ bind('help-read','Reading source help',async()=>{
 bind('help-save','Saving help text',()=>nativeWrite(sourceCommand('source help '+($('helptext').value||'-')),'Save this help text? Program code will stay unchanged.'));
 bind('storage-read','Reading storage / backup capabilities',async()=>{
   supported.data=false;
-  await readGroup(['source api storage','source api data','source api notes','source api reminders','bot limits','data status'],'storage-status');
+  await readGroup(['source api storage','source api threads','source api data','source api notes','source api reminders','bot limits','data status'],'storage-status');
   supported.data=/^Data kv=1 timers=1 reminders=1 scope=single bytes=2422 version=1 /.test(seen['source api data']||'');
   return supported.data?'Backup controls are ready.':'This firmware does not support these backup controls.';
 });
-$('data-scope').onchange=()=>{if($('data-scope').value==='bot') $('principal').value='0'.repeat(64);};
+$('data-scope').onchange=()=>{if($('data-scope').value==='bot'||$('data-scope').value==='bot-thread') $('principal').value='0'.repeat(64);};
 $('backup').onchange=()=>action('Inspecting local backup envelope',inspectBackup);
 bind('data-export','Exporting private scoped data',exportData);
 bind('data-stage','Staging private backup',stageData);

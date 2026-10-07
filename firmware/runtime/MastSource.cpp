@@ -799,6 +799,10 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
              BotTransactionLimit);
     return;
   }
+  if (!strcmp(input, "api threads")) {
+    respond("Threads scopes=4..7 name-bytes=24 encoded-key-bytes=32 origin=full-native kv-origin-keys=8 timer-origin-pending=2 rw=16,32 overrides=8/context");
+    return;
+  }
   if (!strcmp(input, "api data")) {
     respond("Data kv=1 timers=1 reminders=1 scope=single bytes=2422 version=1 owner=required restore=stage,commit scheduler=no-rearm credentials=excluded");
     return;

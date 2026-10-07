@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cassert>
+#include <memory>
 #if !defined(NRF52_PLATFORM) && !(defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
 #include "RoleProfile.h"
 #endif
@@ -221,7 +222,7 @@ struct CommandBot::Core : mesh::Mesh {
   BotRadioPolicy policy;
   AdaptiveAdmission adaptive;
   const char *capacityError = nullptr;
-  mesh::GroupChannel channel{};
+  mesh::GroupChannel channels[BotRadioPolicy::ChannelLimit]{};
   const char *lastAdmission = "none";
   uint32_t admissionAt = 0, admissionWait = 0, noticeAt = 0;
   bool noticeSent = false;
@@ -230,7 +231,7 @@ struct CommandBot::Core : mesh::Mesh {
   CommandBot &owner;
   Counters stats{};
   struct Invocation {
-    bool used = false, collecting = false, deferred = false, cancelled = false;
+    bool used = false, collecting = false, deferred = false, cancelled = false, suppressReply = false;
     uint32_t job = 0, collectionStart = 0;
     uint32_t notBefore = 0, adminTicket = 0;
     uint8_t dmTarget[32]{};
@@ -325,6 +326,8 @@ struct CommandBot::Core : mesh::Mesh {
     owner.nodeSnapshot(event.node);
     event.sharedState = sharedState;
     event.homeAccess = event.forwardAccess = event.reminderAccess = false;
+    policy.bindStorage(event);
+    if (!(event.policyFlags & BotRadioPolicy::BareExecute)) { ++stats.eventsDropped; return false; }
     Invocation *scheduled = nullptr;
     if (event.kind == BotEvent::Scheduled) {
       for (auto &job : invocations) if (!job.used) { scheduled = &job; break; }
@@ -430,9 +433,11 @@ struct CommandBot::Core : mesh::Mesh {
   }
   bool allowPacketForward(const mesh::Packet *) override { return false; }
   int searchChannelsByHash(const uint8_t *hash, mesh::GroupChannel dest[], int maximum) override {
-    if (!policy.channel[0] || maximum < 1 || hash[0] != channel.hash[0]) return 0;
-    dest[0] = channel;
-    return 1;
+    int count = 0;
+    for (unsigned i = 0; i < BotRadioPolicy::ChannelLimit && count < maximum; ++i)
+      if (policy.membership(i).name[0] && hash[0] == channels[i].hash[0])
+        dest[count++] = channels[i];
+    return count;
   }
   void rememberOutbound(const mesh::Packet *packet) {
     if (packet->getPayloadType() != PAYLOAD_TYPE_TXT_MSG &&
@@ -1116,6 +1121,23 @@ struct CommandBot::Core : mesh::Mesh {
       job.repeaterIndex = -1;
       job.io = request; resetBotIoResult(job.result); job.result.token = request.token;
       job.ioPending = true; job.deadline = millis() + request.delayMs;
+      const char *action = request.kind == BotIoRequest::Trace ? "action_trace" :
+                           request.kind == BotIoRequest::Advert ? "action_advert" :
+                           request.kind == BotIoRequest::Send ? "action_send" :
+                           request.kind == BotIoRequest::Forward ? "action_forward" : nullptr;
+      if (action) {
+        const auto flags = policy.flags(job.event, action);
+        if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply)))
+          job.suppressReply = true;
+        if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute))) {
+          finishRadio(job, "Native command policy denies radio action"); continue;
+        }
+      }
+      if (request.kind == BotIoRequest::Send && request.reply &&
+          (job.suppressReply || !(policy.flags(job.event, job.event.name) &
+            (job.event.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply)))) {
+        finishRadio(job, "Native command policy disables replies"); continue;
+      }
       if (!request.delayMs || request.delayMs > 30000 ||
           !memchr(request.key, 0, sizeof(request.key))) {
         finishRadio(job, "Invalid native radio wait bounds"); continue;
@@ -1465,6 +1487,10 @@ struct CommandBot::Core : mesh::Mesh {
     const bool loadGate = !strncmp(gate, "adaptive ", 9);
     if (loadGate) owner.diagnostic("Bot command not run: %s; inspect bot adaptive; no automatic retry\n", gate);
     else owner.diagnostic("On-chip command admission: %s; retry in %u ms\n", gate, wait);
+    if (!(policy.flags(event, event.name) &
+          (event.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply))) {
+      ++stats.noticesSuppressed; return;
+    }
     if ((noticeSent && uint32_t(now - noticeAt) < 60000) || !owner.radio_.queuedReady()) {
       ++stats.noticesSuppressed; return;
     }
@@ -1473,13 +1499,14 @@ struct CommandBot::Core : mesh::Mesh {
     else snprintf(text, sizeof(text), "Not run: %s; retry in %us. Notices max 1/min.",
                   gate, unsigned((wait + 999) / 1000));
     PeerRoute route;
-    mesh::Packet *response;
+    mesh::Packet *response = nullptr;
     if (sender) {
       route = sender->route;
       response = privateReply(text, sender->id.pub_key, secret);
     } else {
       route.scoped = routing.scope(request);
-      response = channelReply(text, channel);
+      const int context = policy.context(event);
+      if (context > 0) response = channelReply(text, channels[context - 1]);
     }
     if (!response) { ++stats.noticesSuppressed; return; }
     if (!capacity(replyAirtime(response, route), true, true)) {
@@ -1680,8 +1707,14 @@ struct CommandBot::Core : mesh::Mesh {
   }
   void onGroupDataRecv(mesh::Packet *packet, uint8_t type, const mesh::GroupChannel &matched,
                        uint8_t *data, size_t size) override {
+    unsigned membership = BotRadioPolicy::ChannelLimit;
+    for (unsigned i = 0; i < BotRadioPolicy::ChannelLimit; ++i)
+      if (policy.membership(i).name[0] &&
+          !memcmp(matched.secret, channels[i].secret, sizeof(matched.secret))) {
+        membership = i; break;
+      }
     if (type != PAYLOAD_TYPE_GRP_TXT || size < 6 || (data[4] >> 2) != 0 ||
-        memcmp(matched.secret, channel.secret, sizeof(channel.secret))) {
+        membership == BotRadioPolicy::ChannelLimit) {
       ++stats.malformed; owner.fault("Malformed native channel text"); return;
     }
     const auto *end = static_cast<const uint8_t *>(memchr(data + 5, 0, size - 5));
@@ -1699,7 +1732,7 @@ struct CommandBot::Core : mesh::Mesh {
     BotEvent event{};
     event.local = packet->_localReflection;
     memcpy(event.nickname, data + 5, nicknameSize);
-    strcpy(event.channel, policy.channel);
+    strcpy(event.channel, policy.membership(membership).name);
     static const uint8_t domain[] = "meshcore-bot-channel-v1";
     mesh::Utils::sha256(event.channelId, sizeof(event.channelId), domain, sizeof(domain) - 1,
                         matched.secret, sizeof(matched.secret));
@@ -1709,7 +1742,7 @@ struct CommandBot::Core : mesh::Mesh {
     uint8_t canonical[MAX_PACKET_PAYLOAD]{};
     memcpy(canonical, data, 4); memcpy(canonical + 4, data + 5, length);
     mesh::Utils::sha256(event.request, sizeof(event.request), canonical, length + 4,
-                        channel.secret, sizeof(channel.secret));
+                        matched.secret, sizeof(matched.secret));
     const char *message = reinterpret_cast<const char *>(colon + 2);
     const size_t messageSize = length - nicknameSize - 2;
     if (!event.local && messageSize >= 13 && !strncmp(message, "[q:", 3) && message[11] == ']' && message[12] == ' ') {
@@ -1717,14 +1750,14 @@ struct CommandBot::Core : mesh::Mesh {
         char marker[14] = "[q:";
         for (unsigned i = 0; i < 4; ++i) snprintf(marker + 3 + 2 * i, 3, "%02x", job.event.request[i]);
         strcpy(marker + 11, "] ");
-        if (!memcmp(marker, message, 13)) {
+        if (!memcmp(marker, message, 13) && !memcmp(job.event.channelId, event.channelId, 32)) {
           ++stats.readSuppressed; wipe(&job, sizeof(job));
         }
       }
     }
     if (colon[2] == '!' && !event.local)
       receiveCommand(packet, event, reinterpret_cast<const char *>(colon + 2),
-                     length - nicknameSize - 2, nullptr, nullptr, nullptr, 0);
+                     length - nicknameSize - 2, nullptr, nullptr, nullptr, 0, &matched);
     else if (!event.local && meshPolicy.channelWait && messageSize <= BotReplyLimit) {
       bool printable = true;
       for (size_t i = 0; i < messageSize; ++i) printable = printable && message[i] >= 32 && message[i] <= 126;
@@ -1758,7 +1791,8 @@ struct CommandBot::Core : mesh::Mesh {
     messageEvent(packet, event, reinterpret_cast<const char *>(colon + 2), length - nicknameSize - 2);
   }
   void receiveCommand(mesh::Packet *packet, BotEvent &event, const char *text, size_t length,
-                      Contact *sender, const uint8_t *secret, const uint8_t *data, size_t size) {
+                      Contact *sender, const uint8_t *secret, const uint8_t *data, size_t size,
+                      const mesh::GroupChannel *matched = nullptr) {
     const size_t originalLength = length;
     char targeted[BotTextLimit + 1]{};
     if (packet->isRouteFlood()) {
@@ -1787,6 +1821,8 @@ struct CommandBot::Core : mesh::Mesh {
     const auto syntaxError = [&](const char *message) {
       ++stats.malformed; reject(message);
       if (!sender || event.local || sender->id.matches(self_id.pub_key)) return;
+      if (!(policy.flags(event, event.name) &
+            (event.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply))) return;
       *slot = {};
       slot->used = true; slot->at = now; slot->ackAt = now;
       memcpy(slot->request, event.request, sizeof(event.request));
@@ -1829,6 +1865,11 @@ struct CommandBot::Core : mesh::Mesh {
     if (!parseBotCommand(text, length, event,
                          error, sizeof(error))) {
       syntaxError(error); return;
+    }
+    policy.bindStorage(event);
+    if (!(event.policyFlags & (event.targeted ? BotRadioPolicy::AddressedExecute :
+                                             BotRadioPolicy::BareExecute))) {
+      reject("Native command policy denies this command/context"); return;
     }
     if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name)) {
       rejectAdmission(event, packet, sender, secret, "target required: !@BOTKEY8 COMMAND", 0); return;
@@ -1917,7 +1958,10 @@ struct CommandBot::Core : mesh::Mesh {
     if (sender) { invocation->route = sender->route; memcpy(invocation->secret, secret, 32); }
     else {
       invocation->route.scoped = routing.scope(packet);
-      invocation->groupChannel = channel;
+      if (!matched) {
+        wipe(invocation, sizeof(*invocation)); reject("Native reply channel unavailable"); return;
+      }
+      invocation->groupChannel = *matched;
     }
     if (readQuery) {
       uint16_t random = 0;
@@ -1986,8 +2030,19 @@ struct CommandBot::Core : mesh::Mesh {
     return owner.radio_.getEstAirtimeFor(
         2 + packet->payload_len + (traceBytes ? traceBytes : path) + (route.scoped ? 4 : 0));
   }
-  bool act(const BotAction &action, const Invocation &invocation) {
+  bool act(const BotAction &action, Invocation &invocation) {
     const auto &pending = invocation.event;
+    if (action.kind == BotAction::Reply &&
+        (invocation.suppressReply || !(policy.flags(pending, pending.name) &
+          (pending.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply)))) return true;
+    if (action.kind == BotAction::Trace) {
+      const auto flags = policy.flags(pending, "action_trace");
+      if (!(flags & (pending.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply)))
+        invocation.suppressReply = true;
+      if (!(flags & (pending.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute))) {
+        reject("Native command policy denies trace action"); return false;
+      }
+    }
     if (!owner.radio_.queuedReady()) {
       reject("Bot shared radio source unavailable/busy"); return false;
     }
@@ -2279,12 +2334,8 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
     core_->repeaters[i].due = millis() + i * 30000;
   }
   core_->meshPolicy = meshPolicy;
-  if (core_->policy.channel[0]) {
-    if (core_->policy.channelKeySet) memcpy(core_->channel.secret, core_->policy.channelKey, 16);
-    else mesh::Utils::sha256(core_->channel.secret, 16,
-        reinterpret_cast<const uint8_t *>(core_->policy.channel), strlen(core_->policy.channel));
-    mesh::Utils::sha256(core_->channel.hash, sizeof(core_->channel.hash), core_->channel.secret, 16);
-  }
+  for (unsigned i = 0; i < BotRadioPolicy::ChannelLimit; ++i)
+    BotRadioPolicy::nativeChannel(core_->policy.membership(i), core_->channels[i]);
   if (!worker_.begin(core_->self_id.pub_key)) { stop(); fault("Command VM worker unavailable"); return false; }
   if (!loadBotSharedState(core_->sharedState)) { stop(); fault("Command state policy unavailable"); return false; }
   worker_.setSharedState(core_->sharedState);
@@ -2313,6 +2364,31 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
     stop(); fault("Command VM initialization unavailable"); return false;
   }
   return true;
+}
+void CommandBot::radioPolicyCommand(const char *command, char *reply, size_t capacity) {
+  std::unique_ptr<BotRadioPolicy, void (*)(BotRadioPolicy *)> policy(
+      allocateRoleStorage<BotRadioPolicy>("native command radio policy"),
+      [](BotRadioPolicy *value) { releaseRoleStorage(value); });
+  if (!policy || !loadBotRadioPolicy(*policy)) {
+    snprintf(reply, capacity, "Error: saved native command radio policy unavailable"); return;
+  }
+  bool changed = false;
+  if (!botRadioPolicyCommand(*policy, command, reply, capacity, changed) || !changed) return;
+  if (!saveBotRadioPolicy(*policy)) {
+    snprintf(reply, capacity, "Error: native command policy commit/readback unknown; inspect membership/access/thread before retry");
+    return;
+  }
+  if (core_) {
+    const auto pathWidth = core_->policy.pathWidth;
+    const auto airtimeMs = core_->policy.airtimeMs;
+    core_->policy = *policy;
+    core_->policy.pathWidth = pathWidth;
+    core_->policy.airtimeMs = airtimeMs;
+    for (unsigned i = 0; i < BotRadioPolicy::ChannelLimit; ++i)
+      BotRadioPolicy::nativeChannel(core_->policy.membership(i), core_->channels[i]);
+  }
+  snprintf(reply, capacity, core_ ? "Saved and applied native command policy; in-flight work may finish or fail" :
+                                  "Saved native command policy; applied on next bot startup");
 }
 void CommandBot::stop() {
   if (core_) {

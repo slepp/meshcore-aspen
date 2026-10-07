@@ -6,10 +6,10 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.6` | `aspen-v0.1.7` |
+| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.7` | `aspen-v0.1.8` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
 
-Show users **Aspen 0.1.6 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.7 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -19,7 +19,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.6` or `birch-0.1.0-rc.1`;
+Companion device information reports `aspen-0.1.7` or `birch-0.1.0-rc.1`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
@@ -75,7 +75,7 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The bundle name is `aspen-v0.1.6-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The bundle name is `aspen-v0.1.7-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Birch adds `-linux-x86_64`. Each has `manifest.json`, checksums, application and
 separate initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -159,6 +159,28 @@ Use `help syslog` to configure logging and `stats system`, `stats memory`,
 retain identities, settings and installed programs. Initial bootloader,
 partition or filesystem writes are a separate first-install operation; back
 up the node before using them.
+
+## Aspen 0.1.7
+
+A bot can join eight channels simultaneously, including one Public channel,
+alongside private DMs. `bot membership`, `bot access` and `bot thread` save and
+apply channel selection, bare/addressed execution and replies, and read/write
+restrictions. Public starts with commands denied. Existing native owner/shared
+grants remain required.
+
+Lua and Wasm can use named storage threads under the same full native caller,
+channel or bot identity without multiplying the existing key or timer quotas.
+Default storage is unchanged; export default and thread families separately.
+See [native channel policy and threads](../firmware/runtime/BOT_RUNTIME.md#channels-and-native-command-policy)
+and [single-file Lua replacement and manual restore](../firmware/runtime/REMOTE_REPEATERS.md#replace-or-compose-lua-sources).
+
+Shared-room frontends leave a radio turnaround window before history delivery.
+The Worker owns the room identity; frontends deliver live messages and offline
+catch-up through their companion-radio connections. Public applications still
+need private frontend configuration to connect.
+Application-only updates retain identities, settings and installed programs.
+Older firmware rejects expanded policy and thread records; make a private
+preservation backup before a firmware downgrade.
 
 ## Aspen 0.1.5
 

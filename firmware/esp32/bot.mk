@@ -34,11 +34,25 @@ BOT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder 
 bot-repeater-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --repeater-test
 .PHONY: bot-repeater-storage-test
+.PHONY: bot-radio-policy-test
+bot-radio-policy-test: bot-prepare-phy
+	@mkdir -p "$(BOT_BUILD)"
+	$(CXX) $(BOT_FLAGS) -I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(NATIVE) -I$(CRYPTO) \
+		tests/bot_radio_policy.cpp ../runtime/BotSettings.cpp ../runtime/BotRegistry.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o -o $(BOT_BUILD)/bot-radio-policy
+	"$(BOT_BUILD)/bot-radio-policy"
+.PHONY: bot-channel-policy-test
+bot-channel-policy-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --channel-policy-test
+.PHONY: bot-thread-policy-test
+bot-thread-policy-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --thread-policy-test
 bot-repeater-storage-test: bot-prepare-phy
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) $(BOT_FLAGS) -I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
 		-I$(UPSTREAM)/src -I$(NATIVE) -I$(CRYPTO) \
-		tests/bot_repeater_storage.cpp ../runtime/BotSettings.cpp ../runtime/BotTypes.cpp \
+		tests/bot_repeater_storage.cpp ../runtime/BotSettings.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
 		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o -o $(BOT_BUILD)/bot-repeater-storage
 	"$(BOT_BUILD)/bot-repeater-storage"
 bot-adaptive-test:

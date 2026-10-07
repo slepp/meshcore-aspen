@@ -45,6 +45,31 @@ static int32_t request(uint32_t job) {
                phase == 0 ? 7 : phase == 1 ? 4 : 6,
                phase == 0 ? (const char *)&conversion : phase == 1 ? "1d2" : "red|blue",
                phase == 0 ? sizeof(conversion) : phase == 1 ? 3 : 8, 0);
+#elif CONTRACT == 8
+  static char key[33], a[33], b[33];
+  int32_t size = mc_thread_key(key, "notes", 5, phase == 4 ? "" : phase >= 5 ? "wake" : "key",
+                               phase == 4 ? 0 : phase >= 5 ? 4 : 3);
+  if (size < 0 || mc_thread_key(a, "notes", 5, "a", 1) < 0 ||
+      mc_thread_key(b, "notes", 5, "b", 1) < 0) return -1;
+  if (phase == 2 || phase == 3) {
+    static mc_mutation operations[2] = {
+      {ADDRESS(a), 7, ADDRESS(""), 0, ADDRESS("one"), 3, MC_COMPARE},
+      {ADDRESS(b), 7, ADDRESS(""), 0, ADDRESS("two"), 3, 0}
+    };
+    return mc_io(job, phase == 2 ? MC_CAS : MC_TRANSACTION, MC_CALLER_THREAD, "", 0,
+                 (const char *)operations, (phase == 2 ? 1 : 2) * sizeof(mc_mutation), 0);
+  }
+  return mc_io(job, phase == 0 ? MC_GET : phase == 1 ? MC_PUT : phase == 4 ? MC_LIST :
+               phase == 5 ? MC_TIMER_SET : phase == 6 ? MC_TIMER_GET : MC_TIMER_CANCEL,
+               MC_CALLER_THREAD, key, (uint32_t)size, phase == 1 ? "v" : "",
+               phase == 1 ? 1 : 0, phase == 5 ? 5 : 0);
+#elif CONTRACT == 9
+  static mc_mutation operations[2] = {
+    {ADDRESS("notes/a"), 7, ADDRESS(""), 0, ADDRESS("one"), 3, 0},
+    {ADDRESS("other/b"), 7, ADDRESS(""), 0, ADDRESS("two"), 3, 0}
+  };
+  return mc_io(job, MC_TRANSACTION, MC_CALLER_THREAD, "", 0,
+               (const char *)operations, sizeof(operations), 0);
 #else
   return -1;
 #endif
@@ -101,6 +126,10 @@ MC_EXPORT("mc_resume") int32_t resume(uint32_t job, uint32_t operation, uint32_t
   if (mc_read(operation, MC_VALUE, output, sizeof(output)) <= 0) return -1;
   if (++phase < 3) return request(job) > 0 ? MC_PENDING : -1;
   mc_reply(job, "utilities complete", 18);
+#elif CONTRACT == 8
+  if (!ok) return -1;
+  if (++phase < 8) return request(job) > 0 ? MC_PENDING : -1;
+  mc_reply(job, "thread complete", 15);
 #endif
   return MC_DONE;
 }

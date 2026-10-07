@@ -163,6 +163,7 @@ int main() {
   personalReminderApi();
   packetContinuations();
   scopedStorage();
+  namedThreadScopes();
   retained();
   manifestLifetimes();
   initializationBudgets();

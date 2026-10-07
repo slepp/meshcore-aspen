@@ -125,6 +125,25 @@ active. `rollback` restores the previous **whole source set**, not one file.
 This requires durable source management; core-only RAM source activation
 does not survive a restart.
 
+Keep a known-good file before replacing a command or monitor:
+
+```sh
+python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
+  source-export monitor known-good-monitor.lua
+python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
+  source-install monitor changed-monitor.lua
+# Restore only that file when needed:
+python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
+  source-install monitor known-good-monitor.lua
+```
+
+Export creates a private `0600` file without changing the running source.
+Reinstalling it leaves other named files, native permissions, durable notes,
+thread data and Wasm selection unchanged. Any Lua source replacement rebuilds
+the shared Lua environment, resets globals and cancels pending Lua work.
+A custom source set must export a command or declare an event; add configuration
+chunks to a working set rather than installing a configuration-only custom set.
+
 The minimal replaceable monitor is:
 
 ```lua

@@ -31,6 +31,20 @@ administrator password using `--password-file /private/password`. Keep both
 files private (`0600`). A timeout leaves the command outcome unknown; inspect
 status before repeating a mutation.
 
+Use `bot membership SLOT` to inspect any of the eight simultaneous group
+memberships, and `bot membership SLOT #tag|public|private NAMEHEX KEY32|off`
+to change one. Public is a single membership and starts with commands denied.
+`bot access dm|native|SLOT` reads the native command default and override count;
+`bot access CONTEXT COMMAND MASK` edits bare/addressed execution, replies and
+storage access. `bot thread CONTEXT NAME 0|16|32|48|inherit` narrows read/write
+access for a named storage thread without changing the full native caller or
+channel identity. `native` selects bot-owned events; their global event/shared
+grants remain required. These settings save and apply without a reboot. See the
+[shared channel policy examples](../runtime/BOT_RUNTIME.md#channels-and-native-command-policy)
+for masks, private-key handling and the grants that remain required.
+Lua thread descriptors and aggregate default/thread quotas are covered in
+[named storage threads](../runtime/BOT_RUNTIME.md#named-storage-threads).
+
 Use `bot radio` to inspect the Lua and shared modem's queued packets, confirmed
 transmissions, failed/uncertain transmissions and RF time. A confirmed
 transmission is not a delivery receipt. `bot status` keeps Lua readiness

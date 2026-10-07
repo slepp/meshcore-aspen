@@ -53,7 +53,7 @@ public-provisioning-test:
 		-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
 		-I$(UPSTREAM)/examples/kiss_modem \
 		-I$(LPP) \
-		tests/public_provisioning.cpp Provisioning.cpp RoleProfile.cpp Lifecycle.cpp ../runtime/BotSettings.cpp \
+		tests/public_provisioning.cpp Provisioning.cpp RoleProfile.cpp Lifecycle.cpp ../runtime/BotSettings.cpp ../runtime/BotRegistry.cpp \
 		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
 		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
 		-o "$(TEST_BUILD)/public-provisioning"

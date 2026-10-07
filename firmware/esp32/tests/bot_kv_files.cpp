@@ -515,6 +515,58 @@ static void repeatedEmptyRecords() {
   }
   puts("PASS repeated unused records: exact-byte digest reuse cannot conceal changed digest/magic/scope/text; distinct valid tombstones retained");
 }
+static void namedThreads() {
+  reset();
+  Client c;
+  c.put("red/key", "default"); assert(c.result.ok);
+  c.request.scope = BotIoRequest::CallerThread;
+  c.put("red/key", "red"); assert(c.result.ok);
+  c.put("blue/key", "blue"); assert(c.result.ok);
+  c.get("red/key"); assert(c.result.ok && !strcmp(c.result.value, "red"));
+  c.request.principal[31] = 1;
+  c.get("red/key"); assert(c.result.ok && !c.result.found);
+  c.put("red/key", "other"); assert(c.result.ok);
+  c.request.principal[31] = 0;
+  c.request.kind = BotIoRequest::List; strcpy(c.request.key, "red/"); c.run();
+  assert(c.result.ok && c.result.keys.count == 1 && !strcmp(c.result.keys.keys[0], "key"));
+  BotStore::Snapshot data; data.scope = BotIoRequest::CallerThread; data.principal[0] = 7;
+  char error[128]{};
+  assert(c.store.snapshot(c.bot, data, error, sizeof(error)) && data.count == 2);
+  c.request.scope = BotIoRequest::Caller;
+  c.get("red/key"); assert(c.result.ok && !strcmp(c.result.value, "default"));
+  for (unsigned i = 0; i < 5; ++i) {
+    char key[8]; snprintf(key, sizeof(key), "k%u", i);
+    c.put(key, "v"); assert(c.result.ok);
+  }
+  c.request.scope = BotIoRequest::CallerThread;
+  c.put("green/key", "v"); assert(!c.result.ok);
+  c.request.kind = BotIoRequest::Transaction; c.request.mutations = 1;
+  strcpy(c.request.mutation[0].key, "green/key"); strcpy(c.request.mutation[0].value, "v");
+  c.run(); assert(!c.result.ok);
+  c.request.mutations = 2;
+  strcpy(c.request.mutation[0].key, "red/key"); c.request.mutation[0].remove = true;
+  strcpy(c.request.mutation[1].key, "red/next"); strcpy(c.request.mutation[1].value, "next");
+  c.run(); assert(c.result.ok);
+  c.request.kind = BotIoRequest::Delete; strcpy(c.request.key, "blue/key"); c.run(); assert(c.result.ok);
+  c.request.scope = BotIoRequest::Caller; c.put("extra", "v"); assert(c.result.ok);
+  const auto before = identity_test::durable; const auto files = filesystem_test::files;
+  c.store.restore(c.bot, data, c.result, 1, c.generation);
+  assert(!c.result.ok && strstr(c.result.error, "quota") &&
+         identity_test::durable == before && filesystem_test::files == files);
+  c.request.scope = BotIoRequest::CallerThread; c.get("red/next");
+  assert(c.result.ok && !strcmp(c.result.value, "next"));
+  c.put("bad/key", "v"); assert(!c.result.ok);
+  c.get("bad/"); assert(!c.result.ok);
+  c.get("bad name/key"); assert(!c.result.ok);
+  Client reboot; reboot.request.scope = BotIoRequest::CallerThread; reboot.get("red/next");
+  assert(reboot.result.ok && !strcmp(reboot.result.value, "next"));
+  reboot.request.scope = BotIoRequest::Caller; reboot.get("red/key");
+  assert(reboot.result.ok && !strcmp(reboot.result.value, "default"));
+  c.request.scope = BotIoRequest::BotThread; memset(c.request.principal, 0, 32);
+  c.request.grant = 1; c.put("monitor/sample", "v"); assert(c.result.ok);
+  c.get("monitor/sample"); assert(c.result.ok && c.result.found);
+  puts("PASS named KV threads: full-origin/default isolation, filtered unprefixed lists, aggregate 8-key quota, atomic replacement, restore quota rejection, restart and bot-reserved allocation");
+}
 static void interruptedEmptyInitialization() {
   reset();
   Client c;
@@ -737,6 +789,7 @@ int main() {
   atomicCuts(); legacyMigration(); restoreCuts(); restoreCancellation(); physicalMigration();
   initializationBudget(); corruptMigration(); ioFailures(); uncertainRetry(); cancellationAndWear();
   cachedRecovery(); cachedCorruption(); repeatedEmptyRecords(); interruptedEmptyInitialization(); slowEmptyMedia(); initialBankDeadlines(); migrationDeadlines();
+  namedThreads();
   reset();
   assert(psram_test::allocations.empty());
 }

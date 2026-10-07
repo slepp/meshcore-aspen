@@ -188,8 +188,8 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("Accepted verification", self.admin(process, f"source commit {upload_id}"))
         return digest
 
-    def bot_values(self, process, key):
-        self.assertTrue(self.admin(process, "data export kv bot " + "0" * 64).startswith("PENDING"))
+    def bot_values(self, process, key, scope="bot"):
+        self.assertTrue(self.admin(process, f"data export kv {scope} " + "0" * 64).startswith("PENDING"))
         for _ in range(80):
             status = self.admin(process, "data status")
             if status.startswith("EXPORTED "):
@@ -208,6 +208,7 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
         self.assertEqual(data[:4], b"BKD\x01")
         self.assertEqual(data[4:36], key)
+        self.assertEqual(data[36], 6 if scope == "bot-thread" else 2)
         self.assertEqual(data[37:69], b"\0" * 32)
         self.assertEqual(hashlib.sha256(data[:-32]).digest(), data[-32:])
         values = {}
@@ -218,10 +219,10 @@ class WorkerProcessTest(unittest.TestCase):
             values[name] = value
         return values
 
-    def wait_bot_value(self, process, key, name):
+    def wait_bot_value(self, process, key, name, scope="bot"):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            values = self.bot_values(process, key)
+            values = self.bot_values(process, key, scope)
             if name in values:
                 return values
             time.sleep(0.02)
@@ -417,6 +418,111 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertEqual(self.ready(third), key)
         self.assertEqual(self.admin(third, "source hash"), installed)
         self.stop(third)
+
+    def test_native_channel_policy_persists_and_browser_aliases_share_backend(self):
+        first = self.start()
+        key = self.ready(first)
+        for command in (
+            "membership 0 #first", "bot membership 1 #second",
+            "membership 2 public",
+            "bot membership 3 private 50726976617465 0102030405060708090a0b0c0d0e0f10",
+            "bot access 2 ping 12", "access dm action_send 10",
+            "bot thread dm notes 16", "thread native monitor 48", "access native default 16",
+        ):
+            reply = self.admin(first, command)
+            self.assertTrue(reply.startswith("Saved and applied"), reply)
+        self.assertIn("default=0", self.admin(first, "access 2"))
+        self.assertIn("ping=12", self.admin(first, "bot access 2 list 0"))
+        self.assertIn("notes=16", self.admin(first, "thread dm list 0"))
+        self.assertIn("default=16", self.admin(first, "access native"))
+        self.assertIn("Threads scopes=4..7", self.admin(first, "source api threads"))
+        private = self.admin(first, "membership 3")
+        self.assertIn("name=Private type=private", private)
+        self.assertNotIn("010203", private)
+        for command in ("membership 8 public", "membership 7 public", "access dm ping 64",
+                        "thread dm notes 63", "thread native wrong/name 16"):
+            self.assertTrue(self.admin(first, command).startswith("Error:"))
+        self.stop(first)
+        second = self.start()
+        self.assertEqual(self.ready(second), key)
+        self.assertIn("name=#first", self.admin(second, "membership 0"))
+        self.assertIn("name=#second", self.admin(second, "bot membership 1"))
+        self.assertIn("name=Private type=private", self.admin(second, "membership 3"))
+        self.assertIn("ping=12", self.admin(second, "access 2 list 0"))
+        self.assertIn("action_send=10", self.admin(second, "access dm list 0"))
+        self.assertIn("notes=16", self.admin(second, "bot thread dm list 0"))
+        self.assertIn("monitor=48", self.admin(second, "thread native list 0"))
+        self.assertIn("default=16", self.admin(second, "access native"))
+        self.stop(second)
+
+    def test_one_lua_file_replace_and_known_good_restore_preserve_data_and_wasm(self):
+        import io
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from tools.hardware import admin as mast_cli, lua_sources
+
+        process = self.start()
+        key = self.ready(process)
+        self.assertIn("Saved/applied", self.admin(process, "shared on"))
+        self.assertIn("Saved/applied", self.admin(process, "events 1"))
+        client = SimpleNamespace(command=lambda text: self.admin(process, text), close=lambda: None)
+        mast_cli.install(client, (ROOT / ".tmp/wasm-examples/c-arithmetic.wasm").read_bytes(),
+                         progress=lambda text: None)
+        wasm_hash = self.admin(process, "source wasm hash")
+        config = STATE / "config.lua"
+        config.write_bytes(b"_setting='unchanged'\n")
+        original = (
+            b"_implementation='one'\n"
+            b"function _started() local scope={scope='bot',thread='notes'} "
+            b"if not kv.get('retained',scope) then kv.put('retained','persistent',scope) end "
+            b"kv.put('selection',_implementation..':'.._setting,'bot') end "
+            b"events.on('startup','_started')\n"
+            b"function selected() return _implementation end\n"
+        )
+        handler = STATE / "handler.lua"
+        handler.write_bytes(original)
+        known_good = STATE / "known-good.lua"
+        known_good.write_bytes(original)
+        replacement = STATE / "replacement.lua"
+        replacement.write_bytes(original.replace(b"'one'", b"'two'"))
+
+        def install_file(name, path):
+            with patch.object(sys, "argv", ["admin.py", "--unix-socket", str(STATE / "fixture.sock"),
+                                           "source-install", name, str(path)]), \
+                    patch.object(mast_cli, "UnixClient", return_value=client), \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                mast_cli.main()
+
+        mast_cli.install(client, lua_sources.encode({"main": None, "config": config.read_bytes(),
+                                                    "handler": handler.read_bytes()}),
+                         progress=lambda text: None)
+        parts = lua_sources.decode(mast_cli.download(client))
+        self.assertEqual(parts, {"main": None, "config": config.read_bytes(), "handler": original})
+        self.assertEqual(self.wait_bot_value(process, key, "selection")["selection"], "one:unchanged")
+        self.assertEqual(self.wait_bot_value(process, key, "notes/retained", "bot-thread"),
+                         {"notes/retained": "persistent"})
+        for path, expected in ((replacement, "two:unchanged"), (known_good, "one:unchanged")):
+            install_file("handler", path)
+            parts = lua_sources.decode(mast_cli.download(client))
+            self.assertEqual(parts["config"], config.read_bytes())
+            self.assertIsNone(parts["main"])
+            self.assertEqual(parts["handler"], path.read_bytes())
+            deadline = time.monotonic() + 5
+            while self.bot_values(process, key).get("selection") != expected:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)
+            self.assertEqual(self.bot_values(process, key, "bot-thread"), {"notes/retained": "persistent"})
+            self.assertEqual(self.admin(process, "source wasm hash"), wasm_hash)
+        selected_hash = self.admin(process, "source hash")
+        self.stop(process)
+        process = self.start()
+        self.assertEqual(self.ready(process), key)
+        self.assertEqual(self.admin(process, "source hash"), selected_hash)
+        self.assertEqual(self.admin(process, "source wasm hash"), wasm_hash)
+        self.assertEqual(self.bot_values(process, key, "bot-thread"), {"notes/retained": "persistent"})
+        self.assertEqual(self.wait_bot_value(process, key, "selection")["selection"], "one:unchanged")
+        self.stop(process)
 
     def test_private_admin_name_channel_and_rejected_identity(self):
         first = self.start()

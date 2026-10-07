@@ -49,6 +49,132 @@ have their own two-per-caller/four-global-per-minute admission, unrelated to
 command cooldown. `!status`, `!signal` and `!air` inspect readiness, actual
 RF metadata and airtime; a TX counter does not show recipient delivery.
 
+## Channels and native command policy
+
+One bot can receive DMs and join up to eight channels at the same time, including
+one Public channel, hashtag channels and private channels. Configure memberships
+through authenticated native administration:
+
+```text
+bot membership 0 #lab
+bot membership 1 #neighbors
+bot membership 2 public
+bot membership 3 private 4f7073 CHANNEL_KEY32
+bot membership 3
+```
+
+Private membership names are ASCII encoded as hex (`4f7073` is `Ops`); the key
+is 16 bytes encoded as 32 hex digits and cannot be all zero. Readback shows the name and
+type, never the key. Slot 0 retains the established `bot channel` and
+`role channel bot 0` settings. Use `bot membership SLOT off` to leave a channel.
+A new membership or changed name/key resets that slot's command overrides.
+Membership and access changes save and apply immediately; path width and
+airtime changes still apply on reboot. On a host's private owner socket, omit
+`bot `; the host browser console accepts the commands shown above.
+
+DM commands are enabled by default. Public commands are denied by default;
+joining Public does not enable responses. Hashtag/private memberships retain
+the existing command behavior. For example, enable only addressed Public Ping
+and deny bare Ping on the second hashtag channel:
+
+```text
+bot access 2 ping 12
+bot access 1 ping 12
+bot access dm
+bot access 2 list 0
+```
+
+`bot access dm|SLOT default MASK` sets a context's default. Replace `default`
+with a command name for an override; use `inherit` instead of a mask to remove
+an override. `list OFFSET` returns up to four overrides; follow `next=` until
+no entries remain. Command/action and thread overrides share 64 slots.
+
+| Mask bit | Permission |
+| --- | --- |
+| 1 / 2 | Execute / send a reply for a bare command |
+| 4 / 8 | Execute / send a reply for an addressed command |
+| 16 / 32 | Read / write storage |
+
+Add the desired bits; `63` allows all six, `0` denies all, and `12` allows
+addressed execution and replies without storage access. `action_send`,
+`action_trace`, `action_advert` and `action_forward` can further deny their
+native radio operations using the same bare/addressed execution bits. Their
+reply bits control subsequent command responses, not the action packet itself.
+An explicit scripted reply can fail when replies are disabled. Turning
+off replies does not undo an allowed effect: a note can be committed without
+an RF response. Syntax errors and admission notices also honor reply settings.
+
+These masks only restrict existing native permissions. An addressed channel
+command cannot become a private DM or owner, and shared state, reminders,
+destinations and network access still require their established grants.
+All channel members share the channel's full key-derived storage identity;
+nicknames never grant private-user access. Each admitted invocation retains
+its own channel and reply key. An edit blocks newly denied commands; work
+already admitted may finish or fail.
+
+The expanded policy survives restart in two checked files selected by the
+existing native policy record. Older single-channel settings are retained.
+Older firmware cannot read the expanded policy: make a private preservation
+backup before a firmware downgrade. Restoring older Lua on current firmware
+does not restore old native permissions.
+
+## Named storage threads
+
+Lua commands can keep separate named threads within an existing native scope:
+
+```lua
+local notes = {scope = 'conversation', thread = 'shopping'}
+kv.put('tea', 'two boxes', notes)
+local value = kv.get('tea', notes)
+local entries = kv.list(nil, notes)
+timer.set('reminder', 300, notes)
+```
+
+Use the same descriptor for get, put, delete, list, CAS, transactions and
+durable timers. The thread name is 1..24 characters, starts with a lowercase
+letter, and contains lowercase letters, digits, `_` or `-`. Its name, `/`
+separator and key or timer name together must fit 32 bytes; `shopping/tea`
+uses 12 bytes. Lists return only the chosen thread's keys, without that prefix.
+The scope defaults to `caller` if omitted from the descriptor.
+
+Threads retain the scope's full authenticated caller, channel or bot identity.
+The same label on another caller, channel or bot does not share data. Explicit
+bot/channel sharing still needs `bot shared on`; a channel cannot select a
+private caller or DM conversation. Default string scopes and their records
+are unchanged. Each base scope and full principal shares its existing quota
+across default records and all threads: eight KV keys and two pending timers,
+not a new allowance per thread.
+
+An owner can further restrict a thread within a DM or channel context:
+
+```text
+bot thread dm shopping 16
+bot thread 1 shopping 48
+bot thread dm shopping inherit
+bot thread dm list 0
+```
+
+Masks are `0` (deny), `16` (read), `32` (write) or `48` (both). Up to eight
+thread overrides per context use the shared 64-rule policy. They only narrow
+the command's read/write mask and native grants. CAS and transactions with
+comparisons need both read and write permission. An edit applies to newly
+admitted work; an existing invocation may finish or fail.
+
+`native` selects bot-owned startup, connectivity, node-status and scheduled
+events: for example, `bot thread native monitor 16`. Their context default is
+`bot access native default MASK`; bit 1 permits new events to start, and bits
+16/32 restrict their storage access. The separate `bot events` and shared-state
+grants remain required. Message events use their actual DM/channel context.
+
+`source api threads` reports the native bounds. Owner exports use additive
+`caller-thread`, `conversation-thread`, `bot-thread` and `channel-thread`
+scopes and include all encoded names for that base scope/principal. Export
+default and thread families separately. Restoring one thread-family KV snapshot
+leaves default records untouched and refuses an aggregate origin-quota overflow.
+Timer restore retains its existing explicit no-rearm behavior. Older firmware
+rejects thread records; use a private preservation backup before downgrading
+firmware. Older Lua on current firmware retains current native permissions.
+
 ## Opt-in adaptive airtime admission
 
 An operator can moderate bot work when the **local shared modem** is busy.
@@ -229,7 +355,8 @@ See [declaration/schema syntax](#restricted-handler-api),
 ### Scoped durable state
 
 All operations yield to storage. The optional scope is `caller` by default,
-or `conversation`, `bot`, `channel`; see [authorization](#context-and-authorization).
+or `conversation`, `bot`, `channel`, or a [named thread descriptor](#named-storage-threads);
+see [authorization](#context-and-authorization).
 
 | API | Successful result | Limits / failure behavior |
 | --- | --- | --- |
@@ -240,7 +367,8 @@ or `conversation`, `bot`, `channel`; see [authorization](#context-and-authorizat
 | `kv.cas(key, expected, value[, scope])` | `{ok, status, error}` | `false` means expected absence / requested deletion; statuses `committed`, `conflict`, `unknown`, `rejected` |
 | `kv.transaction(operations[, scope])` | Same atomic-result shape as CAS | 1..4 distinct `{key, value[, expect]}` entries; one scope/principal; no partial publication |
 
-Strings cannot contain NUL. Eight keys per scope/principal; caller,
+Strings cannot contain NUL. Eight keys per base scope/principal across default
+records and named threads; caller,
 conversation and channel share 32 public slots, with eight bot-global reserve
 slots. A `conflict` writes nothing. For `unknown`, read back affected keys
 before making a new explicit decision. See [atomic semantics](#atomic-kv-and-owner-data-snapshots)
@@ -350,7 +478,7 @@ channel requests additionally provide verified `ctx.channel` and immutable
 | --- | --- |
 | Authenticated private DM | Caller and conversation storage, caller reply/send/waits; reminders/network only with their owner grants |
 | `caller` (default) | Full bot key + authenticated sender key; shared across cooperating functions, private from other callers |
-| `conversation` | Separate bot/caller DM scope; not arbitrary script-selected threads |
+| `conversation` | Separate bot/caller DM scope; named threads retain that native identity |
 | `bot` | Bot-global durable KV/timers, only with explicit shared-state grant |
 | Verified selected channel | Channel scope by full channel-key digest, only with shared-state grant; all members can read/write it |
 | Owner-granted destination | Additional full-key DM destination with a fresh authenticated direct route; not an owner identity or arbitrary routing grant |
@@ -1357,7 +1485,7 @@ identities, timer claims and autonomous reminder journals are not imported or
 replayed by this **KV-data** operation; scheduling state stays unchanged.
 The same bounded owner staging also supports separate `timers` and `reminders`
 families (`BTD`/`BRD`, version 1, 2,422 bytes each). Reminder exports require
-caller scope; timers support all four scopes. Backups include durable states,
+caller scope; timers support the four default and four additive thread scopes. Backups include durable states,
 deadlines, revisions, reminder IDs/text and original source generations.
 Scheduler restore requires explicit `no-rearm`: matching live records win,
 pending records become cancelled, missing records are imported without delivery
@@ -1896,8 +2024,9 @@ is reported, but running access stays disabled; it is not a reboot-persistent
 revocation until saved successfully. Regranting cannot authorize an older
 invocation. Providers check the epoch before effects and before resumption.
 Private caller scopes never change merely because sharing was enabled.
-Arbitrary conversation threads and per-principal grant lists remain unimplemented;
-ordinary shared Lua globals are not private storage.
+Named threads use the same native origin with an additional bounded label;
+scripts cannot select arbitrary principals. Owner read/write masks only narrow
+the existing native grants. Ordinary shared Lua globals are not private storage.
 
 Channel scope uses a domain-separated, full 32-byte SHA-256 identity of the
 **selected, successfully decrypted native channel key**, not its one-byte wire

@@ -158,17 +158,22 @@ struct Peer : PeerState, mesh::Mesh {
   std::vector<std::string> groupReplies(const Radio &radio, uint8_t width = 3,
                                       const char *name = "#example1", const uint8_t *key = nullptr) {
     auto channel = hashtag(name);
-    if (key) memcpy(channel.secret, key, 16);
+    if (key) {
+      memcpy(channel.secret, key, 16);
+      mesh::Utils::sha256(channel.hash, sizeof(channel.hash), key, 16);
+    }
     std::vector<std::string> result;
     for (const auto &raw : radio.sent) {
       mesh::Packet packet;
       assert(packet.readFrom(raw.data(), raw.size()));
       if (packet.getPayloadType() != PAYLOAD_TYPE_GRP_TXT) continue;
+      if (packet.payload[0] != channel.hash[0]) continue;
       assert(packet.payload_len <= MAX_PACKET_PAYLOAD && packet.getPathHashSize() == width);
       uint8_t plain[MAX_PACKET_PAYLOAD]{};
       const int size = mesh::Utils::MACThenDecrypt(channel.secret, plain, packet.payload + 1,
                                                   packet.payload_len - 1);
-      assert(size > 5 && plain[4] == 0);
+      if (size <= 5) continue;
+      assert(plain[4] == 0);
       const auto *end = std::find(plain + 5, plain + size, 0);
       const std::string body(reinterpret_cast<const char *>(plain + 5), reinterpret_cast<const char *>(end));
       const auto separator = body.find(": ");
@@ -219,6 +224,155 @@ struct Peer : PeerState, mesh::Mesh {
     assert(false && "No outgoing native DM to ACK"); return {};
   }
 };
+static void native_channel_policy() {
+  assert(saveBotEnabled(true) && saveBotRadioPolicy({}));
+  Fixture f; f.start(); Peer peer;
+  f.learn(peer);
+  uint8_t identity[32]; memcpy(identity, f.bot.publicKey(), sizeof(identity));
+  char reply[162]{};
+  const auto policy = [&](const char *command) {
+    f.bot.radioPolicyCommand(command, reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved and applied", 17));
+  };
+  policy("membership 0 #first");
+  policy("membership 1 #second");
+  policy("membership 2 public");
+  policy("membership 3 private 50726976617465 0102030405060708090a0b0c0d0e0f10");
+  BotRadioPolicy saved;
+  assert(loadBotRadioPolicy(saved));
+  saved.airtimeMs = 3600; saved.pathWidth = 3; assert(saveBotRadioPolicy(saved));
+  f.bot.stop(); f.start();
+  f.learn(peer);
+  assert(!memcmp(identity, f.bot.publicKey(), sizeof(identity)));
+  mesh::GroupChannel publicChannel, privateChannel;
+  BotRadioPolicy::nativeChannel(saved.membership(2), publicChannel);
+  BotRadioPolicy::nativeChannel(saved.membership(3), privateChannel);
+  const auto group = [&](const char *command, const char *name, const uint8_t *key = nullptr,
+                         bool targeted = true) {
+    timeMs += 61000; f.radio.sent.clear();
+    f.deliver(targeted ? peer.targetedGroup(f.bot.publicKey(), command, name, 3, {}, key) :
+                         peer.group(command, name, 3, {}, key));
+    f.step(800);
+    return peer.groupReplies(f.radio, 3, name, key);
+  };
+  assert(group("operator: !ping", "#first") == std::vector<std::string>{"Pong"});
+  assert(group("operator: !ping", "#second") == std::vector<std::string>{"Pong"});
+  assert(group("operator: !ping", "Private", privateChannel.secret) == std::vector<std::string>{"Pong"});
+  assert(group("operator: !ping", "Public", publicChannel.secret).empty());
+  policy("access 2 ping 12");
+  assert(group("operator: !ping", "Public", publicChannel.secret) == std::vector<std::string>{"Pong"});
+  assert(group("operator: !ping", "Public", publicChannel.secret, false).empty());
+  policy("access 1 ping 12");
+  assert(group("operator: !ping", "#second", nullptr, false).empty());
+  assert(group("operator: !ping", "#second") == std::vector<std::string>{"Pong"});
+  assert(group("operator: !ping", "#first", nullptr, false).size() == 1);
+  policy("access 1 recall 63");
+  const auto privateDenied = group("operator: !recall item", "#second");
+  assert(privateDenied.size() == 1 && privateDenied[0].find("permission") != std::string::npos);
+  const char *source =
+      "function where() sleep(1000) return ctx.channel.name end "
+      "function keep() kv.put('item','retained') return 'written' end "
+      "function fetch() return kv.get('item') or 'missing' end "
+      "function emit() local p=mesh.compose{text='effect'} local r=mesh.send(p) "
+      "if not r.ok then return r.error end return 'sent' end";
+  BotWorker::Result result;
+  assert(f.bot.stageSource(source, strlen(source))); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok);
+  assert(f.bot.activateStaged()); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok);
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(peer.targetedGroup(identity, "same-name: !where", "#first")); f.step(20);
+  f.deliver(peer.targetedGroup(identity, "same-name: !where", "#second")); f.step(20);
+  f.deliver(peer.targetedGroup(identity, "same-name: !where", "Private", 3, {}, privateChannel.secret));
+  f.step(800);
+  assert(peer.groupReplies(f.radio, 3, "#first") == std::vector<std::string>{"#first"});
+  assert(peer.groupReplies(f.radio, 3, "#second") == std::vector<std::string>{"#second"});
+  assert(peer.groupReplies(f.radio, 3, "Private", privateChannel.secret) == std::vector<std::string>{"Private"});
+  policy("access dm keep 53");
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(peer.command(identity, "!keep")); f.step();
+  assert(peer.replies(identity, f.radio).empty());
+  assert(f.command(peer, "!fetch") == "retained");
+  policy("access dm keep 31");
+  assert(f.command(peer, "!keep").find("denies storage write") != std::string::npos);
+  policy("access dm fetch 47");
+  assert(f.command(peer, "!fetch").find("denies storage read") != std::string::npos);
+  policy("access dm action_send 49");
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(peer.command(identity, "!emit")); f.step();
+  assert(peer.replies(identity, f.radio) == std::vector<std::string>{"effect"});
+  policy("access dm action_send 10");
+  assert(f.command(peer, "!emit").find("denies radio action") != std::string::npos);
+  policy("access dm ping 0");
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(peer.command(identity, "!ping")); f.step();
+  assert(peer.replies(identity, f.radio).empty());
+  assert(!memcmp(identity, f.bot.publicKey(), sizeof(identity)));
+  f.bot.stop(); assert(saveBotRadioPolicy({}));
+  puts("PASS native channel policy: simultaneous hashtag/private/Public, full-origin channel routing, independent bare/addressed flags, native permission upper bounds, silent durable effect, read/write and radio-action denial, immediate edit and unchanged identity");
+}
+static void native_thread_policy() {
+  assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotEventAccess(0) && saveBotSharedState(false));
+  Fixture f; f.start(); Peer first, second; f.learn(first); f.learn(second);
+  char reply[162]{};
+  const auto policy = [&](const char *command) {
+    f.bot.radioPolicyCommand(command, reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved and applied", 17));
+  };
+  policy("membership 0 #first"); policy("membership 1 #second");
+  assert(f.bot.setSharedState(true));
+  const char *source =
+      "ticks=0 "
+      "function keep(scope,label,value) kv.put('key',value,{scope=scope,thread=label}) return 'written' end "
+      "function fetch(scope,label) return kv.get('key',{scope=scope,thread=label}) or 'missing' end "
+      "function total() return tostring(ticks) end "
+      "function _tick() kv.put('tick','yes',{scope='bot',thread='monitor'}) ticks=ticks+1 end "
+      "events.every(60,'_tick')";
+  BotWorker::Result result;
+  assert(f.bot.stageSource(source, strlen(source))); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok && f.bot.activateStaged()); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok);
+  assert(f.command(first, "!keep conversation notes first") == "written");
+  assert(f.command(second, "!fetch conversation notes") == "missing");
+  assert(f.command(second, "!keep conversation notes second") == "written");
+  assert(f.command(first, "!fetch conversation notes") == "first");
+  assert(f.command(second, "!fetch conversation notes") == "second");
+  policy("thread dm notes 16");
+  assert(f.command(first, "!keep conversation notes denied").find("denies storage write") != std::string::npos);
+  assert(f.command(first, "!fetch conversation notes") == "first");
+  policy("thread dm notes inherit");
+  const auto group = [&](const char *command, const char *name) {
+    timeMs += 61000; f.radio.sent.clear();
+    f.deliver(first.targetedGroup(f.bot.publicKey(), command, name)); f.step(800);
+    const auto replies = first.groupReplies(f.radio, 1, name);
+    assert(replies.size() == 1); return replies.front();
+  };
+  assert(group("same-name: !keep channel notes first", "#first") == "written");
+  assert(group("same-name: !fetch channel notes", "#second") == "missing");
+  assert(group("same-name: !keep channel notes second", "#second") == "written");
+  assert(group("changed-name: !fetch channel notes", "#first") == "first");
+  assert(group("same-name: !fetch channel notes", "#second") == "second");
+  policy("thread 0 notes 0");
+  assert(group("same-name: !fetch channel notes", "#first").find("denies storage read") != std::string::npos);
+  assert(group("same-name: !fetch channel notes", "#second") == "second");
+  policy("thread native monitor 0");
+  assert(f.bot.setEventAccess(16));
+  const auto failed = f.bot.counters().eventsFailed;
+  timeMs += 61000; f.step(800);
+  assert(f.bot.counters().eventsFailed > failed);
+  policy("thread native monitor 48");
+  const auto completed = f.bot.counters().eventsCompleted;
+  timeMs += 61000; f.step(800);
+  assert(f.bot.counters().eventsCompleted > completed);
+  policy("access native default 48");
+  const auto queued = f.bot.counters().eventsQueued;
+  timeMs += 61000; f.step(800);
+  assert(f.bot.counters().eventsQueued == queued);
+  assert(f.command(first, "!total") != "0" && f.bot.counters().eventsQueued == queued);
+  assert(f.bot.setEventAccess(0) && f.bot.setSharedState(false));
+  f.bot.stop(); assert(saveBotRadioPolicy({}));
+  puts("PASS native thread policy: two full DM principals, two full channel origins, nickname-independent shared threads, immediate per-context RW edits, native scheduled-thread grant and future event denial");
+}
 static void command_mesh_experience() {
   BotRadioPolicy originalRadio; BotMeshPolicy originalMesh;
   assert(loadBotRadioPolicy(originalRadio) && loadBotMeshPolicy(originalMesh));
@@ -4090,6 +4244,23 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--channel-policy-regression-test")) {
+    assert(saveBotEnabled(true));
+    native_channel_key_configuration();
+    native_hashtag_commands();
+    native_channel_storage();
+    native_board();
+    native_admission_feedback();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--channel-policy-test")) {
+    native_channel_policy();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--thread-policy-test")) {
+    native_thread_policy();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {
     native_repeater_monitor();
     return 0;
@@ -4280,6 +4451,23 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--channel-policy-regression-test")) {
+    assert(saveBotEnabled(true));
+    native_channel_key_configuration();
+    native_hashtag_commands();
+    native_channel_storage();
+    native_board();
+    native_admission_feedback();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--channel-policy-test")) {
+    native_channel_policy();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--thread-policy-test")) {
+    native_thread_policy();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {
     native_repeater_monitor();
     return 0;

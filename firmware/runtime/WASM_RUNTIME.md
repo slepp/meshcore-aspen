@@ -338,6 +338,22 @@ original calling conventions. Event callbacks may sleep and use scoped KV
 (including atomic operations) or timers, but cannot send radio traffic,
 set personal reminders or obtain private network authority.
 
+Named storage threads add scope IDs `4..7`: `MC_CALLER_THREAD`,
+`MC_CONVERSATION_THREAD`, `MC_BOT_THREAD` and `MC_CHANNEL_THREAD` (Rust:
+`CALLER_THREAD` through `CHANNEL_THREAD`). Use C `mc_thread_key` or Rust
+`thread_key` to encode `thread/key` into a 33-byte output buffer; pass the
+returned length to `mc_io`. An empty key builds `thread/` for a list prefix.
+The helpers reject invalid labels or a combined name longer than 32 bytes.
+Atomic descriptors must all use the same encoded thread prefix; their outer
+`mc_io` key remains empty. Native binding derives the prefix from the first
+mutation and refuses mixed-thread transactions.
+
+These IDs preserve all original default scopes and full native principals.
+Lua and Wasm see the same named records, origin quotas and native command/thread
+read/write restrictions. Lists return unprefixed keys from only the chosen
+thread. See [named storage threads](BOT_RUNTIME.md#named-storage-threads)
+for owner controls, export scopes and firmware-downgrade warnings.
+
 | Operation | `key` / `value` / `delay` arguments |
 | --- | --- |
 | KV get/put/delete/list, timers | Key/prefix and optional value; timer-set delay is seconds |

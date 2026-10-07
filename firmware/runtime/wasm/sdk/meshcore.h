@@ -27,7 +27,26 @@ enum mc_field {
   MC_KEY0 = 64
 };
 enum mc_permission { MC_PUBLIC, MC_PRIVATE, MC_OWNER, MC_CHANNEL, MC_SHARED, MC_REMINDER, MC_HOME };
-enum mc_scope { MC_CALLER, MC_CONVERSATION, MC_BOT, MC_CHANNEL_SCOPE };
+enum mc_scope { MC_CALLER, MC_CONVERSATION, MC_BOT, MC_CHANNEL_SCOPE,
+                MC_CALLER_THREAD, MC_CONVERSATION_THREAD, MC_BOT_THREAD, MC_CHANNEL_THREAD };
+static inline int32_t mc_thread_key(char out[33], const char *thread, uint32_t thread_len,
+                                    const char *key, uint32_t key_len) {
+  if (!out || !thread || !thread_len || thread_len > 24 ||
+      key_len > 31 - thread_len || (!key && key_len) ||
+      thread[0] < 'a' || thread[0] > 'z') return -1;
+  for (uint32_t i = 0; i < thread_len; ++i) {
+    const char c = thread[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return -1;
+    out[i] = c;
+  }
+  out[thread_len] = '/';
+  for (uint32_t i = 0; i < key_len; ++i) {
+    if (!key[i]) return -1;
+    out[thread_len + 1 + i] = key[i];
+  }
+  out[thread_len + 1 + key_len] = 0;
+  return (int32_t)(thread_len + 1 + key_len);
+}
 enum mc_io {
   MC_SLEEP = 0, MC_GET = 1, MC_PUT = 2, MC_DELETE = 3,
   MC_SEND = 4, MC_WAIT = 5, MC_TRACE = 6, MC_ADVERT = 7, MC_RPC = 8,

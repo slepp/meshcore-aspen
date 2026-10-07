@@ -668,12 +668,16 @@ def data_wait(client, expected):
     raise TimeoutError("Bot-data status unavailable; outcome unknown, inspect data status before retry")
 
 
+DATA_SCOPES = ("caller", "conversation", "bot", "channel",
+               "caller-thread", "conversation-thread", "bot-thread", "channel-thread")
+
+
 def data_export(client, scope, principal, kind="kv"):
     if kind not in DATA_MAGIC or (kind == "reminders" and scope != "caller"):
         raise ValueError("Invalid data kind or reminder scope")
-    if scope not in ("caller", "conversation", "bot", "channel") or not re.fullmatch("[0-9a-f]{64}", principal):
+    if scope not in DATA_SCOPES or not re.fullmatch("[0-9a-f]{64}", principal):
         raise ValueError("Data export requires scope and full lowercase principal hex")
-    if (scope == "bot") != (principal == "0" * 64):
+    if (scope in ("bot", "bot-thread")) != (principal == "0" * 64):
         raise ValueError("Use zero principal only for bot scope")
     admitted = checked(client, f"data export {'' if kind == 'kv' else kind + ' '}{scope} {principal}")
     if not admitted.startswith("PENDING"):
@@ -690,7 +694,7 @@ def data_export(client, scope, principal, kind="kv"):
         data.extend(bytes.fromhex(response[5:]))
     if len(data) != DATA_LIMIT or hashlib.sha256(data).hexdigest() != match[1] or checked(client, "data status") != status:
         raise ValueError("Bot-data export changed or failed SHA256")
-    if (data[:4] != DATA_MAGIC[kind] or data[36] != ("caller", "conversation", "bot", "channel").index(scope)
+    if (data[:4] != DATA_MAGIC[kind] or data[36] != DATA_SCOPES.index(scope)
             or data[37:69] != bytes.fromhex(principal)
             or hashlib.sha256(data[:-32]).digest() != data[-32:]):
         raise ValueError("Bot-data export scope, principal, version or content digest mismatch")
@@ -772,7 +776,7 @@ def main():
         sub.add_parser(action, help="inspect or recover the on-device source lifecycle")
     export = sub.add_parser("data-export", help="export one scoped KV, timer or reminder record set; no credentials")
     export.add_argument("destination", type=Path)
-    export.add_argument("--scope", choices=("caller", "conversation", "bot", "channel"), required=True)
+    export.add_argument("--scope", choices=DATA_SCOPES, required=True)
     export.add_argument("--principal", required=True, help="full user/channel identity; 64 zeros for bot scope")
     export.add_argument("--kind", choices=tuple(DATA_MAGIC), default="kv")
     restore = sub.add_parser("data-restore", help="stage a scoped backup; KV replaces atomically, scheduler merges without rearming")

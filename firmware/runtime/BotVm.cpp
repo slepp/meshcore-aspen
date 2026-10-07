@@ -1320,8 +1320,19 @@ int rpcText(lua_State *s) {
   lua_pushstring(s, out);
   return 1;
 }
+void tableFields(lua_State *s, int index, std::initializer_list<const char *> allowed);
 void stateScope(lua_State *s, onchip::BotIoRequest &request, int scopeIndex) {
   auto &call = context(s);
+  const bool thread = lua_istable(s, scopeIndex);
+  char label[onchip::BotNameLimit + 1]{};
+  if (thread) {
+    tableFields(s, scopeIndex, {"scope", "thread"});
+    lua_getfield(s, scopeIndex, "thread");
+    boundedString(s, -1, label, sizeof(label)); lua_pop(s, 1);
+    if (!onchip::botThreadName(label, strlen(label))) luaL_error(s, "Invalid thread name");
+    lua_getfield(s, scopeIndex, "scope");
+    scopeIndex = lua_gettop(s);
+  }
   size_t size = 0;
   const char *scope = lua_isnoneornil(s, scopeIndex) ? "caller" : luaL_checklstring(s, scopeIndex, &size);
   if (size && size != strlen(scope)) luaL_error(s, "Invalid storage scope");
@@ -1330,6 +1341,19 @@ void stateScope(lua_State *s, onchip::BotIoRequest &request, int scopeIndex) {
   else if (!strcmp(scope, "bot")) request.scope = onchip::BotIoRequest::Bot;
   else if (!strcmp(scope, "channel")) request.scope = onchip::BotIoRequest::Channel;
   else luaL_error(s, "Storage scope unavailable");
+  if (thread) {
+    lua_pop(s, 1);
+    request.scope = onchip::BotIoRequest::Scope(unsigned(request.scope) + 4);
+    const auto encode = [&](char *key) {
+      const size_t prefix = strlen(label) + 1, size = strlen(key);
+      if (prefix + size > onchip::BotKeyLimit)
+        luaL_error(s, "Thread/name and key together exceed 32 bytes");
+      memmove(key + prefix, key, size + 1);
+      memcpy(key, label, prefix - 1); key[prefix - 1] = '/';
+    };
+    encode(request.key);
+    for (unsigned i = 0; i < request.mutations; ++i) encode(request.mutation[i].key);
+  }
   char error[128]{};
   if (!onchip::botStorageScope(*call.event, request, error, sizeof(error)))
     luaL_error(s, "%s", error);
@@ -1383,7 +1407,6 @@ int stateTransaction(lua_State *s) {
     lua_pop(s, 1);
   }
   request.mutations = uint8_t(count);
-  stateScope(s, request, 2);
   for (unsigned i = 0; i < count; ++i) {
     lua_rawgeti(s, 1, i + 1);
     const int index = lua_gettop(s);
@@ -1401,6 +1424,7 @@ int stateTransaction(lua_State *s) {
       if (!strcmp(op.key, request.mutation[j].key)) return luaL_error(s, "KV transaction duplicate key");
     lua_pop(s, 1);
   }
+  stateScope(s, request, 2);
   return lua_yieldk(s, 0, 0, finishIo);
 }
 int stateList(lua_State *s) {

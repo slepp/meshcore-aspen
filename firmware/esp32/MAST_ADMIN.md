@@ -376,6 +376,9 @@ These commands work through either authenticated backend:
 | --- | --- |
 | `bot name [TEXT]` | Read or persist/apply a 1..31-byte printable bot display name, excluding `:`; never rotate its key |
 | `bot destination SLOT [KEY64\|off]` | Read/set/revoke one of four additional native DM destinations; full keys, fresh authenticated direct routes, no flood fallback |
+| `bot membership SLOT [off\|public\|#tag\|private NAMEHEX KEY32]` | Read or save/apply one of eight simultaneous group memberships; one Public, initially denied; private keys are never printed |
+| `bot access dm\|native\|SLOT [default\|COMMAND\|action_NAME [MASK\|inherit]]` | Read or save/apply native bare/addressed execution, replies and storage access; `list OFFSET` lists bounded overrides; [mask bits and examples](../runtime/BOT_RUNTIME.md#channels-and-native-command-policy) |
+| `bot thread dm\|native\|SLOT NAME [0\|16\|32\|48\|inherit]` | Read or save/apply a named thread's read/write restriction; `list OFFSET` lists overrides; [thread names, quotas and native events](../runtime/BOT_RUNTIME.md#named-storage-threads) |
 | `bot channel-wait [on\|off]` | Read or grant selected-channel follow-up waits; off by default, no authenticated individual sender |
 | `bot mesh` | Applied name, destination count, channel-wait grant and epoch |
 | `bot discovery [status\|on\|off]` | Persist/apply native base telemetry and path-discovery replies for signed contacts; default off, no location/environment or management grant |
@@ -386,8 +389,11 @@ These commands work through either authenticated backend:
 Name/destination/channel-wait policy occupies one checked 166-byte NVS record.
 Revoking grants fences in-flight epochs before persistence; a failed save is
 reported and does not silently restore live authority. Regranting does not
-revive older jobs. `bot policy` continues to report saved channel/path/airtime
-settings, whose changes apply on reboot.
+revive older jobs. `bot policy` continues to report the legacy slot-0 channel
+and saved path/airtime settings. `bot channel` and `role channel bot SLOT`
+still require a reboot; `bot membership`, `bot access` and `bot thread` apply immediately
+without applying pending path/airtime changes. All eight memberships and
+command overrides survive restart.
 
 `bot discovery on` is a separate explicit disclosure setting: it permits
 base telemetry requests from all authenticated signed-advert contacts, not
@@ -499,8 +505,9 @@ must be running with its existing persistent identity.
 For a Go-host native bot, use `--unix-socket /absolute/state/bot/native/admin.sock`
 instead of `--web` and `--password-file`; the same-UID owner socket uses the
 same formats, scope checks and non-rearming scheduler restore rules.
-Choose `caller`, `conversation`, `channel` or `bot`; supply the full user key
-or verified channel identifier, or 64 zeros for `bot`. Channel identifiers are
+Choose `caller`, `conversation`, `channel` or `bot`, or append `-thread` to
+export that origin's named threads. Supply the full user key or verified channel
+identifier, or 64 zeros for `bot` and `bot-thread`. Channel identifiers are
 digests, not channel secrets. There is no public Lua data-export capability.
 
 ```sh
@@ -514,6 +521,10 @@ The destination is created exclusively with mode 0600. Restore accepts a private
 regular file, rejects wrong size/version/digest/bot identity, stages and checks
 it on the storage worker, then explicitly commits the encoded scope. It replaces
 all keys in that scope, including deleting newer keys absent from the backup.
+Thread-family exports include all encoded thread names for the selected full
+principal. Restore leaves its default scope alone, and refuses to exceed the
+origin's eight-key quota across default records and all threads. Export both
+default and `-thread` scopes when preserving a complete origin.
 The default `--kind kv` preserves the original KV-only operation: scheduling
 journals remain unchanged. Use `--kind timers` for durable named timers in any
 supported scope, or `--kind reminders --scope caller` for personal reminders.

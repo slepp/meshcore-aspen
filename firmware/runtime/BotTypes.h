@@ -29,6 +29,7 @@
 #include <MeshCore.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <cstring>
 #include "RepeaterMetrics.h"
 
 namespace onchip {
@@ -66,6 +67,29 @@ constexpr unsigned BotTransactionLimit = 4;
 constexpr unsigned BotReceiveLimit = 4, BotReceiveDedupLimit = 16;
 constexpr unsigned BotRepeaterLimit = ONCHIP_BOT_COMPACT_PROFILE ? 4 : 12;
 constexpr unsigned BotSourcePartLimit = 8;
+constexpr unsigned BotThreadRuleLimit = 8;
+struct BotThreadRule {
+  char name[BotNameLimit + 1]{};
+  uint8_t access = 48;
+};
+inline uint8_t botBaseScope(uint8_t scope) { return scope & 3; }
+inline bool botThreadName(const char *name, size_t size) {
+  if (!size || size > BotNameLimit || name[0] < 'a' || name[0] > 'z') return false;
+  for (size_t i = 1; i < size; ++i)
+    if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= '0' && name[i] <= '9') ||
+          name[i] == '_' || name[i] == '-')) return false;
+  return true;
+}
+inline size_t botThreadPrefix(const char *key) {
+  const char *slash = strchr(key, '/');
+  return slash && botThreadName(key, size_t(slash - key)) ? size_t(slash - key) + 1 : 0;
+}
+inline bool botStorageKey(uint8_t scope, const char *key, bool prefix = false) {
+  if (scope > 7 || !memchr(key, 0, BotKeyLimit + 1)) return false;
+  if (scope < 4) return prefix || key[0];
+  const size_t size = botThreadPrefix(key);
+  return size && (prefix || key[size]);
+}
 
 struct BotSourcePart {
   char name[BotNameLimit + 1]{};
@@ -130,6 +154,8 @@ struct BotEvent {
   bool truncated = false;
   bool authenticated = false, channelVerified = false, sharedState = false, homeAccess = false,
        forwardAccess = false, reminderAccess = false, owner = false, targeted = false, channelWait = false;
+  uint8_t policyFlags = 63;
+  BotThreadRule threadRules[BotThreadRuleLimit]{};
   uint8_t destinations[4][32]{};
   uint32_t meshGrant = 0;
   uint32_t homeGrant = 0, sharedGrant = 0, forwardGrant = 0, reminderGrant = 0;
@@ -154,7 +180,8 @@ struct BotIoRequest {
                         ReminderSet, ReminderList, ReminderCancel, List, Cas, Transaction,
                         Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility,
                         RepeaterNext, RepeaterStatus, RepeaterLogin } kind = Sleep;
-  enum Scope : uint8_t { Caller, Conversation, Bot, Channel } scope = Caller;
+  enum Scope : uint8_t { Caller, Conversation, Bot, Channel,
+                        CallerThread, ConversationThread, BotThread, ChannelThread } scope = Caller;
   BotIoToken token{};
   uint8_t principal[32]{};
   uint32_t delayMs = 0;
@@ -177,7 +204,7 @@ struct BotIoRequest {
   uint8_t mutations = 0;
   uint32_t eventEpoch = 0;
   BotMutation mutation[BotTransactionLimit]{};
-  bool sharedScope() const { return scope == Bot || scope == Channel; }
+  bool sharedScope() const { return botBaseScope(scope) == Bot || botBaseScope(scope) == Channel; }
   bool durableTimer() const { return kind >= TimerSet && kind <= TimerWait; }
   bool reminder() const { return kind >= ReminderSet && kind <= ReminderCancel; }
 };

@@ -133,6 +133,7 @@ public:
   bool setDiscovery(bool enabled);
   void discoveryCommand(const char *command, char *reply, size_t capacity);
   void repeaterCommand(const char *command, char *reply, size_t capacity);
+  void radioPolicyCommand(const char *command, char *reply, size_t capacity);
   unsigned repeaterSnapshots(BotRepeaterSnapshot *snapshots, unsigned capacity) const;
 #if ONCHIP_BOT_HTTPS
   bool ensureNativeHttps() { return worker_.ensureNativeHttps(); }

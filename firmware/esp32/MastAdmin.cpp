@@ -511,17 +511,18 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
       strcpy(reply.text, "Error: this native role has no application group-channel keys; identity keys are separate"); return;
     }
     uint32_t slot = 0;
-    if (!number(word(cursor), slot) || slot >= (bot ? 1 : companionChannelCount())) {
-      strcpy(reply.text, "Error: channel SLOT is 0 for bot; use role config companion for its slot count"); return;
+    if (!number(word(cursor), slot) || slot >= (bot ? BotRadioPolicy::ChannelLimit : companionChannelCount())) {
+      strcpy(reply.text, "Error: bot channel SLOT is 0..7; use role config companion for its slot count"); return;
     }
     BotRadioPolicy policy;
     if (bot && !loadBotRadioPolicy(policy)) { strcpy(reply.text, "Error: saved bot channel unavailable"); return; }
     if (!*cursor) {
       char channelName[33]{}, keyId[17] = "none";
       if (bot) {
-        strcpy(channelName, policy.channel);
-        if (policy.channelKeySet) fingerprint(policy.channelKey, keyId);
-        else if (channelName[0]) strcpy(keyId, "hashtag");
+        const auto membership = policy.membership(slot);
+        strcpy(channelName, membership.name);
+        if (membership.keySet) fingerprint(membership.key, keyId);
+        else if (channelName[0]) strcpy(keyId, !strcmp(channelName, "Public") ? "public" : "hashtag");
       } else {
         uint8_t digest[8];
         if (!companionChannelInfo(slot, channelName, digest)) {
@@ -552,9 +553,11 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
     }
     bool ok;
     if (bot) {
-      strcpy(policy.channel, channelName);
-      policy.channelKeySet = channelName[0] != 0;
-      memcpy(policy.channelKey, key, sizeof(key));
+      BotRadioPolicy::Membership membership;
+      strcpy(membership.name, channelName);
+      membership.keySet = channelName[0] != 0;
+      memcpy(membership.key, key, sizeof(key));
+      policy.setMembership(slot, membership);
       ok = saveBotRadioPolicy(policy);
     } else ok = companionSetChannel(slot, channelName, key);
     memset(key, 0, sizeof(key));
@@ -1707,6 +1710,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     commandBotService().discoveryCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot repeaters") || !strncmp(command, "bot repeaters ", 14)) {
     commandBotService().repeaterCommand(command[13] ? command + 14 : "", reply.text, sizeof(reply.text));
+  } else if (!strcmp(command, "bot membership") || !strncmp(command, "bot membership ", 15) ||
+             !strcmp(command, "bot access") || !strncmp(command, "bot access ", 11) ||
+             !strcmp(command, "bot thread") || !strncmp(command, "bot thread ", 11)) {
+    commandBotService().radioPolicyCommand(command + 4, reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot cancel")) {
     commandBotService().cancelJobs(invokingBotJob);
     strcpy(reply.text, "Cancellation requested for other running commands/events; admitted effects may have committed; reminders unchanged");
@@ -1883,8 +1890,9 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       if (strlen(name) >= sizeof(policy.channel)) {
         strcpy(reply.text, "Error: hashtag channel exceeds 32 bytes"); return;
       }
-      strcpy(policy.channel, name);
-      policy.channelKeySet = false; memset(policy.channelKey, 0, sizeof(policy.channelKey));
+      BotRadioPolicy::Membership membership;
+      strcpy(membership.name, name);
+      policy.setMembership(0, membership);
     } else {
       uint32_t value;
       const bool path = !strncmp(command, "bot path ", 9);

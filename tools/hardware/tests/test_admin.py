@@ -533,6 +533,36 @@ class MastClientTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "scope"):
             mast_cli.data_export(None, "channel", "07" + "00" * 31, "reminders")
 
+    def test_named_thread_exports_keep_additive_scope_and_full_principal(self):
+        for scope in mast_cli.DATA_SCOPES[4:]:
+            with self.subTest(scope=scope):
+                principal = "0" * 64 if scope == "bot-thread" else "07" + "00" * 31
+                data = bytearray(mast_cli.DATA_LIMIT)
+                data[:4] = b"BKD\x01"
+                data[36] = mast_cli.DATA_SCOPES.index(scope)
+                data[37:69] = bytes.fromhex(principal)
+                data[-32:] = hashlib.sha256(data[:-32]).digest()
+                digest = hashlib.sha256(data).hexdigest()
+                ident = digest[:16]
+                commands = []
+
+                def checked(client, text):
+                    commands.append(text)
+                    if text == "data status":
+                        return f"EXPORTED {digest} {ident}"
+                    if text.startswith("data read "):
+                        offset = int(text.split()[-1]) * 48
+                        return "DATA " + data[offset:offset + 48].hex()
+                    return f"PENDING {ident}"
+
+                with patch.object(mast_cli, "checked", side_effect=checked):
+                    self.assertEqual(mast_cli.data_export(None, scope, principal), data)
+                    self.assertEqual(commands[0], f"data export {scope} {principal}")
+        with self.assertRaisesRegex(ValueError, "zero principal"):
+            mast_cli.data_export(None, "conversation-thread", "0" * 64)
+        with self.assertRaisesRegex(ValueError, "scope"):
+            mast_cli.data_export(None, "caller-thread", "07" + "00" * 31, "reminders")
+
     def test_scoped_data_export_and_staged_restore(self):
         data = bytearray(mast_cli.DATA_LIMIT)
         data[:4] = b"BKD\x01"

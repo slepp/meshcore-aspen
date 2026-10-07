@@ -674,6 +674,71 @@ static void scopedStorage() {
   assert(vm.complete(done) && vm.poll(result) && !result.ok && strstr(result.error, "read-only"));
   puts("PASS Lua channel authority/scope denial, key-derived principals, typed durable timer yield and immutable result");
 }
+static void namedThreadScopes() {
+  BotSession vm; BotVmStats stats; char error[128]{};
+  const char *source =
+      "function read(scope,name) return kv.get('key',{scope=scope,thread=name}) or 'empty' end "
+      "function write(scope,name) kv.put('key','v',{scope=scope,thread=name}) return 'ok' end "
+      "function compare() return kv.cas('key',false,'v',{scope='caller',thread='notes'}) end "
+      "function batch() kv.transaction({{key='a',value='v'},{key='b',value='v'}},"
+      "{scope='caller',thread='notes'}) return 'ok' end "
+      "function list() return tostring(kv.list('',{scope='caller',thread='notes'}).count) end "
+      "function arm() return timer.set('wake',5,{scope='caller',thread='notes'}).state end "
+      "function invalid() return kv.get('key',{scope='caller',thread='notes',principal='fake'}) end";
+  assert(vm.load(source, strlen(source), 1, stats, error, sizeof(error)));
+  BotIoRequest request; BotSession::Result result;
+  const auto start = [&](const BotEvent &input) {
+    assert(vm.start(1, input, error, sizeof(error)));
+  };
+  const auto finish = [&] {
+    BotIoResult done; done.ok = true; done.token = request.token;
+    done.outcome = BotIoResult::Committed; done.timerState = BotTimerState::Pending;
+    assert(vm.complete(done) && vm.poll(result));
+    if (!result.ok) fprintf(stderr, "thread completion failed: %s\n", result.error);
+    assert(result.ok);
+  };
+  auto dm = event("!read conversation notes"); dm.sender[31] = 9;
+  start(dm); assert(vm.nextIo(request));
+  assert(request.scope == BotIoRequest::ConversationThread && !strcmp(request.key, "notes/key") &&
+         !memcmp(request.principal, dm.sender, 32));
+  finish();
+  start(event("!batch")); assert(vm.nextIo(request));
+  assert(request.scope == BotIoRequest::CallerThread && request.mutations == 2 &&
+         !strcmp(request.key, "notes/") && !strcmp(request.mutation[0].key, "notes/a") &&
+         !strcmp(request.mutation[1].key, "notes/b"));
+  finish();
+  start(event("!list")); assert(vm.nextIo(request) && !strcmp(request.key, "notes/")); finish();
+  start(event("!arm")); assert(vm.nextIo(request) && request.kind == BotIoRequest::TimerSet &&
+                            !strcmp(request.key, "notes/wake")); finish();
+  auto channel = event("!read channel notes");
+  channel.authenticated = false; channel.sharedState = channel.channelVerified = channel.targeted = true;
+  channel.sharedGrant = 9; channel.channelId[0] = 7; channel.channelId[31] = 8;
+  memset(channel.sender, 0, 32); strcpy(channel.channel, "#fixture");
+  start(channel); assert(vm.nextIo(request));
+  assert(request.scope == BotIoRequest::ChannelThread && request.grant == 9 &&
+         !memcmp(request.principal, channel.channelId, 32)); finish();
+  const auto deny = [&](const BotEvent &input) {
+    start(input); assert(vm.poll(result) && !result.ok && !vm.nextIo(request));
+  };
+  auto readOnly = event("!write caller notes");
+  strcpy(readOnly.threadRules[0].name, "notes"); readOnly.threadRules[0].access = 16;
+  deny(readOnly);
+  strcpy(readOnly.name, "read"); strcpy(readOnly.arguments, "caller notes");
+  start(readOnly); assert(vm.nextIo(request)); finish();
+  auto compare = event("!compare"); compare.policyFlags = 32; deny(compare);
+  deny(event("!read caller bad/name"));
+  start(event("!read caller abcdefghijklmnopqrstuvwx"));
+  assert(vm.nextIo(request) && strlen(request.key) == 28); finish();
+  deny(event("!read caller abcdefghijklmnopqrstuvwxy"));
+  deny(event("!invalid"));
+  auto notTargeted = channel; strcpy(notTargeted.name, "write"); notTargeted.targeted = false;
+  deny(notTargeted);
+  auto noShared = channel; noShared.sharedState = false; deny(noShared);
+  auto other = event("!write caller other");
+  strcpy(other.threadRules[0].name, "notes"); other.threadRules[0].access = 0;
+  start(other); assert(vm.nextIo(request) && !strcmp(request.key, "other/key")); finish();
+  puts("PASS Lua named threads: same native full-origin scopes, bounded encoded keys, CAS/transactions/list/timers, per-thread RW upper bounds, target/shared denials and invalid descriptors");
+}
 static void packetContinuations() {
   BotSession vm;
   BotVmStats stats;
@@ -1764,6 +1829,7 @@ int main(int argc, char **argv) {
   personalReminderApi();
   packetContinuations();
   scopedStorage();
+  namedThreadScopes();
   retained();
   manifestLifetimes();
   initializationBudgets();

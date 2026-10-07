@@ -45,7 +45,9 @@ static_assert(uint32_t(onchip::BotIoRequest::Send) == MC_SEND &&
 static_assert(uint32_t(onchip::BotIoRequest::Caller) == MC_CALLER &&
     uint32_t(onchip::BotIoRequest::Conversation) == MC_CONVERSATION &&
     uint32_t(onchip::BotIoRequest::Bot) == MC_BOT &&
-    uint32_t(onchip::BotIoRequest::Channel) == MC_CHANNEL_SCOPE, "Native scopes must preserve Wasm ABI v1");
+    uint32_t(onchip::BotIoRequest::Channel) == MC_CHANNEL_SCOPE &&
+    uint32_t(onchip::BotIoRequest::ChannelThread) == MC_CHANNEL_THREAD,
+    "Native scopes must preserve Wasm ABI v1");
 static_assert(uint32_t(onchip::BotCommand::Public) == MC_PUBLIC &&
     uint32_t(onchip::BotCommand::Private) == MC_PRIVATE &&
     uint32_t(onchip::BotCommand::Owner) == MC_OWNER &&
@@ -517,7 +519,7 @@ struct BotWasmSession::Impl {
     j->result.action.kind = BotAction::Reply; return 0;
   }
   bool scope(Job &j, BotIoRequest &r, uint32_t value) {
-    if (value > BotIoRequest::Channel) { fail("Wasm storage scope unavailable"); return false; }
+    if (value > BotIoRequest::ChannelThread) { fail("Wasm storage scope unavailable"); return false; }
     r.scope = BotIoRequest::Scope(value);
     char error[128]{};
     if (!botStorageScope(j.event, r, error, sizeof(error))) { fail(error); return false; }

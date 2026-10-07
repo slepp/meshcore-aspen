@@ -508,22 +508,28 @@ void BotWorker::dataCommand(const char *command, char *reply, size_t capacity) {
   } else if (!strcmp(command, "clear")) {
     data = {}; snprintf(reply, capacity, "CLEARED");
   } else if (!strncmp(command, "export ", 7)) {
-    char scope[13]{};
+    char scope[24]{};
     const char *arguments = command + 7, *magic = "BKD\1";
     if (!strncmp(arguments, "kv ", 3)) arguments += 3;
     else if (!strncmp(arguments, "timers ", 7)) { arguments += 7; magic = "BTD\1"; }
     else if (!strncmp(arguments, "reminders ", 10)) { arguments += 10; magic = "BRD\1"; }
-    if (sscanf(arguments, "%12s %64s %c", scope, hex, &extra) != 2) {
+    if (sscanf(arguments, "%23s %64s %c", scope, hex, &extra) != 2) {
       error("data export [kv|timers|reminders] SCOPE PRINCIPAL64"); return;
     }
     uint8_t principal[32];
     const int selected = !strcmp(scope, "caller") ? BotIoRequest::Caller :
         !strcmp(scope, "conversation") ? BotIoRequest::Conversation :
         !strcmp(scope, "bot") ? BotIoRequest::Bot :
-        !strcmp(scope, "channel") ? BotIoRequest::Channel : -1;
+        !strcmp(scope, "channel") ? BotIoRequest::Channel :
+        !strcmp(scope, "caller-thread") ? BotIoRequest::CallerThread :
+        !strcmp(scope, "conversation-thread") ? BotIoRequest::ConversationThread :
+        !strcmp(scope, "bot-thread") ? BotIoRequest::BotThread :
+        !strcmp(scope, "channel-thread") ? BotIoRequest::ChannelThread : -1;
     if (selected < 0 || !decode(hex, principal, 32)) { error("invalid data scope/principal"); return; }
     uint8_t bits = 0; for (auto byte : principal) bits |= byte;
-    if ((selected == BotIoRequest::Bot) != !bits) { error("bot scope requires zero principal; other scopes require full nonzero identity"); return; }
+    if ((botBaseScope(selected) == BotIoRequest::Bot) != !bits) {
+      error("bot and bot-thread require zero principal; other scopes require full nonzero identity"); return;
+    }
     if (!memcmp(magic, "BRD", 3) && selected != BotIoRequest::Caller) {
       error("reminders require caller scope"); return;
     }

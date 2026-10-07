@@ -230,7 +230,12 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
   for (size_t i = 0; i < command_size; ++i)
     if (frame[5 + i] < 32 || frame[5 + i] > 126) return false;
   std::memcpy(command, frame + 5, command_size);
-  if (!std::strcmp(command, "help")) {
+  const char *policy_command = !std::strncmp(command, "bot ", 4) ? command + 4 : command;
+  if (!std::strcmp(policy_command, "membership") || !std::strncmp(policy_command, "membership ", 11) ||
+      !std::strcmp(policy_command, "access") || !std::strncmp(policy_command, "access ", 7) ||
+      !std::strcmp(policy_command, "thread") || !std::strncmp(policy_command, "thread ", 7)) {
+    bot.radioPolicyCommand(policy_command, reply, sizeof(reply));
+  } else if (!std::strcmp(command, "help")) {
     std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; channel; path; airtime; adaptive; advert.zerohop; key bot (Go owner). Grants: help grants");
   } else if (!std::strcmp(command, "help grants")) {
     constexpr char helpGrants[] = "shared/reminders [status|on|off]; events [status|MASK 0..31] (1 startup,2 connectivity,4 message,8 node_status,16 scheduled); repeaters help; policy saved/applied; cancel stops commands/events, not reminders. Defaults off; packages never authorize scripts.";
@@ -384,32 +389,33 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
     if (!onchip::loadBotRadioPolicy(policy)) {
       std::strcpy(reply, "Error: saved bot channel unavailable");
     } else if (!std::strcmp(command + 8, "off")) {
-      policy.channel[0] = 0;
-      policy.channelKeySet = false;
-      explicit_bzero(policy.channelKey, sizeof(policy.channelKey));
+      policy.setMembership(0, {});
       std::strcpy(reply, onchip::saveBotRadioPolicy(policy) ?
           "Saved bot channel/key; reboot required" :
           "Error: channel persistence failed; saved state may be uncertain");
     } else {
       const char *encoded = command + 8;
+      onchip::BotRadioPolicy::Membership membership;
       const char *space = std::strchr(encoded, ' ');
       const size_t name_bytes = space ? size_t(space - encoded) / 2 : 0;
       if (!space || size_t(space - encoded) != name_bytes * 2 ||
           name_bytes < 1 || name_bytes > 31 || std::strlen(space + 1) != 32 ||
-          !decode_hex(encoded, name_bytes, reinterpret_cast<uint8_t *>(policy.channel)) ||
-          !decode_hex(space + 1, 16, policy.channelKey)) {
+          !decode_hex(encoded, name_bytes, reinterpret_cast<uint8_t *>(membership.name)) ||
+          !decode_hex(space + 1, 16, membership.key)) {
         std::strcpy(reply, "Error: channel requires NAMEHEX KEY32; name 1..31 bytes, key exactly 16 bytes");
       } else {
-        policy.channel[name_bytes] = 0;
-        policy.channelKeySet = true;
+        membership.name[name_bytes] = 0;
+        membership.keySet = true;
         bool printable = true;
         for (size_t i = 0; i < name_bytes; ++i)
-          printable = printable && policy.channel[i] >= 32 && policy.channel[i] <= 126;
+          printable = printable && membership.name[i] >= 32 && membership.name[i] <= 126;
+        policy.setMembership(0, membership);
         std::strcpy(reply, printable && onchip::saveBotRadioPolicy(policy) ?
             "Saved bot channel/key; reboot required" :
             "Error: invalid channel or channel persistence failed; saved state may be uncertain");
       }
       explicit_bzero(policy.channelKey, sizeof(policy.channelKey));
+      explicit_bzero(membership.key, sizeof(membership.key));
     }
   } else if (!std::strcmp(command, "path status")) {
     onchip::BotRadioPolicy policy;

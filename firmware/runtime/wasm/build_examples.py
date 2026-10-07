@@ -33,7 +33,7 @@ def build():
     commands.append(["clang"] + common + [str(HERE / "examples/rpc_args.c"), "-o", str(OUT / "c-rpc-args.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/owner.c"), "-o", str(OUT / "c-owner.wasm")])
     commands.append(["clang"] + common + [str(HERE / "examples/admin.c"), "-o", str(OUT / "c-admin.wasm")])
-    for contract in range(8):
+    for contract in range(10):
         commands.append(["clang"] + common + [f"-DCONTRACT={contract}",
             str(HERE / "examples/contract.c"), "-o", str(OUT / f"contract-{contract}.wasm")])
     for command in commands:

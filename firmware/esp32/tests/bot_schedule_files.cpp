@@ -297,7 +297,36 @@ static void bootstrapUncertainty() {
     }
   puts("PASS KV/timer/reminder bootstrap: indeterminate commit/readback/cancellation retain UNKNOWN, verified marker plus file failure is REJECTED; recovery does not publish speculative payloads");
 }
+static void namedThreads() {
+  reset();
+  Client c; c.request.kind = BotIoRequest::TimerSet;
+  c.run(false); assert(c.result.ok);
+  c.request.scope = BotIoRequest::CallerThread; strcpy(c.request.key, "red/wake");
+  c.run(false); assert(c.result.ok);
+  strcpy(c.request.key, "blue/wake"); c.run(false);
+  assert(!c.result.ok && strstr(c.result.error, "quota"));
+  c.request.principal[31] = 1; c.run(false); assert(c.result.ok);
+  c.request.principal[31] = 0;
+  strcpy(c.request.key, "red/wake"); c.request.kind = BotIoRequest::TimerGet;
+  c.run(false); assert(c.result.ok && c.result.found && c.result.timerState == BotTimerState::Pending);
+  const auto snapshot = c.snapshot(false); assert(snapshot.count == 1);
+  Client reboot; reboot.request.scope = BotIoRequest::CallerThread;
+  strcpy(reboot.request.key, "red/wake"); reboot.request.kind = BotIoRequest::TimerGet;
+  reboot.run(false); assert(reboot.result.ok && reboot.result.found);
+  c.timers.restore(c.bot, snapshot, c.result, 1, c.generation); assert(c.result.ok);
+  c.run(false); assert(c.result.ok && c.result.timerState == BotTimerState::Cancelled);
+  c.request.kind = BotIoRequest::TimerSet; strcpy(c.request.key, "blue/wake");
+  c.run(false); assert(c.result.ok);
+  c.request.scope = BotIoRequest::Caller; strcpy(c.request.key, "tea");
+  c.request.kind = BotIoRequest::TimerGet; c.run(false);
+  assert(c.result.ok && c.result.found && c.result.timerState == BotTimerState::Pending);
+  c.request.scope = BotIoRequest::BotThread; memset(c.request.principal, 0, 32);
+  strcpy(c.request.key, "monitor/wake"); c.request.kind = BotIoRequest::TimerSet;
+  c.run(false); assert(c.result.ok);
+  puts("PASS named timer threads: full principal and default isolation, shared 2-pending quota, restart, no-rearm restore and bot-reserved allocation");
+}
 int main() {
   migration(); initialAndCapacity(); claimsAndRestore(); failures(); invalidLegacy(); bootstrapUncertainty();
+  namedThreads();
   assert(identity_test::handles.empty() && psram_test::allocations.empty());
 }

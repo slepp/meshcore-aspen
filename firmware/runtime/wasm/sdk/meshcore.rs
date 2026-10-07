@@ -137,6 +137,23 @@ pub const CALLER: u32 = 0;
 pub const CONVERSATION: u32 = 1;
 pub const BOT: u32 = 2;
 pub const CHANNEL_SCOPE: u32 = 3;
+pub const CALLER_THREAD: u32 = 4;
+pub const CONVERSATION_THREAD: u32 = 5;
+pub const BOT_THREAD: u32 = 6;
+pub const CHANNEL_THREAD: u32 = 7;
+pub fn thread_key(out: &mut [u8; 33], thread: &[u8], key: &[u8]) -> Option<usize> {
+    if thread.is_empty() || thread.len() > 24 || !thread[0].is_ascii_lowercase() ||
+        key.len() > 31 - thread.len() || key.contains(&0) ||
+        !thread.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-') {
+        return None;
+    }
+    let prefix = thread.len() + 1;
+    out[..thread.len()].copy_from_slice(thread);
+    out[thread.len()] = b'/';
+    out[prefix..prefix + key.len()].copy_from_slice(key);
+    out[prefix + key.len()] = 0;
+    Some(prefix + key.len())
+}
 pub const PUBLIC: u32 = 0;
 pub const PRIVATE: u32 = 1;
 pub const OWNER: u32 = 2;

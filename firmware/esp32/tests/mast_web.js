@@ -99,7 +99,7 @@ function fixture() {
     if(text==='data status') return state.dataStatus;
     if(text.startsWith('data export ')) {
       const [, ,kind,scope,key]=text.split(' ');
-      state.data=snapshot({kv:'BKD',timers:'BTD',reminders:'BRD'}[kind],['caller','conversation','bot','channel'].indexOf(scope),key);
+      state.data=snapshot({kv:'BKD',timers:'BTD',reminders:'BRD'}[kind],['caller','conversation','bot','channel','caller-thread','conversation-thread','bot-thread','channel-thread'].indexOf(scope),key);
       const hash=digest(state.data); state.dataStatus=`EXPORTED ${hash} ${hash.slice(0,16)}`;
       return 'PENDING ';
     }
@@ -322,6 +322,28 @@ async function tests() {
   assert.equal(f.downloads.length,1);
   assert.equal(Buffer.from(await f.downloads[0].arrayBuffer()).toString('hex'),snapshot().toString('hex'));
   assert(!f.element('result').textContent.includes('DATA '),'Do not dump private payload chunks into results');
+  for(const [index,scope] of ['caller-thread','conversation-thread','bot-thread','channel-thread'].entries()) {
+    f.element('data-scope').value=scope;
+    f.element('principal').value=principal;
+    f.element('data-scope').onchange();
+    const key=scope==='bot-thread'?'0'.repeat(64):principal;
+    assert.equal(f.element('principal').value,key,'Bot threads use the zero principal');
+    if(scope==='bot-thread') {
+      f.element('principal').value=principal;
+      const before=f.requests.length;
+      await f.element('data-export').click();
+      assert.equal(f.requests.length,before,'Reject nonzero bot-thread principals before sending');
+      f.element('principal').value=key;
+    }
+    await f.element('data-export').click();
+    const bytes=Buffer.from(await f.downloads.at(-1).arrayBuffer());
+    assert.equal(bytes.toString('hex'),snapshot('BKD',index+4,key).toString('hex'));
+    assert.equal(f.evaluate(`backupEnvelope(new Uint8Array(${JSON.stringify([...bytes])})).scope`),scope);
+    assert.match(f.requests.filter(r=>r.body?.startsWith('data export ')).at(-1).body,new RegExp(`^data export kv ${scope} ${key}$`));
+  }
+  assert.equal(f.downloads.length,5,'All four thread families export a downloadable snapshot');
+  f.element('data-scope').value='caller';
+  f.element('principal').value=principal;
   const timer=snapshot('BTD');
   f.element('backup').files=[{size:timer.length,arrayBuffer:async()=>timer.buffer.slice(timer.byteOffset,timer.byteOffset+timer.byteLength)}];
   await f.run('inspectBackup()');
@@ -342,7 +364,7 @@ async function tests() {
   assert.equal(f.requests.filter(r=>r.body?.startsWith('data restore ')).length,restoreAttempts);
   f.state.override=null;
   await f.element('data-export').click();
-  assert.equal(f.downloads.length,2,'Readback/export must remain possible after unknown restore');
+  assert.equal(f.downloads.length,6,'Readback/export must remain possible after unknown restore');
   await f.element('inspect').click();
   f.state.httpError=403; await f.element('refresh').click();
   assert.equal(f.element('refresh').disabled,true);

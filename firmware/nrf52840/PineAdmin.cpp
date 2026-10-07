@@ -228,6 +228,10 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
       if (!decodeKey(from, policy.from) || !decodeKey(text + 77, policy.to)) { say("Error: forward requires two full public keys"); return; }
     }
     say(bot.setForwardPolicy(policy) ? "Saved/applied forward grant" : "Error: forward grant rejected or persistence unknown");
+  } else if (!strcmp(text, "bot membership") || !strncmp(text, "bot membership ", 15) ||
+             !strcmp(text, "bot access") || !strncmp(text, "bot access ", 11) ||
+             !strcmp(text, "bot thread") || !strncmp(text, "bot thread ", 11)) {
+    bot.radioPolicyCommand(text + 4, reply.text, sizeof(reply.text));
   } else if (!strcmp(text, "bot policy") || !strncmp(text, "bot channel ", 12) ||
              !strncmp(text, "bot path ", 9) || !strncmp(text, "bot airtime ", 12)) {
     BotRadioPolicy policy;
@@ -237,10 +241,11 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
                policy.channel[0] ? policy.channel : "off", policy.pathWidth, policy.airtimeMs); return;
     }
     if (!strncmp(text, "bot channel ", 12)) {
-      if (!strcmp(text + 12, "off")) policy.channel[0] = 0;
-      else if (strlen(text + 12) < sizeof(policy.channel)) strcpy(policy.channel, text + 12);
+      BotRadioPolicy::Membership membership;
+      if (!strcmp(text + 12, "off")) membership.name[0] = 0;
+      else if (strlen(text + 12) < sizeof(membership.name)) strcpy(membership.name, text + 12);
       else { say("Error: channel must be at most 32 bytes"); return; }
-      policy.channelKeySet = false; memset(policy.channelKey, 0, 16);
+      policy.setMembership(0, membership);
     } else {
       uint32_t value; const bool path = !strncmp(text, "bot path ", 9);
       if (!number(text + (path ? 9 : 12), value, path ? 3 : 3600) || value < (path ? 1 : 360)) {

@@ -21,11 +21,41 @@ bool botSourceIsWasm(const char *source, size_t size) {
 }
 bool botStorageScope(const BotEvent &event, BotIoRequest &request, char *error, size_t capacity) {
   const auto fail = [&](const char *text) { snprintf(error, capacity, "%s", text); return false; };
-  if (request.scope > BotIoRequest::Channel) return fail("Storage scope unavailable");
+  const bool read = request.kind == BotIoRequest::Get || request.kind == BotIoRequest::List ||
+                    request.kind == BotIoRequest::TimerGet;
+  bool compare = request.kind == BotIoRequest::Cas;
+  for (unsigned i = 0; i < request.mutations && i < BotTransactionLimit; ++i)
+    compare = compare || request.mutation[i].compare;
+  const uint8_t required = read ? 16 : compare ? 48 : 32;
+  uint8_t permitted = event.policyFlags;
+  if (request.scope >= BotIoRequest::CallerThread) {
+    const bool atomic = request.kind == BotIoRequest::Cas || request.kind == BotIoRequest::Transaction;
+    if (atomic && request.mutations && request.mutations <= BotTransactionLimit && !request.key[0]) {
+      if (!botStorageKey(request.scope, request.mutation[0].key))
+        return fail("Thread transaction requires encoded thread/key names");
+      const size_t prefix = botThreadPrefix(request.mutation[0].key);
+      memcpy(request.key, request.mutation[0].key, prefix);
+    }
+    if (!botStorageKey(request.scope, request.key, atomic || request.kind == BotIoRequest::List))
+      return fail("Thread storage requires NAME/key within 32 bytes; NAME is 1..24 characters");
+    const size_t prefix = botThreadPrefix(request.key);
+    for (unsigned i = 0; i < request.mutations && i < BotTransactionLimit; ++i)
+      if (!botStorageKey(request.scope, request.mutation[i].key) ||
+          strncmp(request.key, request.mutation[i].key, prefix))
+        return fail("Thread transaction cannot mix thread names");
+    for (const auto &rule : event.threadRules)
+      if (rule.name[0] && strlen(rule.name) == prefix - 1 &&
+          !strncmp(rule.name, request.key, prefix - 1)) permitted &= rule.access;
+  }
+  if ((permitted & required) != required)
+    return fail(read ? "Native command policy denies storage read" :
+                       "Native command/thread policy denies storage write or comparison read");
+  if (request.scope > BotIoRequest::ChannelThread) return fail("Storage scope unavailable");
+  const uint8_t scope = botBaseScope(request.scope);
   const bool subscription = event.kind != BotEvent::Command;
-  if (subscription && request.scope != BotIoRequest::Bot && request.scope != BotIoRequest::Channel)
+  if (subscription && scope != BotIoRequest::Bot && scope != BotIoRequest::Channel)
     return fail("Event metadata does not authorize private user storage");
-  if (request.scope == BotIoRequest::Channel) {
+  if (scope == BotIoRequest::Channel) {
     if (!event.channelVerified || !event.channel[0] || event.authenticated)
       return fail("Channel storage requires verified native channel authority");
     if (!subscription && !event.targeted && request.kind != BotIoRequest::Get &&
@@ -35,7 +65,7 @@ bool botStorageScope(const BotEvent &event, BotIoRequest &request, char *error, 
   } else {
     if ((!subscription && !event.authenticated) || event.channel[0])
       return fail("Private storage requires authenticated request authority");
-    if (request.scope != BotIoRequest::Bot)
+    if (scope != BotIoRequest::Bot)
       memcpy(request.principal, event.sender, sizeof(request.principal));
   }
   if (request.sharedScope() && !event.sharedState) return fail("Shared storage scope not granted");

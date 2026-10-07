@@ -186,11 +186,42 @@ static void homeArguments() {
   }
   puts("PASS Wasm configured-home strict arguments, UTF-8/Unicode escapes, native bounds and same-session recovery");
 }
+static void namedThreads() {
+  BotSession vm; load(vm, bytes("contract-8"));
+  auto e = event("!wcontract"); e.sender[31] = 9;
+  char error[128]{};
+  assert(vm.start(71, e, error, sizeof(error)));
+  BotIoRequest request; unsigned phase = 0;
+  const BotIoRequest::Kind kinds[] = {BotIoRequest::Get, BotIoRequest::Put, BotIoRequest::Cas,
+      BotIoRequest::Transaction, BotIoRequest::List, BotIoRequest::TimerSet,
+      BotIoRequest::TimerGet, BotIoRequest::TimerCancel};
+  while (vm.nextIo(request)) {
+    assert(phase < 8 && request.kind == kinds[phase] && request.scope == BotIoRequest::CallerThread &&
+           !memcmp(request.principal, e.sender, 32));
+    if (phase == 2 || phase == 3) {
+      assert(!strcmp(request.key, "notes/") && !strcmp(request.mutation[0].key, "notes/a"));
+      if (phase == 3) assert(!strcmp(request.mutation[1].key, "notes/b"));
+    } else assert(!strcmp(request.key, phase == 4 ? "notes/" : phase >= 5 ? "notes/wake" : "notes/key"));
+    BotIoResult completion; completion.ok = true; completion.token = request.token;
+    completion.outcome = BotIoResult::Committed; completion.timerState = BotTimerState::Pending;
+    assert(vm.complete(completion)); ++phase;
+  }
+  BotSession::Result result;
+  assert(phase == 8 && vm.poll(result) && result.ok && !strcmp(result.action.text, "thread complete"));
+  strcpy(e.threadRules[0].name, "notes"); e.threadRules[0].access = 0;
+  assert(vm.start(72, e, error, sizeof(error)) && vm.poll(result) && !result.ok && !vm.nextIo(request));
+  e.threadRules[0] = {};
+  load(vm, bytes("contract-9"));
+  assert(vm.start(73, e, error, sizeof(error)) && vm.poll(result) && !result.ok &&
+         strstr(result.error, "mix thread") && !vm.nextIo(request));
+  puts("PASS Wasm additive thread scopes and SDK key builder: all 8 KV/timer operations, full origin, native RW denial and mixed-thread atomic rejection");
+}
 int main(int argc, char **argv) {
   assert(argc == 2); folder = argv[1];
   emptyManifest();
   initializationBudgets();
   homeArguments();
+  namedThreads();
   for (const char *language : {"c", "rust"}) {
     BotSession arithmetic;
     load(arithmetic, bytes(std::string(language) + "-arithmetic"));
