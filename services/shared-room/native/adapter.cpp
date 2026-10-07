@@ -16,6 +16,16 @@ void mc_pub(){ed25519_derive_pub(arena+64,arena);}
 void mc_seed(){ed25519_create_keypair(arena+64,arena,arena+96);}
 int mc_shared(){ed25519_key_exchange(arena+128,arena+96,arena);unsigned n=0;for(unsigned i=128;i<160;++i)n|=arena[i];return n!=0;}
 void mc_sha(unsigned n){SHA256 sha;sha.update(arena+160,n);sha.finalize(arena+1024,32);}
+// MeshCore d929643 TransportKey::calcTransportCode: HMAC over type+payload,
+// little-endian first two bytes, with 0000/FFFF reserved. Public scope key: 16B.
+unsigned mc_transport(unsigned kind,unsigned n){
+ if(kind>15||n>184)return 0;
+ SHA256 sha;unsigned char type=kind;
+ sha.resetHMAC(arena+128,16);sha.update(&type,1);sha.update(arena+160,n);
+ sha.finalizeHMAC(arena+128,16,arena+1024,2);
+ unsigned code=arena[1024]|(unsigned(arena[1025])<<8);
+ return code==0?1:code==0xFFFF?0xFFFE:code;
+}
 void mc_sign(unsigned n){ed25519_sign(arena+1024,arena+160,n,arena+64,arena);}
 int mc_verify(unsigned n){return ed25519_verify(arena+1088,arena+160,n,arena+64);}
 int mc_crypt(unsigned n,int decrypt){

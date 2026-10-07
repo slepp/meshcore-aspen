@@ -12,10 +12,15 @@ base64 containing 1..255 raw MeshCore bytes. Transmit IDs are UUIDs; delay is
 0..30000 milliseconds and priority is an unsigned byte. See the
 [three-operation API](README.md#small-opaque-api).
 
-RF packets use native payload version zero and unscoped flood/direct routes.
+RF packets use native payload version zero and all four route encodings.
 Path encoding uses the upper two bits for hash width and lower six for hop
-count, bounded by native's 64 path bytes and 184 payload bytes. Region-scoped
-transport is rejected until a region-key contract is supplied. The Worker
+count, bounded by native's 64 path bytes and 184 payload bytes. Scoped routes
+0/3 put two little-endian 16-bit transport codes between header and path length.
+An optional public `FRONTENDS[id].region` validates the primary code before
+room decoding. Regional frontends reject unscoped floods; frontends with no
+region reject all scoped packets. There is no unknown-scope fallback. Ordinary
+direct route 2 follows native room authentication. See [regional routing](README.md#public-regional-routing).
+The Worker
 tries every permitted room/client prefix and requires exactly one native
 MAC-authenticated decode. Bare ACKs are resolved against owned pending proofs
 when all configured aliases share one backend; ambiguous proofs are rejected.

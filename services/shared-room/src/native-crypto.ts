@@ -7,6 +7,7 @@ interface Exports {
   mc_seed(): void;
   mc_shared(): number;
   mc_sha(n: number): void;
+  mc_transport(kind: number, n: number): number;
   mc_sign(n: number): void;
   mc_verify(n: number): number;
   mc_crypt(n: number, decrypt: number): number;
@@ -93,6 +94,14 @@ export class NativeCrypto {
       b.set(data, 160);
       const n = this.e.mc_crypt(data.length, decrypt ? 1 : 0);
       return n ? b.slice(1024, 1024 + n) : undefined;
+    });
+  }
+  transportCode(key: Uint8Array, kind: number, payload: Uint8Array): number {
+    if (key.length !== 16 || !Number.isInteger(kind) || kind < 0 || kind > 15 || payload.length > 184)
+      throw new Error("Invalid native transport input");
+    return this.call(b => {
+      b.set(key, 128); b.set(payload, 160);
+      return this.e.mc_transport(kind, payload.length);
     });
   }
   sign(key: Uint8Array, data: Uint8Array): Uint8Array {

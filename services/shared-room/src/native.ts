@@ -1,4 +1,4 @@
-import { aliases, fail, type Env } from "./config";
+import { aliases, fail, publicRegion, type Env } from "./config";
 import type { Delivery, Member, Operation, Result } from "./protocol";
 import {
   NativeCrypto,
@@ -30,6 +30,7 @@ export interface Packet {
   length: number;
   path: Uint8Array;
   payload: Uint8Array;
+  transportCode?: number;
 }
 export function pathSize(length: number): number {
   const n = (length & 63) * ((length >> 6) + 1);
@@ -39,22 +40,23 @@ export function pathSize(length: number): number {
 export function packet(wire: Uint8Array): Packet | undefined {
   if (wire.length < 3 || wire.length > 255 || wire[0] >> 6) return;
   const route = wire[0] & 3;
-  // Scoped transport authentication needs region-key configuration; never
-  // silently treat its transport codes as authenticated/unscoped radio.
-  if (route !== 1 && route !== 2) return;
+  const scoped = route === 0 || route === 3, offset = scoped ? 5 : 1;
+  if (wire.length <= offset + 1) return;
   let n: number;
   try {
-    n = pathSize(wire[1]);
+    n = pathSize(wire[offset]);
   } catch {
     return;
   }
-  if (2 + n >= wire.length || wire.length - 2 - n > 184) return;
+  const start = offset + 1 + n;
+  if (start >= wire.length || wire.length - start > 184) return;
   return {
     kind: (wire[0] >> 2) & 15,
-    flood: route === 1,
-    length: wire[1],
-    path: wire.slice(2, 2 + n),
-    payload: wire.slice(2 + n),
+    flood: route === 0 || route === 1,
+    length: wire[offset],
+    path: wire.slice(offset + 1, start),
+    payload: wire.slice(start),
+    transportCode: scoped ? new DataView(wire.buffer, wire.byteOffset, wire.byteLength).getUint16(1, true) : undefined,
   };
 }
 export interface Identity {
@@ -62,6 +64,7 @@ export interface Identity {
   key: Uint8Array;
   publicKey: Uint8Array;
   name: string;
+  scope?: Uint8Array;
 }
 export interface Decoded {
   identity: Identity;
@@ -94,7 +97,7 @@ export class RadioCodec {
   readonly crypto = new NativeCrypto();
   private keys?: Record<string, string>;
   constructor(private env: Env) {}
-  identity(alias: string): Identity {
+  identity(alias: string, region?: string): Identity {
     if (!this.keys) {
       try {
         this.keys = JSON.parse(this.env.ROOM_KEYS ?? "{}");
@@ -115,7 +118,9 @@ export class RadioCodec {
     }
     if (toHex(pub) !== config.publicKey)
       return fail(503, "Native room key does not match advertised identity");
-    return { alias, key, publicKey: pub, name: config.name };
+    const name = publicRegion(region);
+    return { alias, key, publicKey: pub, name: config.name,
+      scope: name ? this.crypto.sha(encoder.encode(`#${name}`)).slice(0, 16) : undefined };
   }
   ack(plain: Uint8Array, peer: Uint8Array): number {
     return number(this.crypto.sha(join(plain, peer)));
@@ -127,6 +132,12 @@ export class RadioCodec {
   ): Promise<Decoded | undefined> {
     const p = packet(wire);
     if (!p) return;
+    // Scope is a server-owned property of this physical frontend. Validate it
+    // before room decode, including bare ACKs. Never strip a mismatched scope.
+    identities = identities.filter(id => p.transportCode !== undefined ?
+      !!id.scope && this.crypto.transportCode(id.scope, p.kind, p.payload) === p.transportCode :
+      !p.flood || !id.scope);
+    if (!identities.length) return;
     let ackPayload = p.payload;
     if (p.kind === 10) {
       if ((ackPayload[0] & 15) !== 3) return;
@@ -268,6 +279,11 @@ export class RadioCodec {
       ? nativeRoute(raw)
       : { known: false, length: 0x80, path: new Uint8Array() };
     if (payload.length > 184) throw new Error("Native payload too large");
+    if (!route.known && id.scope) {
+      const codes = new Uint8Array(4);
+      new DataView(codes.buffer).setUint16(0, this.crypto.transportCode(id.scope, kind, payload), true);
+      return join(new Uint8Array([kind << 2]), codes, new Uint8Array([route.length]), route.path, payload);
+    }
     return join(
       new Uint8Array([(kind << 2) | (route.known ? 2 : 1), route.length]),
       route.path,

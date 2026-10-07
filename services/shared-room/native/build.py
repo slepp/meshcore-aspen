@@ -14,7 +14,7 @@ for i,f in enumerate(files):
     subprocess.run([clang,*common,*flags,'-c',str(f),'-o',str(obj)],check=True)
     objects.append(str(obj))
 out=root.parent/'src/native-crypto.wasm'
-exports=['mc_arena','mc_pub','mc_seed','mc_shared','mc_sha','mc_sign','mc_verify','mc_crypt']
+exports=['mc_arena','mc_pub','mc_seed','mc_shared','mc_sha','mc_transport','mc_sign','mc_verify','mc_crypt']
 subprocess.run([clang,'--target=wasm32','-nostdlib',*objects,'-Wl,--no-entry','-Wl,--strip-all','-Wl,--initial-memory=131072','-Wl,--max-memory=131072',*['-Wl,--export='+e for e in exports],'-o',str(out)],check=True)
 out.chmod(0o644)
 print(f'{out.name}: {out.stat().st_size} bytes sha256={hashlib.sha256(out.read_bytes()).hexdigest()}')

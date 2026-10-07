@@ -15,8 +15,8 @@ and signs room advertisements. It uses no WebCrypto key-format substitution.
   filesystem, network or JavaScript imports.
 - `compat/`: the few libc declarations needed by those unchanged sources.
 
-The checked-in binary is 62,405 bytes, SHA-256
-`9b1c8cfbddfa6bbd730d45eab9100e4f4f8114584ebe1cb143cefb3cdd147960`.
+The checked-in binary is 62,613 bytes, SHA-256
+`60b97ae1299e335876570c611eff9895304bee2a46160b28880378abfec464b0`.
 Normal Worker builds use that binary and need no C toolchain. Rebuild with LLVM
 22.1.8 (including wasm-ld):
 
@@ -30,6 +30,13 @@ npm run build
 `native-crypto.ts` checks lengths, calls synchronously and clears the arena after
 each operation. The focused test decrypts the committed native C++ ciphertext,
 checks its ACK hash, rejects a modified MAC and checks native signing. Public
-login/post/PATH/REQ fixtures are generated independently with pinned
+login/post/PATH/REQ and regional fixtures are generated independently with pinned
 `meshcore-go v1.5.0` by `tools/native-fixtures.go`. These fixture keys must never
 be used for deployed identities.
+
+Public named regions use `SHA256("#" + name)[:16]` and the existing native
+SHA256 HMAC over payload type plus payload. `mc_transport` follows pinned
+[`TransportKey::calcTransportCode`](https://github.com/meshcore-dev/MeshCore/blob/d92964352441e53b93e8667b802e04f6e072b39e/src/helpers/TransportKeyStore.cpp),
+including its little-endian 16-bit code and reserved-value remapping. The module
+still has fixed 128KiB memory and no imports. No private region key is generated
+or loaded by the public-name derivation.

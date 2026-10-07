@@ -1,7 +1,7 @@
 import type {Room} from "./room";
 
 export interface Alias {backend: string; publicKey: string; name: string; password: string}
-export interface Frontend {token: string; aliases: string[]}
+export interface Frontend {token: string; aliases: string[]; region?: string}
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
   ALIASES: string;
@@ -25,6 +25,20 @@ export function wellFormed(value: string): boolean {
     } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
   }
   return true;
+}
+/** Public native hashtag region only. No wildcard, hierarchy or private key. */
+export function publicRegion(value: unknown): string | undefined {
+  if (value === undefined) return;
+  if (typeof value !== "string" || !wellFormed(value)) fail(503, "Invalid public frontend region");
+  const name = value.replace(/^#/, ""), bytes = new TextEncoder().encode(name);
+  if (!bytes.length || bytes.length > 30 || name.startsWith("$") || name.startsWith("#") ||
+      !bytes.every(c => c === 45 || c === 35 || c === 36 || (c >= 48 && c <= 57) || c >= 65))
+    fail(503, "Use a public named frontend region; private regions require a key handoff");
+  return name;
+}
+export function frontendRegion(env: Env, frontend: string): string | undefined {
+  const entries = JSON.parse(env.FRONTENDS) as Record<string, Frontend>;
+  return publicRegion(entries[frontend]?.region);
 }
 export function aliases(env: Env): Record<string, Alias> {
   const entries = JSON.parse(env.ALIASES) as Record<string, Alias>;

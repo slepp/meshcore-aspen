@@ -21,7 +21,7 @@ configure private `ALIASES`, `FRONTENDS` and `ROOM_KEYS` secrets. Keep
 | --- | --- |
 | `ALIASES[id] = {backend, publicKey, name, password}` | Advertised room identity and its canonical backend |
 | `ROOM_KEYS[id] = "<128 lowercase hex characters>"` | Expanded native 64-byte private key, held only in the Worker |
-| `FRONTENDS[id] = {token, aliases:[...]}` | Restricted frontend credential and allowed advertised identities |
+| `FRONTENDS[id] = {token, aliases:[...], region?:"ab"}` | Restricted frontend credential, aliases and optional public flood region |
 
 Several frontends can serve the same public key/name without receiving its
 private key. Distinct aliases can share one backend history; membership,
@@ -126,10 +126,33 @@ This also protects modems with separate alias grants that share the RF network.
 After adding a second backend to the service, a fresh client login or
 refresh replaces any old direct pending delivery with this PATH ACK mode.
 
-The codec accepts unscoped flood/direct RF packets. Region-scoped packets
-carry additional transport authentication codes and are rejected with
-`accepted:false` until region-key configuration is implemented. This applies
-equally to one identity, shared-backend aliases and independent backends.
+## Public regional routing
+
+Set a physical frontend's optional `region` to a public native region name,
+such as `ab` or `#ab`. That frontend accepts transport flood/direct routes 0/3
+only when their primary transport code matches the configured name. Outgoing
+floods, including login replies, history and explicit advertisements, carry
+that region's native code. A regional frontend rejects unscoped floods;
+unknown or mismatched scoped packets return `accepted:false` with no fallback.
+Without `region`, a frontend continues using unscoped flood/direct routes 1/2
+and rejects scoped packets. The thin radio adapter carries the bytes unchanged.
+
+Different frontends can serve the same room identity in different public
+regions. Names are case-sensitive; `ab` and `AB` differ. An optional leading
+`#` is normalized. There is no inherited `can`/`ab`/`edm` permission or region
+tree in this service. Each frontend selects one public region explicitly.
+Native clients need their outgoing scope configured to match, including their
+flooded PATH ACKs; receiving a scoped advert does not automatically select it.
+See Aspen's [region guide](../../firmware/shared/REGIONS.md).
+
+Public region names derive publicly known transport keys and control flood
+routing. They are not an authorization boundary. Native ordinary direct
+route 2 remains accepted and replies with learned direct routes use route 2;
+room/password authentication and native ACK rules still apply. Incoming
+transport-direct route 3 is validated, and its replies follow native ordinary
+direct behavior. The secondary transport code supplies no admission permission
+and is zero on outgoing floods. Private `$` regions require an explicit
+16-byte key and secure handoff; they are rejected by this configuration.
 
 `HISTORY_LIMIT=0` defaults to unlimited catch-up. A positive value limits the
 visible window to that many latest posts. It deletes no messages, attempts or
@@ -163,7 +186,9 @@ The focused checks cover two-front reception, one durable post, native login
 and PATH replies, pushed encrypted history, cursor/receipt behavior,
 hibernation/reconnect, catch-up, shared-alias and independent-backend ACK isolation and unauthorized or
 forged decoded requests. The native crypto test uses the committed C++ packet
-and ACK fixture; login/post/PATH/REQ fixtures come from pinned meshcore-go.
+and ACK fixture; login/post/PATH/REQ and scoped fixtures come from pinned meshcore-go.
+Regional checks cover both transport routes, matching scope on replies,
+catch-up, hibernation and wrong-region/corrupted-code rejection.
 `make -C firmware/shared/cloudroom test` checks the portable driver and parser.
 The build is a Wrangler dry run; none of these commands deploy or transmit RF.
 Live hardware/RF interoperability still needs an operator test.

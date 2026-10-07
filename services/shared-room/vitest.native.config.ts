@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import fixture from "./test/native-fixtures.json" with { type: "json" };
-export function nativeConfig(independent = false) {
+export function nativeConfig(independent = false, regional = false) {
   return defineConfig({
     plugins: [
       cloudflareTest({
@@ -36,8 +36,14 @@ export function nativeConfig(independent = false) {
               ...(independent ? {B: fixture.thirdRoom.key} : {}),
             }),
             FRONTENDS: JSON.stringify({
-              one: { token: "one", aliases: ["A", "SharedB"] },
-              two: { token: "two", aliases: ["A", "SharedB"] },
+              one: { token: "one", aliases: ["A", "SharedB"], ...(regional ? {region: "ab"} : {}) },
+              two: { token: "two", aliases: ["A", "SharedB"], ...(regional ? {region: "#ab"} : {}) },
+              ...(regional ? {
+                edm: {token: "edm", aliases: ["A"], region: "edm"},
+                upper: {token: "upper", aliases: ["A"], region: "AB"},
+                plain: {token: "plain", aliases: ["A"]},
+                private: {token: "private", aliases: ["A"], region: "$private"},
+              } : {}),
               ...(independent ? {
                 multi: { token: "multi", aliases: ["A", "B"] },
                 aonly: { token: "aonly", aliases: ["A"] },
@@ -48,7 +54,7 @@ export function nativeConfig(independent = false) {
         },
       }),
     ],
-    test: { include: [independent ? "test/native-independent.test.ts" : "test/native-room.test.ts"], testTimeout: 10000 },
+    test: { include: [regional ? "test/native-region.test.ts" : independent ? "test/native-independent.test.ts" : "test/native-room.test.ts"], testTimeout: 10000 },
   });
 }
 export default nativeConfig();

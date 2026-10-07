@@ -1,5 +1,5 @@
 import {DurableObject} from "cloudflare:workers";
-import {aliases, ApiError, authorize, credential, errorResponse, fail, wellFormed, type Connection, type Env} from "./config";
+import {aliases, ApiError, authorize, credential, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 import {RadioCodec, opaque, OPAQUE_PROTOCOL} from "./native";
 import {base64, unbase64} from "./native-crypto";
@@ -123,7 +123,8 @@ export class Room extends DurableObject<Env> {
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
       this.bindIdentity(connection.alias);
       const isOpaque = opaque(this.env);
-      if (isOpaque) this.codec.identity(connection.alias);
+      const region = frontendRegion(this.env, connection.frontend);
+      if (isOpaque) this.codec.identity(connection.alias, region);
       if (match[2] === "socket") {
         if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
         const offered = request.headers.get("Sec-WebSocket-Protocol")?.split(",").map(p => p.trim());
@@ -137,7 +138,8 @@ export class Room extends DurableObject<Env> {
         const [client, server] = Object.values(new WebSocketPair());
         this.ctx.acceptWebSocket(server);
         server.serializeAttachment(connection);
-        this.send(server, {type: "ready", version: isOpaque ? 2 : 1, alias: connection.alias, publicKey: alias.publicKey, name: alias.name});
+        this.send(server, {type: "ready", version: isOpaque ? 2 : 1, alias: connection.alias, publicKey: alias.publicKey, name: alias.name,
+          ...(region ? {region} : {})});
         await this.pump();
         return new Response(null, {status: 101, webSocket: client,
           headers: offered ? {"Sec-WebSocket-Protocol": protocol} : undefined});
@@ -239,13 +241,13 @@ export class Room extends DurableObject<Env> {
       }
       return {accepted: true};
     }
-    if (op.op === "advertise") return {accepted: true, transmission: this.dispatch(c, this.codec.advertisement(this.codec.identity(c.alias)), 0)};
+    if (op.op === "advertise") return {accepted: true, transmission: this.dispatch(c, this.codec.advertisement(this.codec.identity(c.alias, frontendRegion(this.env, c.frontend))), 0)};
     if (op.op !== "rf") fail(403, "Opaque mode accepts only rf, txReceipt and explicit advertise operations");
     let wire: Uint8Array;
     try {wire = unbase64(string(op.packet, "native packet", 340));} catch {return fail(400, "Invalid native packet base64");}
     const configured = aliases(this.env);
     const grant = (JSON.parse(this.env.FRONTENDS) as Record<string, {aliases: string[]}>)[c.frontend];
-    const identities = grant.aliases.map(alias => this.codec.identity(alias));
+    const identities = grant.aliases.map(alias => this.codec.identity(alias, frontendRegion(this.env, c.frontend)));
     const decoded = await this.codec.decode(wire, identities, async (alias, prefix) => {
       const backend = configured[alias].backend;
       if (this.ctx.id.equals(this.env.ROOMS.idFromName(backend))) return this.nativeMembers(alias, prefix, c.frontend);
@@ -445,7 +447,7 @@ export class Room extends DurableObject<Env> {
           // signed history even when they already know a direct route.
           if (requirePathAck) delivery.route = base64(new Uint8Array([1, 0, 0x80]));
           const proofs = requirePathAck ? new Set<string>() : occupied;
-          const encoded = this.codec.delivery(this.codec.identity(s.alias), delivery, proofs);
+          const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
           if (!encoded) continue;
           proofs.add(encoded.proof);
           this.sql.exec("INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state, require_path_ack) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?)",

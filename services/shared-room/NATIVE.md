@@ -44,9 +44,13 @@ Other profiles retain their existing limits. The Home/Lua HTTP rate limit
 (two calls per caller/four globally per minute) is bypassed by this dedicated
 persistent transport.
 
-The Worker codec supports unscoped ANON login, original TXT, directed REQ
-history, PATH, bare/multipart ACK and signed room advertisements. Region-scoped
-transport requires actual region-key authentication and is rejected here.
+The Worker codec supports ANON login, original TXT, directed REQ history, PATH,
+bare/multipart ACK and signed room advertisements. Unscoped routing is the
+default. Optional public `FRONTENDS[id].region` validates scoped routes 0/3
+and scopes outgoing floods; the native driver forwards those bytes unchanged.
+Configure the companion's outgoing scope explicitly. Public regions control
+flood routing; ordinary direct packets remain native-compatible. Private `$`
+regions require explicit keys and are rejected. See [regional setup](README.md#public-regional-routing).
 Services with independent backends use flooded history and authenticated
 native PATH ACKs through every frontend. A service with one backend can use
 learned direct routes across its aliases and frontends.

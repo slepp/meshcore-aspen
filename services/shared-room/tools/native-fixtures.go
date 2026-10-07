@@ -94,6 +94,28 @@ func main() {
 	out["refresh"] = seal("room", "reader", meshcore.PayloadTypeReq, body)
 	// Native PATH supplies the learned return route.
 	out["path"] = seal("room", "reader", meshcore.PayloadTypePath, []byte{0x82, 6, 5, 4, 3, 2, 1, 15})
+	// Public hashtag scopes only. Native-equivalent transport fixtures from Go.
+	for name, src := range map[string]string{"scopedAuthorLogin": "authorLogin", "scopedReaderLogin": "readerLogin", "scopedPost": "post", "scopedPath": "path", "scopedRefresh": "refresh"} {
+		wire, _ := base64.StdEncoding.DecodeString(out[src].(string))
+		p, err := meshcore.PacketFromBytes(wire)
+		if err != nil {
+			panic(err)
+		}
+		route := meshcore.RouteTypeTransportDirect
+		if p.RouteType() == meshcore.RouteTypeFlood || src == "path" {
+			route = meshcore.RouteTypeTransportFlood
+		}
+		p.Header = meshcore.MakeHeader(route, p.PayloadType(), 0)
+		p.TransportCode1 = meshcore.DeriveRegionKey("#ab").CalcTransportCode(p.PayloadType(), p.Payload)
+		p.TransportCode2 = 0
+		b, err := p.ToBytes()
+		if err != nil {
+			panic(err)
+		}
+		out[name] = base64.StdEncoding.EncodeToString(b)
+	}
+	regionKey := meshcore.DeriveRegionKey("#test")
+	out["regionVector"] = map[string]any{"name": "test", "key": hex.EncodeToString(regionKey[:]), "kind": 2, "payload": "010203", "code": regionKey.CalcTransportCode(2, []byte{1, 2, 3})}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(out); err != nil {

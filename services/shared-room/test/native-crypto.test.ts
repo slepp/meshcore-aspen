@@ -3,6 +3,7 @@ import { NativeCrypto, fromHex, toHex, join } from "../src/native-crypto";
 import { RadioCodec, le32 } from "../src/native";
 import type { Env } from "../src/config";
 import type { Delivery } from "../src/protocol";
+import fixture from "./native-fixtures.json";
 it("reuses native expanded keys, ciphertext and recipient-bound ACK vector", () => {
   const c = new NativeCrypto();
   const seed = new Uint8Array(32);
@@ -69,4 +70,8 @@ it("reuses native expanded keys, ciphertext and recipient-bound ACK vector", () 
   expect(codec.delivery(identity, delivery, proofs)?.proof).toBe(allowed);
   proofs.add(allowed);
   expect(codec.delivery(identity, delivery, proofs)).toBeUndefined();
+  // Same #test/type2/010203 vector emitted by the pinned native parity oracle.
+  const vector = fixture.regionVector;
+  expect(toHex(c.sha(new TextEncoder().encode(`#${vector.name}`)).slice(0, 16))).toBe(vector.key);
+  expect(c.transportCode(fromHex(vector.key), vector.kind, fromHex(vector.payload))).toBe(vector.code);
 });

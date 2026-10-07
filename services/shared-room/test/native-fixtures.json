@@ -16,10 +16,22 @@
   },
   "readerLogin": "HYIBAgMEBQYis+DglrAuLsmKNEFBCu3deMleJ6Dab0EaCcYxwPK+pulEk/gZWVyUO9sfiSEvwxnrU0A=",
   "refresh": "AoIBAgMEBQYiszPFAI8cZGNg7ZEsyJ0Nx1ysqA==",
+  "regionVector": {
+    "code": 60802,
+    "key": "9cd8fcf22a47333b591d96a2b848b73f",
+    "kind": 2,
+    "name": "test",
+    "payload": "010203"
+  },
   "room": {
     "key": "18bf5297036bf9a0bdce8f050f58e57e50413a49ae37e7fb74a044e8b48363632a2ce0aed069264b9a988490fb6cca0cce7285994ad29f6ad23c2920fbb76f47",
     "publicKey": "22351e22105a19aabb42589162ad7f1ea0df1c25cebf0e4a9fcd261301274862"
   },
+  "scopedAuthorLogin": "HB3uAACCAQIDBAUGIjtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop6HpQpDmMBhXrNMA+JaktjhJd",
+  "scopedPath": "ICcFAACCAQIDBAUGIrPos4KRkQ4LdSk8SCX7XWgHons=",
+  "scopedPost": "C6jTAACCAQIDBAUGIjv0JsroxmSz0LLRsgNVfk64YYk=",
+  "scopedReaderLogin": "HP5pAACCAQIDBAUGIrPg4JawLi7JijRBQQrt3XjJXieg2m9BGgnGMcDyvqbpRJP4GVlclDvbH4khL8MZ61NA",
+  "scopedRefresh": "Awf9AACCAQIDBAUGIrMzxQCPHGRjYO2RLMidDcdcrKg=",
   "secondPost": "CoIBAgMEBQYiO8XnXEcBLDPUuTwh8UW+awR/UQ==",
   "sharedReaderLogin": "HYIBAgMEBQYis+DglrAuLsmKNEFBCu3deMleJ6Dab0EaCcYxwPK+pukfRUm/cr//RwOvLOrjURDEepk=",
   "thirdRoom": {

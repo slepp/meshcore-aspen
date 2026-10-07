@@ -12,6 +12,13 @@ const validate = args.includes("--validate");
 function reject(message) {throw new Error(message);}
 function record(value) {return value && typeof value === "object" && !Array.isArray(value);}
 const id = /^[a-zA-Z0-9_-]{1,64}$/;
+function publicRegion(value) {
+  if (value === undefined) return true;
+  if (typeof value !== "string" || !value.isWellFormed()) return false;
+  const name=value.replace(/^#/, ""), bytes=Buffer.from(name);
+  return bytes.length>0 && bytes.length<=30 && !name.startsWith("$") && !name.startsWith("#") &&
+    bytes.every(c=>c===45||c===35||c===36||(c>=48&&c<=57)||c>=65);
+}
 
 try {
   if (!args.includes("--file") || !file || file.startsWith("--") ||
@@ -46,7 +53,8 @@ try {
         !Array.isArray(frontend.aliases) || !frontend.aliases.length ||
         new Set(frontend.aliases).size !== frontend.aliases.length ||
         frontend.aliases.some(alias => !Object.hasOwn(config.ALIASES, alias)) ||
-        Object.keys(frontend).sort().join(",") !== "aliases,token")
+        !publicRegion(frontend.region) ||
+        !["aliases,token", "aliases,region,token"].includes(Object.keys(frontend).sort().join(",")))
       reject("Invalid/duplicate frontend token or alias grant.");
     tokens.add(frontend.token);
   }

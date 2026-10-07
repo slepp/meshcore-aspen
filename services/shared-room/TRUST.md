@@ -16,6 +16,13 @@ preserves those protocol limits rather than claiming stronger authentication.
 TLS protects the frontend connection. Revoke a lost frontend token; replace the
 advertised identity if its Worker room key is compromised.
 
+An optional frontend `region` is a public routing name, not a secret or client
+authorization boundary. It validates scoped packets and determines outgoing
+flood scope. Native direct packets have no transport codes and still use room
+authentication. Unknown scopes never fall back to unscoped handling. Private
+`$` regions need operator-provided 16-byte transport keys and are unsupported
+by this public-name configuration. Existing test setup files omit `region`.
+
 The legacy `MODE="decoded"` development path trusts frontend assertions and
 exposes plaintext/member operations. Its adapters need room keys on the host.
 Do not enable that mode for the central-key deployment or provision those
