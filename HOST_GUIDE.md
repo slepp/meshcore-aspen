@@ -16,11 +16,11 @@ connections, installation, radio maintenance and external KISS clients.
 For standalone deployment, use the [ESP32 guide](firmware/esp32/README.md)
 or [nRF52840 guide](firmware/nrf52840/README.md).
 
-Host roles use the **Birch 0.1.0 RC1** product version. Their `ver` command reports the
+Host roles use the **Birch 0.1.0** product version. Their `ver` command reports the
 MeshCore protocol/reference separately from the host implementation; companion
-and native owner-information replies identify `birch-0.1.0-rc.1`.
+and native owner-information replies identify `birch-0.1.0`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
-The Birch 0.1.0 RC1 download contains the Linux x86_64 host tools and native
+The Birch 0.1.0 download contains the Linux x86_64 host tools and native
 worker. Connect an already configured WiFi/TCP shared modem implementing queued
 PHY v1, or build and privately provision the modem separately. The download
 does not contain a modem image or station credentials. See the
@@ -54,14 +54,14 @@ The host needs `libcjson1` and `libssl3`; installing the download does not need
 Go, a compiler or PlatformIO. Python 3.11 or newer runs the installer.
 
 Download the ZIP, manifest and checksums from
-[Birch 0.1.0 RC1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0-rc.1)
+[Birch 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0)
 into a new directory. Extract the ZIP there, then run `sha256sum --check` on the
 downloaded SHA256SUMS file: both the ZIP and extracted manifest must match.
 Replace `SOURCE12` below with the suffix of the extracted directory.
 
 ```sh
-python3 birch-v0.1.0-rc.1-linux-x86_64-SOURCE12/install-birch.py \
-  --prefix "$HOME/.local/opt/birch-0.1.0-rc.1"
+python3 birch-v0.1.0-linux-x86_64-SOURCE12/install-birch.py \
+  --prefix "$HOME/.local/opt/birch-0.1.0"
 ```
 
 The installer refuses an existing prefix. It installs four binaries and a
@@ -69,7 +69,7 @@ private example configuration, but does not start services, connect to the
 modem or change an existing host's identities, state or configuration.
 Keep the source and native relink archives from the download.
 
-Edit `~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json`: set
+Edit `~/.local/opt/birch-0.1.0/config/meshcore-host.json`: set
 `radio_address`, select `enabled_roles` for the modem's available client slots,
 and set the room password environment variable if enabling the room.
 The installed example selects the bundled native Lua worker and follows the
@@ -77,10 +77,10 @@ modem's PHY without retuning it. Keep all listeners on trusted interfaces.
 
 ```sh
 export MESHCORE_ROOM_PASSWORD='choose-a-private-room-password'
-~/.local/opt/birch-0.1.0-rc.1/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json -check
-~/.local/opt/birch-0.1.0-rc.1/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.0-rc.1/config/meshcore-host.json
+~/.local/opt/birch-0.1.0/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.0/config/meshcore-host.json -check
+~/.local/opt/birch-0.1.0/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.0/config/meshcore-host.json
 ```
 
 `-check` validates configuration without opening the radio or creating

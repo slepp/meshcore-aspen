@@ -5,6 +5,7 @@
 #include "NoteStore.h"
 #include "CompanionInterface.h"
 #include "CompanionProtocol.h"
+#include "../../esp32/FirmwareIdentity.h"
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/TransportKeyStore.h>
@@ -349,7 +350,7 @@ static void testCompanion() {
   frames.secured = true;
   companion.loop();
   assert(frames.outgoing.back()[0] == RESP_CODE_DEVICE_INFO && frames.outgoing.back().size() == 82);
-  assert(!strcmp(reinterpret_cast<const char*>(frames.outgoing.back().data() + 60), "1.17.1-slp-pine"));
+  assert(!strcmp(reinterpret_cast<const char*>(frames.outgoing.back().data() + 60), MESHCORE_SLP_PINE_VERSION));
   auto self = command({CMD_APP_START, 0, 0, 0, 0, 0, 0, 0});
   assert(self[0] == RESP_CODE_SELF_INFO && !memcmp(self.data() + 4, bot.self_id.pub_key, 32));
   assert(self[2] == 2 && self[56] == 7 && self[57] == 5);
@@ -504,7 +505,7 @@ static void testRuntimeConfig() {
     return std::string(reply);
   };
   assert(command("get capabilities").find("channel-keys=unsupported") != std::string::npos);
-  assert(command("ver").find("v1.17.1-slp-pine") == 0);
+  assert(command("ver").find("v" MESHCORE_SLP_PINE_VERSION) == 0);
   assert(command("help").find("help bot|source|wifi") == 0);
   assert(command("help wifi").find("slp-pine has no WiFi") != std::string::npos);
   assert(command("get bot.time.provider").find("provider=off fault=0") == 0);

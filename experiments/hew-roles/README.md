@@ -6,15 +6,15 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-**Willow is experimental.** This source includes the event-driven service
-runtime. Loopback protocol and CPU/heap checks have run; full fault/restart and
-RF qualification of that runtime is still in progress. Build an isolated
-installation and check the services you select before handing it existing
-identities. Keep the previous installation and a frozen state copy for rollback.
+**Willow 0.0.1 is the first experimental Hew release.** Download its
+[source bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.1)
+and build at the final installation path. The native worker is bound to that
+source/build tree; copying prebuilt binaries alone is not a supported install.
+The running services retain identities, source and data across upgrades and
+restart. Worker recovery and ordinary RF messaging have been exercised.
+Keep the previous installation for retained-state rollback.
 
-Start with the isolated emulator: it exchanges authenticated packets, runs
-Lua and Wasm commands, disconnects the modem, and checks recovery. It opens
-only private loopback fixtures. Willow is the Hew implementation of Birch's
+Willow is the Hew implementation of Birch's
 off-chip host arrangement. Aspen runs its selected roles on an ESP32 and is
 the core on-device design; Pine is its hardware-limited nRF52 variation.
 
@@ -29,9 +29,17 @@ Enable the native observer with [the private service settings](SERVICE.md#native
 ```sh
 cd experiments/hew-roles
 make compiler-version native-worker build/hew-host-release
+python3 -B willow.py --version
 python3 -B willow.py check --state /path/to/private/willow
 python3 -B willow.py run --release --state /path/to/private/willow
 ```
+
+Expected: `Willow 0.0.1`; the state check reports the retained role identities
+and configuration, and startup connects to the configured shared modem without
+retuning it. Build the optional Base, broker and dashboard with
+`make base-service broker dashboard` when those services are selected.
+For a new lab installation, start with `make demo`; its emulator uses synthetic
+identities and private loopback connections, not your radio.
 
 Use the running host's [owner-only DM and inbox commands](SERVICE.md#send-a-dm-and-read-the-owners-inbox)
 to send as its native bot and read authenticated incoming DMs. For a version
@@ -130,7 +138,7 @@ KISS stream fragments, queued-modem submissions, and time advancement.
 | Native bot regions | Separate home/default keys; known request scope, unscoped flood preservation, explicit fallback, default-scoped adverts and home-only unscoped adverts; serialized Go/native differential plus independent Go policy/code checks | Two registered bot keys, changed through local owner administration. Relay/room use their own permitted keys and explicit defaults. |
 | Worker build binding | Actual worktree native worker built with pinned MeshCore/Lua/WAMR inputs; recorded source fingerprint, compiler commands and input/binary hashes; compiled-in manifest verification before startup/restart | Local build binding, not a signed/reproducible release. Arbitrary installed workers are refused; source/build tree must remain available. |
 | All-Hew bot | Signed discovery; DM/group authentication; public/private gates; two-minute request dedup; targeted commands; private notes; deferred mt | Smaller command subset below; no Lua/Wasm or advanced native APIs in this mode. |
-| Async/lifetime | Three role actors run bounded batches concurrently; eight RX packets per role per batch; independent native extension process; automatic ticks; bounded mailboxes and 32 outstanding TX jobs per port; worker faults leave relay/room connected | Disconnect cancels native collectors and marks pending TX unknown. A healthy worker retains contacts across modem reconnect; worker/process failure requires rediscovery. The all-Hew bot has eight deferred jobs. |
+| Async/lifetime | Three role actors run bounded batches concurrently; eight RX packets per role per batch; independent native extension process; automatic ticks; bounded mailboxes and 32 outstanding TX jobs per port; worker faults leave relay/room connected | Disconnect cancels native collectors and marks pending TX unknown. A healthy worker retains contacts across modem reconnect; after worker restart, the native bot can recover signed contacts from its configured retained Base authority. Missing/invalid contacts require a fresh advert. The all-Hew bot has eight deferred jobs. |
 | Supervision | Independent declarative role, socket-owner and native-process-owner branches; stable ChildRefs; two actor restarts per 60 seconds; committed-state reconstruction and role-local quarantine | Coordinator, epoch session/decoders and metadata actors are outside these budgets. Native hardware faults in the Hew process remain fatal; the native worker stays in a subprocess. |
 | Shared modem | TCP/MKISS HELLO, extended CAPACITY, read-only CONFIG, SOURCE_POLICY, ROLE_PRESENCE warning, signal reporting, full airtime table, PHY statistics; correlated queued TX; reconnect and periodic profile fencing | Numeric IPv4 TCP only; no serial, TLS or modem configuration ownership. Three logical ports, or four with observer enabled. Required profile readback never retunes. Presence is advisory. Base uses its own ordinary connection rather than an aggregate port. |
 | Base companion | Separate native process, retained identity, protocol-13 TCP endpoint, contacts, channels, message cursors, RF traffic and read-only health | Protocol coverage is partial; select destructive and key-management operations explicitly. See [Base setup and contracts](BASE.md). |

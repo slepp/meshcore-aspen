@@ -14,6 +14,7 @@ from pathlib import Path
 
 from build_worker import HERE, verify
 from migrate_go import private, write_private, observer_config, identity_public
+from release_identity import VERSION
 
 OWNER_PHASES = ("pending-admission", "admitted", "queued", "local-tx-confirmed",
                 "native-rf-ack", "failed", "unknown")
@@ -220,6 +221,7 @@ def rebind(source, destination):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version="Willow " + VERSION)
     parser.add_argument("operation",choices=("check","run","rebind","send","status","inbox","command","health","packet-log"))
     parser.add_argument("--state",type=Path,required=True)
     parser.add_argument("--source",type=Path,help="rebind: complete stopped/frozen imported state; --state must be NEW")

@@ -7,6 +7,8 @@ LINK = --link-lib $(CURDIR)/build/crypto_bridge.o --link-lib $(CURDIR)/build/sto
 OBSERVER_LINK = --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib -lcurl
 HOSTLIB = $(wildcard hostlib/*.hew)
 MESHPROTO = $(wildcard meshproto/*.hew)
+build/roles build/roles-release build/roles-interrupt build/hew-host build/hew-host-release \
+build/hew-host-symbols build/hew-host-supervision build/hew-host-supervision-release: release_identity.hew
 
 .PHONY: broker broker-test broker-symbols
 BROKER_LINK = --link-lib $(CURDIR)/build/listener_bridge.o --link-lib $(CURDIR)/build/event_bridge.o --link-lib -lcrypto

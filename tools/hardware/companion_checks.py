@@ -377,7 +377,7 @@ def management_exercise():
                 "offline_verified": False, "temporary_seconds": temporary_seconds}
     lines = ["sync_msgs", "msgs_subscribe"]
     login(lines)
-    command(lines, "wifi ssid " + ("rf-only-" + str(time.time_ns())).encode().hex())
+    command(lines, "wifi ssid hex " + ("rf-only-" + str(time.time_ns())).encode().hex())
     command(lines, "wifi apply", delay=4)
     command(lines, "wifi status", "connected=0")
     command(lines, "radio 912525000 250000 7 5 1", "Accepted radio change")
@@ -442,7 +442,7 @@ def management_exercise():
         login(recovery)
         command(recovery, "radio 912525000 250000 7 5 2", "Accepted radio change")
         command(recovery, "job", "Radio applied and saved;")
-        command(recovery, "wifi ssid " + ssid.hex())
+        command(recovery, "wifi ssid hex " + ssid.hex())
         command(recovery, "wifi apply", delay=8)
         command(recovery, "wifi status", "connected=1")
         command(recovery, "status", "PHY=912525000,250000,7,5,2")

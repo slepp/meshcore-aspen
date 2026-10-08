@@ -38,12 +38,13 @@ globally per minute**.
 | Priority | Outcome | Current operator path |
 | --- | --- | --- |
 | 1 | More consistent remote metrics and configurable discovery | Available; use [remote repeater monitoring](firmware/runtime/REMOTE_REPEATERS.md) to choose polling and discovery intervals |
-| 2 | Room live messages, reconnect catch-up and a second frontend | Available in [Aspen 0.1.8](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.8); keep the room's identity and state when updating |
+| 2 | Room live messages, reconnect catch-up and a second frontend | Available in [Aspen 0.1.9](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.9); keep the room's identity and state when updating |
 | 3 | Native DM/group command policy and named storage threads | Available; configure [channel policy](firmware/runtime/BOT_RUNTIME.md#channels-and-native-command-policy) before enabling Public commands |
 | 4 | Multiple Lua files, single-file replacement and manual recovery | Available; start with [updating one installed file](firmware/runtime/BOT_DEVELOPMENT.md#update-one-installed-lua-file) |
 | 5 | Bot key recovery and trusted-owner administration | Aspen uses its active companion's verified contact store; owner permission remains role-local |
 | 6 | Willow native-worker recovery and ordinary RF messaging | Available; the worker recovers signed contacts from the retained Base authority after restart. Read `bot contacts` for cache/recovery status; keep uncertain requests unreplayed |
-| 7 | Separately installable Birch and Pine downloads | [Birch RC1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0-rc.1) and [Pine's update-only profile](https://github.com/slepp/meshcore-aspen/releases/tag/pine-1.17.1-slp-pine-fleet-lua-20261007) are available; neither replaces the latest stable Aspen release |
+| 7 | Separately installable Birch, Pine and Willow releases | [Birch 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0), [Pine 0.1.0 update-only](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and [Willow 0.0.1 source-build](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.1); each has its own version series |
+| 8 | Focused administration commands and help | Aspen 0.1.9 uses literal short WiFi setters, explicit hex setters and bounded help pages; `admin.py source` and `admin.py data` group existing operations |
 
 Pine wireless recovery after an interrupted transfer remains blocked on its
 retained single-bank bootloader. Use accessible USB recovery; do not move an
@@ -77,22 +78,16 @@ will recover it.
   outcomes before submitting another operation. Configure frequency, bandwidth
   and power for your network and regional operating rules.
 
-## Next directions
+## Deferred until needed
 
-Potential additions:
+Use personal reminders and manual Lua updates for now. Automatic fallback,
+broader reminders, high-speed RF transfer and repeated on-device roles are not
+active delivery goals. Extra room frontends can use the distributed room service;
+additional role instances can run on a host.
 
-- Wireless recovery from interrupted Pine BLE updates before inaccessible
-  installations; phone-specific scan, pairing and DFU checks.
-- More device-specific mixed RF/network/storage workloads, power-loss cases
-  and long-term storage/flash-endurance measurements.
-- Broader recurring/channel reminders.
-  Current personal reminders use durable claims and do not replay uncertain
-  sends.
-- Companion-assisted bulk transfer with coordinated temporary radio settings.
-  A single SX1262 can listen on only one setting at a time.
-- Additional instances of the same on-device role if demand and measured
-  resources justify them. ESP32 currently runs at most one of each built-in
-  role; extra instances can run on a host.
+Historical release cleanup, historical RF-loss attribution and a new signer
+policy are not active goals. Keep diagnostics that help operate the current
+system and regression checks for known failure behavior.
 
 Start application work with [Lua development](firmware/runtime/BOT_DEVELOPMENT.md),
 the [runtime API](firmware/runtime/BOT_RUNTIME.md#lua-api-by-capability) or the

@@ -11,11 +11,11 @@ Current Lua source builds also provide `backup help` through authenticated
 repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
 to download InternalFS identities/settings and QSPI source/data without USB
 access; retain the recipient's operator seed.
-The [Pine application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-1.17.1-slp-pine-fleet-lua-20261007)
-uses the existing `1.17.1-slp-pine` identity and `nrfmast_fleet_lua` profile.
-Its signed source/profile tag is `pine-1.17.1-slp-pine-fleet-lua-20261007`;
+The [Pine 0.1.0 application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0)
+uses the `pine-0.1.0` firmware version and `nrfmast_fleet_lua` profile.
+Its signed product tag is `pine-v0.1.0`;
 the attached manifest records the full public source commit and image hashes.
-This is a separate legacy Pine download, not an Aspen or Birch product version.
+Pine has its own release series, independent of Aspen and Birch.
 The download is **update-only**. It requires
 initialized repeater/bot identities and credential records; it does not
 commission a blank board. Application-only updates retain InternalFS and
@@ -39,9 +39,9 @@ accessible: an interrupted transfer can require USB, so inaccessible
 installation remains on hold.** No bootloader, SoftDevice or QSPI layout
 change is needed.
 
-These on-device nRF builds use the **`slp-pine`** profile. Repeater `ver`,
+These on-device nRF builds use the **Pine** profile. Repeater `ver`,
 native owner information and companion device information identify
-`1.17.1-slp-pine`; the companion protocol remains v13. `help` lists the
+`pine-0.1.0`; the companion protocol remains v13. `help` lists the
 administration entry points. WiFi commands report that this platform has no
 WiFi rather than exposing nonfunctional configuration.
 

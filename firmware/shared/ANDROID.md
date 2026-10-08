@@ -103,7 +103,8 @@ role help
 
 Bare `wifi` returns usage; `help wifi` and `wifi help` show syntax.
 `wifi status` omits credentials. App-compatible WiFi setters take literal text;
-`wifi ssid HEX` / `wifi password HEX` take hex. Save credentials, then
+`wifi ssid TEXT` / `wifi password TEXT` also take literal text; append `hex`
+before the value for explicitly encoded bytes. Save credentials, then
 `wifi apply` to reconnect. `set wifi.enabled 0` disconnects after responding
 and remains disabled after restart; encrypted Management RF stays available.
 `set wifi.enabled 1` reconnects with saved credentials. The HTTP console

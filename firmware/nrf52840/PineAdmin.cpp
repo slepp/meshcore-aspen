@@ -107,9 +107,23 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
     return;
   }
 #endif
-  if (!strcmp(text, "help") || !strcmp(text, "help bot") || !strcmp(text, "bot")) {
-    say("bot help; source help; backup help; help wifi; bot status|mesh|policy|owner|time|adaptive; source status|hash|api; repeater role settings");
+  if (!strcmp(text, "help")) {
+    say("bot help [1..3]; source help; backup help; help wifi; bot status; source status; native repeater: get|set|stats; WiFi/HTTPS unsupported");
     return;
+  }
+  if (!strcmp(text, "bot") || !strcmp(text, "help bot") || !strncmp(text, "help bot ", 9) ||
+      !strcmp(text, "bot help") || !strncmp(text, "bot help ", 9)) {
+    static constexpr char pages[][146] = {
+      "bot 1/3: bot status|stats|radio|diagnostics|limits|memory|admission|adaptive; bot help 2",
+      "bot 2/3: bot mesh|policy|membership|access|thread|name|advert|discovery|repeaters; bot help 3",
+      "bot 3/3: bot shared|reminders|events|forward|owner|time|cancel; bot data help; source help; WiFi/HTTPS unsupported"
+    };
+    uint32_t page = 1;
+    const char *argument = strlen(text) > 8 ? text + 9 : "";
+    if ((*argument && !number(argument, page, 3)) || page < 1 || page > 3) {
+      say("Error: bot help page requires 1..3"); return;
+    }
+    say(pages[page - 1]); return;
   }
   if (!strcmp(text, "help source") || !strcmp(text, "source")) {
     say("source help; source status|hash|metadata|helptext|api; source begin|chunk|commit|rollback|remove ..."); return;
@@ -120,9 +134,7 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
   }
   if (!strncmp(text, "source ", 7)) { source_.execute(text + 7, reply.text, sizeof(reply.text)); return; }
   if (!strncmp(text, "bot data ", 9)) { bot.dataCommand(text + 9, reply.text, sizeof(reply.text)); return; }
-  if (!strcmp(text, "bot help")) {
-    say("bot status|stats|radio|diagnostics|limits|memory|admission|adaptive|policy|mesh|discovery|name|advert|shared|reminders|events|forward|owner|time|cancel; source help");
-  } else if (!strcmp(text, "bot status")) {
+  if (!strcmp(text, "bot status")) {
     RadioDashboard::RoleStatus status; bot.dashboardStatus(status);
     snprintf(reply.text, sizeof(reply.text), "Lua %s ready=%u generation=%lu runtime_epoch=%lu jobs=%u/%u cooldown=0%s%s",
              status.state, status.ready, (unsigned long)bot.sourceWorker().sourceGeneration(),

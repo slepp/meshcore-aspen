@@ -27,6 +27,51 @@ class MastClientTests(unittest.TestCase):
     def setUp(self):
         configure_inventory(self)
 
+    def test_wifi_byte_setters_are_unambiguous_and_fit_tagged_commands(self):
+        self.assertEqual(mast_cli.wifi_field_command("ssid", b"4142"), "wifi ssid hex 34313432")
+        self.assertEqual(mast_cli.wifi_field_command("password", b""), "wifi password -")
+        self.assertEqual(mast_cli.wifi_field_command("password", b"eight888"),
+                         "wifi password hex 6569676874383838")
+        for size in (8, 63, 64):
+            command = mast_cli.wifi_field_command("password", b"a" * size)
+            self.assertLessEqual(len(command), 145)
+        self.assertEqual(mast_cli.wifi_field_command("password", b"a" * 64), "set wifi.pwd " + "a" * 64)
+        with self.assertRaises(ValueError):
+            mast_cli.wifi_field_command("unknown", b"12345678")
+
+    def test_grouped_source_and_data_commands_reuse_flat_implementations(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            source = Path(directory) / "part.lua"
+            source.write_bytes(b"function example() return 'ok' end")
+            source.chmod(0o600)
+            arguments = ["admin.py", "--unix-socket", str(Path(directory) / "owner.sock")]
+            for command in (["source", "replace", str(source)], ["install", str(source)]):
+                client = MagicMock()
+                with patch.object(sys, "argv", arguments + command), \
+                        patch.object(mast_cli, "UnixClient", return_value=client), \
+                        patch.object(mast_cli, "install") as install, \
+                        patch("sys.stdout", new_callable=io.StringIO):
+                    mast_cli.main()
+                    install.assert_called_once_with(client, source.read_bytes())
+                    client.close.assert_called_once()
+            for command in (["source", "rollback"], ["rollback"]):
+                client = MagicMock(command=MagicMock(return_value="Accepted"))
+                with patch.object(sys, "argv", arguments + command), \
+                        patch.object(mast_cli, "UnixClient", return_value=client), \
+                        patch.object(mast_cli, "lifecycle") as lifecycle, \
+                        patch("sys.stdout", new_callable=io.StringIO):
+                    mast_cli.main()
+                    lifecycle.assert_called_once_with(client, "rollback")
+            for command in (["data", "restore", str(source), "--no-rearm"],
+                            ["data-restore", str(source), "--no-rearm"]):
+                client = MagicMock()
+                with patch.object(sys, "argv", arguments + command), \
+                        patch.object(mast_cli, "UnixClient", return_value=client), \
+                        patch.object(mast_cli, "data_restore", return_value="COMMITTED") as restore, \
+                        patch("sys.stdout", new_callable=io.StringIO):
+                    mast_cli.main()
+                    restore.assert_called_once_with(client, source.read_bytes(), True)
+
     def test_named_source_export_is_read_only_and_preserves_exact_bytes(self):
         from tools.hardware import lua_sources
         source = lua_sources.encode({"main": None, "config": b"settings={interval=300}\n",

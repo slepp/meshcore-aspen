@@ -208,10 +208,10 @@ bool wifiPassword(const char *text) {
 }
 struct Help { const char *topic, *syntax; unsigned page = 1; };
 constexpr Help topics[] = {
-    {"wifi", "wifi status|ssid HEX|password HEX|apply|forget; get wifi.FIELD; set wifi.ssid|pwd TEXT; set wifi.enabled 0|1; secrets: encrypted RF"},
-    {"wifi", "wifi 2/4: ASCII input only; set wifi.ssid TEXT (1..32 bytes); set wifi.pwd TEXT (0 or 8..63 bytes, or 64 hex digits); literal spaces; help wifi 3", 2},
-    {"wifi", "wifi 3/4: wifi ssid [hex] HEX; wifi password [hex] HEX|-; UTF-8/control SSID: hex; max combined hex won't fit: use separate forms; help wifi 4", 3},
-    {"wifi", "wifi 4/4: 64-byte PSK with 16-hex tag: wifi password HEX or set wifi.pwd TEXT; wifi password hex HEX is 146 bytes, over tagged limit 145", 4},
+    {"wifi", "wifi status|ssid TEXT|password TEXT|-|apply|forget; explicit bytes: ssid|password hex HEX; set wifi.enabled 0|1; encrypted RF only"},
+    {"wifi", "wifi 2/4: literal ASCII, including spaces and hex-looking text; SSID 1..32 bytes; password 8..63 bytes or 64 hex digits; '-' opens network", 2},
+    {"wifi", "wifi 3/4: wifi ssid hex HEX; wifi password hex HEX; UTF-8/control SSID: hex; combined legacy wifi HEX HEX: use separate forms", 3},
+    {"wifi", "wifi 4/4: tagged content max 145 bytes; 64-byte PSK: wifi password TEXT or set wifi.pwd TEXT; set wifi.ssid|pwd preserves literal hex prefix", 4},
     {"radio", "radio FREQ_HZ BW_HZ SF CR TX_DBM; read: get radio|get freq|get tx; shared PHY changes after reply"},
     {"tempradio", "tempradio SECONDS FREQ_HZ BW_HZ SF CR TX_DBM; duration 1..3600; restores saved PHY"},
     {"cad", "get cad; set cad on|off; hardware channel activity detection before shared-radio TX; saved after reply"},
@@ -227,10 +227,17 @@ constexpr Help topics[] = {
     {"key", "key ROLE [pending|cancel|HEX128]; use key help; private imports: encrypted RF only"},
     {"password", "password [help|HEX]; 1..15 printable bytes encoded as hex; changes: encrypted RF only"},
     {"source", "source help; source status|hash|metadata|helptext|api; source begin|chunk|commit|rollback|remove ..."},
-    {"source", "source 2/3: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
-    {"source", "source 3/3: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it", 3},
+    {"source", "source 2/4: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
+    {"source", "source 3/4: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it; help source 4", 3},
+    {"source", "source 4/4: admin.py source list|install NAME FILE|export NAME FILE|remove NAME; files share one Lua VM; rollback restores source, not data", 4},
     {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|discovery|adaptive|shared|reminders|events|forward|https ..."},
-    {"bot", "bot 2/2: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; reboot", 2},
+    {"bot", "bot 2/4: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; help bot 3", 2},
+    {"bot", "bot 3/4: bot membership [SLOT ...]; bot access [CONTEXT ...]; Public commands default denied; use help channels; help bot 4", 3},
+    {"bot", "bot 4/4: bot thread ...; bot repeaters ...; bot data ...; source api storage; help threads; help repeaters; data help", 4},
+    {"channels", "bot membership SLOT off|public|#NAME|private NAME_HEX KEY32; bot access dm|SLOT default|COMMAND MASK|inherit; slots 0..7"},
+    {"channels", "channels 2/2: access bits 1/2 bare execute/reply,4/8 addressed execute/reply,16/32 thread read/write; Public defaults denied", 2},
+    {"threads", "bot thread dm|SLOT|native NAME MASK|inherit; list INDEX reads grants; read/write bits 16/32; native caller grants still required"},
+    {"repeaters", "bot repeaters help; bot repeaters discovery 60..86400; bot repeaters interval 60..86400; seconds; retained samples keep original RF time"},
     {"auth", "auth status [KEY64]; auth peer 1..10; auth forget KEY64 (not the compiled owner)"},
     {"trust", "trust KEY64|none; legacy singleton authority; compiled owner and Management ACL unchanged"},
     {"setperm", "setperm KEY64 PERMISSIONS (0..255); native roles: 0=remove,1=read-only,2=read-write,3=admin; Management/bot admin only; get acl"},
@@ -309,9 +316,9 @@ void fingerprint(const uint8_t key[16], char out[17]) {
 }
 void MastAdmin::helpCommand(const char *argument, Reply &reply) {
   static constexpr const char *index[] = {
-    "help 1/3: status; stats; ver; board; help role|roles|room|companion|bot|stats; next: help 2",
-    "help 2/3: help wifi|radio|tempradio|cad|radio-controls|autoadvert|sntp|syslog|mqtt|setup|get|set; next: help 3",
-    "help 3/3: help auth|setperm|trust|password|key|source|data|backup|telemetry; apply|reboot"
+    "help 1/3: status; roles; stats; ver; board; help bot|channels|companion|repeaters|role|roles|room|stats|threads; next: help 2",
+    "help 2/3: help autoadvert|cad|cloudroom|get|mqtt|radio|radio-controls|set|setup|sntp|syslog|tempradio|wifi; next: help 3",
+    "help 3/3: help auth|backup|data|key|password|setperm|source|telemetry|trust; apply|reboot; one page per request"
   };
   static_assert(textLength(index[0]) <= TextLimit - 17 &&
                 textLength(index[1]) <= TextLimit - 17 &&
@@ -2060,7 +2067,15 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     }
     const bool ssid = command[5] == 's';
     const char *value = command + (ssid ? 10 : 14);
-    if (!strncmp(value, "hex ", 4)) value += 4;
+    const bool encoded = !strncmp(value, "hex ", 4);
+    if (!encoded && (ssid || strcmp(value, "-"))) {
+      char literal[TextLimit + 1];
+      snprintf(literal, sizeof(literal), "set wifi.%s %s", ssid ? "ssid" : "pwd", value);
+      wifiCommand(literal, reply, transport, invokingBotJob);
+      clearSecret(literal, sizeof(literal));
+      return;
+    }
+    if (encoded) value += 4;
     Settings next = settings_;
     char *destination = ssid ? next.wifi.ssid : next.wifi.password;
     const size_t maximum = ssid ? 32 : 64, n = strlen(value) / 2;

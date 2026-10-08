@@ -8,6 +8,7 @@ import std.encoding.utf8;
 
 import storage;
 import transport;
+import release_identity;
 
 import std.string;
 
@@ -635,7 +636,7 @@ pub actor Role {
             } else {
                 2
             };
-            reply = f"meshcore-host willow (MeshCore room/repeater protocol level {level}; native Hew 0.6.0-rc7)";
+            reply = f"Willow {release_identity.version()} (MeshCore room/repeater protocol level {level}; native Hew 0.6.0-rc7)";
         } else if command == "clock" {
             reply = management.utc(timestamp(now));
         } else if command == "clock sync" || command.starts_with("time ") {
@@ -2210,7 +2211,7 @@ pub actor Role {
                         }
                     }
                 } else if plain[4] == 7 && role == 2 {
-                    let header = "host-v2-slp-willow\n" + prefs.name + "\n";
+                    let header = "willow-" + release_identity.version() + "\n" + prefs.name + "\n";
                     let capacity = response_capacity(p) - reply.len();
                     if header.to_bytes().len() > capacity {
                         return out;

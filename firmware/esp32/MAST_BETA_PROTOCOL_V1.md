@@ -112,8 +112,8 @@ Successful command results and errors are plain text, without JSON wrapping.
 | `roles`, `roles list [1\|2]` | Read-only named applied/saved bits on page 1; Management availability, separate applied/saved bot and KISS service on page 2. `roles N` remains a mask write |
 | `bot on`, `bot off` | Save independent next-boot bot selection |
 | `apply`, `reboot` | Accept a deferred reboot; `apply` is not hot role recreation |
-| `wifi ssid HEX`, `wifi password HEX` | Encrypted RF only; save SSID 1..32 bytes or password 8..63 bytes/64 ASCII hex digits; `wifi password -` explicitly selects an open network |
-| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit aliases for the separate hex setters; no text/hex autodetection |
+| `wifi ssid TEXT`, `wifi password TEXT` | Encrypted RF only; literal printable SSID 1..32 bytes or password 8..63 bytes/64 ASCII hex digits; `wifi password -` explicitly selects an open network |
+| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit byte setters; no text/hex autodetection; pre-0.1.9 short-form hex clients must add `hex` |
 | `get wifi.enabled/ssid/pwd/ip/status` | Separate field commands, native `> VALUE` replies; nonprintable/non-ASCII SSIDs use `> hex HEX`. Enabled is saved 0/1, status is Arduino WiFi status, IP is current station IPv4. Exact password readback requires encrypted RF |
 | `set wifi.ssid TEXT`, `set wifi.pwd TEXT` | Encrypted RF only; literal printable text including spaces; an empty password explicitly selects an open network. Save first, then `wifi apply` |
 | `set wifi.enabled 0/1` | Encrypted RF only; `off/on` aliases accepted. Save and defer station stop/start until after the response. Default enabled; disabling retains credentials and RF roles |
@@ -143,7 +143,7 @@ and `|`; complete tagged replies are at most 162 bytes, with 163 bytes of storag
 including NUL. No extra help pages are sent without a request.
 The combined maximum WiFi hex fields do not fit this text limit. Use separate
 setters. `wifi password hex HEX` with a 64-byte ASCII-hex PSK is 146 content
-bytes and cannot carry the default tag; use `wifi password HEX` or the literal
+bytes and cannot carry the default tag; use literal `wifi password TEXT` or
 `set wifi.pwd TEXT` instead. See [WiFi and role readback](MAST_ADMIN.md#common-control-commands).
 
 `G` is durable role-journal u64; parse without floating-point loss. `E` is

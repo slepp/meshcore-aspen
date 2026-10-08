@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from parity import BUILD, Host, body, dm, login, packet, parse, public, secret, seal, text, tx
 from service_demo import RunningService, Emulator, addressed, body as service_body, advert as service_advert
+from release_identity import VERSION
 
 
 def cli(host, stamp, command):
@@ -51,7 +52,7 @@ class Management(unittest.TestCase):
                 self.assertEqual(parsed[0],8)
                 self.assertLessEqual(len(parsed[4]),184)
                 value=body(frames[0],2)[2+len(path)+4:].rstrip(b"\0").decode()
-                self.assertTrue(value.startswith("host-v2-slp-willow\nHew Room\n"),value)
+                self.assertTrue(value.startswith(f"willow-{VERSION}\nHew Room\n"),value)
             for seed in range(3,22):
                 self.assertEqual(host.command(f"acl {public(seed).hex()} 2"),["true"])
             before=host.command("cursor "+public(2).hex())

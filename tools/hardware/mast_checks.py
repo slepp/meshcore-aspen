@@ -496,7 +496,7 @@ def rf_management_check():
         # Change only the SSID; retain the saved password and restore via encrypted RF.
         restore_wifi = True
         offline_ssid = ("rf-only-" + str(time.time_ns())).encode("ascii")
-        checked(client, "wifi ssid " + offline_ssid.hex())
+        checked(client, "wifi ssid hex " + offline_ssid.hex())
         checked(client, "wifi apply")
         for _ in range(12):
             time.sleep(1)
@@ -537,7 +537,7 @@ def rf_management_check():
             recovery = None
             try:
                 recovery = connect_rf()
-                checked(recovery, "wifi ssid " + ssid.hex())
+                checked(recovery, "wifi ssid hex " + ssid.hex())
                 checked(recovery, "wifi apply")
                 for _ in range(20):
                     time.sleep(1)

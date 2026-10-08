@@ -75,6 +75,14 @@ class VersionTests(unittest.TestCase):
         changed["products"]["birch"]["version"] = "0.1.1"
         self.assertIn('HostVersion = "birch-0.1.1"', versions.generated(changed)["internal/buildinfo/identity.go"])
         self.assertEqual(changed["compatibility"], data["compatibility"])
+        changed = copy.deepcopy(data)
+        changed["products"]["pine"]["version"] = "0.1.1"
+        self.assertIn('"pine-0.1.1"', versions.generated(changed)["firmware/esp32/FirmwareIdentity.h"])
+        self.assertEqual(before["internal/buildinfo/identity.go"], versions.generated(changed)["internal/buildinfo/identity.go"])
+        changed = copy.deepcopy(data)
+        changed["products"]["willow"]["version"] = "0.0.2"
+        self.assertIn('"0.0.2"', versions.generated(changed)["experiments/hew-roles/release_identity.hew"])
+        self.assertIn('"0.0.2"', versions.generated(changed)["experiments/hew-roles/release_identity.py"])
 
     def test_validation_rejects_overlong_and_ambiguous_versions(self):
         for version in ("01.1.0", "0.1", "0.1.0-rc.0", "0.1.0-rc1", "10000.10000.10000"):

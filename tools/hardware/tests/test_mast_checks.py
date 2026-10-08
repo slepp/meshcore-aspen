@@ -88,7 +88,7 @@ class OwnerFieldTests(unittest.TestCase):
                     state["wifi"] = state["restore"]
                     return "Accepted WiFi reconnect after this reply"
                 if command.startswith("wifi ssid "):
-                    state["restore"] = command == "wifi ssid " + restored_ssid.hex()
+                    state["restore"] = command == "wifi ssid hex " + restored_ssid.hex()
                     return "Saved WiFi field"
                 if command.startswith("radio "):
                     if fail_save:

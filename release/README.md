@@ -1,15 +1,17 @@
 # Product versions and candidate builds
 
-Aspen and Birch each use an independent Semantic Version. A fix to one product
+Aspen, Birch, Pine and Willow each use an independent Semantic Version. A fix to one product
 does not require a release of the other. MeshCore's version identifies the
 upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | `aspen-v0.1.5-rc.3` | `aspen-v0.1.8` | `aspen-v0.1.9` |
+| Aspen | As needed | `aspen-v0.1.9` | `aspen-v0.1.10` |
 | Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
+| Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
+| Willow | Experimental series | `willow-v0.0.1` | `willow-v0.0.2` |
 
-Show users **Aspen 0.1.8 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.9 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -18,15 +20,18 @@ tag to another commit.
 
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
-The generated firmware header and Go constants share the Birch identity.
-Companion device information reports `aspen-0.1.8` or `birch-0.1.0-rc.1`;
+The generated firmware header, Go constants and Willow version modules share
+this authority. Companion device information reports `aspen-0.1.9`,
+`birch-0.1.0` or `pine-0.1.0`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
 
-Pine retains its existing `1.17.1-slp-pine` identity. Willow remains experimental.
-This change does not introduce independent host, modem, worker, Pine or Willow
-release streams. **Birch 0.1.0 RC1 is a Linux x86_64 host-tools and native-worker
+Willow 0.0.1 is the first experimental Hew source-build release. Its native
+worker is verified against the local source/build tree, so the source release
+must be built at its final installation path. Use its
+[setup and retained-state upgrade guide](../experiments/hew-roles/README.md).
+**Birch 0.1.0 is a Linux x86_64 host-tools and native-worker
 bundle for an already configured queued-v1 WiFi/TCP shared modem.** The host
 and worker share one product commit. Modem firmware is built and privately
 provisioned separately; the host download contains no blank-credential modem
@@ -78,12 +83,12 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The Aspen bundle name is `aspen-v0.1.8-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The Aspen bundle name is `aspen-v0.1.9-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Its files include `manifest.json`, checksums, application and separate
 initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
 tag/full SHA and public source full SHA. Hashes identify the packaged files.
-The host-only Birch name is `birch-v0.1.0-rc.1-linux-x86_64-SOURCE12.zip`.
+The host-only Birch name is `birch-v0.1.0-linux-x86_64-SOURCE12.zip`.
 It includes four host binaries, the installer and example configuration,
 host guide, source, native relink material and dependency notices. Its
 `public_birch_host` profile and `host_only` scope require an external queued-v1
@@ -138,7 +143,7 @@ the application from initial-install bootloader/partition files.
 documented Go host, and a source-built WiFi modem compiles station credentials.
 `platformio.birch.ini` builds a matching WiFi modem with blank credentials for
 build inspection only. It cannot connect a newly installed modem. The host-only
-RC requires an existing configured compatible modem, or an operator source
+download requires an existing configured compatible modem, or an operator source
 build with private provisioning. Never put station passwords into a public
 image. Installing the host does not flash or provision the radio.
 
@@ -157,13 +162,13 @@ image. Installing the host does not flash or provision the radio.
 Changing an RC to a final version changes the embedded product identity and
 requires a new build.
 
-## Pine legacy application download
+## Pine application download
 
-Pine retains `1.17.1-slp-pine` and uses the source/profile tag
-`pine-1.17.1-slp-pine-fleet-lua-20261007` for the `nrfmast_fleet_lua` update.
+Pine 0.1.0 uses `pine-0.1.0` and the product tag `pine-v0.1.0`
+for the `nrfmast_fleet_lua` update.
 Its manifest identifies the exact signed public source commit, pinned MeshCore
-base, board profile and application images. This does not add Pine to the
-Aspen/Birch version authority.
+base, board profile and application images. Older version labels remain attached
+to their original releases; updating the firmware label does not replace node keys.
 
 The download updates an initialized XIAO nRF52840 + Wio SX1262 using its retained
 bootloader and saved identities/credentials. It includes app-only UF2/BIN and
@@ -172,6 +177,20 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Aspen 0.1.9
+
+Management help groups role, device and owner/source controls into requested
+pages, including channels, threads, remote repeaters and distributed rooms.
+`roles list` reports applied and saved selections without changing them.
+The operator client adds `source` and `data` command groups while retaining
+its existing flat names.
+
+`wifi ssid TEXT` and `wifi password TEXT` now save literal printable text.
+Scripts sending encoded bytes must use `wifi ssid hex HEX` and
+`wifi password hex HEX`; the combined legacy hex form remains supported.
+Credentials still require encrypted RF, and saving does not reconnect until
+`wifi apply`. Application-only updates retain identities, settings and source.
 
 ## Aspen 0.1.1
 

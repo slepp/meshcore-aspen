@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.hardware.esp32_device import DIRECTORY as MAST, ROOT, status
-from tools.hardware.admin import NativeClient, WebClient, checked, private_file
+from tools.hardware.admin import NativeClient, WebClient, checked, private_file, wifi_field_command
 
 from tools.hardware.inventory import value as inventory_value
 
@@ -292,8 +292,8 @@ def lan_provision():
         baseline = checked(client, "status")
         if "PHY=912525000,250000,7,5,2" not in baseline or "temp=0" not in baseline:
             raise ValueError("Mast is not on the permitted lab PHY")
-        checked(client, "wifi ssid " + ssid.hex())
-        checked(client, "wifi password " + (password.hex() if password else "-"))
+        checked(client, wifi_field_command("ssid", ssid))
+        checked(client, wifi_field_command("password", password))
         checked(client, "wifi apply")
     finally:
         client.close()
@@ -342,8 +342,8 @@ def provision():
         if not resuming:
             write(before_file, {"status": baseline, "source": source, "wifi": wifi})
         secret = credentials()
-        checked(client, "wifi ssid " + secret["ssid"].encode().hex())
-        checked(client, "wifi password " + secret["password"].encode().hex())
+        checked(client, wifi_field_command("ssid", secret["ssid"].encode()))
+        checked(client, wifi_field_command("password", secret["password"].encode()))
         checked(client, "wifi apply")
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:

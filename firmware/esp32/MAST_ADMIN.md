@@ -89,6 +89,23 @@ python3 -m pip install -r firmware/esp32/requirements-sign.txt
 python3 tools/hardware/admin.py --help
 ```
 
+Use `source --help` for named-file installation, export and manual recovery;
+use `data --help` for scoped records. Put connection options before the command:
+
+```sh
+python3 tools/hardware/admin.py --unix-socket /path/to/bot/native/admin.sock \
+  source list
+python3 tools/hardware/admin.py --unix-socket /path/to/bot/native/admin.sock \
+  source install monitor monitor.lua
+```
+
+`source install NAME FILE` changes one named Lua file. `source replace FILE`
+replaces the complete source set. `source rollback` restores the previous
+generation without restoring data; `source reset` selects bundled commands.
+Existing `source-install`, `install`, `rollback`, `remove`, `data-export` and
+`data-restore` forms remain aliases. Use `command 'help'` for the connected
+endpoint's native administration topics.
+
 The manifest supplies `cryptography` and PyNaCl. If you already have an
 isolated Python environment, skip its creation and activate that environment
 instead.
@@ -162,6 +179,10 @@ Start with `status`, `roles`, `help`, `get name`, `get owner.info` or `role help
 `help` returns the first of three topic-index pages; request `help 2` or
 `help 3` for the rest. `help TOPIC [PAGE]` returns one requested syntax page,
 including `help wifi 2` for text setters and `help wifi 3` for hex setters.
+Topics are grouped by role, shared device and owner/source operations, with
+alphabetical names within each group. `help bot 3`, `help channels`,
+`help threads` and `help repeaters` lead to policy and monitoring controls.
+One request returns one page; the radio does not send unsolicited help bursts.
 Other bare command namespaces return a usage error. Standard name/owner and
 WiFi commands map to Management's own settings;
 repeat/delay/region settings still belong to the Relay or Room.
@@ -1055,8 +1076,8 @@ KISS radio, not the target mast; its PHY must match the mast.
 | `role password repeater\|room HEX` | Save/apply the active role's administrator password; authenticated encrypted Management RF only; use the secret-file CLI below |
 | `role channel ROLE SLOT [off\|NAMEHEX KEY32]` | Read channel metadata or configure a native 128-bit group key; never return the PSK |
 | `apply`, `reboot` | Reboot after the acceptance reply; `apply` uses the saved role selections |
-| `wifi ssid HEX`, `wifi password HEX` | Encrypted RF only; save bounded SSID/password bytes; `-` explicitly selects an open network password |
-| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit hex aliases; the shorter forms above retain the same hex meaning |
+| `wifi ssid TEXT`, `wifi password TEXT` | Encrypted RF only; save literal printable SSID/password text; `wifi password -` explicitly selects an open network |
+| `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit byte setters; SSID supports UTF-8/control bytes except NUL; no text/hex guessing |
 | `get wifi.enabled`, `get wifi.ssid`, `get wifi.ip`, `get wifi.status` | Saved enable/credential configuration and current connection readback; printable ASCII SSIDs return `> SSID`, other bytes return `> hex HEX`; status is the Arduino WiFi status number |
 | `get wifi.pwd` | Password readback over encrypted Management RF only; do not publish the response or collect it in ordinary diagnostic captures |
 | `set wifi.ssid TEXT`, `set wifi.pwd TEXT` | Save literal text over encrypted Management RF; spaces are retained, and an explicitly empty password selects an open network |
@@ -1086,8 +1107,8 @@ HTTP WiFi provisioning is refused by both the page and backend.
 
 Text setters preserve every byte after the separating space, including leading
 and trailing spaces, quotes, backslashes and `|`. They do not unquote text or
-guess hex: `set wifi.ssid 4142` saves the four-character SSID `4142`, while
-`wifi ssid 4142` saves `AB`. CLI input remains printable ASCII. Encode UTF-8 or
+guess hex: both `set wifi.ssid 4142` and `wifi ssid 4142` save the four-character
+SSID `4142`; `wifi ssid hex 4142` saves `AB`. CLI input remains printable ASCII. Encode UTF-8 or
 other SSID bytes as hex; SSIDs are 1..32 decoded bytes and cannot contain NUL.
 Passwords accept an explicitly empty value, 8..63 bytes, or 64 ASCII hex
 characters for a PSK. `get wifi.pwd` returns the exact saved value, including
@@ -1097,8 +1118,13 @@ With the default 16-hex tag and `|`, each command and reply has **145 content
 bytes** within the 162-byte text limit. A maximum SSID plus password cannot fit
 the combined `wifi SSIDHEX PWDHEX` form: save them separately. A 63-byte password
 fits `wifi password hex HEX` with the tag; a 64-byte PSK in that long alias is
-146 content bytes and does not fit. Use the shorter `wifi password HEX` (142
-bytes) or `set wifi.pwd TEXT` (77 bytes) for that PSK. Neither form drops the tag.
+146 content bytes and does not fit. Use `wifi password TEXT` (78 bytes) or
+`set wifi.pwd TEXT` (77 bytes) for that PSK. Neither form drops the tag.
+
+**CLI migration:** before Aspen 0.1.9, the short `wifi ssid` and `wifi password`
+forms decoded hex. Scripts encoding bytes must now include `hex` explicitly.
+The combined legacy `wifi SSIDHEX PWDHEX` form retains its existing meaning.
+To save literal text beginning with `hex `, use `set wifi.ssid` or `set wifi.pwd`.
 
 `roles` is the same read-only first page as `roles list 1`. Its `applied/saved`
 pairs describe the boot selection and next-boot selection; `roles list 2`

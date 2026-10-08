@@ -35,6 +35,18 @@ PACKAGE_FETCH_API = (
 )
 
 
+def wifi_field_command(field, value):
+    if field == "ssid":
+        return "wifi ssid hex " + value.hex()
+    if field != "password":
+        raise ValueError("WiFi field must be ssid or password")
+    if not value:
+        return "wifi password -"
+    if len(value) == 64:
+        return "set wifi.pwd " + value.decode("ascii")
+    return "wifi password hex " + value.hex()
+
+
 def private_file(path, limit):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as stream:
@@ -727,8 +739,32 @@ def data_restore(client, data, no_rearm=False):
     return committed
 
 
+def named_source_arguments(parser, action):
+    if action != "source-list":
+        parser.add_argument("name")
+    if action == "source-install":
+        parser.add_argument("source", type=Path)
+    elif action == "source-export":
+        parser.add_argument("destination", type=Path)
+
+
+def data_arguments(parser, action):
+    if action == "data-export":
+        parser.add_argument("destination", type=Path)
+        parser.add_argument("--scope", choices=DATA_SCOPES, required=True)
+        parser.add_argument("--principal", required=True, help="full user/channel identity; 64 zeros for bot scope")
+        parser.add_argument("--kind", choices=tuple(DATA_MAGIC), default="kv")
+    else:
+        parser.add_argument("source", type=Path)
+        parser.add_argument("--no-rearm", action="store_true",
+                            help="required for scheduler import; cancels matching pending work, never replays side effects")
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Use source --help, data --help or package --help for focused commands. "
+               "Existing flat command names remain supported. Global connection options precede the command.")
     parser.add_argument("--gateway", help="independent KISS gateway host for native encrypted RF")
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--target", help="full mast management public key")
@@ -744,7 +780,7 @@ def main():
     parser.add_argument("--runtime", choices=("lua", "wasm"), default="lua",
                         help="runtime for status, download, rollback or remove; package installation detects its runtime")
     sub = parser.add_subparsers(dest="action", required=True)
-    sub.add_parser("command").add_argument("text")
+    sub.add_parser("command", help="execute one native command; use 'help' for that endpoint's topics").add_argument("text")
     identity = sub.add_parser("key-import", help="stage a supplied native identity over Management RF or the Go bot owner socket; no apply")
     identity.add_argument("role", choices=IDENTITY_ROLES)
     identity.add_argument("--native-key-file", type=Path, required=True, help="0600 raw 64-byte expanded native key")
@@ -753,16 +789,14 @@ def main():
     role_password.add_argument("role", choices=("repeater", "room"))
     role_password.add_argument("--new-password-file", type=Path, required=True,
                                help="0600 file containing 1..15 printable ASCII bytes, without newline; separate from Management --password-file")
-    sub.add_parser("install").add_argument("source", type=Path)
-    sub.add_parser("download").add_argument("destination", type=Path)
+    sub.add_parser("install", help="replace the complete installed source; source install replaces one named file").add_argument("source", type=Path)
+    sub.add_parser("download", help="read the complete installed source without changing it").add_argument("destination", type=Path)
     named_install = sub.add_parser("source-install", help="add/update one named Lua source; retain other sources and reject namespace collisions atomically")
-    named_install.add_argument("name")
-    named_install.add_argument("source", type=Path)
+    named_source_arguments(named_install, "source-install")
     named_remove = sub.add_parser("source-remove", help="remove one named Lua source; retain the rest")
-    named_remove.add_argument("name")
+    named_source_arguments(named_remove, "source-remove")
     named_export = sub.add_parser("source-export", help="read one installed Lua file without changing the selected source set")
-    named_export.add_argument("name")
-    named_export.add_argument("destination", type=Path)
+    named_source_arguments(named_export, "source-export")
     sub.add_parser("source-list", help="list separately installed Lua sources and their byte lengths")
     for action in ("package-install", "update"):
         package_install_parser = sub.add_parser(action, help="validate and atomically install a source package")
@@ -772,16 +806,45 @@ def main():
     fetch_parser = sub.add_parser("package-fetch", help="stream source from the fixed owner-configured HTTPS GET alias")
     fetch_parser.add_argument("endpoint_alias", choices=("package",), help="fixed named HTTPS GET alias")
     fetch_parser.add_argument("sha256")
-    for action in ("status", "diagnose", "rollback", "remove", "reboot"):
-        sub.add_parser(action, help="inspect or recover the on-device source lifecycle")
+    source_actions = {
+        "status": "read source transfer and activation state",
+        "diagnose": "read source/runtime fault and API details",
+        "rollback": "manually restore the previous source generation; data is unchanged",
+        "remove": "restore bundled source; removes the whole installed source set",
+        "reboot": "restart this endpoint; inspect readiness after reconnecting",
+    }
+    for action, help_text in source_actions.items():
+        sub.add_parser(action, help=help_text)
     export = sub.add_parser("data-export", help="export one scoped KV, timer or reminder record set; no credentials")
-    export.add_argument("destination", type=Path)
-    export.add_argument("--scope", choices=DATA_SCOPES, required=True)
-    export.add_argument("--principal", required=True, help="full user/channel identity; 64 zeros for bot scope")
-    export.add_argument("--kind", choices=tuple(DATA_MAGIC), default="kv")
+    data_arguments(export, "data-export")
     restore = sub.add_parser("data-restore", help="stage a scoped backup; KV replaces atomically, scheduler merges without rearming")
-    restore.add_argument("source", type=Path)
-    restore.add_argument("--no-rearm", action="store_true", help="required for scheduler import; cancels matching pending work, never replays side effects")
+    data_arguments(restore, "data-restore")
+    source_group = sub.add_parser("source", help="list, update, export or manually recover installed Lua/Wasm source")
+    source_sub = source_group.add_subparsers(dest="source_action", required=True)
+    for name, action, help_text in (
+            ("list", "source-list", "list named Lua files and lengths"),
+            ("install", "source-install", "replace one named Lua file while retaining the others"),
+            ("remove", "source-remove", "remove one named Lua file"),
+            ("export", "source-export", "read one named Lua file to a new private file")):
+        leaf = source_sub.add_parser(name, help=help_text)
+        named_source_arguments(leaf, action)
+        leaf.set_defaults(action=action)
+    for name, action in (("status", "status"), ("diagnose", "diagnose"),
+                         ("rollback", "rollback"), ("reset", "remove")):
+        source_sub.add_parser(name, help=source_actions[action]).set_defaults(action=action)
+    whole_source = source_sub.add_parser("replace", help="replace the whole source set")
+    whole_source.add_argument("source", type=Path)
+    whole_source.set_defaults(action="install")
+    whole_read = source_sub.add_parser("download", help="read the whole source set")
+    whole_read.add_argument("destination", type=Path)
+    whole_read.set_defaults(action="download")
+    data_group = sub.add_parser("data", help="export or restore scoped KV, timers or personal reminders")
+    data_sub = data_group.add_subparsers(dest="data_action", required=True)
+    for name, action, help_text in (("export", "data-export", "read scoped records to a new private file"),
+                                    ("restore", "data-restore", "restore records; scheduler imports require --no-rearm")):
+        leaf = data_sub.add_parser(name, help=help_text)
+        data_arguments(leaf, action)
+        leaf.set_defaults(action=action)
     package = sub.add_parser("package", help="create, inspect, validate or optionally sign Lua/Wasm packages")
     package_actions = package.add_subparsers(dest="package_action", required=True)
     create_parser = package_actions.add_parser("create")

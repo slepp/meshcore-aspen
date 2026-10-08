@@ -546,7 +546,8 @@ static void management_cli_core() {
     assert(readOnly("help") == readOnly("help 1"));
     for (const char *topic : {"wifi", "radio", "tempradio", "cad", "radio-controls", "sntp",
                              "role", "roles", "key", "password", "source", "bot", "auth",
-                             "setperm", "trust", "data", "telemetry", "room", "companion", "stats", "get", "set"}) {
+                             "setperm", "trust", "data", "telemetry", "room", "companion", "stats", "get", "set",
+                             "channels", "threads", "repeaters", "cloudroom"}) {
       assert(index.find(topic) != std::string::npos);
       const std::string command = "help " + std::string(topic);
       const auto content = readOnly(command.c_str());
@@ -573,11 +574,17 @@ static void management_cli_core() {
     }
     assert(readOnly("bot help 2") == readOnly("help bot 2"));
     assert(rf(tag + "help source 2") == tag + readOnly("help source 2"));
-    assert(rf(tag + "help source 3") == tag + readOnly("help source 3"));
+    for (unsigned page = 2; page <= 4; ++page) {
+      for (const char *topic : {"source", "bot"}) {
+        const std::string command = "help " + std::string(topic) + " " + std::to_string(page);
+        assert(rf(tag + command) == tag + readOnly(command.c_str()));
+      }
+    }
+    assert(readOnly("help channels 2").find("16/32 thread read/write") != std::string::npos);
     assert(readOnly("help wifi 3").find("use separate forms") != std::string::npos);
-    assert(readOnly("help wifi 4").find("146 bytes") != std::string::npos);
-    assert(readOnly("help wifi 2").size() == 145);
-    assert(rf(tag + "help wifi 2").size() == 162);
+    assert(readOnly("help wifi 4").find("max 145 bytes") != std::string::npos);
+    assert(readOnly("help wifi 2").size() <= 145);
+    assert(rf(tag + "help wifi 2").size() <= 162);
     assert(rf("a2|help wifi 2") == "a2|" + readOnly("help wifi 2"));
     assert(rf("zz|help").find("Error: unknown mast command") == 0);
     assert(rf("0123456789abcdeg|help").find("Error: unknown mast command") == 0);
@@ -637,6 +644,8 @@ static void management_cli_core() {
                                                           "hex", "4142", "-"}) {
       assert(rf(tag + "set wifi.ssid " + value).find("OK - saved") != std::string::npos);
       assert(rf(tag + "get wifi.ssid") == tag + "> " + value);
+      assert(rf(tag + "wifi ssid " + value).find("OK - saved") != std::string::npos);
+      assert(rf(tag + "get wifi.ssid") == tag + "> " + value);
     }
     for (const std::string value : std::vector<std::string>{"", std::string(33, 's')}) {
       const auto before = credentials();
@@ -648,6 +657,10 @@ static void management_cli_core() {
                                                           "        "}) {
       assert(rf(tag + "set wifi.pwd " + value).find("OK - saved") != std::string::npos);
       assert(rf(tag + "get wifi.pwd") == tag + "> " + value);
+      if (!value.empty() && value.find("hex ") != 0) {
+        assert(rf(tag + "wifi password " + value).find("OK - saved") != std::string::npos);
+        assert(rf(tag + "get wifi.pwd") == tag + "> " + value);
+      }
     }
     for (const std::string value : std::vector<std::string>{"short77", std::string(64, 'g'), std::string(65, 'a')}) {
       const auto before = credentials();
@@ -662,12 +675,9 @@ static void management_cli_core() {
     assert(rf(tag + "set wifi.pwd ") == tag + "OK - saved WiFi field; use wifi apply");
     for (const char *hexValue : {"6162", "CAFEBABE", "636166c3a9", "ff1b0a7f", "01",
                                 "4142", "20206c69746572616c2020"}) {
-      assert(rf(tag + "wifi ssid " + hexValue).find("Saved WiFi field") != std::string::npos);
-      const auto legacy = rf(tag + "get wifi.ssid");
       assert(rf(tag + "wifi ssid hex " + hexValue).find("Saved WiFi field") != std::string::npos);
-      assert(rf(tag + "get wifi.ssid") == legacy);
     }
-    assert(rf(tag + "wifi ssid 636166c3a9").find("Saved") != std::string::npos);
+    assert(rf(tag + "wifi ssid hex 636166c3a9").find("Saved") != std::string::npos);
     assert(rf(tag + "get wifi.ssid") == tag + "> hex 636166c3a9");
     std::string utf8Hex;
     for (unsigned i = 0; i < 16; ++i) utf8Hex += "c3a9";
@@ -676,7 +686,7 @@ static void management_cli_core() {
     const auto beforeUtf8 = credentials();
     assert(rf(tag + "wifi ssid hex " + utf8Hex + "c3").find("Error:") != std::string::npos);
     assert(credentials() == beforeUtf8);
-    assert(rf(tag + "wifi ssid ff1b0a7f").find("Saved") != std::string::npos);
+    assert(rf(tag + "wifi ssid hex ff1b0a7f").find("Saved") != std::string::npos);
     assert(rf(tag + "get wifi.ssid") == tag + "> hex ff1b0a7f");
     const std::string ssidHex(64, 'f');
     assert(rf(tag + "wifi ssid hex " + ssidHex).find("Saved") != std::string::npos);
@@ -686,12 +696,16 @@ static void management_cli_core() {
       assert(rf(tag + "wifi ssid hex " + value).find("Error:") != std::string::npos);
       assert(credentials() == before);
     }
-    assert(rf(tag + "wifi ssid 6162").find("Saved") != std::string::npos);
+    assert(rf(tag + "wifi ssid 6162").find("OK - saved") != std::string::npos);
+    assert(rf(tag + "get wifi.ssid") == tag + "> 6162");
+    assert(rf(tag + "wifi ssid hex 6162").find("Saved") != std::string::npos);
     assert(rf(tag + "get wifi.ssid") == tag + "> ab");
+    assert(rf(tag + "wifi password 6162636465666768").find("OK - saved") != std::string::npos);
+    assert(rf(tag + "get wifi.pwd") == tag + "> 6162636465666768");
     for (size_t count : {8, 63, 64}) {
       const std::string password(count, 'a');
       const std::string encoded = encode(reinterpret_cast<const uint8_t *>(password.data()), password.size());
-      assert(rf(tag + "wifi password " + encoded).find("Saved") != std::string::npos);
+      assert(rf(tag + "wifi password " + password).find("OK - saved") != std::string::npos);
       assert(rf(tag + "get wifi.pwd") == tag + "> " + password);
       const std::string longAlias = "wifi password hex " + encoded;
       if (count < 64) {
@@ -706,7 +720,7 @@ static void management_cli_core() {
     }
     for (const char *value : {"0", "xyz", "00", "61626364656667", "6162006364656667"}) {
       const auto before = credentials();
-      assert(rf(tag + "wifi password " + value).find("Error:") != std::string::npos);
+      assert(rf(tag + "wifi password hex " + value).find("Error:") != std::string::npos);
       assert(credentials() == before);
     }
     for (const std::string value : {std::string(128, '7'), std::string(130, '6')}) {
