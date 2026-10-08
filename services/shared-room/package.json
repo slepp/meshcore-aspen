@@ -7,8 +7,8 @@
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/bindings.test.mjs test/web-model.test.mjs && vitest run && vitest run --config vitest.native.config.ts && vitest run --config vitest.independent.config.ts && vitest run --config vitest.region.config.ts",
-    "test:browser": "node test/web-browser.mjs"
+    "test": "node --test test/bindings.test.mjs test/web-model.test.mjs test/web-device.test.mjs test/web-users.test.mjs && vitest run && vitest run --config vitest.native.config.ts && vitest run --config vitest.independent.config.ts && vitest run --config vitest.region.config.ts && vitest run --config vitest.accounts.config.ts",
+    "test:browser": "node test/web-browser.mjs && node test/web-browser.mjs --accounts"
   },
   "devDependencies": {
     "axe-core": "4.14.0",

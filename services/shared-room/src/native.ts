@@ -66,6 +66,13 @@ export interface Identity {
   name: string;
   scope?: Uint8Array;
 }
+export interface ParticipantProfile {
+  publicKey: string;
+  name: string;
+  advertType: number;
+  timestamp: number;
+  source: "radio" | "desktop";
+}
 export interface Decoded {
   identity: Identity;
   packet: Packet;
@@ -124,6 +131,26 @@ export class RadioCodec {
   }
   ack(plain: Uint8Array, peer: Uint8Array): number {
     return number(this.crypto.sha(join(plain, peer)));
+  }
+  profile(wire: Uint8Array, id: Identity): ParticipantProfile | undefined {
+    const p = packet(wire);
+    if (!p || p.kind !== 4 || p.payload.length < 102 || p.payload.length > 132) return;
+    if (p.transportCode !== undefined ?
+        !id.scope || this.crypto.transportCode(id.scope, p.kind, p.payload) !== p.transportCode :
+        p.flood && id.scope) return;
+    const publicKey = p.payload.slice(0, 32), stamp = p.payload.slice(32, 36);
+    const signature = p.payload.slice(36, 100), app = p.payload.slice(100);
+    if (!this.crypto.verify(publicKey, signature, join(publicKey, stamp, app))) return;
+    const flags = app[0], advertType = flags & 15;
+    if (!(flags & 0x80) || advertType < 1 || advertType > 4) return;
+    const offset = 1 + (flags & 0x10 ? 8 : 0) + (flags & 0x20 ? 2 : 0) + (flags & 0x40 ? 2 : 0);
+    if (offset >= app.length) return;
+    let name: string;
+    try {name = decoder.decode(app.slice(offset));} catch {return;}
+    if (!name.trim() || /[\u0000-\u001f\u007f-\u009f]/u.test(name)) return;
+    const timestamp = number(stamp);
+    if (timestamp > Math.floor(Date.now() / 1000) + 300) return;
+    return {publicKey: toHex(publicKey), name, advertType, timestamp, source: "radio"};
   }
   async decode(
     wire: Uint8Array,

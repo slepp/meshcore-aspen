@@ -1,10 +1,17 @@
 # Join an Aspen room from the web
 
 Open the room Worker's HTTPS address on your desktop or phone. Select a channel,
-enter a display name and that room's password, and choose **Join room**.
-The operator's `ALIASES` configuration supplies the channels and passwords.
+enter your operator-created username and account password, and choose **Join
+room**. The operator grants each account access to particular channels and sets
+its display name. [Create accounts](#operator-created-accounts) before enabling
+account login. A development service without `WEB_USERS` keeps the display-name
+and shared room-password flow.
 Aliases pointing to the same backend show the same ordered messages; another
 backend has its own conversation.
+
+For the same flow in a Linux terminal, [build and run the terminal
+client](../../clients/room-tui/README.md). It uses the same account grants and
+shared history, with a separate locally stored desktop keypair.
 
 The interface follows the system's light/dark preference, including changes
 while it is open. Text and controls also adapt to browser text sizing and
@@ -18,6 +25,16 @@ native radio posts, then delivered to connected browsers and eligible radio
 members. A radio member's confirmed history cursor advances only on its native
 ACK. Viewing a message on the web does not acknowledge it for a companion.
 The web identity is separate from any companion or management identity.
+
+Radio authors show the name from their latest signed MeshCore advert received
+by a connected frontend. The Worker verifies the full public key, signature and
+configured public-region scope before saving a name, and sends changes to joined
+clients. Names survive a Worker restart; newer signed timestamps replace older
+names. The directory retains up to 4096 recently advertised identities per
+backend. A sender without a received name still shows its key fingerprint.
+Every message also shows a fingerprint: names can repeat, and an advert means
+that key chose a label, not that the label is a verified person. Only full keys
+are used for lookup; matching short prefixes never merge people.
 
 ## Writing and reconnecting
 
@@ -40,12 +57,62 @@ the site restores its selected channel and login cookies, then catches up from
 the shared history. Earlier messages load in pages of 100. `HISTORY_LIMIT`
 applies to both browser history and radio catch-up.
 
-The browser stores its random device identity, name preference, drafts and
-uncertain post IDs/text in local storage. Passwords are not written there.
+For account login, this browser generates an Ed25519 keypair compatible with
+MeshCore. Its private key is nonextractable and stays in this origin's IndexedDB
+key store; the public key is its message author. A one-use, two-minute challenge
+binds its ownership signature to the service origin, alias, username and key.
+Each browser profile or terminal client is a separate device, even when both use
+the same account. A device key belongs to one account; use another browser
+profile or terminal state directory for another account.
+
+The browser stores the username, name preference, drafts and uncertain post
+IDs/text/author in local storage. Passwords are not written there.
 Cookies grant access for up to 30 days. Leaving a room ends its browser session
 but keeps unsent work; clearing site data loses the identity and unsent work.
-Separate devices have separate identities. Display names are not unique or
-verified user accounts.
+There is no device-key transfer or key backup flow yet. A browser cannot export
+the private key; keep its profile if you need to keep that device identity.
+Account login does not create radio membership, announce this desktop over RF,
+select a home tower, or add direct messages. Display names are not unique.
+
+## Operator-created accounts
+
+From `services/shared-room`, create a private account file. The command prompts
+twice for a password without echoing it; use a long, unique passphrase of at least
+16 UTF-8 bytes. Passwords are salted PBKDF2-SHA256 hashes with 100,000 iterations,
+the Workers WebCrypto iteration limit, and logins are limited to ten attempts
+per address, per backend, per minute. Keep this temporary password login behind
+HTTPS; passkeys and person/device linking are not implemented.
+
+```sh
+node tools/web-users.mjs \
+  --file "$HOME/.config/aspen-room-operator/users.json" \
+  --username alice --name Alice --aliases A,SharedB
+node tools/web-users.mjs \
+  --file "$HOME/.config/aspen-room-operator/users.json" \
+  --upload --account CLOUDFLARE_ACCOUNT_ID
+```
+
+Use alias IDs from `ALIASES`, not room labels. The tool creates a `0700` directory
+and `0600` file, refuses public files and symlinks, and uploads `WEB_USERS` only
+as a secret after checking the active Worker binding types. Never put it in
+Wrangler `vars`. Uploading even an empty `{}` switches desktop login to accounts
+and disables shared room-password web login; radio passwords stay unchanged.
+Run the creation command again to replace a password, name or grants. Use
+`--username alice --remove` followed by `--upload` to revoke an account.
+Any change to an account or its room configuration invalidates its sessions;
+its signed-in devices must log in again, retaining their keys and unsent work.
+
+For unattended local setup, `--password-file PRIVATE_FILE` reads an
+operator-owned `0600`/`0400` file instead of prompting. It may end with one
+newline. The tool does not delete that file. Keep account files outside the
+checkout and do not pass passwords as command arguments.
+
+Before switching an existing service to accounts, confirm or retry any uncertain
+posts under their old login. Old shared-password messages remain in history
+with their original author; new account devices get real public-key authors.
+Clients refuse to resend an old pending post under a different author, because
+that would defeat deduplication. Do not clear browser storage to bypass that
+warning.
 
 ## Browser API
 
@@ -57,11 +124,12 @@ The browser API does not accept radio operations or expose room private keys.
 
 | Route | Request / result |
 | --- | --- |
-| `GET /v1/web/rooms` | Public `{rooms:[{id,name,publicKey}],maxPostBytes:151}`; no login required |
-| `POST /v1/web/rooms/{alias}/login` | `{identity:"<64 lowercase hex>",name,password}`; returns `{author,name,expires,maxPostBytes}` and sets an HttpOnly session cookie |
+| `GET /v1/web/rooms` | Public `{rooms:[{id,name,publicKey}],maxPostBytes:151,loginMode,deviceProtocol}`; no login required |
+| `POST /v1/web/rooms/{alias}/challenge` | Account mode: `{username,publicKey}`; returns `{nonce,message,expires,protocol:"aspen-room.device.v1"}` |
+| `POST /v1/web/rooms/{alias}/login` | Account mode: `{username,password,publicKey,nonce,signature}`; development room-password mode: `{identity,name,password}`. Returns `{author,name,username,expires,maxPostBytes}` and a scoped HttpOnly cookie |
 | `GET /v1/web/rooms/{alias}/session` | Returns the current browser author, name and expiry |
 | `POST /v1/web/rooms/{alias}/logout` | Ends this session and closes its sockets |
-| `GET /v1/web/rooms/{alias}/history` | Latest 100 visible messages, oldest first, and `{more,floor}` |
+| `GET /v1/web/rooms/{alias}/history` | Latest 100 visible messages, oldest first, and `{more,floor,profiles}` |
 | `GET .../history?before={seq}` | Earlier page; `more` means more earlier history |
 | `GET .../history?after={seq}` | Catch-up page; `more` means another forward page |
 | `POST /v1/web/rooms/{alias}/posts` | `{id:"<UUID v4>",text}`; returns `{message,duplicate}` only after storage has synced |
@@ -74,7 +142,11 @@ timestamp and sequence remain unchanged. History includes canonical `seq`,
 `webName`. Radio messages have no `webName`.
 
 The socket starts with `{type:"ready",version:1,alias,publicKey,name}`, followed
-by `{type:"message",message}` in sequence order, including the sender's posts.
+by `{type:"profile",profile}` and `{type:"message",message}` in sequence order,
+including the sender's posts. Profile updates can arrive independently.
+Each profile has `{publicKey,name,advertType,timestamp,source}`; source is
+`radio` for a signed advert or `desktop` for an account-authenticated key.
+Match full keys, keep the newest timestamp and never merge ambiguous prefixes.
 It replays up to 100 messages after `since`. A further backlog produces
 `{type:"catchup",cursor}`; load forward history, then send
 `{op:"sync",since:<last sequence>}` to align the connection. Merge history and

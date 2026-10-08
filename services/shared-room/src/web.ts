@@ -11,6 +11,7 @@ export interface WebSession {
   name: string;
   credential: string;
   expires: number;
+  username?: string | null;
 }
 export interface WebConnection extends WebSession {
   kind: "web";
@@ -20,7 +21,7 @@ export function isWebConnection(value: unknown): value is WebConnection {
   return !!value && typeof value === "object" && "kind" in value && value.kind === "web";
 }
 export function webPath(path: string): RegExpMatchArray | null {
-  return path.match(/^\/v1\/web\/rooms\/([a-zA-Z0-9_-]{1,64})\/(login|session|logout|history|posts|socket)$/);
+  return path.match(/^\/v1\/web\/rooms\/([a-zA-Z0-9_-]{1,64})\/(challenge|login|session|logout|history|posts|socket)$/);
 }
 export function sameOrigin(request: Request): void {
   const url = new URL(request.url);
@@ -35,7 +36,7 @@ export function webText(value: unknown, label: string, bytes: number): string {
 }
 export function displayName(value: unknown): string {
   const name = webText(value, "display name", 24);
-  if (name !== name.trim() || /[\u0000-\u001f\u007f:]/.test(name)) fail(400, "Use a display name without colons or control characters");
+  if (name !== name.trim() || /[\u0000-\u001f\u007f-\u009f:]/.test(name)) fail(400, "Use a display name without colons or control characters");
   return name;
 }
 export async function webCredential(alias: Alias): Promise<string> {

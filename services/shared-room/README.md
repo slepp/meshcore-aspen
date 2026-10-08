@@ -4,7 +4,9 @@ Run one Cloudflare Worker with one SQLite Durable Object per backend room.
 The Worker owns the room keys, canonical membership, ordered messages,
 deduplication and ACK-confirmed radio cursors. Open the Worker's HTTPS address
 on a desktop or phone to use **Aspen Rooms**: select a channel, enter your
-display name and room password, then read and send messages over IP.
+operator-created username and account password, then read and send messages
+over IP. The [terminal client](../../clients/room-tui/README.md) follows the same
+flow. Each browser or terminal device keeps its own local keypair.
 Thin radio frontends connect with inbound hibernating WebSockets and carry
 opaque MeshCore packets. Both paths use the same stored conversation.
 
@@ -27,6 +29,7 @@ variables. Keep those three names out of Wrangler's public `vars`.
 | `ALIASES[id] = {backend, publicKey, name, password}` | Advertised room identity and its canonical backend |
 | `ROOM_KEYS[id] = "<128 lowercase hex characters>"` | Expanded native 64-byte private key, held only in the Worker |
 | `FRONTENDS[id] = {token, aliases:[...], region?:"ab"}` | Restricted frontend credential, aliases and optional public flood region |
+| `WEB_USERS[username] = {name,salt,hash,iterations,aliases}` | Operator-created desktop accounts and per-channel grants; upload as a secret with [the account tool](WEB.md#operator-created-accounts) |
 
 Several frontends can serve the same public key/name without receiving its
 private key. Distinct aliases can share one backend history; membership,
@@ -39,9 +42,10 @@ a different history; this does not migrate the old room.
 
 The Worker serves the interface and browser API on the same origin. Each
 configured alias appears as a channel; aliases with the same `backend` share
-messages, and different backends remain separate. Join each channel with that
-alias's room password. No radio, companion application or frontend bearer token
-is needed for web access.
+messages, and different backends remain separate. Join with an account granted
+access to that channel. A development service without `WEB_USERS` retains the
+display-name and shared room-password flow. No radio, companion application or
+frontend bearer token is needed for web access.
 
 Messages update live, with earlier history available on demand. The browser
 retains its device identity, display-name preference, drafts and any post

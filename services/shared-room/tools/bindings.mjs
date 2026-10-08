@@ -1,5 +1,5 @@
 // Names/types only; never return or log binding values.
-export const privateBindings = ["ALIASES", "FRONTENDS", "ROOM_KEYS"];
+export const privateBindings = ["ALIASES", "FRONTENDS", "ROOM_KEYS", "WEB_USERS"];
 
 export function assertSecretSlots(bindings) {
   if (!Array.isArray(bindings)) throw Error("Cannot inspect live binding types.");

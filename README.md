@@ -62,7 +62,10 @@ For shared room history across radio frontends and desktop/mobile web clients, t
 [shared room Worker/API](services/shared-room/README.md) provides one canonical
 backend with several advertised room identities, login catch-up and live push.
 Its **Aspen Rooms** interface connects directly over IP: open the Worker URL,
-choose a channel and join with the room password.
+choose a channel and join with an operator-created account. The
+[terminal client](clients/room-tui/README.md) uses the same channels and login
+flow. Each browser or terminal device keeps its own keypair; radio names are
+resolved from signed adverts received by the frontends.
 The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
 frontend carries opaque radio bytes and final transmission receipts.
 Additional role instances can run on a host, but each enabled built-in ESP32

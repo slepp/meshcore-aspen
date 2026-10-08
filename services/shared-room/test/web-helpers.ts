@@ -2,6 +2,7 @@ import {SELF} from "cloudflare:test";
 import {expect} from "vitest";
 import {WEB_PROTOCOL} from "../src/web";
 import type {Message} from "../src/protocol";
+import type {ParticipantProfile} from "../src/native";
 
 export const origin = "https://room.test";
 export const device = (n: number) => n.toString(16).padStart(64, "0");
@@ -29,7 +30,7 @@ export async function webSocket(alias: string, cookie: string, sockets: WebSocke
   expect(response.status).toBe(101);
   const ws = response.webSocket!;
   sockets.push(ws);
-  const inbox: Array<{type: string; message?: Message; cursor?: number}> = [];
+  const inbox: Array<{type: string; message?: Message; cursor?: number; profile?: ParticipantProfile}> = [];
   const waiters: Array<(value: typeof inbox[number]) => void> = [];
   ws.addEventListener("message", event => {
     const value = JSON.parse(event.data as string);

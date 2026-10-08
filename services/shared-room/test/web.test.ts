@@ -14,7 +14,7 @@ it("lists public room metadata without credentials, passwords or histories", asy
   const value = await response.json<{rooms: unknown[]; maxPostBytes: number}>();
   expect(value.maxPostBytes).toBe(151);
   expect(value.rooms).toContainEqual({id: "A", name: "A", publicKey: "11".repeat(32)});
-  expect(JSON.stringify(value)).not.toMatch(/password|backend|token|messages/);
+  expect(JSON.stringify(value)).not.toMatch(/"(password|backend|token|messages)":/);
 });
 
 it("requires room-specific cookies and same-origin login/posts without accepting adapter tokens", async () => {

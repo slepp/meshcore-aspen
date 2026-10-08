@@ -5,6 +5,7 @@ import {mkdtemp, mkdir, readFile, rm, writeFile} from "node:fs/promises";
 import {resolve} from "node:path";
 import {createServer} from "node:net";
 import {setTimeout as sleep} from "node:timers/promises";
+import {passwordRecord} from "../tools/web-users.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const scratchRoot = resolve(root, ".tmp");
@@ -19,6 +20,7 @@ await once(portProbe, "listening");
 const port = portProbe.address().port;
 await new Promise(resolveClose => portProbe.close(resolveClose));
 const base = `http://localhost:${port}`;
+const accountTest = process.argv.includes("--accounts");
 
 function start(command, args) {
   const child = spawn(command, args, {cwd: root, stdio: ["ignore", "pipe", "pipe"]});
@@ -93,7 +95,7 @@ async function page(context, width = 1280, height = 900) {
       await wait(`document.getElementById('room-name').textContent === ${JSON.stringify(name)}`, `select ${name}`);
     },
     async join(name, password = "room") {
-      await evaluate(`document.getElementById('display-name').value = ${JSON.stringify(name)};
+      await evaluate(`document.getElementById(${JSON.stringify(accountTest ? "account-username" : "display-name")}).value = ${JSON.stringify(name)};
         document.getElementById('room-password').value = ${JSON.stringify(password)};
         document.getElementById('join-form').requestSubmit()`);
       await wait(`document.getElementById('connection-text').textContent === 'Connected'`, "room login and socket");
@@ -115,6 +117,77 @@ async function page(context, width = 1280, height = 900) {
       await writeFile(path, Buffer.from(capture.data, "base64"));
     },
   };
+}
+async function accountsFlow(desktop, mobile) {
+  await accessibility(desktop, "account login");
+  assert.equal(await desktop.evaluate(`document.getElementById('display-name').hidden`), true);
+  await desktop.join("alice", "fixture password only");
+  await mobile.select("Uplink"); await mobile.join("sam", "second fixture password");
+  const desktopKey = await desktop.evaluate(`document.getElementById('room-info').click(); document.getElementById('detail-author').textContent`);
+  assert.match(desktopKey, /^[a-f0-9]{64}$/);
+  await key(desktop, "Escape", "Escape");
+  await desktop.send("Desktop keys stay on each desktop.");
+  await mobile.sees("Desktop keys stay on each desktop.");
+  assert.equal(await mobile.evaluate(`document.querySelector('.message-name').textContent`), "Alice");
+  assert.equal(await desktop.evaluate(`document.getElementById('room-password').value`), "");
+  assert.equal(await desktop.evaluate(`Object.values(localStorage).some(v => /fixture password|privateKey|verificationKey/.test(v))`), false);
+  for (const scheme of ["light", "dark"]) {
+    await palette(desktop, scheme); await accessibility(desktop, `${scheme} account conversation`);
+  }
+  await desktop.type("Draft stays with this device.");
+  await desktop.open();
+  await desktop.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "account session restore");
+  assert.equal(await desktop.evaluate(`document.getElementById('message-input').value`), "Draft stays with this device.");
+  await desktop.evaluate(`document.getElementById('room-info').click()`);
+  assert.equal(await desktop.evaluate(`document.getElementById('detail-author').textContent`), desktopKey);
+  await key(desktop, "Escape", "Escape");
+  let dropped = false;
+  const remove = cdp.listen(event => {
+    if (event.method !== "Fetch.requestPaused" || event.sessionId !== desktop.sessionId) return;
+    dropped = true;
+    desktop.call("Fetch.failRequest", {requestId: event.params.requestId, errorReason: "ConnectionReset"})
+      .then(() => desktop.call("Fetch.disable")).catch(error => errors.push(error));
+  });
+  await desktop.call("Fetch.enable", {patterns: [{urlPattern: "*/A/posts", requestStage: "Response"}]});
+  await desktop.type("One account post, even after a lost response.");
+  await desktop.evaluate(`document.getElementById('compose-form').requestSubmit()`);
+  await desktop.wait(`!document.getElementById('pending-post').hidden && !document.getElementById('retry-post').disabled`, "account uncertain outbox");
+  await mobile.sees("One account post, even after a lost response.");
+  assert.equal(dropped, true); remove();
+  await desktop.evaluate(`fetch('/v1/web/rooms/A/logout', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})`);
+  await desktop.wait(`!document.getElementById('join-panel').hidden`, "account expired-session recovery");
+  await desktop.open(); await desktop.join("alice", "fixture password only");
+  await desktop.evaluate(`document.getElementById('retry-post').click()`);
+  await desktop.wait(`document.getElementById('pending-post').hidden`, "account post retry");
+  assert.equal(await desktop.evaluate(`Array.from(document.querySelectorAll('.message-text')).filter(p=>p.textContent==='One account post, even after a lost response.').length`), 1);
+  const fixture = JSON.parse(await readFile(resolve(root, "test/native-fixtures.json"), "utf8"));
+  const rf = async packet => {
+    const response = await fetch(`${base}/v1/aliases/A/operations`, {method: "POST",
+      headers: {Authorization: "Bearer one"}, body: JSON.stringify({op:"rf", packet})});
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).accepted, true);
+  };
+  await rf(fixture.authorLogin); await rf(fixture.post);
+  await desktop.sees("hello");
+  assert.equal(await desktop.evaluate(`Array.from(document.querySelectorAll('.message')).find(p=>p.querySelector('.message-text').textContent==='hello').querySelector('.message-name').textContent`),
+    fixture.author.publicKey.slice(0, 8) + "…");
+  const wasm = new WebAssembly.Instance(new WebAssembly.Module(await readFile(resolve(root, "src/native-crypto.wasm"))), {}).exports;
+  const arena = new Uint8Array(wasm.memory.buffer, wasm.mc_arena(), 2048);
+  const stamp = Buffer.alloc(4); stamp.writeUInt32LE(Math.floor(Date.now()/1000));
+  const app = Buffer.concat([Buffer.from([0x81]), Buffer.from("VE6SLP Radio")]);
+  const signable = Buffer.concat([Buffer.from(fixture.author.publicKey,"hex"), stamp, app]);
+  let advert;
+  try {
+    arena.set(Buffer.from(fixture.author.key,"hex")); wasm.mc_pub(); arena.set(signable,160); wasm.mc_sign(signable.length);
+    advert = Buffer.concat([Buffer.from([17,0x80]), signable.subarray(0,36), Buffer.from(arena.slice(1024,1088)), app]).toString("base64");
+  } finally {arena.fill(0);}
+  await rf(advert);
+  await desktop.wait(`Array.from(document.querySelectorAll('.message')).some(p=>p.querySelector('.message-text').textContent==='hello'&&p.querySelector('.message-name').textContent==='VE6SLP Radio')`, "live signed radio name");
+  await desktop.open();
+  await desktop.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "account and profile restore");
+  await desktop.wait(`Array.from(document.querySelectorAll('.message-name')).some(p=>p.textContent==='VE6SLP Radio')`, "persisted radio name");
+  assert.deepEqual(browserErrors, []); assert.deepEqual(errors, []);
+  console.log("PASS: operator accounts, nonextractable persistent desktop keys, light/dark account a11y, shared content, signed radio names, drafts and same-author idempotent recovery.");
 }
 function contrast(a, b) {
   const luminance = color => {
@@ -178,6 +251,19 @@ try {
     B: {backend: "shared", publicKey: "22".repeat(32), name: "Uplink", password: "room"},
     C: {backend: "field", publicKey: "33".repeat(32), name: "Field notes", password: "private"},
   }), FRONTENDS: "{}"};
+  if (accountTest) {
+    const fixture = JSON.parse(await readFile(resolve(root, "test/native-fixtures.json"), "utf8"));
+    config.vars.MODE = "opaque";
+    const aliases = JSON.parse(config.vars.ALIASES);
+    aliases.A.publicKey = fixture.room.publicKey; aliases.B.publicKey = fixture.otherRoom.publicKey;
+    config.vars.ALIASES = JSON.stringify(aliases);
+    config.vars.ROOM_KEYS = JSON.stringify({A: fixture.room.key, B: fixture.otherRoom.key});
+    config.vars.FRONTENDS = JSON.stringify({one: {token:"one",aliases:["A","B"]}});
+    config.vars.WEB_USERS = JSON.stringify({
+      alice: passwordRecord("fixture password only", "Alice", ["A","B","C"]),
+      sam: passwordRecord("second fixture password", "Sam", ["A","B"]),
+    });
+  }
   await writeFile(resolve(scratch, "wrangler.json"), JSON.stringify(config));
   const worker = start(process.execPath, [resolve(root, "node_modules/wrangler/bin/wrangler.js"),
     "dev", "--local", "--config", resolve(scratch, "wrangler.json"), "--port", String(port), "--inspector-port", "0",
@@ -201,6 +287,9 @@ try {
   const desktopContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const mobileContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const desktop = await page(desktopContext), mobile = await page(mobileContext, 390, 844);
+  if (accountTest) {
+    await accountsFlow(desktop, mobile);
+  } else {
   for (const scheme of ["light", "dark"]) {
     await palette(desktop, scheme); await accessibility(desktop, `${scheme} desktop login`);
     await palette(mobile, scheme); await accessibility(mobile, `${scheme} mobile login`);
@@ -342,6 +431,7 @@ try {
   assert.deepEqual(browserErrors, []);
   assert.deepEqual(errors, []);
   console.log("PASS: messaging, light/dark WCAG checks, 44px targets, 320px reflow, 200% text, keyboard focus, mobile drawer, announcements, reconnect and idempotent retry. Minimum palette text contrast:", contrastResults);
+  }
 } finally {
   cdp?.close();
   for (const child of children.reverse()) {

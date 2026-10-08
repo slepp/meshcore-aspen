@@ -56,14 +56,16 @@
         <h2 id="join-title">Come into the conversation.</h2>
         <p class="join-description">Connect over IP. Read and send the same messages as the people joining through mesh radios.</p>
         <form id="join-form">
-          <label for="display-name">Display name</label>
+          <label for="account-username" id="username-label" hidden>Username</label>
+          <input id="account-username" name="username" autocomplete="username" maxlength="64" placeholder="Your operator-created account" aria-describedby="join-error" hidden>
+          <label for="display-name" id="display-name-label">Display name</label>
           <input id="display-name" name="displayName" autocomplete="nickname" required maxlength="24" placeholder="How people will see you" aria-describedby="join-error">
-          <label for="room-password">Room password</label>
+          <label for="room-password" id="password-label">Room password</label>
           <input id="room-password" name="password" type="password" autocomplete="current-password" placeholder="Ask the room operator" aria-describedby="join-error">
           <p class="form-error" id="join-error" role="alert" hidden></p>
           <button class="primary-button" id="join-button" type="submit">Join room <span aria-hidden="true">→</span></button>
         </form>
-        <p class="privacy-note">Your identity stays with this browser. Your display name is included in messages sent to the room.</p>
+        <p class="privacy-note" id="login-note">Your identity stays with this browser. Your display name is included in messages sent to the room.</p>
       </section>
       <section class="timeline" id="timeline" aria-label="Room messages" tabindex="0">
         <div class="timeline-top"><button class="quiet-button" id="load-older" hidden>Load earlier messages</button></div>
@@ -99,7 +101,7 @@
   <div class="sr-only" id="message-announcement" role="status" aria-atomic="true"></div>
   <dialog id="details-dialog" aria-labelledby="details-title">
     <div class="dialog-heading"><h2 id="details-title">Room details</h2><button id="close-details" class="icon-button" aria-label="Close room details">×</button></div>
-    <dl><dt>Room</dt><dd id="detail-name"></dd><dt>Alias</dt><dd id="detail-alias"></dd><dt>Radio identity</dt><dd class="key" id="detail-key"></dd><dt>Your web identity</dt><dd class="key" id="detail-author"></dd></dl>
+    <dl><dt>Room</dt><dd id="detail-name"></dd><dt>Alias</dt><dd id="detail-alias"></dd><dt>Radio identity</dt><dd class="key" id="detail-key"></dd><dt>Your device identity</dt><dd class="key" id="detail-author"></dd></dl>
     <p>Web posts enter the room's stored history. Radio delivery depends on each participant's connection and acknowledgement; a saved post does not confirm RF reception.</p>
     <button class="danger-button" id="leave-room">Leave room on this browser</button>
   </dialog>

@@ -1,4 +1,5 @@
-import {bytes, initials, mergeMessages, messageBody, postBytes, validName} from "./model.js";
+import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, validName} from "./model.js";
+import {loadDevice, signChallenge} from "./device.js";
 
 const $ = id => document.getElementById(id);
 const STORAGE = "aspen.rooms.v1.";
@@ -6,6 +7,7 @@ const MAX_BYTES = 151;
 const rooms = new Map();
 const mobileLayout = matchMedia("(max-width: 640px)");
 let active, identity, name, booted = false;
+let device, accountMode = false;
 class ApiError extends Error {
   constructor(status, message) {super(message); this.status = status;}
 }
@@ -106,23 +108,26 @@ function drawMessages(scroll = false) {
       divider.textContent = date.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric"});
       fragment.append(divider); previousDay = day;
     }
-    const author = message.webName || `${message.author.slice(0, 8)}…`;
+    const author = authorName(message, room.profiles);
     const row = document.createElement("article");
     row.className = `message${message.author === room.session?.author ? " own" : ""}`;
     row.dataset.seq = String(message.seq);
     const avatar = document.createElement("span");
     avatar.className = `avatar swatch-${parseInt(message.author.slice(0, 2), 16) % 6}`;
-    avatar.textContent = message.webName ? initials(message.webName) : message.author.slice(0, 2).toUpperCase();
+    avatar.textContent = message.webName || room.profiles.has(message.author) ? initials(author) : message.author.slice(0, 2).toUpperCase();
     avatar.setAttribute("aria-hidden", "true");
     const content = document.createElement("div"); content.className = "message-content";
     const meta = document.createElement("div"); meta.className = "message-meta";
     const title = document.createElement("span"); title.className = "message-name";
-    title.textContent = author; title.title = message.author;
+    title.textContent = author; title.title = `${author} · ${message.author}`;
+    const fingerprint = document.createElement("span"); fingerprint.className = "message-source";
+    fingerprint.textContent = message.author.slice(0, 8); fingerprint.title = message.author;
+    fingerprint.setAttribute("aria-label", `Key fingerprint ${message.author.slice(0, 8)}`);
     const time = document.createElement("time"); time.dateTime = date.toISOString(); time.title = date.toLocaleString();
     time.textContent = date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"});
     const source = document.createElement("span"); source.className = "message-source";
     source.textContent = message.webName ? "WEB" : "RADIO";
-    meta.append(title, time, source);
+    meta.append(title, fingerprint, time, source);
     const text = document.createElement("p"); text.className = "message-text"; text.textContent = messageBody(message);
     content.append(meta, text); row.append(avatar, content); fragment.append(row);
   }
@@ -147,7 +152,7 @@ function receive(room, messages, live = false) {
     if (live && incoming.length) {
       const last = incoming.at(-1);
       $("message-announcement").textContent = incoming.length === 1 ?
-        `${last.webName || `Radio sender ${last.author.slice(0, 8)}`} in ${room.name}: ${messageBody(last)}` :
+        `${authorName(last, room.profiles)} in ${room.name}: ${messageBody(last)}` :
         `${incoming.length} new messages in ${room.name}.`;
     }
   }
@@ -159,6 +164,7 @@ async function history(room, initial = false) {
     let query = initial ? "" : `?after=${room.cursor}`;
     do {
       const page = await api(endpoint(room, "history") + query);
+      mergeProfiles(room.profiles, page.profiles ?? []);
       receive(room, page.messages);
       if (initial) {
         room.hasEarlier = page.more;
@@ -212,6 +218,9 @@ function connect(room) {
         if (room.generation === generation) status(room, "live", "Connected");
       } else if (value.type === "message") {
         receive(room, [value.message], true);
+      } else if (value.type === "profile") {
+        mergeProfiles(room.profiles, [value.profile]);
+        if (room === active) drawMessages();
       } else if (value.type === "catchup") {
         await history(room);
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({op: "sync", since: room.cursor}));
@@ -239,13 +248,15 @@ function showRoom() {
   if (!active) return;
   const room = active, joined = !!room.session;
   $("room-name").textContent = room.name;
-  $("room-subtitle").textContent = joined ? "A shared conversation across IP and mesh." : "Join with the room password.";
+  $("room-subtitle").textContent = joined ? "A shared conversation across IP and mesh." :
+    accountMode ? "Sign in with your room account." : "Join with the room password.";
   $("join-panel").hidden = joined;
   $("timeline").hidden = !joined;
   $("composer-area").hidden = !joined;
   $("room-info").disabled = false;
   $("join-title").textContent = `Join ${room.name}.`;
   $("display-name").value = name;
+  $("account-username").value = read("username", "");
   $("room-password").value = "";
   $("join-error").hidden = true;
   $("message-input").value = room.draft;
@@ -285,11 +296,15 @@ function updateComposer() {
 }
 async function transmit(room) {
   if (room.sending || !room.outbox) return;
+  if (room.outbox.author !== room.session?.author) {
+    report(new Error("This pending post belongs to a different device identity. Restore its original login before checking it; no new copy was sent."));
+    return;
+  }
   const focusComposer = $("compose-form").contains(document.activeElement) || document.activeElement === $("retry-post");
   room.sending = true;
   if (room === active) updateComposer();
   try {
-    const result = await api(endpoint(room, "posts"), room.outbox);
+    const result = await api(endpoint(room, "posts"), {id: room.outbox.id, text: room.outbox.text});
     receive(room, [result.message], true);
     save(`outbox.${room.id}`, null);
     room.outbox = null; room.draft = "";
@@ -327,14 +342,30 @@ async function boot() {
   setProfile();
   const listing = await api("/v1/web/rooms");
   if (listing.maxPostBytes !== MAX_BYTES || !Array.isArray(listing.rooms)) throw new Error("Unsupported room service response");
+  accountMode = listing.loginMode === "account";
+  if (accountMode) {
+    if (listing.deviceProtocol !== "aspen-room.device.v1") throw new Error("Unsupported desktop identity protocol");
+    device = await loadDevice();
+    $("username-label").hidden = false; $("account-username").hidden = false; $("account-username").required = true;
+    $("display-name-label").hidden = true; $("display-name").hidden = true; $("display-name").required = false;
+    $("password-label").textContent = "Account password";
+    $("login-note").textContent = "This browser holds its own private key. Your operator assigns your display name and room access. Clearing site data loses this device identity.";
+    $("edit-profile").hidden = true;
+  }
+  const legacyAuthor = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(`aspen-web-author:${identity}`))), byte => byte.toString(16).padStart(2, "0")).join("");
   $("service-name").textContent = location.host;
   $("channel-count").textContent = String(listing.rooms.length);
   for (const entry of listing.rooms) {
-    const room = {...entry, messages: new Map(), cursor: 0, unread: 0, loaded: false, hasEarlier: false,
+    const room = {...entry, messages: new Map(), profiles: new Map(), cursor: 0, unread: 0, loaded: false, hasEarlier: false,
       generation: 0, backoff: 1000, status: "", statusText: "Not joined",
       draft: read(`draft.${entry.id}`, ""), outbox: read(`outbox.${entry.id}`, null)};
     if (typeof room.draft !== "string" || (room.outbox && (typeof room.outbox.id !== "string" || typeof room.outbox.text !== "string")))
       throw new Error(`The saved draft for ${room.name} is damaged`);
+    if (room.outbox && !room.outbox.author) {
+      room.outbox.author = legacyAuthor;
+      save(`outbox.${room.id}`, room.outbox);
+    }
     rooms.set(room.id, room);
   }
   drawChannels();
@@ -345,7 +376,12 @@ async function boot() {
     $("room-info").disabled = true; return;
   }
   await Promise.all([...rooms.values()].map(async room => {
-    try {room.session = await api(endpoint(room, "session"));}
+    try {
+      room.session = await api(endpoint(room, "session"));
+      if (accountMode && room.session.author !== device.publicKey)
+        throw new Error("The saved room session belongs to a different device key. Restore its browser profile or leave the room before signing in.");
+      if (accountMode) {name = room.session.name; setProfile();}
+    }
     catch (error) {if (error.status !== 401) throw error;}
   }));
   const chosen = read("channel", null);
@@ -358,15 +394,28 @@ async function boot() {
 $("join-form").addEventListener("submit", async event => {
   event.preventDefault();
   const room = active, display = $("display-name").value.trim();
-  if (!validName(display)) {
+  const username = $("account-username").value.trim();
+  if (accountMode && !/^[a-z0-9][a-z0-9_-]{2,63}$/.test(username)) {
+    $("join-error").textContent = "Use the lowercase username assigned by your room operator.";
+    $("join-error").hidden = false; $("account-username").setAttribute("aria-invalid", "true");
+    $("account-username").focus(); return;
+  }
+  if (!accountMode && !validName(display)) {
     $("join-error").textContent = "Use 1–24 UTF-8 bytes, without colons or control characters.";
     $("join-error").hidden = false;
     $("display-name").setAttribute("aria-invalid", "true"); $("display-name").focus(); return;
   }
   $("join-button").disabled = true; $("join-error").hidden = true;
   try {
-    const session = await api(endpoint(room, "login"), {identity, name: display, password: $("room-password").value});
-    save("name", display); name = display; setProfile();
+    let body = {identity, name: display, password: $("room-password").value};
+    if (accountMode) {
+      const challenge = await api(endpoint(room, "challenge"), {username, publicKey: device.publicKey});
+      const signature = await signChallenge(device, challenge, location.origin, room.id, username);
+      body = {username, publicKey: device.publicKey, nonce: challenge.nonce, signature, password: $("room-password").value};
+    }
+    const session = await api(endpoint(room, "login"), body);
+    save("name", session.name); name = session.name; setProfile();
+    if (accountMode) save("username", username);
     room.session = session;
     room.messages.clear(); room.loaded = false; room.cursor = 0;
     drawChannels();
@@ -379,7 +428,7 @@ $("join-form").addEventListener("submit", async event => {
       $("join-error").textContent = error.message; $("join-error").hidden = false;
       if (error.status === 403) {$("room-password").setAttribute("aria-invalid", "true"); $("room-password").focus();}
     } else report(new Error(`${room.name}: ${error.message}`));
-  } finally {$("join-button").disabled = false;}
+  } finally {$("join-button").disabled = false; $("room-password").value = "";}
 });
 $("compose-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -387,7 +436,7 @@ $("compose-form").addEventListener("submit", async event => {
   const text = $("message-input").value;
   if (!text.trim() || postBytes(active.session.name, text) > MAX_BYTES) return;
   try {
-    const post = {id: crypto.randomUUID(), text};
+    const post = {id: crypto.randomUUID(), text, author: active.session.author};
     save(`outbox.${active.id}`, post);
     active.outbox = post;
     await transmit(active);
@@ -411,6 +460,7 @@ $("load-older").addEventListener("click", async () => {
     const first = Math.min(...room.messages.keys());
     const oldHeight = $("timeline").scrollHeight, oldTop = $("timeline").scrollTop;
     const page = await api(endpoint(room, "history") + `?before=${first}`);
+    mergeProfiles(room.profiles, page.profiles ?? []);
     room.hasEarlier = page.more;
     receive(room, page.messages);
     if (room === active) {$("timeline").scrollTop = oldTop + $("timeline").scrollHeight - oldHeight; $("load-older").hidden = !page.more;}
@@ -433,7 +483,7 @@ document.addEventListener("keydown", event => {
   if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus();}
   else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}
 });
-for (const id of ["display-name", "room-password", "profile-input"]) {
+for (const id of ["account-username", "display-name", "room-password", "profile-input"]) {
   $(id).addEventListener("input", () => $(id).removeAttribute("aria-invalid"));
 }
 $("notice-dismiss").addEventListener("click", () => {$("notice").hidden = true;});
@@ -441,7 +491,7 @@ $("room-info").addEventListener("click", () => {
   if (!active) return;
   $("detail-name").textContent = active.name; $("detail-alias").textContent = active.id;
   $("detail-key").textContent = active.publicKey;
-  $("detail-author").textContent = active.session?.author ?? "Join this room to create your web identity.";
+  $("detail-author").textContent = active.session?.author ?? device?.publicKey ?? "Join this room to create your web identity.";
   $("leave-room").hidden = !active.session; $("details-dialog").showModal();
 });
 $("close-details").addEventListener("click", () => $("details-dialog").close());

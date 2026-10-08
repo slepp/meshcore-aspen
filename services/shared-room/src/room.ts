@@ -1,8 +1,9 @@
 import {DurableObject} from "cloudflare:workers";
 import {aliases, ApiError, authorize, credential, equalToken, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
-import {RadioCodec, opaque, OPAQUE_PROTOCOL} from "./native";
-import {base64, unbase64} from "./native-crypto";
+import {RadioCodec, opaque, OPAQUE_PROTOCOL, type ParticipantProfile} from "./native";
+import {base64, fromHex, unbase64} from "./native-crypto";
+import {accountCredential, checkPassword, deviceChallenge, DEVICE_PROTOCOL, username, webUsers} from "./accounts";
 import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOrigin, sequence, sessionCookie,
   webBody, webCredential, webPath, webResponse, webText, WEB_PROTOCOL, WEB_SESSION_SECONDS,
   type WebConnection, type WebSession} from "./web";
@@ -26,6 +27,7 @@ const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend
 const MAX_FRAME = 4096;
 const WIRE_PROTOCOL = "aspen-room.v1.json";
 const HISTORY_TURNAROUND_MS = 1500;
+const PROFILE_COLUMNS = "public_key AS publicKey, name, advert_type AS advertType, timestamp, source";
 const textEncoder = new TextEncoder();
 
 function string(value: unknown, name: string, max: number): string {
@@ -96,12 +98,25 @@ export class Room extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS web_login_limits (
         address TEXT PRIMARY KEY, start INTEGER NOT NULL, attempts INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS profiles (
+        public_key TEXT PRIMARY KEY, name TEXT NOT NULL, advert_type INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL, source TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS web_challenges (
+        nonce TEXT PRIMARY KEY, alias TEXT NOT NULL, username TEXT NOT NULL,
+        public_key TEXT NOT NULL, expires INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS web_devices (
+        public_key TEXT PRIMARY KEY, username TEXT NOT NULL
+      );
     `);
     // Additive migration preserves existing messages, sessions and dispatches.
     if (!this.rows<{name: string}>("PRAGMA table_info(pending)").some(c => c.name === "require_path_ack"))
       this.sql.exec("ALTER TABLE pending ADD COLUMN require_path_ack INTEGER NOT NULL DEFAULT 0");
     if (!this.rows<{name: string}>("PRAGMA table_info(messages)").some(c => c.name === "web_name"))
       this.sql.exec("ALTER TABLE messages ADD COLUMN web_name TEXT");
+    if (!this.rows<{name: string}>("PRAGMA table_info(web_sessions)").some(c => c.name === "username"))
+      this.sql.exec("ALTER TABLE web_sessions ADD COLUMN username TEXT");
   }
 
   private rows<T>(query: string, ...params: SqlStorageValue[]): T[] {
@@ -286,6 +301,25 @@ export class Room extends DurableObject<Env> {
     const configured = aliases(this.env);
     const grant = (JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]}>)[c.frontend];
     const identities = grant.aliases.map(alias => this.codec.identity(alias, frontendRegion(this.env, c.frontend)));
+    const profile = this.codec.profile(wire, this.codec.identity(c.alias, frontendRegion(this.env, c.frontend)));
+    if (profile) {
+      const changed = this.ctx.storage.transactionSync(() => {
+        const previous = this.rows<ParticipantProfile>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE public_key=?`, profile.publicKey)[0];
+        if (previous && previous.timestamp >= profile.timestamp) return false;
+        this.sql.exec(`INSERT INTO profiles VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(public_key) DO UPDATE SET name=excluded.name, advert_type=excluded.advert_type,
+          timestamp=excluded.timestamp, source=excluded.source`,
+          profile.publicKey, profile.name, profile.advertType, profile.timestamp, profile.source);
+        this.sql.exec(`DELETE FROM profiles WHERE public_key IN
+          (SELECT public_key FROM profiles ORDER BY timestamp DESC, public_key LIMIT -1 OFFSET 4096)`);
+        return true;
+      });
+      if (changed) {
+        await this.ctx.storage.sync();
+        await this.publishProfile(profile);
+      }
+      return {accepted: true};
+    }
     const decoded = await this.codec.decode(wire, identities, async (alias, prefix) => {
       const backend = configured[alias].backend;
       if (this.ctx.id.equals(this.env.ROOMS.idFromName(backend))) return this.nativeMembers(alias, prefix, c.frontend);
@@ -524,6 +558,26 @@ export class Room extends DurableObject<Env> {
     return limit ? Math.max(0, latest - limit) : 0;
   }
 
+  private profilesFor(messages: Message[]): ParticipantProfile[] {
+    return [...new Set(messages.map(m => m.author))].flatMap(author =>
+      this.rows<ParticipantProfile>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE public_key=?`, author));
+  }
+
+  private async publishProfile(profile: ParticipantProfile): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const connection = ws.deserializeAttachment() as Connection | WebConnection;
+      if (!isWebConnection(connection)) continue;
+      try {
+        await this.validWebSession(connection);
+        this.send(ws, {type: "profile", profile});
+      } catch (error) {
+        if (!(error instanceof ApiError)) console.error("Room profile delivery failed", error);
+        ws.close(error instanceof ApiError ? 1008 : 1011, "Room profile connection failed");
+      }
+    }
+  }
+
   private webAlias(alias: string) {
     const config = aliases(this.env)[alias];
     if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend))) fail(403, "Room does not belong to this backend");
@@ -534,8 +588,11 @@ export class Room extends DurableObject<Env> {
   private async validWebSession(session: WebSession): Promise<WebSession> {
     const config = this.webAlias(session.alias);
     const found = this.rows<WebSession>("SELECT * FROM web_sessions WHERE token=? AND alias=?", session.token, session.alias)[0];
-    if (!found || found.expires <= Math.floor(Date.now() / 1000) ||
-        found.credential !== await webCredential(config) || found.author !== session.author) fail(401, "Room access expired; join again");
+    const users = webUsers(this.env);
+    if (!found || found.expires <= Math.floor(Date.now() / 1000) || found.author !== session.author ||
+        (users === undefined ? !!found.username || found.credential !== await webCredential(config) :
+          !found.username || found.credential !== await accountCredential(this.env, session.alias, found.username)))
+      fail(401, "Room access expired; sign in again");
     return found;
   }
 
@@ -550,11 +607,11 @@ export class Room extends DurableObject<Env> {
     const config = this.webAlias(alias);
     const url = new URL(request.url);
     const now = Math.floor(Date.now() / 1000);
-    if (endpoint === "login") {
+    if (endpoint === "login" || endpoint === "challenge") {
       if (request.method !== "POST") fail(405, "POST required");
       sameOrigin(request);
       const body = await webBody(request);
-      const address = await credential(request.headers.get("CF-Connecting-IP") ?? "local");
+      const address = await credential(`${endpoint}:${request.headers.get("CF-Connecting-IP") ?? "local"}`);
       const permitted = this.ctx.storage.transactionSync(() => {
         this.sql.exec("DELETE FROM web_login_limits WHERE start<?", now - 60);
         this.sql.exec(`INSERT INTO web_login_limits VALUES (?, ?, 1)
@@ -562,27 +619,77 @@ export class Room extends DurableObject<Env> {
         return this.rows<{attempts: number}>("SELECT attempts FROM web_login_limits WHERE address=?", address)[0].attempts <= 10;
       });
       if (!permitted) fail(429, "Too many room login attempts; wait one minute");
-      const password = typeof body.password === "string" && wellFormed(body.password) && textEncoder.encode(body.password).length <= 256 ? body.password : undefined;
-      if (password === undefined || !equalToken(password, config.password)) fail(403, "Incorrect room password");
-      const identity = hex(body.identity, "browser identity", 32);
-      const name = displayName(body.name);
-      const author = await credential(`aspen-web-author:${identity}`);
+      const users = webUsers(this.env);
+      if (endpoint === "challenge") {
+        if (users === undefined) fail(503, "Operator accounts are not configured on this room service");
+        const user = username(body.username), publicKey = hex(body.publicKey, "device public key", 32);
+        const nonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+        const message = deviceChallenge(url.origin, alias, user, publicKey, nonce);
+        this.ctx.storage.transactionSync(() => {
+          this.sql.exec("DELETE FROM web_challenges WHERE expires<=?", now);
+          if (this.rows<{n: number}>("SELECT COUNT(*) AS n FROM web_challenges")[0].n >= 4096)
+            fail(429, "Room login queue is full; wait two minutes");
+          this.sql.exec("INSERT INTO web_challenges VALUES (?, ?, ?, ?, ?)", nonce, alias, user, publicKey, now + 120);
+        });
+        await this.ctx.storage.sync();
+        return webResponse({nonce, message, expires: now + 120, protocol: DEVICE_PROTOCOL});
+      }
+      let author: string, name: string, user: string | undefined, sessionCredential: string;
+      if (users !== undefined) {
+        user = username(body.username);
+        const account = users[user], publicKey = hex(body.publicKey, "device public key", 32);
+        const nonce = hex(body.nonce, "device login challenge", 32), signature = hex(body.signature, "device signature", 64);
+        const challenge = this.ctx.storage.transactionSync(() => {
+          const saved = this.rows<{alias: string; username: string; public_key: string; expires: number}>(
+            "SELECT * FROM web_challenges WHERE nonce=?", nonce)[0];
+          this.sql.exec("DELETE FROM web_challenges WHERE nonce=?", nonce);
+          return saved;
+        });
+        await this.ctx.storage.sync();
+        if (!challenge || challenge.expires <= now || challenge.alias !== alias || challenge.username !== user ||
+            challenge.public_key !== publicKey || !this.codec.crypto.verify(fromHex(publicKey), fromHex(signature),
+              textEncoder.encode(deviceChallenge(url.origin, alias, user, publicKey, nonce))))
+          fail(403, "Device ownership check failed; request a new login challenge");
+        if (!await checkPassword(body.password, account) || !account.aliases.includes(alias))
+          fail(403, "Incorrect username, password or room access");
+        const owner = this.rows<{username: string}>("SELECT username FROM web_devices WHERE public_key=?", publicKey)[0];
+        if (owner && owner.username !== user) fail(409, "This desktop key belongs to another account; use a separate browser profile or client state directory");
+        this.sql.exec("INSERT OR IGNORE INTO web_devices VALUES (?, ?)", publicKey, user);
+        author = publicKey; name = account.name;
+        sessionCredential = await accountCredential(this.env, alias, user);
+      } else {
+        const password = typeof body.password === "string" && wellFormed(body.password) && textEncoder.encode(body.password).length <= 256 ? body.password : undefined;
+        if (password === undefined || !equalToken(password, config.password)) fail(403, "Incorrect room password");
+        const identity = hex(body.identity, "browser identity", 32);
+        name = displayName(body.name);
+        author = await credential(`aspen-web-author:${identity}`);
+        sessionCredential = await webCredential(config);
+      }
       // A hex token avoids URL/cookie encoding and is never put in a socket URL.
       const cookie = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
       const session: WebSession = {token: await credential(cookie), alias, author, name,
-        credential: await webCredential(config), expires: now + WEB_SESSION_SECONDS};
+        credential: sessionCredential, expires: now + WEB_SESSION_SECONDS, username: user ?? null};
+      let profile: ParticipantProfile | undefined;
       this.ctx.storage.transactionSync(() => {
         this.sql.exec("DELETE FROM web_sessions WHERE expires<=? OR (alias=? AND author=?)", now, alias, author);
-        this.sql.exec("INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?, ?)",
-          session.token, alias, author, name, session.credential, session.expires);
+        this.sql.exec("INSERT INTO web_sessions(token,alias,author,name,credential,expires,username) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          session.token, alias, author, name, session.credential, session.expires, session.username ?? null);
+        if (user) {
+          const previous = this.rows<ParticipantProfile>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE public_key=?`, author)[0];
+          profile = {publicKey: author, name, advertType: 1, timestamp: Math.max(now, (previous?.timestamp ?? 0) + 1), source: "desktop"};
+          this.sql.exec(`INSERT INTO profiles VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(public_key) DO UPDATE SET name=excluded.name, advert_type=excluded.advert_type,
+            timestamp=excluded.timestamp, source=excluded.source`, author, name, 1, profile.timestamp, profile.source);
+        }
       });
       await this.ctx.storage.sync();
-      return webResponse({author, name, expires: session.expires, maxPostBytes: POST_BYTES}, 200, sessionCookie(alias, cookie));
+      if (profile) await this.publishProfile(profile);
+      return webResponse({author, name, username: session.username, expires: session.expires, maxPostBytes: POST_BYTES}, 200, sessionCookie(alias, cookie));
     }
     const session = await this.browserSession(request, alias);
     if (endpoint === "session") {
       if (request.method !== "GET") fail(405, "GET required");
-      return webResponse({author: session.author, name: session.name, expires: session.expires, maxPostBytes: POST_BYTES});
+      return webResponse({author: session.author, name: session.name, username: session.username ?? null, expires: session.expires, maxPostBytes: POST_BYTES});
     }
     if (endpoint === "logout") {
       if (request.method !== "POST") fail(405, "POST required");
@@ -612,7 +719,7 @@ export class Room extends DurableObject<Env> {
         more = rows.length > PAGE_SIZE;
         messages = rows.slice(0, PAGE_SIZE).reverse();
       }
-      return webResponse({messages, more, floor});
+      return webResponse({messages, more, floor, profiles: this.profilesFor(messages)});
     }
     if (endpoint === "posts") {
       if (request.method !== "POST") fail(405, "POST required");
@@ -656,6 +763,7 @@ export class Room extends DurableObject<Env> {
     const cursor = Math.max(connection.cursor, this.historyFloor());
     const messages = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? ORDER BY seq LIMIT ?`, cursor, PAGE_SIZE + 1);
     for (const message of messages.slice(0, PAGE_SIZE)) {
+      for (const profile of this.profilesFor([message])) this.send(ws, {type: "profile", profile});
       this.send(ws, {type: "message", message});
       connection.cursor = message.seq;
     }

@@ -54,7 +54,8 @@ export function nativeConfig(independent = false, regional = false) {
         },
       }),
     ],
-    test: { include: [regional ? "test/native-region.test.ts" : independent ? "test/native-independent.test.ts" : "test/native-room.test.ts"], testTimeout: 10000 },
+    test: { include: regional ? ["test/native-region.test.ts"] : independent ? ["test/native-independent.test.ts"] :
+      ["test/native-room.test.ts", "test/profiles.test.ts"], testTimeout: 10000 },
   });
 }
 export default nativeConfig();

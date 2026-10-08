@@ -41,6 +41,34 @@ jobs:
         run: |
           make -C firmware/shared/cloudroom "$(pwd)/.tmp/cloudroom-wire/opaque"
           .tmp/cloudroom-wire/opaque
+  room-tui:
+    name: Room terminal client and Worker integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: clients/room-tui/go.mod
+          cache-dependency-path: clients/room-tui/go.sum
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/shared-room/package-lock.json
+      - name: Install local Worker dependencies
+        working-directory: services/shared-room
+        run: npm ci
+      - name: Check terminal client
+        working-directory: clients/room-tui
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          go test -race ./...
+          go vet ./...
+          node test/worker.mjs
   offline:
     name: Linux offline checks
     runs-on: ubuntu-24.04

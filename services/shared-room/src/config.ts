@@ -9,6 +9,7 @@ export interface Env {
   HISTORY_LIMIT?: string;
   MODE?: string;
   ROOM_KEYS?: string;
+  WEB_USERS?: string;
   ASSETS?: Fetcher;
 }
 export interface Connection {alias: string; frontend: string; credential: string}

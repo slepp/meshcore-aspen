@@ -1,5 +1,6 @@
 import {aliases, authorize, errorResponse, fail, type Env} from "./config";
 import {POST_BYTES, webPath, webResponse} from "./web";
+import {DEVICE_PROTOCOL, webUsers} from "./accounts";
 export {Room} from "./room";
 
 export default {
@@ -8,7 +9,8 @@ export default {
       const path = new URL(request.url).pathname;
       if (path === "/v1/web/rooms" && request.method === "GET") {
         return webResponse({rooms: Object.entries(aliases(env)).map(([id, a]) =>
-          ({id, name: a.name, publicKey: a.publicKey})), maxPostBytes: POST_BYTES});
+          ({id, name: a.name, publicKey: a.publicKey})), maxPostBytes: POST_BYTES,
+          loginMode: webUsers(env) === undefined ? "room-password" : "account", deviceProtocol: DEVICE_PROTOCOL});
       }
       const browser = webPath(path);
       const match = browser ?? path.match(/^\/v1\/aliases\/([a-zA-Z0-9_-]{1,64})\/(socket|operations)$/);
