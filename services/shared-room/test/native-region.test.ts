@@ -1,5 +1,5 @@
 import {expect, it} from "vitest";
-import {evictDurableObject} from "cloudflare:test";
+import {evictDurableObject, runDurableObjectAlarm, runInDurableObject} from "cloudflare:test";
 import {bindings, fixture, rf, http, connect, state, history} from "./native-helpers";
 import {base64, unbase64, join} from "../src/native-crypto";
 import {packet} from "../src/native";
@@ -39,6 +39,13 @@ it("authenticates scoped flood/direct packets and preserves scope on login, catc
   await expectScope(first);
   const received = history(first);
   expect(received.text).toBe("hello");
+  await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, state) =>
+    state.storage.sql.exec("UPDATE pending SET retry_at=?", Date.now() - 1));
+  expect(await runDurableObjectAlarm(bindings.ROOMS.getByName("native"))).toBe(true);
+  const retry = await two.next("scoped retry");
+  await expectScope(retry);
+  expect(history(retry).text).toBe(received.text);
+  expect(history(retry).ack).not.toBe(received.ack);
   // Native companions send their PATH+ACK using their configured public scope.
   await rf("two", await scoped(received.pathAck));
   expect((await state()).pending).toHaveLength(0);

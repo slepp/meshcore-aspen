@@ -87,5 +87,7 @@ node test/worker.mjs
 The second command starts an isolated local Worker with public fixture keys,
 checks Go signatures against its native verifier, drops a committed post's
 response to check same-ID recovery, and drives login, send, resize, quit and
-restart through a PTY. It uses no production credentials and sends nothing
+restart through a PTY. It also waits for a real Worker alarm to retry native
+history after a missing ACK, without another client request. It uses no
+production credentials and sends nothing
 over RF. It removes its local Worker state and test binary on completion.

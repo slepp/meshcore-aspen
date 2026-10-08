@@ -1,7 +1,8 @@
 import {expect, it} from "vitest";
 import {SELF, runInDurableObject, evictDurableObject} from "cloudflare:test";
-import {bindings, crypto as nativeCrypto, fixture, rf, sockets} from "./native-helpers";
-import {fromHex, toHex} from "../src/native-crypto";
+import {bindings, crypto as nativeCrypto, fixture, rf, sockets, connect, history, state, seal} from "./native-helpers";
+import {fromHex, toHex, join as bytes} from "../src/native-crypto";
+import {le32} from "../src/native";
 import {accountCredential, checkPassword, deviceChallenge, webUsers} from "../src/accounts";
 import {webRequest, webPost, webSocket, origin} from "./web-helpers";
 
@@ -99,4 +100,56 @@ it("matches browser/standard Ed25519 ownership proofs with native MeshCore verif
   expect(response.status, await response.clone().text()).toBe(200);
   expect(await checkPassword("fixture password only", webUsers(bindings)!.alice)).toBe(true);
   expect(await checkPassword("fixture password only")).toBe(false);
+});
+
+it("keeps native radio delivery working after an account browser reload and Durable Object wake", async () => {
+  const radio = await connect("one");
+  await rf("one", fixture.readerLogin);
+  await rf("one", fixture.path);
+  const account = await join();
+  const browser = await webSocket("A", account.cookie, sockets);
+  const first = await webPost("A", account.cookie, "before reload");
+  const firstRadio = history(await radio.next("account post before reload"));
+  expect(firstRadio.text).toBe(first.message.text);
+  expect((await rf("one", firstRadio.ack)).accepted).toBe(true);
+  browser.ws.close();
+  await evictDurableObject(bindings.ROOMS.getByName("native"));
+  const restored = await webRequest("A", "session", account.cookie);
+  expect(restored.status).toBe(200);
+  expect(await restored.json()).toMatchObject({author: account.author, username: "alice"});
+  await webSocket("A", account.cookie, sockets, first.message.seq);
+  const second = await webPost("A", account.cookie, "after reload");
+  const secondRadio = history(await radio.next("account post after reload"));
+  expect(secondRadio.text).toBe(second.message.text);
+  expect((await rf("one", secondRadio.ack)).accepted).toBe(true);
+  expect((await state()).sessions.find(s => s.client === fixture.reader.publicKey)?.cursor).toBe(second.message.seq);
+  expect((await state()).pending).toHaveLength(0);
+});
+
+it("holds later account posts behind a missing native ACK until a fresh radio login, not a browser reload", async () => {
+  const radio = await connect("one");
+  await rf("one", fixture.readerLogin);
+  const account = await join();
+  const browser = await webSocket("A", account.cookie, sockets);
+  const first = await webPost("A", account.cookie, "waiting for the radio ACK");
+  const missingAck = history(await radio.next("unconfirmed native history"));
+  expect(missingAck.text).toBe(first.message.text);
+  const pending = (await state()).pending;
+  browser.ws.close();
+  await evictDurableObject(bindings.ROOMS.getByName("native"));
+  await webSocket("A", account.cookie, sockets, first.message.seq);
+  const second = await webPost("A", account.cookie, "queued after reload");
+  expect((await state()).pending).toEqual(pending);
+  expect(radio.inbox).toHaveLength(0);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const login = seal(fixture.room, fixture.reader, 7,
+    bytes(le32(timestamp), le32(0), new TextEncoder().encode("room\0")));
+  expect((await rf("one", login)).accepted).toBe(true);
+  const replay = history(await radio.next("fresh radio login replays unconfirmed history"));
+  expect(replay.text).toBe(first.message.text);
+  expect((await rf("one", replay.ack)).accepted).toBe(true);
+  const queued = history(await radio.next("later account post after radio ACK"));
+  expect(queued.text).toBe(second.message.text);
+  expect((await rf("one", queued.ack)).accepted).toBe(true);
+  expect((await state()).pending).toHaveLength(0);
 });

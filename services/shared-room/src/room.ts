@@ -20,13 +20,15 @@ interface Session {
 interface Pending {
   alias: string; client: string; deliveryId: string; seq: number;
   frontend: string; proof: string | null; state: string; requirePathAck: number;
+  proofs: string; retryAt: number; retryCount: number; retryBinding: string | null; dispatchId: string | null;
 }
 const MESSAGE_COLUMNS = "seq, timestamp, origin_alias AS originAlias, author, client_timestamp AS clientTimestamp, text, web_name AS webName";
 const SESSION_COLUMNS = "alias, client, cursor, last_timestamp AS lastTimestamp, frontend, route";
-const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state, require_path_ack AS requirePathAck";
+const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state, require_path_ack AS requirePathAck, proofs, retry_at AS retryAt, retry_count AS retryCount, retry_binding AS retryBinding, dispatch_id AS dispatchId";
 const MAX_FRAME = 4096;
 const WIRE_PROTOCOL = "aspen-room.v1.json";
 const HISTORY_TURNAROUND_MS = 1500;
+export const HISTORY_RETRY_DELAYS = [30000, 60000, 120000] as const;
 const PROFILE_COLUMNS = "public_key AS publicKey, name, advert_type AS advertType, timestamp, source";
 const textEncoder = new TextEncoder();
 
@@ -50,6 +52,14 @@ function route(value: unknown): string {
     if (decoded.length > 255 || btoa(decoded) !== encoded) fail(400, "Invalid base64 return route");
   } catch {fail(400, "Invalid base64 return route");}
   return encoded;
+}
+
+function pendingProofs(pending: Pending): string[] {
+  const proofs: unknown = JSON.parse(pending.proofs);
+  if (!Array.isArray(proofs) || proofs.length > 4 || proofs.some(proof => typeof proof !== "string" || !/^[a-f0-9]{8}$/.test(proof)) ||
+      new Set(proofs).size !== proofs.length || pending.proof && proofs.length === 4 && !proofs.includes(pending.proof))
+    throw new Error("Invalid stored history ACK proofs");
+  return pending.proof && !proofs.includes(pending.proof) ? [...proofs, pending.proof] : proofs;
 }
 
 /** One canonical history. Advertised identities have separate sessions and ACKs. */
@@ -76,6 +86,8 @@ export class Room extends DurableObject<Env> {
         alias TEXT NOT NULL, client TEXT NOT NULL, delivery_id TEXT NOT NULL,
         seq INTEGER NOT NULL, frontend TEXT NOT NULL, proof TEXT, state TEXT NOT NULL,
         require_path_ack INTEGER NOT NULL DEFAULT 0,
+        proofs TEXT NOT NULL DEFAULT '[]', retry_at INTEGER NOT NULL DEFAULT 0,
+        retry_count INTEGER NOT NULL DEFAULT 0, retry_binding TEXT, dispatch_id TEXT,
         PRIMARY KEY(alias, client)
       );
       CREATE TABLE IF NOT EXISTS attempts (
@@ -113,6 +125,13 @@ export class Room extends DurableObject<Env> {
     // Additive migration preserves existing messages, sessions and dispatches.
     if (!this.rows<{name: string}>("PRAGMA table_info(pending)").some(c => c.name === "require_path_ack"))
       this.sql.exec("ALTER TABLE pending ADD COLUMN require_path_ack INTEGER NOT NULL DEFAULT 0");
+    const pendingColumns = new Set(this.rows<{name: string}>("PRAGMA table_info(pending)").map(c => c.name));
+    for (const [name, definition] of [
+      ["proofs", "TEXT NOT NULL DEFAULT '[]'"], ["retry_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["retry_count", "INTEGER NOT NULL DEFAULT 0"], ["retry_binding", "TEXT"], ["dispatch_id", "TEXT"],
+    ]) {
+      if (!pendingColumns.has(name)) this.sql.exec(`ALTER TABLE pending ADD COLUMN ${name} ${definition}`);
+    }
     if (!this.rows<{name: string}>("PRAGMA table_info(messages)").some(c => c.name === "web_name"))
       this.sql.exec("ALTER TABLE messages ADD COLUMN web_name TEXT");
     if (!this.rows<{name: string}>("PRAGMA table_info(web_sessions)").some(c => c.name === "username"))
@@ -266,7 +285,7 @@ export class Room extends DurableObject<Env> {
       if (s.frontend === frontend) member.route = s.route;
       const p = this.pending(alias, s.client);
       if (p?.frontend === frontend) member.pending = {deliveryId: p.deliveryId, proof: p.proof, state: p.state,
-        requirePathAck: !!p.requirePathAck || this.needsPathAck()};
+        proofs: pendingProofs(p), requirePathAck: !!p.requirePathAck || this.needsPathAck()};
       return member;
     });
   }
@@ -290,7 +309,11 @@ export class Room extends DurableObject<Env> {
       // First terminal receipt wins. It never proves client reception.
       if (d.state === "prepared") {
         this.sql.exec("UPDATE dispatches SET state=? WHERE id=?", op.outcome!, id);
-        if (d.client && d.delivery_id) this.run(c, {op: "receipt", client: d.client, deliveryId: d.delivery_id, outcome: op.outcome as "sent" | "failed" | "unknown"});
+        if (d.client && d.delivery_id) {
+          const pending = this.pending(c.alias, d.client);
+          if (!pending?.dispatchId || pending.dispatchId === id)
+            this.run(c, {op: "receipt", client: d.client, deliveryId: d.delivery_id, outcome: op.outcome as "sent" | "failed" | "unknown"});
+        }
       }
       return {accepted: true};
     }
@@ -401,7 +424,7 @@ export class Room extends DurableObject<Env> {
         if (operation.proof !== undefined) {
           const p = this.pending(c.alias, client);
           if (!p || p.frontend !== c.frontend || p.deliveryId !== operation.deliveryId ||
-              p.proof !== hex(operation.proof, "ACK proof", 4)) fail(403, "PATH ACK does not match this delivery");
+              !pendingProofs(p).includes(hex(operation.proof, "ACK proof", 4))) fail(403, "PATH ACK does not match this delivery");
           this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
           this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
         }
@@ -455,7 +478,7 @@ export class Room extends DurableObject<Env> {
         this.sql.exec("UPDATE pending SET state=? WHERE alias=? AND client=?", operation.outcome, c.alias, client);
         return {};
       }
-      if (!p.proof || hex(operation.proof, "ACK proof", 4) !== p.proof) fail(403, "ACK proof does not match this delivery");
+      if (!p.proof || !pendingProofs(p).includes(hex(operation.proof, "ACK proof", 4))) fail(403, "ACK proof does not match this delivery");
       if (p.requirePathAck || (opaque(this.env) && this.needsPathAck())) fail(403, "This delivery requires an authenticated PATH ACK");
       this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
       this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
@@ -463,8 +486,35 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  /** Only new deliveries are pushed. Prepared/uncertain deliveries await client activity. */
-  private async pump(): Promise<void> {
+  async alarm(): Promise<void> {
+    await this.pump(true);
+  }
+
+  private historyBinding(connection: Connection): string {
+    return JSON.stringify([connection.credential, frontendRegion(this.env, connection.frontend) ?? null]);
+  }
+
+  private async scheduleHistoryRetry(sockets: Map<string, WebSocket>): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (!opaque(this.env)) {
+      if (current !== null) await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    let next: number | undefined;
+    for (const pending of this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending WHERE retry_at>0`)) {
+      const ws = sockets.get(`${pending.alias}:${pending.frontend}`);
+      if (!ws || pending.retryBinding !== this.historyBinding(ws.deserializeAttachment() as Connection)) continue;
+      if (next === undefined || pending.retryAt < next) next = pending.retryAt;
+    }
+    if (next === undefined) {
+      if (current !== null) await this.ctx.storage.deleteAlarm();
+    } else {
+      const at = Math.max(next, Date.now() + 1000);
+      if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+    }
+  }
+
+  private async pump(retryDue = false): Promise<void> {
     const sockets = new Map<string, WebSocket>();
     const configuredAliases = aliases(this.env);
     const configuredFrontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
@@ -492,12 +542,44 @@ export class Room extends DurableObject<Env> {
         const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", p.alias)[0];
         if (alias && configuredFrontends[p.frontend]?.aliases.includes(p.alias) &&
             this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend)) && bound?.public_key === alias.publicKey)
-          occupied.add(p.proof!);
+          for (const proof of pendingProofs(p)) occupied.add(proof);
       }
       const floor = this.historyFloor();
       for (const s of this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions`)) {
         const ws = sockets.get(`${s.alias}:${s.frontend}`);
-        if (!ws || this.pending(s.alias, s.client)) continue;
+        if (!ws) continue;
+        const connection = ws.deserializeAttachment() as Connection;
+        const pending = this.pending(s.alias, s.client);
+        if (pending) {
+          if (!retryDue || !opaque(this.env) || pending.frontend !== s.frontend || pending.retryAt <= 0 ||
+              pending.retryAt > Date.now() || pending.retryBinding !== this.historyBinding(connection)) continue;
+          if (pending.retryCount >= HISTORY_RETRY_DELAYS.length) {
+            this.sql.exec("UPDATE pending SET retry_at=0 WHERE alias=? AND client=?", s.alias, s.client);
+            continue;
+          }
+          const message = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq=?`, pending.seq)[0];
+          if (!message) throw new Error("Pending radio history message is missing");
+          const pathAck = !!pending.requirePathAck || requirePathAck;
+          const proofs = new Set(pathAck ? pendingProofs(pending) : occupied);
+          const delivery: Delivery = {type: "delivery", alias: s.alias, client: s.client, deliveryId: pending.deliveryId,
+            route: pathAck ? base64(new Uint8Array([1, 0, 0x80])) : s.route, message};
+          const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
+          if (!encoded) {
+            this.sql.exec("UPDATE pending SET retry_at=0 WHERE alias=? AND client=?", s.alias, s.client);
+            console.warn("Radio history retry paused: native ACK attempt space is occupied", s.alias, s.client.slice(0, 8), pending.seq);
+            continue;
+          }
+          occupied.add(encoded.proof);
+          const retryCount = pending.retryCount + 1;
+          const retryAt = retryCount < HISTORY_RETRY_DELAYS.length ? Date.now() + HISTORY_RETRY_DELAYS[retryCount] : 0;
+          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, pending.deliveryId);
+          this.sql.exec(`UPDATE pending SET proof=?, proofs=?, state='prepared', require_path_ack=?,
+            retry_at=?, retry_count=?, dispatch_id=? WHERE alias=? AND client=?`,
+            encoded.proof, JSON.stringify([...pendingProofs(pending), encoded.proof]), pathAck ? 1 : 0,
+            retryAt, retryCount, transmit.dispatchId, s.alias, s.client);
+          dispatches.push({ws, delivery: transmit});
+          continue;
+        }
         let cursor = Math.max(s.cursor, floor);
         let message: Message | undefined;
         while ((message = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? ORDER BY seq LIMIT 1`, cursor)[0])) {
@@ -516,16 +598,19 @@ export class Room extends DurableObject<Env> {
           const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
           if (!encoded) continue;
           proofs.add(encoded.proof);
-          this.sql.exec("INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state, require_path_ack) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?)",
-            s.alias, s.client, deliveryId, message.seq, s.frontend, encoded.proof, requirePathAck ? 1 : 0);
-          dispatches.push({ws, delivery: this.dispatch(ws.deserializeAttachment() as Connection, encoded.wire,
-            HISTORY_TURNAROUND_MS, s.client, deliveryId)});
+          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, deliveryId);
+          this.sql.exec(`INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state, require_path_ack,
+            proofs, retry_at, retry_binding, dispatch_id) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?, ?, ?, ?)`,
+            s.alias, s.client, deliveryId, message.seq, s.frontend, encoded.proof, requirePathAck ? 1 : 0,
+            JSON.stringify([encoded.proof]), Date.now() + HISTORY_RETRY_DELAYS[0], this.historyBinding(connection), transmit.dispatchId);
+          dispatches.push({ws, delivery: transmit});
         } else {
           this.sql.exec("INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state) VALUES (?, ?, ?, ?, ?, NULL, 'queued')", s.alias, s.client, deliveryId, message.seq, s.frontend);
           dispatches.push({ws, delivery});
         }
       }
     });
+    await this.scheduleHistoryRetry(sockets);
     await this.ctx.storage.sync();
     for (const {ws, delivery} of dispatches) this.send(ws, delivery);
     for (const ws of this.ctx.getWebSockets()) {

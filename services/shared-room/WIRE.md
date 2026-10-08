@@ -24,6 +24,14 @@ The Worker
 tries every permitted room/client prefix and requires exactly one native
 MAC-authenticated decode. Bare ACKs are resolved against owned pending proofs
 when all configured aliases share one backend; ambiguous proofs are rejected.
+Each opaque history delivery permits one initial transmission and up to three
+retries after successive 30, 60 and 120 second waits. Retries retain the
+canonical message and selected frontend, use another native attempt-bit value,
+and allocate a fresh dispatch ID. All issued proofs for that delivery remain
+valid and reserved until its native ACK or a fresh client request replaces it.
+Late receipts from an earlier dispatch do not overwrite the current attempt.
+An offline or changed frontend does not transfer the delivery to another
+frontend. See [recovery and retry limits](README.md#coherence-and-recovery).
 Services configuring multiple backends send flooded history through all frontends and require the native
 encrypted PATH+ACK. Its room/client MAC resolves even identical short proofs.
 Mutable packet paths do not affect RF-attempt

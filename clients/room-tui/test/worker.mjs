@@ -57,7 +57,7 @@ try {
     if (Date.now() >= deadline) throw Error("Local Worker startup timed out\n" + output);
     await sleep(100);
   }
-  await command("go", ["test", "-race", "-run", "^TestActualWorker$", "-count=1", "./..."],
+  await command("go", ["test", "-race", "-run", "^TestActualWorker", "-count=1", "./..."],
     {ASPEN_ROOM_TEST_ORIGIN: origin});
   const binary = resolve(scratch, "room-tui");
   await command("go", ["build", "-o", binary, "."]);
@@ -66,7 +66,7 @@ try {
   await writeFile(passwordFile, "fixture password only\n", {mode: 0o600});
   await command("python3", [resolve(root, "test/terminal.py"), binary, origin, "-",
     "--login-only", "alice", passwordFile, "A"], {XDG_CONFIG_HOME: resolve(scratch, "config")});
-  console.log("PASS: native Worker device login, shared history, lost-response UUID recovery and terminal login/post/restart.");
+  console.log("PASS: native Worker device login, shared history, timed RF retry, lost-response UUID recovery and terminal login/post/restart.");
 } finally {
   if (worker && worker.exitCode === null) {
     const closed = once(worker, "exit");

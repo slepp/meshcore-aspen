@@ -51,6 +51,13 @@ exists. The browser never retries an uncertain post automatically and keeps
 its pending post through reloads or an expired login. Rejoin, then check it.
 Changing the display name before checking a committed post does not rewrite it.
 
+If a saved post is slow to reach a companion radio, do not resend it from the
+browser. The radio reader advances only after its native history ACK. Opaque
+radio delivery retries that same stored message up to three times, after
+30, 60 and 120 second waits. If that budget is exhausted, rejoin the room in the
+companion app to resume its pending history; reset its path first if necessary.
+Reloading the browser or sending an advert does not reset that radio state.
+
 Joined channels remain connected while you switch between them. Badges count
 new messages arriving in another channel during this page session. Reopening
 the site restores its selected channel and login cookies, then catches up from

@@ -152,20 +152,37 @@ or authenticated REQ refresh with an increasing timestamp selects the frontend
 hearing it and replaces uncertain pending work. The new frontend uses flood
 until it learns its own PATH; another modem's route is never reused.
 
-After a failed or unknown dispatch, there is no timed takeover or automatic
-RF retransmission. The next fresh client request recovers. Reconnecting a
-frontend also leaves pending dispatches paused. Attachments restore alias,
-frontend and credential fingerprint through hibernation; SQLite restores the
-membership, routes, delivery proofs and cursors. Credentials are rechecked.
-There are no Worker keepalive timers, periodic alarms or proactive replicas.
-Existing clients can use Reset Path/relogin; seamless roaming and exactly-once
-client display are not promised.
+In opaque mode, an unconfirmed history message gets up to **three additional RF
+attempts**, after waits of **30, 60 and 120 seconds**. These are successive waits
+from each dispatch, not absolute times from the first post. Each attempt keeps
+the same reader, selected frontend, alias, author, text, timestamp and sequence;
+only the native attempt bits, ACK proof and dispatch ID change. A valid ACK from
+any of those attempts advances the cursor. TX receipts alone do not. A lost ACK
+can therefore produce a repeated radio packet without another stored post.
+
+Retries survive Worker hibernation. An offline frontend pauses its alarm; the
+same frontend reconnecting with unchanged credentials and public region rearms
+the remaining budget. Another frontend does not take over automatically.
+After the budget is exhausted, a fresh radio login or authenticated history
+request resumes the unconfirmed message. Rejoin the room in the companion app;
+reset its path first if the route has changed. A browser reload or signed advert
+does not reset the radio reader's pending delivery. Do not resend the web post
+to work around an RF delay.
+
+SQLite retains membership, delivery proofs, retry budget and confirmed cursors.
+Older pending deliveries created before this retry policy remain paused until
+their native ACK or a fresh radio request; the additive migration does not
+replay them. Decoded development mode retains manual request-based recovery.
+Worker alarms run only for eligible pending retries, not periodic keepalives,
+replicas or advertisements.
 
 When all configured aliases share one backend, history uses learned
 direct routes. Bare ACKs have only a 32-bit proof; the Worker tries all four
 native attempt-bit variants and reserves distinct active proofs atomically
 across all frontends, since each modem can hear the others' bare ACKs.
-If all four are occupied, that delivery waits for an ACK or fresh request.
+Earlier retry proofs stay reserved until the delivery is ACKed or replaced.
+If all four are occupied, a new delivery waits; an automatic retry pauses
+rather than using an ambiguous proof, and a fresh radio request can recover it.
 
 When the service configures multiple independent backends, all frontends receive history by
 flood, even after learning a direct route. Native clients reply with an

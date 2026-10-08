@@ -1,19 +1,182 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type lostPostResponse struct {
 	base  http.RoundTripper
 	posts int
 	drop  bool
+}
+
+type workerTransmit struct {
+	Type       string `json:"type"`
+	DispatchID string `json:"dispatchId"`
+	Packet     string `json:"packet"`
+	DelayMS    int    `json:"delayMs"`
+}
+
+func workerRadioOperation(t *testing.T, client *roomClient, ctx context.Context, operation any) bool {
+	t.Helper()
+	data, err := json.Marshal(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(ctx, "POST", client.origin+"/v1/aliases/A/operations", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer one")
+	response, err := client.http.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		Accepted bool `json:"accepted"`
+	}
+	if response.StatusCode != 200 || json.NewDecoder(response.Body).Decode(&result) != nil {
+		t.Fatalf("local fixture radio operation failed (%d)", response.StatusCode)
+	}
+	return result.Accepted
+}
+
+func acknowledgeWorkerMessage(t *testing.T, client *roomClient, ctx context.Context, m message, reader string) {
+	t.Helper()
+	public, err := hex.DecodeString(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	author, err := hex.DecodeString(m.Author)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := make([]byte, 9)
+	binary.LittleEndian.PutUint32(body, m.Timestamp)
+	copy(body[5:], author[:4])
+	body = append(body, []byte(m.Text)...)
+	body = append(body, public...)
+	accepted := 0
+	for attempt := byte(0); attempt < 4; attempt++ {
+		body[4] = 8 | attempt
+		hash := sha256.Sum256(body)
+		packet := append([]byte{13, 0x80}, hash[:4]...)
+		if workerRadioOperation(t, client, ctx, map[string]string{"op": "rf", "packet": base64.StdEncoding.EncodeToString(packet)}) {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("canonical native message ACK accepted %d variants", accepted)
+	}
+}
+
+func TestActualWorkerRetryAlarm(t *testing.T) {
+	origin := os.Getenv("ASPEN_ROOM_TEST_ORIGIN")
+	if origin == "" {
+		t.Skip("run node test/worker.mjs for the timed local Worker check")
+	}
+	client, err := newClient(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.base.Scheme != "http" || (client.base.Hostname() != "localhost" && client.base.Hostname() != "127.0.0.1") {
+		t.Fatal("public RF fixtures are restricted to the local Worker")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancel()
+	_, saved := testState(t, origin)
+	if _, err := client.login(ctx, "A", "alice", "fixture password only", "account", saved); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../../services/shared-room/test/native-fixtures.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		ReaderLogin string `json:"readerLogin"`
+		Reader      struct {
+			PublicKey string `json:"publicKey"`
+		} `json:"reader"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	socketURL := *client.base
+	socketURL.Scheme, socketURL.Path = "ws", "/v1/aliases/A/socket"
+	socket, response, err := websocket.DefaultDialer.DialContext(ctx, socketURL.String(), http.Header{"Authorization": {"Bearer one"}})
+	if response != nil && response.Body != nil {
+		response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close()
+	socket.SetReadDeadline(time.Now().Add(45 * time.Second))
+	var ready struct {
+		Type    string `json:"type"`
+		Version int    `json:"version"`
+	}
+	if err := socket.ReadJSON(&ready); err != nil || ready.Type != "ready" || ready.Version != 2 {
+		t.Fatalf("fixture frontend ready: %+v %v", ready, err)
+	}
+	page, err := client.history(ctx, "A", "")
+	if err != nil || page.More {
+		t.Fatalf("fixture history: %v", err)
+	}
+	if !workerRadioOperation(t, client, ctx, map[string]string{"op": "rf", "packet": fixture.ReaderLogin}) {
+		t.Fatal("native reader login rejected")
+	}
+	next := func() workerTransmit {
+		t.Helper()
+		var tx workerTransmit
+		if err := socket.ReadJSON(&tx); err != nil {
+			t.Fatal(err)
+		}
+		if tx.Type != "transmit" || tx.DispatchID == "" || tx.Packet == "" || tx.DelayMS != 1500 {
+			t.Fatalf("invalid native history dispatch: %+v", tx)
+		}
+		return tx
+	}
+	for _, m := range page.Messages {
+		next()
+		acknowledgeWorkerMessage(t, client, ctx, m, fixture.Reader.PublicKey)
+	}
+	id, err := newPostID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.post(ctx, "A", pendingPost{id, "Real alarm RF retry check", saved.PublicKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := next()
+	started := time.Now()
+	if !workerRadioOperation(t, client, ctx, map[string]string{"op": "txReceipt", "dispatchId": first.DispatchID, "outcome": "sent"}) {
+		t.Fatal("fixture TX receipt rejected")
+	}
+	retry := next()
+	elapsed := time.Since(started)
+	if elapsed < 28*time.Second || elapsed > 40*time.Second || retry.DispatchID == first.DispatchID || retry.Packet == first.Packet {
+		t.Fatalf("real alarm retry: %s, reused dispatch %v, reused packet %v", elapsed,
+			retry.DispatchID == first.DispatchID, retry.Packet == first.Packet)
+	}
+	acknowledgeWorkerMessage(t, client, ctx, result.Message, fixture.Reader.PublicKey)
+	t.Logf("Real Worker alarm retried the same canonical post after %s without another client request", elapsed.Round(time.Millisecond))
 }
 
 func (r *lostPostResponse) RoundTrip(req *http.Request) (*http.Response, error) {

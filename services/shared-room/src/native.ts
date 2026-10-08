@@ -176,7 +176,7 @@ export class RadioCodec {
       const found: Decoded[] = [];
       for (const identity of identities)
         for (const member of await lookup(identity.alias, ""))
-          if (member.pending?.proof === value && !member.pending.requirePathAck)
+          if (member.pending && (member.pending.proof === value || member.pending.proofs?.includes(value)) && !member.pending.requirePathAck)
             found.push({
               identity,
               packet: p,
@@ -274,10 +274,11 @@ export class RadioCodec {
             if (
               (plain[1 + n] & 15) === 3 &&
               plain.length >= n + 6 &&
-              member.pending?.proof === proof(number(plain.slice(n + 2)))
+              member.pending && (member.pending.proof === proof(number(plain.slice(n + 2))) ||
+                member.pending.proofs?.includes(proof(number(plain.slice(n + 2)))))
             ) {
               op.deliveryId = member.pending.deliveryId;
-              op.proof = member.pending.proof;
+              op.proof = proof(number(plain.slice(n + 2)));
             }
           }
           nativeRoute(route);

@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { evictDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { bindings, fixture, rf, connect, state, history, seal } from "./native-helpers";
 import { base64, unbase64, join } from "../src/native-crypto";
 import { packet, le32 } from "../src/native";
@@ -31,6 +31,12 @@ it("uses authenticated PATH ACKs for identical simultaneous history from indepen
   expect(packet(unbase64(btx.packet))!.flood).toBe(true);
   expect((await rf("aonly", ah.ack)).accepted).toBe(false);
   expect((await rf("bonly", ah.ack, "B")).accepted).toBe(false);
+  await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, state) =>
+    state.storage.sql.exec("UPDATE pending SET retry_at=?", Date.now() - 1));
+  expect(await runDurableObjectAlarm(bindings.ROOMS.getByName("native"))).toBe(true);
+  const retry = history(await a.next("A native retry"));
+  expect(retry.text).toBe(ah.text);
+  expect(retry.ack).not.toBe(ah.ack);
   await evictDurableObject(bindings.ROOMS.getByName("other"));
   expect((await state("other")).pending[0].require_path_ack).toBe(1);
   expect((await rf("aonly", ah.pathAck)).accepted).toBe(true);
