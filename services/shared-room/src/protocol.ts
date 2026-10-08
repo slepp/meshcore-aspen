@@ -5,6 +5,7 @@ export interface Message {
   author: string;
   clientTimestamp: number;
   text: string;
+  webName?: string | null;
 }
 
 export interface Delivery {

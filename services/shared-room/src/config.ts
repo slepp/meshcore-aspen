@@ -9,6 +9,7 @@ export interface Env {
   HISTORY_LIMIT?: string;
   MODE?: string;
   ROOM_KEYS?: string;
+  ASSETS?: Fetcher;
 }
 export interface Connection {alias: string; frontend: string; credential: string}
 export class ApiError extends Error {
@@ -56,7 +57,7 @@ export function aliases(env: Env): Record<string, Alias> {
   }
   return entries;
 }
-function equalToken(a: string, b: string): boolean {
+export function equalToken(a: string, b: string): boolean {
   let different = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++) different |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return different === 0;
@@ -80,5 +81,6 @@ export async function authorize(request: Request, env: Env, alias: string): Prom
 export function errorResponse(error: unknown): Response {
   const known = error instanceof ApiError;
   if (!known) console.error("Shared room operation failed", error);
-  return Response.json({error: known ? error.message : "Room operation failed"}, {status: known ? error.status : 500});
+  return Response.json({error: known ? error.message : "Room operation failed"}, {status: known ? error.status : 500,
+    headers: {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}});
 }

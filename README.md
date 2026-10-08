@@ -58,9 +58,11 @@ For autonomous fleet status and battery voltage through Aspen's existing
 metrics receiver, [install a remote-repeater Lua monitor](firmware/runtime/REMOTE_REPEATERS.md).
 For MQTT packet collection, choose the host or on-device
 [observer output contract](firmware/esp32/OBSERVER.md).
-For shared room history across radio frontends, the
+For shared room history across radio frontends and desktop/mobile web clients, the
 [shared room Worker/API](services/shared-room/README.md) provides one canonical
 backend with several advertised room identities, login catch-up and live push.
+Its **Aspen Rooms** interface connects directly over IP: open the Worker URL,
+choose a channel and join with the room password.
 The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
 frontend carries opaque radio bytes and final transmission receipts.
 Additional role instances can run on a host, but each enabled built-in ESP32

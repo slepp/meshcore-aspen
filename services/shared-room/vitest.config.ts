@@ -21,5 +21,5 @@ export default defineConfig({
       },
     },
   })],
-  test: {include: ["test/room.test.ts", "test/native-crypto.test.ts"], testTimeout: 10000},
+  test: {include: ["test/room.test.ts", "test/native-crypto.test.ts", "test/web.test.ts"], testTimeout: 10000},
 });

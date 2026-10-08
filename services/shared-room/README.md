@@ -2,8 +2,11 @@
 
 Run one Cloudflare Worker with one SQLite Durable Object per backend room.
 The Worker owns the room keys, canonical membership, ordered messages,
-deduplication and ACK-confirmed cursors. Thin radio frontends connect with
-inbound hibernating WebSockets and carry opaque MeshCore packets.
+deduplication and ACK-confirmed radio cursors. Open the Worker's HTTPS address
+on a desktop or phone to use **Aspen Rooms**: select a channel, enter your
+display name and room password, then read and send messages over IP.
+Thin radio frontends connect with inbound hibernating WebSockets and carry
+opaque MeshCore packets. Both paths use the same stored conversation.
 
 ```sh
 cd services/shared-room
@@ -31,6 +34,43 @@ routes, pending delivery and cursors remain separate for each alias and full
 client key. The service pins each alias's first-use public key in SQLite.
 Replacing that identity requires a new alias ID. Changing its backend selects
 a different history; this does not migrate the old room.
+
+## Web conversations
+
+The Worker serves the interface and browser API on the same origin. Each
+configured alias appears as a channel; aliases with the same `backend` share
+messages, and different backends remain separate. Join each channel with that
+alias's room password. No radio, companion application or frontend bearer token
+is needed for web access.
+
+Messages update live, with earlier history available on demand. The browser
+retains its device identity, display-name preference, drafts and any post
+awaiting confirmation. A lost send response shows **Check / retry**; retrying
+that post ID returns its existing message instead of creating another copy.
+Posts are not automatically resent after an uncertain result.
+
+A web message stores `Name: text` so radio participants receive the author's
+name as well as the same content. The composer counts the complete **151-byte
+UTF-8 limit**, including the name. It rejects overlong text rather than creating
+a longer web-only version. A saved post confirms storage, not RF reception.
+Radio participants receive it through the normal native history and ACK path.
+
+To update an existing deployment:
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run build
+npx wrangler deploy
+```
+
+Use the existing Worker name, Cloudflare account and `ROOMS` namespace. Keep
+the configured secrets; do not regenerate room identities. The browser session
+tables and optional message display-name field are added without replacing
+history, radio membership or pending deliveries. The assets deploy with the
+Worker, and existing radio frontends need no firmware update.
+See [WEB.md](WEB.md) for browser access, storage and API details.
 
 ## Small opaque API
 
@@ -188,6 +228,11 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+`npm run test:browser` also exercises desktop and mobile conversations in a
+local Worker using Google Chrome and public fixture identities. Set
+`CHROME_BIN` if Chrome uses another executable name. It creates isolated
+temporary room/browser storage and sends no RF packets. CI runs this check too.
 
 The focused checks cover two-front reception, one durable post, native login
 and PATH replies, pushed encrypted history, cursor/receipt behavior,

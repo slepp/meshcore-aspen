@@ -16,6 +16,35 @@ preserves those protocol limits rather than claiming stronger authentication.
 TLS protects the frontend connection. Revoke a lost frontend token; replace the
 advertised identity if its Worker room key is compromised.
 
+## Browser access
+
+The same Worker serves Aspen Rooms over HTTPS. Browser login checks the
+configured alias's room password and creates a room-scoped, HttpOnly, Secure,
+SameSite=Strict session cookie valid for 30 days. Login, posts, logout and
+WebSocket upgrades require the service's own Origin. No cross-origin browser
+API is enabled, and credentials are never placed in socket URLs. Password
+attempts are limited to ten per minute per connecting address and backend.
+
+Anyone knowing a room password can read its visible history and post messages.
+Alias names and public radio identities appear in the unauthenticated channel
+list; passwords, keys, membership and history do not. Do not use a private
+description as an alias name. Changing an alias's password, public key or backend
+invalidates its web sessions when they are next used. Leaving a room removes
+that browser session and closes its sockets. Radio ACL membership has its
+existing separate lifetime; changing a password does not revoke native members.
+
+The browser stores a random device secret in local storage and uses it to
+derive a stable web author ID at login. This is not a companion's private key
+and grants no radio membership or management permission. Display names are
+labels, not verified accounts, and different users can choose the same name.
+The author ID distinguishes them in room details and message tooltips.
+Room private keys and radio frontend tokens remain outside the browser.
+
+Local storage also retains display-name preferences, drafts and uncertain
+post IDs/text. Clearing site data loses that browser identity and any unsent
+work. Do not share a browser profile with someone who should not use its joined
+rooms. Message history is not saved in local storage. See [WEB.md](WEB.md).
+
 An optional frontend `region` is a public routing name, not a secret or client
 authorization boundary. It validates scoped packets and determines outgoing
 flood scope. Native direct packets have no transport codes and still use room

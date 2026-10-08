@@ -1,8 +1,11 @@
 import {DurableObject} from "cloudflare:workers";
-import {aliases, ApiError, authorize, credential, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
+import {aliases, ApiError, authorize, credential, equalToken, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 import {RadioCodec, opaque, OPAQUE_PROTOCOL} from "./native";
 import {base64, unbase64} from "./native-crypto";
+import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOrigin, sequence, sessionCookie,
+  webBody, webCredential, webPath, webResponse, webText, WEB_PROTOCOL, WEB_SESSION_SECONDS,
+  type WebConnection, type WebSession} from "./web";
 
 export interface Transmit {
   type: "transmit"; alias: string; dispatchId: string; packet: string;
@@ -17,7 +20,7 @@ interface Pending {
   alias: string; client: string; deliveryId: string; seq: number;
   frontend: string; proof: string | null; state: string; requirePathAck: number;
 }
-const MESSAGE_COLUMNS = "seq, timestamp, origin_alias AS originAlias, author, client_timestamp AS clientTimestamp, text";
+const MESSAGE_COLUMNS = "seq, timestamp, origin_alias AS originAlias, author, client_timestamp AS clientTimestamp, text, web_name AS webName";
 const SESSION_COLUMNS = "alias, client, cursor, last_timestamp AS lastTimestamp, frontend, route";
 const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state, require_path_ack AS requirePathAck";
 const MAX_FRAME = 4096;
@@ -81,10 +84,24 @@ export class Room extends DurableObject<Env> {
         id TEXT PRIMARY KEY, alias TEXT NOT NULL, frontend TEXT NOT NULL,
         client TEXT, delivery_id TEXT, state TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS web_sessions (
+        token TEXT PRIMARY KEY, alias TEXT NOT NULL, author TEXT NOT NULL,
+        name TEXT NOT NULL, credential TEXT NOT NULL, expires INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS web_session_expiry ON web_sessions(expires);
+      CREATE TABLE IF NOT EXISTS web_posts (
+        author TEXT NOT NULL, request_id TEXT NOT NULL, seq INTEGER NOT NULL,
+        PRIMARY KEY(author, request_id)
+      );
+      CREATE TABLE IF NOT EXISTS web_login_limits (
+        address TEXT PRIMARY KEY, start INTEGER NOT NULL, attempts INTEGER NOT NULL
+      );
     `);
     // Additive migration preserves existing messages, sessions and dispatches.
     if (!this.rows<{name: string}>("PRAGMA table_info(pending)").some(c => c.name === "require_path_ack"))
       this.sql.exec("ALTER TABLE pending ADD COLUMN require_path_ack INTEGER NOT NULL DEFAULT 0");
+    if (!this.rows<{name: string}>("PRAGMA table_info(messages)").some(c => c.name === "web_name"))
+      this.sql.exec("ALTER TABLE messages ADD COLUMN web_name TEXT");
   }
 
   private rows<T>(query: string, ...params: SqlStorageValue[]): T[] {
@@ -117,6 +134,8 @@ export class Room extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     try {
+      const browser = webPath(new URL(request.url).pathname);
+      if (browser) return await this.webFetch(request, browser[1], browser[2]);
       const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-zA-Z0-9_-]{1,64})\/(socket|operations)$/);
       if (!match) fail(404, "Unknown endpoint");
       const connection = await authorize(request, this.env, match[1]);
@@ -133,7 +152,8 @@ export class Room extends DurableObject<Env> {
         if (offered && !offered.includes(protocol)) fail(426, `Use ${protocol}`);
         // A frontend has one connection per alias. Reconnect replaces the old socket.
         for (const old of this.ctx.getWebSockets()) {
-          const prior = old.deserializeAttachment() as Connection;
+          const prior = old.deserializeAttachment() as Connection | WebConnection;
+          if (isWebConnection(prior)) continue;
           if (prior.alias === connection.alias && prior.frontend === connection.frontend) old.close(1000, "Frontend reconnected");
         }
         const [client, server] = Object.values(new WebSocketPair());
@@ -167,6 +187,23 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, frame: string | ArrayBuffer): Promise<void> {
+    const attachment = ws.deserializeAttachment() as Connection | WebConnection;
+    if (isWebConnection(attachment)) {
+      try {
+        await this.validWebSession(attachment);
+        if (typeof frame !== "string" || textEncoder.encode(frame).length > MAX_FRAME) fail(400, "Invalid browser frame");
+        const value = this.parse(frame) as unknown as {op?: string; since?: number};
+        if (value.op !== "sync" || !Number.isSafeInteger(value.since) || value.since! < 0) fail(400, "Use a sync operation with a sequence cursor");
+        attachment.cursor = value.since!;
+        ws.serializeAttachment(attachment);
+        await this.pumpWebSocket(ws, attachment);
+      } catch (error) {
+        this.send(ws, {type: "error", error: error instanceof ApiError ? error.message : "Browser room connection failed"});
+        if (!(error instanceof ApiError)) console.error("Browser room connection failed", error);
+        ws.close(error instanceof ApiError && error.status === 401 ? 1008 : 1011, "Browser room connection failed");
+      }
+      return;
+    }
     let id: string | undefined;
     try {
       if (typeof frame !== "string" || textEncoder.encode(frame).length > MAX_FRAME) fail(400, "Use JSON text frames up to 4096 bytes");
@@ -344,11 +381,7 @@ export class Room extends DurableObject<Env> {
         if (!message && stamp <= session.lastTimestamp) fail(409, "Client timestamp must increase");
         const duplicate = !!message;
         if (!message) {
-          const last = this.rows<{timestamp: number}>("SELECT COALESCE(MAX(timestamp),0) AS timestamp FROM messages")[0].timestamp;
-          const wireTime = Math.max(Math.floor(Date.now() / 1000), last + 1);
-          if (wireTime > 0xffffffff) fail(503, "Room timestamp range exhausted");
-          this.sql.exec("INSERT INTO messages(timestamp, origin_alias, author, client_timestamp, text) VALUES (?, ?, ?, ?, ?)", wireTime, c.alias, client, stamp, text);
-          message = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY seq DESC LIMIT 1`)[0];
+          message = this.commitMessage(c.alias, client, text, stamp);
           this.sql.exec("UPDATE sessions SET last_timestamp=? WHERE alias=? AND client=?", stamp, c.alias, client);
         }
         // Logical dedup is independent of the RF attempt; each new attempt may get an ACK.
@@ -403,7 +436,8 @@ export class Room extends DurableObject<Env> {
     const configuredFrontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
     for (const ws of this.ctx.getWebSockets()) {
       if (ws.readyState !== WebSocket.OPEN) continue;
-      const c = ws.deserializeAttachment() as Connection;
+      const c = ws.deserializeAttachment() as Connection | WebConnection;
+      if (isWebConnection(c)) continue;
       const alias = configuredAliases[c.alias], frontend = configuredFrontends[c.frontend];
       const boundKey = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", c.alias)[0]?.public_key;
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend)) ||
@@ -426,10 +460,7 @@ export class Room extends DurableObject<Env> {
             this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend)) && bound?.public_key === alias.publicKey)
           occupied.add(p.proof!);
       }
-      const configuredLimit = Number(this.env.HISTORY_LIMIT ?? "0");
-      if (!Number.isSafeInteger(configuredLimit) || configuredLimit < 0) fail(503, "Invalid HISTORY_LIMIT");
-      const latest = this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages")[0].seq;
-      const floor = configuredLimit ? Math.max(0, latest - configuredLimit) : 0;
+      const floor = this.historyFloor();
       for (const s of this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions`)) {
         const ws = sockets.get(`${s.alias}:${s.frontend}`);
         if (!ws || this.pending(s.alias, s.client)) continue;
@@ -463,5 +494,173 @@ export class Room extends DurableObject<Env> {
     });
     await this.ctx.storage.sync();
     for (const {ws, delivery} of dispatches) this.send(ws, delivery);
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const connection = ws.deserializeAttachment() as Connection | WebConnection;
+      if (!isWebConnection(connection)) continue;
+      try {
+        await this.validWebSession(connection);
+        await this.pumpWebSocket(ws, connection);
+      } catch (error) {
+        if (!(error instanceof ApiError)) console.error("Browser room delivery failed", error);
+        ws.close(error instanceof ApiError ? 1008 : 1011, error instanceof ApiError ? error.message : "Browser room delivery failed");
+      }
+    }
+  }
+
+  private commitMessage(alias: string, author: string, text: string, clientTimestamp?: number, webName?: string): Message {
+    const last = this.rows<{timestamp: number}>("SELECT COALESCE(MAX(timestamp),0) AS timestamp FROM messages")[0].timestamp;
+    const wireTime = Math.max(Math.floor(Date.now() / 1000), last + 1);
+    if (wireTime > 0xffffffff) fail(503, "Room timestamp range exhausted");
+    this.sql.exec("INSERT INTO messages(timestamp, origin_alias, author, client_timestamp, text, web_name) VALUES (?, ?, ?, ?, ?, ?)",
+      wireTime, alias, author, clientTimestamp ?? wireTime, text, webName ?? null);
+    return this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages ORDER BY seq DESC LIMIT 1`)[0];
+  }
+
+  private historyFloor(): number {
+    const limit = Number(this.env.HISTORY_LIMIT ?? "0");
+    if (!Number.isSafeInteger(limit) || limit < 0) fail(503, "Invalid HISTORY_LIMIT");
+    const latest = this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages")[0].seq;
+    return limit ? Math.max(0, latest - limit) : 0;
+  }
+
+  private webAlias(alias: string) {
+    const config = aliases(this.env)[alias];
+    if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend))) fail(403, "Room does not belong to this backend");
+    this.bindIdentity(alias);
+    return config;
+  }
+
+  private async validWebSession(session: WebSession): Promise<WebSession> {
+    const config = this.webAlias(session.alias);
+    const found = this.rows<WebSession>("SELECT * FROM web_sessions WHERE token=? AND alias=?", session.token, session.alias)[0];
+    if (!found || found.expires <= Math.floor(Date.now() / 1000) ||
+        found.credential !== await webCredential(config) || found.author !== session.author) fail(401, "Room access expired; join again");
+    return found;
+  }
+
+  private async browserSession(request: Request, alias: string): Promise<WebSession> {
+    const hash = await credential(cookieToken(request, alias));
+    const found = this.rows<WebSession>("SELECT * FROM web_sessions WHERE token=? AND alias=?", hash, alias)[0];
+    if (!found) fail(401, "Join this room to read or send messages");
+    return this.validWebSession(found);
+  }
+
+  private async webFetch(request: Request, alias: string, endpoint: string): Promise<Response> {
+    const config = this.webAlias(alias);
+    const url = new URL(request.url);
+    const now = Math.floor(Date.now() / 1000);
+    if (endpoint === "login") {
+      if (request.method !== "POST") fail(405, "POST required");
+      sameOrigin(request);
+      const body = await webBody(request);
+      const address = await credential(request.headers.get("CF-Connecting-IP") ?? "local");
+      const permitted = this.ctx.storage.transactionSync(() => {
+        this.sql.exec("DELETE FROM web_login_limits WHERE start<?", now - 60);
+        this.sql.exec(`INSERT INTO web_login_limits VALUES (?, ?, 1)
+          ON CONFLICT(address) DO UPDATE SET attempts=attempts+1`, address, now);
+        return this.rows<{attempts: number}>("SELECT attempts FROM web_login_limits WHERE address=?", address)[0].attempts <= 10;
+      });
+      if (!permitted) fail(429, "Too many room login attempts; wait one minute");
+      const password = typeof body.password === "string" && wellFormed(body.password) && textEncoder.encode(body.password).length <= 256 ? body.password : undefined;
+      if (password === undefined || !equalToken(password, config.password)) fail(403, "Incorrect room password");
+      const identity = hex(body.identity, "browser identity", 32);
+      const name = displayName(body.name);
+      const author = await credential(`aspen-web-author:${identity}`);
+      // A hex token avoids URL/cookie encoding and is never put in a socket URL.
+      const cookie = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+      const session: WebSession = {token: await credential(cookie), alias, author, name,
+        credential: await webCredential(config), expires: now + WEB_SESSION_SECONDS};
+      this.ctx.storage.transactionSync(() => {
+        this.sql.exec("DELETE FROM web_sessions WHERE expires<=? OR (alias=? AND author=?)", now, alias, author);
+        this.sql.exec("INSERT INTO web_sessions VALUES (?, ?, ?, ?, ?, ?)",
+          session.token, alias, author, name, session.credential, session.expires);
+      });
+      await this.ctx.storage.sync();
+      return webResponse({author, name, expires: session.expires, maxPostBytes: POST_BYTES}, 200, sessionCookie(alias, cookie));
+    }
+    const session = await this.browserSession(request, alias);
+    if (endpoint === "session") {
+      if (request.method !== "GET") fail(405, "GET required");
+      return webResponse({author: session.author, name: session.name, expires: session.expires, maxPostBytes: POST_BYTES});
+    }
+    if (endpoint === "logout") {
+      if (request.method !== "POST") fail(405, "POST required");
+      sameOrigin(request);
+      this.sql.exec("DELETE FROM web_sessions WHERE token=?", session.token);
+      await this.ctx.storage.sync();
+      for (const ws of this.ctx.getWebSockets()) {
+        const c = ws.deserializeAttachment() as Connection | WebConnection;
+        if (isWebConnection(c) && c.token === session.token) ws.close(1008, "Left room");
+      }
+      return webResponse({left: true}, 200, sessionCookie(alias, "", 0));
+    }
+    if (endpoint === "history") {
+      if (request.method !== "GET") fail(405, "GET required");
+      const after = url.searchParams.get("after"), before = url.searchParams.get("before");
+      if (after !== null && before !== null) fail(400, "Use either after or before");
+      const floor = this.historyFloor();
+      let messages: Message[], more: boolean;
+      if (after !== null) {
+        const cursor = Math.max(floor, sequence(after, "history cursor"));
+        const rows = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? ORDER BY seq LIMIT ?`, cursor, PAGE_SIZE + 1);
+        more = rows.length > PAGE_SIZE;
+        messages = rows.slice(0, PAGE_SIZE);
+      } else {
+        const ceiling = before === null ? Number.MAX_SAFE_INTEGER : sequence(before, "history cursor");
+        const rows = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? AND seq<? ORDER BY seq DESC LIMIT ?`, floor, ceiling, PAGE_SIZE + 1);
+        more = rows.length > PAGE_SIZE;
+        messages = rows.slice(0, PAGE_SIZE).reverse();
+      }
+      return webResponse({messages, more, floor});
+    }
+    if (endpoint === "posts") {
+      if (request.method !== "POST") fail(405, "POST required");
+      sameOrigin(request);
+      const body = await webBody(request);
+      const id = string(body.id, "post ID", 36);
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) fail(400, "Use a UUID v4 post ID");
+      const bodyText = webText(body.text, "message text", POST_BYTES);
+      const result = this.ctx.storage.transactionSync(() => {
+        const existing = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq=(SELECT seq FROM web_posts WHERE author=? AND request_id=?)`,
+          session.author, id)[0];
+        if (existing) {
+          if (existing.text !== `${existing.webName}: ${bodyText}`) fail(409, "This post ID already belongs to a different message");
+          return {message: existing, duplicate: true};
+        }
+        const text = `${session.name}: ${bodyText}`;
+        webText(text, "message including display name", POST_BYTES);
+        const message = this.commitMessage(alias, session.author, text, undefined, session.name);
+        this.sql.exec("INSERT INTO web_posts VALUES (?, ?, ?)", session.author, id, message.seq);
+        return {message, duplicate: false};
+      });
+      await this.ctx.storage.sync();
+      await this.pump();
+      return webResponse(result);
+    }
+    if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
+    sameOrigin(request);
+    if (!request.headers.get("Sec-WebSocket-Protocol")?.split(",").map(p => p.trim()).includes(WEB_PROTOCOL))
+      fail(426, `Use ${WEB_PROTOCOL}`);
+    const cursor = sequence(url.searchParams.get("since") ?? "0", "history cursor");
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    const connection: WebConnection = {...session, kind: "web", cursor};
+    server.serializeAttachment(connection);
+    this.send(server, {type: "ready", version: 1, alias, publicKey: config.publicKey, name: config.name});
+    await this.pumpWebSocket(server, connection);
+    return new Response(null, {status: 101, webSocket: client, headers: {"Sec-WebSocket-Protocol": WEB_PROTOCOL}});
+  }
+
+  private async pumpWebSocket(ws: WebSocket, connection: WebConnection): Promise<void> {
+    const cursor = Math.max(connection.cursor, this.historyFloor());
+    const messages = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? ORDER BY seq LIMIT ?`, cursor, PAGE_SIZE + 1);
+    for (const message of messages.slice(0, PAGE_SIZE)) {
+      this.send(ws, {type: "message", message});
+      connection.cursor = message.seq;
+    }
+    if (connection.cursor < cursor) connection.cursor = cursor;
+    ws.serializeAttachment(connection);
+    if (messages.length > PAGE_SIZE) this.send(ws, {type: "catchup", cursor: connection.cursor});
   }
 }

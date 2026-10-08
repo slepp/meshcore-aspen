@@ -3,6 +3,36 @@ import { runInDurableObject, evictDurableObject } from "cloudflare:test";
 import { bindings, fixture, crypto, http, rf, connect, state, history } from "./native-helpers";
 import { base64, unbase64, fromHex, join, toHex } from "../src/native-crypto";
 import { packet, le32 } from "../src/native";
+import {joinWeb, webPost, webRequest, webSocket} from "./web-helpers";
+import {sockets} from "./native-helpers";
+
+it("shares canonical web and native radio content without granting browser identities RF membership", async () => {
+  const radio = await connect("two");
+  await rf("two", fixture.readerLogin);
+  await rf("two", fixture.path);
+  const web = await joinWeb(), remote = await joinWeb("SharedB", 2, "Bob");
+  const browser = await webSocket("SharedB", remote.cookie, sockets);
+  const sent = await webPost("A", web.cookie, "Hello from IP");
+  expect((await browser.next()).message).toEqual(sent.message);
+  const received = history(await radio.next("web post over native radio"));
+  expect(received.text).toBe("Alice: Hello from IP");
+  expect(received.timestamp).toBe(sent.message.timestamp);
+  await rf("two", received.ack);
+  await rf("one", fixture.authorLogin);
+  await rf("one", fixture.post);
+  expect((await browser.next()).message).toMatchObject({author: fixture.author.publicKey, text: "hello", seq: 2});
+  const page = await (await webRequest("A", "history", web.cookie)).json<{messages: {text: string}[]}>();
+  expect(page.messages.map(m => m.text)).toEqual(["Alice: Hello from IP", "hello"]);
+  const stored = await state();
+  expect(stored.sessions.some(s => s.client === web.author)).toBe(false);
+  const native = history(await radio.next("native author history"));
+  expect(native.text).toBe("hello");
+  await rf("two", native.ack);
+  const bounded = await webPost("A", web.cookie, "🙂".repeat(36));
+  const full = history(await radio.next("151-byte UTF-8 web history"));
+  expect(full.text).toBe(bounded.message.text);
+  expect(new TextEncoder().encode(full.text)).toHaveLength(151);
+});
 
 it("verifies native logins/posts from two frontends, pushes ordered ciphertext and restores pending state", async () => {
   const one = await connect("one"),
