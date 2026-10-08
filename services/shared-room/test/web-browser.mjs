@@ -236,5 +236,5 @@ try {
       if (child.exitCode === null) {child.kill("SIGKILL"); await stopped;}
     }
   }
-  await rm(scratch, {recursive: true, force: true});
+  await rm(scratch, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
 }
