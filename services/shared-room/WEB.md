@@ -6,6 +6,13 @@ The operator's `ALIASES` configuration supplies the channels and passwords.
 Aliases pointing to the same backend show the same ordered messages; another
 backend has its own conversation.
 
+The interface follows the system's light/dark preference, including changes
+while it is open. Text and controls also adapt to browser text sizing and
+high-contrast settings. Tab moves through controls; the mobile channel drawer
+keeps keyboard focus inside until you choose a channel or close it with Escape.
+The skip link goes directly to the conversation. Screen-reader status updates
+announce new incoming messages and saved posts without rereading the history.
+
 The interface uses IP only. Web posts are stored in the same SQLite history as
 native radio posts, then delivered to connected browsers and eligible radio
 members. A radio member's confirmed history cursor advances only on its native

@@ -11,6 +11,7 @@ const scratchRoot = resolve(root, ".tmp");
 await mkdir(scratchRoot, {recursive: true});
 const scratch = await mkdtemp(resolve(scratchRoot, "web-browser-"));
 const children = [], errors = [], browserErrors = [];
+const axeSource = await readFile(resolve(root, "node_modules/axe-core/axe.min.js"), "utf8");
 let cdp;
 const portProbe = createServer();
 portProbe.listen(0, "127.0.0.1");
@@ -115,6 +116,58 @@ async function page(context, width = 1280, height = 900) {
     },
   };
 }
+function contrast(a, b) {
+  const luminance = color => {
+    const hex = color.trim().replace("#", "");
+    const expanded = hex.length === 3 ? [...hex].map(c => c + c).join("") : hex;
+    assert.match(expanded, /^[a-f0-9]{6}$/i);
+    const values = [0, 2, 4].map(offset => parseInt(expanded.slice(offset, offset + 2), 16) / 255)
+      .map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+    return values[0] * .2126 + values[1] * .7152 + values[2] * .0722;
+  };
+  const x = luminance(a), y = luminance(b);
+  return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
+}
+async function accessibility(page, label) {
+  await page.evaluate(axeSource);
+  const violations = await page.evaluate(`axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})
+    .then(r => r.violations.map(v => ({id:v.id,impact:v.impact,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})))`);
+  assert.deepEqual(violations, [], `${label}: accessibility violations`);
+  const smallTargets = await page.evaluate(`Array.from(document.querySelectorAll('button,a[href],input,textarea')).filter(e =>
+    !e.disabled && !e.closest('[inert]') && e.getClientRects().length && getComputedStyle(e).visibility === 'visible')
+    .map(e=>({id:e.id || e.className,w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height}))
+    .filter(r=>r.w<44 || r.h<44)`);
+  assert.deepEqual(smallTargets, [], `${label}: controls below 44px`);
+}
+async function palette(page, scheme) {
+  await page.call("Emulation.setEmulatedMedia", {features: [{name: "prefers-color-scheme", value: scheme}]});
+  const values = await page.evaluate(`(() => {const s=getComputedStyle(document.documentElement); return Object.fromEntries(
+    ['paper','sidebar','surface','ink','muted','green','green-hover','on-green','green-soft','control-border','error','warning','warning-soft','danger-soft','profile-ink','profile-bg',
+      ...Array.from({length:6},(_,i)=>['avatar-'+i+'-ink','avatar-'+i+'-bg']).flat()]
+      .map(n=>[n,s.getPropertyValue('--'+n).trim()]));})()`);
+  assert.equal(await page.evaluate(`getComputedStyle(document.documentElement).colorScheme`), scheme);
+  const pairs = [
+    ["ink", "paper"], ["ink", "surface"], ["ink", "sidebar"],
+    ["muted", "paper"], ["muted", "surface"], ["muted", "sidebar"], ["muted", "warning-soft"],
+    ["green", "paper"], ["green", "green-soft"], ["on-green", "green"], ["on-green", "green-hover"],
+    ["error", "paper"], ["error", "surface"], ["error", "danger-soft"],
+    ["warning", "paper"], ["warning", "warning-soft"], ["profile-ink", "profile-bg"],
+    ...Array.from({length: 6}, (_, i) => [`avatar-${i}-ink`, `avatar-${i}-bg`]),
+  ];
+  for (const [foreground, background] of pairs)
+    assert(contrast(values[foreground], values[background]) >= 4.5, `${scheme}: ${foreground}/${background} text contrast`);
+  for (const background of ["paper", "surface", "sidebar"]) {
+    assert(contrast(values["control-border"], values[background]) >= 3, `${scheme}: control border/${background}`);
+    assert(contrast(values.green, values[background]) >= 3, `${scheme}: focus/${background}`);
+  }
+  return Math.min(...pairs.map(([a, b]) => contrast(values[a], values[b])));
+}
+async function key(page, key, code, modifiers = 0) {
+  const windowsVirtualKeyCode = {Enter: 13, Escape: 27, Tab: 9}[key];
+  await page.call("Input.dispatchKeyEvent", {type: "keyDown", key, code, modifiers, windowsVirtualKeyCode,
+    ...(key === "Enter" ? {text: "\r", unmodifiedText: "\r"} : {})});
+  await page.call("Input.dispatchKeyEvent", {type: "keyUp", key, code, modifiers, windowsVirtualKeyCode});
+}
 try {
   const config = JSON.parse(await readFile(resolve(root, "wrangler.jsonc"), "utf8"));
   config.name = "aspen-room-browser-test";
@@ -148,17 +201,80 @@ try {
   const desktopContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const mobileContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const desktop = await page(desktopContext), mobile = await page(mobileContext, 390, 844);
+  for (const scheme of ["light", "dark"]) {
+    await palette(desktop, scheme); await accessibility(desktop, `${scheme} desktop login`);
+    await palette(mobile, scheme); await accessibility(mobile, `${scheme} mobile login`);
+  }
   await desktop.join("Alice");
   await mobile.select("Uplink"); await mobile.join("Sam");
   await desktop.send("The mast is up. Good to have everyone in one room.");
   await mobile.sees("The mast is up. Good to have everyone in one room.");
   await mobile.send("Checking in from my phone. Same conversation, different connection.");
   await desktop.sees("Checking in from my phone. Same conversation, different connection.");
-  assert.equal(await desktop.evaluate(`document.querySelectorAll('.message').length`), 2);
+  assert.equal(await desktop.evaluate(`document.getElementById('message-announcement').textContent`),
+    "Sam in Harbor: Checking in from my phone. Same conversation, different connection.");
+  const contrastResults = {};
+  for (const scheme of ["light", "dark"]) {
+    contrastResults[scheme] = await palette(desktop, scheme);
+    await palette(mobile, scheme);
+    await accessibility(desktop, `${scheme} desktop conversation`);
+    await accessibility(mobile, `${scheme} mobile conversation`);
+    await desktop.evaluate(`document.getElementById('room-info').focus(); document.getElementById('room-info').click()`);
+    await accessibility(desktop, `${scheme} room details`);
+    await key(desktop, "Escape", "Escape");
+    assert.equal(await desktop.evaluate("document.activeElement.id"), "room-info");
+    await desktop.evaluate(`document.getElementById('edit-profile').click()`);
+    await accessibility(desktop, `${scheme} profile dialog`);
+    await key(desktop, "Escape", "Escape");
+  }
+  assert(await desktop.evaluate(`parseFloat(getComputedStyle(document.querySelector('.message-text')).fontSize) >= 16`));
+  assert(await desktop.evaluate(`parseFloat(getComputedStyle(document.querySelector('.message time')).fontSize) >= 14`));
+  await mobile.call("Emulation.setDeviceMetricsOverride", {width: 320, height: 844, deviceScaleFactor: 1, mobile: true});
+  await accessibility(mobile, "320px reflow");
+  assert.equal(await mobile.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
+  await mobile.evaluate(`document.querySelectorAll('*').forEach(e => {
+    e.style.lineHeight='1.5'; e.style.letterSpacing='.12em'; e.style.wordSpacing='.16em';
+    if(e.tagName==='P') e.style.marginBottom='2em';
+  })`);
+  await accessibility(mobile, "user text spacing");
+  assert.equal(await mobile.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
+  await mobile.evaluate(`document.querySelectorAll('*').forEach(e => {
+    for(const p of ['line-height','letter-spacing','word-spacing','margin-bottom']) e.style.removeProperty(p);
+  })`);
+  await mobile.call("Emulation.setEmulatedMedia", {features: [{name: "prefers-color-scheme", value: "dark"}, {name: "prefers-reduced-motion", value: "reduce"}]});
+  assert.equal(await mobile.evaluate(`getComputedStyle(document.getElementById('sidebar')).transitionDuration`), "0s");
+  await mobile.call("Emulation.setEmulatedMedia", {features: [{name: "forced-colors", value: "active"}]});
+  await accessibility(mobile, "system high contrast");
+  await palette(mobile, "dark");
+  await desktop.evaluate(`document.documentElement.style.fontSize='200%'`);
+  await accessibility(desktop, "200% text size");
+  assert.equal(await desktop.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
+  await desktop.evaluate(`document.documentElement.style.fontSize=''`);
+  await mobile.call("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 1, mobile: true});
+  await mobile.evaluate(`document.getElementById('mobile-menu').focus()`);
+  await key(mobile, "Enter", "Enter");
+  assert.equal(await mobile.evaluate(`document.getElementById('main-content').inert && document.getElementById('sidebar').getAttribute('aria-modal') === 'true'`), true);
+  await accessibility(mobile, "mobile channel drawer");
+  await mobile.evaluate(`document.getElementById('edit-profile').focus()`);
+  await key(mobile, "Tab", "Tab");
+  assert.equal(await mobile.evaluate("document.activeElement.className"), "brand");
+  await key(mobile, "Tab", "Tab", 8);
+  assert.equal(await mobile.evaluate("document.activeElement.id"), "edit-profile");
+  await key(mobile, "Escape", "Escape");
+  assert.equal(await mobile.evaluate(`document.activeElement.id === 'mobile-menu' && document.getElementById('sidebar').inert`), true);
+  await desktop.evaluate(`document.getElementById('message-input').focus()`);
+  assert.equal(await desktop.evaluate(`getComputedStyle(document.querySelector('.composer')).outlineStyle`), "solid");
+  await desktop.evaluate(`document.querySelector('.channel[data-room-id=A]').focus()`);
+  await mobile.send("Keyboard focus stays put while messages arrive.");
+  await desktop.sees("Keyboard focus stays put while messages arrive.");
+  assert.equal(await desktop.evaluate("document.activeElement.dataset.roomId"), "A");
+  assert.equal(await desktop.evaluate(`document.querySelectorAll('.message').length`), 3);
   assert.equal(await mobile.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
   await desktop.type("x".repeat(145));
   assert.equal(await desktop.evaluate(`document.getElementById('send-button').disabled`), true);
   assert.equal(await desktop.evaluate(`document.getElementById('byte-count').textContent`), "152 / 151 bytes");
+  assert.equal(await desktop.evaluate(`document.getElementById('message-input').getAttribute('aria-invalid')`), "true");
+  await accessibility(desktop, "over-limit feedback");
   await desktop.type("");
 
   await mobile.evaluate(`document.getElementById('mobile-menu').click()`);
@@ -221,11 +337,11 @@ try {
   assert.equal(await desktop.evaluate(`document.querySelectorAll('.message').length`), 100);
   assert.equal(await desktop.evaluate(`document.getElementById('load-older').hidden`), false);
   await desktop.evaluate(`document.getElementById('timeline').scrollTop = 0; document.getElementById('load-older').click()`);
-  await desktop.wait(`document.querySelectorAll('.message').length === 111`, "earlier history paging");
+  await desktop.wait(`document.querySelectorAll('.message').length === 112`, "earlier history paging");
   assert.equal(await desktop.evaluate(`document.getElementById('load-older').hidden`), true);
   assert.deepEqual(browserErrors, []);
   assert.deepEqual(errors, []);
-  console.log("PASS: desktop/mobile login, shared aliases, independent channels, live messages, RF byte limits, unread badges, reconnect, paged history, durable uncertain sends, re-login/name changes and idempotent retry.");
+  console.log("PASS: messaging, light/dark WCAG checks, 44px targets, 320px reflow, 200% text, keyboard focus, mobile drawer, announcements, reconnect and idempotent retry. Minimum palette text contrast:", contrastResults);
 } finally {
   cdp?.close();
   for (const child of children.reverse()) {

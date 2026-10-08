@@ -2,136 +2,199 @@
   color-scheme: light;
   --paper: #fdfcf8;
   --sidebar: #f0f0e9;
+  --surface: #fffefa;
   --ink: #242d28;
-  --muted: #737a72;
+  --muted: #58634f;
   --line: #e5e7de;
+  --control-border: #77836f;
   --green: #315545;
+  --green-hover: #244738;
+  --on-green: #fff;
   --green-soft: #e0e8db;
-  --error: #a84432;
+  --hover: #e7e9df;
+  --error: #963d2d;
+  --warning: #775534;
+  --warning-soft: #faf0e7;
+  --danger-soft: #fcf1eb;
+  --profile-bg: #ded9cc;
+  --profile-ink: #5f5745;
+  --avatar-0-bg: #e2e9dc;
+  --avatar-0-ink: #3e583c;
+  --avatar-1-bg: #eae4ef;
+  --avatar-1-ink: #625376;
+  --avatar-2-bg: #efe3d8;
+  --avatar-2-ink: #76533c;
+  --avatar-3-bg: #e0eaec;
+  --avatar-3-ink: #415c64;
+  --avatar-4-bg: #eee1e0;
+  --avatar-4-ink: #7a4c52;
+  --avatar-5-bg: #e8ebd9;
+  --avatar-5-ink: #565d2f;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 100%;
+  line-height: 1.5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #181e1a;
+    --sidebar: #202820;
+    --surface: #232c25;
+    --ink: #e9eee4;
+    --muted: #b4bfaa;
+    --line: #3c4839;
+    --control-border: #8a9b80;
+    --green: #b8d5a8;
+    --green-hover: #cee5bf;
+    --on-green: #182319;
+    --green-soft: #33472f;
+    --hover: #303b2e;
+    --error: #ffb6a3;
+    --warning: #e4c398;
+    --warning-soft: #362d22;
+    --danger-soft: #362620;
+    --profile-bg: #4b4232;
+    --profile-ink: #e5d3af;
+    --avatar-0-bg: #354634;
+    --avatar-0-ink: #cae0ba;
+    --avatar-1-bg: #43374c;
+    --avatar-1-ink: #e1cee9;
+    --avatar-2-bg: #4c3b2e;
+    --avatar-2-ink: #f1d5bd;
+    --avatar-3-bg: #2b4146;
+    --avatar-3-ink: #c0dce3;
+    --avatar-4-bg: #4c3438;
+    --avatar-4-ink: #edc5cb;
+    --avatar-5-bg: #41452c;
+    --avatar-5-ink: #dce3b5;
+  }
 }
 * {box-sizing: border-box}
 body {margin: 0; background: var(--paper); color: var(--ink)}
 button, input, textarea {font: inherit}
 button {cursor: pointer}
-button:disabled {cursor: default; opacity: .45}
+button:disabled {cursor: not-allowed}
 button, a, input, textarea { -webkit-tap-highlight-color: transparent }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, .timeline:focus-visible {outline: 2px solid var(--green); outline-offset: 3px}
+:focus-visible {outline: 3px solid var(--green); outline-offset: 3px}
 [hidden] {display: none !important}
+.skip-link {position: fixed; top: 8px; left: 8px; z-index: 50; padding: 12px 16px; background: var(--green); color: var(--on-green); border-radius: 6px; transform: translateY(-200%)}
+.skip-link:focus {transform: translateY(0)}
 .shell {display: flex; height: 100dvh; min-height: 300px}
-.sidebar {width: 268px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--line); padding: 32px 18px 0}
-.brand {display: flex; align-items: center; gap: 12px; padding: 0 12px; color: var(--ink); text-decoration: none; font-size: 24px; font-weight: 650; letter-spacing: -.9px; line-height: 1}
-.brand-caption {display: block; font-size: 9px; font-weight: 600; letter-spacing: 2.8px; margin-top: 7px; color: var(--muted)}
-.workspace {display: flex; gap: 11px; align-items: center; margin: 36px 7px 29px; padding: 13px 9px; border-top: 1px solid #ddd; border-bottom: 1px solid #ddd}
-.workspace-mark {display: grid; place-items: center; width: 32px; height: 32px; background: #e0e2d8; border: 1px solid #d1d7c8; border-radius: 8px; color: var(--green); font-family: Georgia, serif; font-size: 19px}
-.workspace strong, .identity strong {display: block; font-size: 12px; font-weight: 600}
+.sidebar {width: 268px; flex-shrink: 0; display: flex; flex-direction: column; overflow-y: auto; background: var(--sidebar); border-right: 1px solid var(--line); padding: 32px 18px 0}
+.brand {display: flex; align-items: center; gap: 12px; padding: 0 12px; color: var(--ink); text-decoration: none; font-size: 1.5rem; font-weight: 650; letter-spacing: -.9px; line-height: 1.2; flex-shrink: 0}
+.brand-caption {display: block; font-size: .75rem; font-weight: 600; letter-spacing: 2.8px; margin-top: 7px; color: var(--muted)}
+.workspace {display: flex; gap: 11px; align-items: center; margin: 28px 7px 24px; padding: 13px 9px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); flex-shrink: 0}
+.workspace-mark {display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; background: var(--green-soft); border: 1px solid var(--line); border-radius: 8px; color: var(--green); font-family: Georgia, serif; font-size: 1.25rem}
+.workspace strong, .identity strong {display: block; font-size: .875rem; font-weight: 600}
 .workspace div, .identity div {min-width: 0}
-.workspace div span {display: block; max-width: 156px; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; color: var(--muted); font-size: 10px; white-space: nowrap}
-.channel-heading {display: flex; align-items: center; justify-content: space-between; padding: 0 14px; margin-bottom: 12px; color: var(--muted); font-size: 10px}
-.channel-heading h2 {margin: 0; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px}
+.workspace div span {display: block; max-width: 156px; overflow-wrap: anywhere; margin-top: 4px; color: var(--muted); font-size: .75rem}
+.channel-heading {display: flex; align-items: center; justify-content: space-between; padding: 0 14px; margin-bottom: 12px; color: var(--muted); font-size: .75rem; flex-shrink: 0}
+.channel-heading h2 {margin: 0; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px}
 .channels {flex: 1; min-height: 60px; overflow: auto}
-.channel {width: 100%; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 7px; padding: 12px; margin: 2px 0; background: transparent; color: #616b61; text-align: left}
-.channel:hover {background: #e7e9df}
-.channel.active {background: var(--green-soft); color: #284c37; font-weight: 600}
-.channel-hash {font-size: 19px; font-weight: 400; color: #929d8c; line-height: 1}
-.channel.active .channel-hash {color: #4b7455}
-.channel-label {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 13px}
-.channel-badge {background: #355743; color: white; border-radius: 5px; padding: 2px 5px; min-width: 18px; text-align: center; font-size: 10px}
-.channel-lock {width: 12px; height: 12px; color: #8d9788}
+.channel {width: calc(100% - 8px); min-height: 44px; display: flex; align-items: center; gap: 10px; border: 2px solid transparent; border-radius: 7px; padding: 10px; margin: 4px; background: transparent; color: var(--muted); text-align: left}
+.channel:hover {background: var(--hover)}
+.channel.active {background: var(--green-soft); color: var(--green); border-left-color: var(--green); font-weight: 600}
+.channel-hash {font-size: 1.25rem; font-weight: 400; color: var(--muted); line-height: 1}
+.channel.active .channel-hash {color: var(--green)}
+.channel-label {min-width: 0; overflow-wrap: anywhere; flex: 1; font-size: 1rem}
+.channel-badge {background: var(--green); color: var(--on-green); border-radius: 5px; padding: 2px 5px; min-width: 22px; text-align: center; font-size: .75rem}
+.channel-lock {width: 16px; height: 16px; flex-shrink: 0; color: var(--muted)}
 svg {fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round}
-.sidebar-note {display: flex; align-items: center; gap: 12px; padding: 26px 14px; color: #87907e}
-.sidebar-note p {font-size: 11px; line-height: 1.65; margin: 0}
-.signal-mark {width: 15px; height: 15px; border: 1px solid #9cae91; border-radius: 50%; position: relative}
-.signal-mark::before {content: ""; position: absolute; inset: 3px; border: 1px solid #9cae91; border-radius: 50%}
-.identity {display: flex; align-items: center; gap: 9px; border-top: 1px solid #dfe2d7; margin: 0 -18px; padding: 18px 23px max(18px, env(safe-area-inset-bottom))}
+.sidebar-note {display: flex; align-items: center; gap: 12px; padding: 24px 14px; color: var(--muted); flex-shrink: 0}
+.sidebar-note p {font-size: .875rem; line-height: 1.65; margin: 0}
+.signal-mark {width: 16px; height: 16px; flex-shrink: 0; border: 1px solid var(--muted); border-radius: 50%; position: relative}
+.signal-mark::before {content: ""; position: absolute; inset: 3px; border: 1px solid var(--muted); border-radius: 50%}
+.identity {display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); margin: 0 -18px; padding: 18px 18px max(18px, env(safe-area-inset-bottom)); flex-shrink: 0}
 .identity div {flex: 1}
-.identity strong {overflow: hidden; text-overflow: ellipsis; white-space: nowrap}
-.identity div span {display: block; font-size: 10px; color: var(--muted); margin-top: 4px}
-.avatar {width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; font-size: 12px; font-weight: 600; color: #4e6650; background: #e0e8da; letter-spacing: .5px}
-.profile-avatar {width: 31px; height: 31px; font-size: 11px; background: #ded9cc; color: #756b58}
-.swatch-0 {color: #4a6651; background: #e2e9dc}
-.swatch-1 {color: #696181; background: #eae4ef}
-.swatch-2 {color: #8a6550; background: #efe3d8}
-.swatch-3 {color: #526e78; background: #e0eaec}
-.swatch-4 {color: #8b6165; background: #eee1e0}
-.swatch-5 {color: #717544; background: #e8ebd9}
-.icon-button {width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: #858d81; display: grid; place-items: center; flex-shrink: 0; font-size: 23px}
-.icon-button:hover {background: #e8ebe2; color: var(--green)}
+.identity strong {overflow-wrap: anywhere}
+.identity div span {display: block; font-size: .75rem; color: var(--muted); margin-top: 4px}
+.avatar {width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; font-size: .875rem; font-weight: 600; color: var(--avatar-0-ink); background: var(--avatar-0-bg); letter-spacing: .5px}
+.profile-avatar {width: 36px; height: 36px; background: var(--profile-bg); color: var(--profile-ink)}
+.swatch-0 {color: var(--avatar-0-ink); background: var(--avatar-0-bg)}
+.swatch-1 {color: var(--avatar-1-ink); background: var(--avatar-1-bg)}
+.swatch-2 {color: var(--avatar-2-ink); background: var(--avatar-2-bg)}
+.swatch-3 {color: var(--avatar-3-ink); background: var(--avatar-3-bg)}
+.swatch-4 {color: var(--avatar-4-ink); background: var(--avatar-4-bg)}
+.swatch-5 {color: var(--avatar-5-ink); background: var(--avatar-5-bg)}
+.icon-button {width: 44px; height: 44px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; flex-shrink: 0; font-size: 1.75rem}
+.icon-button:hover {background: var(--hover); color: var(--green)}
 .icon-button svg {width: 19px; height: 19px}
 .main {min-width: 0; flex: 1; display: flex; flex-direction: column; position: relative}
 .room-header {display: flex; align-items: center; gap: 14px; padding: 23px 32px; border-bottom: 1px solid var(--line); flex-shrink: 0; min-height: 85px}
 .header-hash {font-size: 29px; color: #a7b29f; font-weight: 300}
 .room-title {flex: 1; min-width: 0}
-.room-title h1 {margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap}
-.room-title p {margin: 5px 0 0; font-size: 11px; color: var(--muted)}
-.connection {display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap}
-.status-dot {width: 6px; height: 6px; border-radius: 50%; background: #aaa}
-.connection.live .status-dot {background: #608d5a; box-shadow: 0 0 0 3px #eef3e8}
-.connection.offline .status-dot {background: #b28142}
-.connection.offline {color: #967140}
-.timeline {overflow: auto; flex: 1; min-height: 0; padding: 0 32px 20px; overscroll-behavior: contain; scrollbar-color: #d8ddd1 transparent; scrollbar-width: thin}
+.room-title h1 {margin: 0; font-size: 1.125rem; font-weight: 650; letter-spacing: -.3px; overflow-wrap: anywhere}
+.room-title p {margin: 5px 0 0; font-size: .875rem; color: var(--muted)}
+.connection {display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .875rem; white-space: nowrap}
+.status-dot {width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--muted)}
+.connection.live .status-dot {background: var(--green)}
+.connection.offline .status-dot {background: var(--warning)}
+.connection.offline {color: var(--warning)}
+.timeline {overflow: auto; flex: 1; min-height: 0; padding: 0 32px 20px; scroll-padding: 8px; overscroll-behavior: contain; scrollbar-color: var(--control-border) transparent}
 .timeline-top {display: flex; justify-content: center; padding: 12px 0}
-.quiet-button {border: 0; background: transparent; color: var(--green); font-size: 11px; padding: 7px 10px; border-radius: 5px; font-weight: 500}
+.quiet-button {min-height: 44px; border: 0; background: transparent; color: var(--green); font-size: .875rem; padding: 10px 12px; border-radius: 5px; font-weight: 500}
 .quiet-button:hover {background: var(--green-soft)}
 .conversation-intro {padding: 36px 0 26px}
-.intro-hash {width: 44px; height: 44px; background: #eef0e6; color: #82976e; display: grid; place-items: center; border-radius: 13px; font-size: 27px; margin-bottom: 14px}
-.conversation-intro h2 {font-weight: 600; letter-spacing: -.7px; font-size: 26px; margin: 0 0 8px}
-.conversation-intro p {font-size: 12px; color: var(--muted); line-height: 1.6; max-width: 490px; margin: 0}
-.date-divider {display: flex; align-items: center; gap: 14px; margin: 24px 0 20px; color: #8d9585; font-size: 10px; font-weight: 500}
+.intro-hash {width: 44px; height: 44px; background: var(--green-soft); color: var(--green); display: grid; place-items: center; border-radius: 13px; font-size: 1.75rem; margin-bottom: 14px}
+.conversation-intro h2 {font-weight: 600; letter-spacing: -.7px; font-size: 1.625rem; margin: 0 0 8px; overflow-wrap: anywhere}
+.conversation-intro p {font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 490px; margin: 0}
+.date-divider {display: flex; align-items: center; gap: 14px; margin: 24px 0 20px; color: var(--muted); font-size: .875rem; font-weight: 500}
 .date-divider::before, .date-divider::after {content: ""; height: 1px; background: var(--line); flex: 1}
 .message {display: flex; gap: 12px; padding: 10px 0}
 .message-content {min-width: 0; flex: 1}
-.message-meta {display: flex; align-items: baseline; gap: 9px; margin-bottom: 6px}
-.message-name {font-size: 12px; font-weight: 650; overflow-wrap: anywhere}
-.message time {font-size: 10px; color: #a0a694; white-space: nowrap}
-.message-source {font-size: 8px; font-weight: 550; letter-spacing: .7px; border: 1px solid #dfe3d7; color: #8a947f; border-radius: 3px; padding: 1px 3px}
-.message-text {margin: 0; font-size: 14px; line-height: 1.65; color: #444e41; white-space: pre-wrap; overflow-wrap: anywhere}
+.message-meta {display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; margin-bottom: 6px}
+.message-name {font-size: .875rem; font-weight: 650; overflow-wrap: anywhere}
+.message time {font-size: .875rem; color: var(--muted); white-space: nowrap}
+.message-source {font-size: .75rem; font-weight: 550; letter-spacing: .7px; border: 1px solid var(--line); color: var(--muted); border-radius: 3px; padding: 1px 4px}
+.message-text {margin: 0; font-size: 1rem; line-height: 1.65; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere}
 .message.own .message-name {color: var(--green)}
 .message.highlight {animation: arrive .5s ease-out}
-@keyframes arrive {from {background: #ecf1e5} to {background: transparent}}
+@keyframes arrive {from {background: var(--green-soft)} to {background: transparent}}
 .composer-area {flex-shrink: 0; padding: 8px 32px max(20px, env(safe-area-inset-bottom)); background: var(--paper)}
-.composer {border: 1px solid #d8dfce; border-radius: 10px; background: #fffefa; overflow: hidden; box-shadow: 0 2px 5px #303b2410}
-.composer:focus-within {border-color: #8caa7b; box-shadow: 0 0 0 2px #d5e1c744}
-.composer textarea {display: block; width: 100%; min-height: 54px; max-height: 160px; resize: vertical; border: 0; padding: 15px 16px 6px; background: transparent; outline: none; color: var(--ink); line-height: 1.5; font-size: 13px}
+.composer {border: 1px solid var(--control-border); border-radius: 10px; background: var(--surface); overflow: hidden}
+.composer:focus-within {outline: 3px solid var(--green); outline-offset: 3px}
+.composer textarea {display: block; width: 100%; min-height: 4rem; max-height: 10rem; resize: vertical; border: 0; padding: 15px 16px 6px; background: transparent; color: var(--ink); line-height: 1.5; font-size: 1rem}
 .composer textarea:focus-visible {outline: none}
-.composer textarea::placeholder {color: #a4aa9c}
+.composer textarea::placeholder {color: var(--muted); opacity: 1}
 .composer-actions {display: flex; align-items: center; gap: 10px; padding: 3px 9px 9px 16px}
-.composer-hint {font-size: 10px; color: #9ba68f; flex: 1}
-.byte-count {color: #9ba68f; font-size: 10px; font-variant-numeric: tabular-nums}
+.composer-hint {font-size: .75rem; color: var(--muted); flex: 1; min-width: 0}
+.byte-count {color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; white-space: nowrap}
 .byte-count.over {color: var(--error); font-weight: 600}
-.send-button {background: var(--green); border: 0; color: #fff; border-radius: 7px; width: 32px; height: 32px; display: grid; place-items: center}
-.send-button:hover:not(:disabled) {background: #244738}
+.send-button {background: var(--green); border: 0; color: var(--on-green); border-radius: 7px; width: 44px; height: 44px; flex-shrink: 0; display: grid; place-items: center}
+.send-button:hover:not(:disabled) {background: var(--green-hover)}
+.send-button:disabled {background: var(--line); color: var(--muted)}
 .send-button svg {width: 19px; height: 19px}
-.composer-footer {display: flex; justify-content: space-between; gap: 10px; font-size: 9px; color: #a4aa9b; padding: 10px 1px 0}
-.new-messages {position: absolute; align-self: center; bottom: 160px; border: 1px solid #ccd8c4; border-radius: 18px; padding: 8px 15px; background: #edf3e7; color: var(--green); box-shadow: 0 3px 12px #243b2220; font-size: 12px}
-.notice {display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 28px; background: #faf0e7; border-bottom: 1px solid #e9dbca; color: #875e3d; font-size: 12px; line-height: 1.5}
-.pending-post {display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #8c6842; font-size: 11px; padding: 5px 0 10px}
+.composer-footer {display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: .75rem; color: var(--muted); padding: 10px 1px 0}
+.new-messages {align-self: center; flex-shrink: 0; min-height: 44px; border: 1px solid var(--control-border); border-radius: 18px; padding: 8px 15px; margin: 4px; background: var(--green-soft); color: var(--green); font-size: .875rem}
+.notice {display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 28px; background: var(--warning-soft); border-bottom: 1px solid var(--line); color: var(--warning); font-size: .875rem; line-height: 1.5}
+.pending-post {display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--warning); font-size: .875rem; padding: 5px 0 10px}
+.compose-error {font-size: .875rem; color: var(--error); margin: 8px 1px}
 .join-panel {max-width: 420px; width: calc(100% - 48px); margin: auto; padding: 38px 0; overflow: auto}
-.join-symbol {width: 54px; height: 54px; background: var(--green-soft); color: #60815a; border-radius: 16px; display: grid; place-items: center; font-size: 32px; margin-bottom: 22px}
-.eyebrow {font-size: 9px; letter-spacing: 1.7px; color: #7d9272; font-weight: 650; margin-bottom: 12px}
-.join-panel h2 {font-size: 29px; letter-spacing: -1px; line-height: 1.2; font-weight: 600; margin: 0 0 12px}
-.join-description {font-size: 13px; color: var(--muted); line-height: 1.7; margin: 0 0 26px}
-form label {display: block; font-size: 11px; color: #5f6b59; font-weight: 550; margin: 16px 0 8px}
-input {width: 100%; border: 1px solid #d9dfcf; border-radius: 7px; padding: 12px; background: #fffefa; color: var(--ink); min-width: 0}
-input::placeholder {color: #a3a99a; font-size: 12px}
-.primary-button {display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; border-radius: 7px; padding: 12px 16px; background: var(--green); color: #fff; font-weight: 550; margin-top: 20px; font-size: 12px}
-.primary-button:hover {background: #244738}
-.primary-button span {font-size: 17px}
-.privacy-note {font-size: 10px; color: #98a18c; line-height: 1.7; margin-top: 18px}
-.form-error {font-size: 12px; color: var(--error); line-height: 1.5}
-dialog {border: 1px solid #d7ddcd; border-radius: 13px; padding: 25px; background: var(--paper); color: var(--ink); width: min(460px, calc(100% - 32px)); max-height: calc(100dvh - 40px); box-shadow: 0 12px 60px #23322233}
+.join-symbol {width: 54px; height: 54px; background: var(--green-soft); color: var(--green); border-radius: 16px; display: grid; place-items: center; font-size: 2rem; margin-bottom: 22px}
+.eyebrow {font-size: .75rem; letter-spacing: 1.7px; color: var(--muted); font-weight: 650; margin-bottom: 12px}
+.join-panel h2 {font-size: 1.8125rem; letter-spacing: -1px; line-height: 1.2; font-weight: 600; margin: 0 0 12px; overflow-wrap: anywhere}
+.join-description {font-size: 1rem; color: var(--muted); line-height: 1.7; margin: 0 0 26px}
+form label {display: block; font-size: .875rem; color: var(--ink); font-weight: 550; margin: 16px 0 8px}
+input {width: 100%; min-height: 44px; border: 1px solid var(--control-border); border-radius: 7px; padding: 12px; background: var(--surface); color: var(--ink); min-width: 0; font-size: 1rem}
+input::placeholder {color: var(--muted); opacity: 1}
+.primary-button {display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 44px; border: 0; border-radius: 7px; padding: 12px 16px; background: var(--green); color: var(--on-green); font-weight: 550; margin-top: 20px; font-size: 1rem}
+.primary-button:hover:not(:disabled) {background: var(--green-hover)}
+.primary-button span {font-size: 1.0625rem}
+.privacy-note {font-size: .875rem; color: var(--muted); line-height: 1.7; margin-top: 18px}
+.form-error {font-size: .875rem; color: var(--error); line-height: 1.5}
+dialog {border: 1px solid var(--control-border); border-radius: 13px; padding: 25px; background: var(--paper); color: var(--ink); width: min(460px, calc(100% - 32px)); max-height: calc(100dvh - 40px); box-shadow: 0 12px 60px #0005}
 dialog::backdrop {background: #1b251c66}
 .dialog-heading {display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-bottom: 18px}
-.dialog-heading h2 {margin: 0; font-size: 18px; letter-spacing: -.3px}
-dialog p {font-size: 12px; line-height: 1.65; color: var(--muted)}
+.dialog-heading h2 {margin: 0; font-size: 1.125rem; letter-spacing: -.3px}
+dialog p {font-size: .875rem; line-height: 1.65; color: var(--muted)}
 dl {margin: 0}
-dt {font-size: 10px; color: #8b967f; margin: 18px 0 5px; text-transform: uppercase; letter-spacing: .8px}
-dd {margin: 0; font-size: 13px}
-.key {font-family: ui-monospace, monospace; font-size: 11px; overflow-wrap: anywhere; line-height: 1.6}
-.danger-button {width: 100%; border: 1px solid #e3cfc3; background: #fcf1eb; color: #a0543c; border-radius: 6px; padding: 11px; margin-top: 14px; font-size: 12px}
+dt {font-size: .75rem; color: var(--muted); margin: 18px 0 5px; text-transform: uppercase; letter-spacing: .8px}
+dd {margin: 0; font-size: 1rem}
+.key {font-family: ui-monospace, monospace; font-size: .875rem; overflow-wrap: anywhere; line-height: 1.6}
+.danger-button {width: 100%; min-height: 44px; border: 1px solid var(--error); background: var(--danger-soft); color: var(--error); border-radius: 6px; padding: 11px; margin-top: 14px; font-size: .875rem}
 .sr-only {position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap}
 .mobile-menu {display: none}
+.mobile-close {display: none}
 .scrim {position: fixed; inset: 0; z-index: 20; border: 0; background: #1f302355}
 @media (min-width: 1500px) {.timeline, .composer-area {padding-left: max(32px, calc((100% - 960px) / 2)); padding-right: max(32px, calc((100% - 960px) / 2))}}
 @media (max-width: 900px) {.sidebar {width: 228px; padding-left: 12px; padding-right: 12px}.identity {margin: 0 -12px; padding-left: 17px; padding-right: 17px}.desktop-hint {display: none}.room-header {padding: 20px 22px}.timeline, .composer-area {padding-left: 22px; padding-right: 22px}}
@@ -139,26 +202,31 @@ dd {margin: 0; font-size: 13px}
   .sidebar {position: fixed; top: 0; bottom: 0; left: 0; width: 272px; z-index: 30; transform: translateX(-100%); transition: transform .18s ease}
   .sidebar.open {transform: translateX(0)}
   .mobile-menu {display: grid}
-  .room-header {min-height: 73px; gap: 10px; padding: max(12px, env(safe-area-inset-top)) 12px 12px}
+  .mobile-close {display: grid; position: absolute; top: 24px; right: 12px}
+  .room-header {display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; min-height: 88px; gap: 2px 8px; padding: max(12px, env(safe-area-inset-top)) 12px 12px}
   .header-hash {display: none}
-  .room-title h1 {font-size: 16px}
-  .room-title p {font-size: 10px; margin-top: 4px}
-  .connection {font-size: 9px; gap: 5px}
-  .room-header > .icon-button:last-child {width: 26px}
+  .room-title {grid-column: 2; grid-row: 1}
+  .room-title p {display: none}
+  .connection {grid-column: 2; grid-row: 2}
+  .room-header > .icon-button:first-child {grid-column: 1; grid-row: 1 / span 2}
+  .room-header > .icon-button:last-child {grid-column: 3; grid-row: 1 / span 2}
   .timeline {padding: 0 18px 18px}
   .conversation-intro {padding-top: 24px}
-  .conversation-intro h2 {font-size: 24px}
+  .conversation-intro h2 {font-size: 1.5rem}
   .message {gap: 10px}
-  .message-text {font-size: 14px}
   .composer-area {padding: 6px 12px max(12px, env(safe-area-inset-bottom))}
-  .composer textarea {font-size: 16px; resize: none}
-  .composer-hint {font-size: 9px}
-  .composer-footer {font-size: 8px; justify-content: center}
+  .composer textarea {resize: none}
+  .composer-footer {justify-content: center}
   .composer-actions {padding-left: 12px}
   .notice {padding: 7px 12px}
   .join-panel {padding: 28px 0}
-  input {font-size: 16px}
   .pending-post {align-items: flex-start}
   .pending-post .quiet-button {white-space: nowrap}
+}
+@media (forced-colors: active) {
+  .channel.active {border-color: Highlight}
+  .composer, input, dialog {border-color: FieldText}
+  .composer:focus-within, :focus-visible {outline-color: Highlight}
+  .send-button, .primary-button, .danger-button, .new-messages {border: 1px solid ButtonText}
 }
 @media (prefers-reduced-motion: reduce) {*, *::before, *::after {animation: none !important; transition: none !important; scroll-behavior: auto !important}}

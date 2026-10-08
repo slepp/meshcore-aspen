@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const STORAGE = "aspen.rooms.v1.";
 const MAX_BYTES = 151;
 const rooms = new Map();
+const mobileLayout = matchMedia("(max-width: 640px)");
 let active, identity, name, booted = false;
 class ApiError extends Error {
   constructor(status, message) {super(message); this.status = status;}
@@ -39,10 +40,12 @@ function setProfile() {
   $("profile-avatar").textContent = name ? initials(name) : "?";
 }
 function drawChannels() {
+  const focusedRoom = $("channels").contains(document.activeElement) ? document.activeElement.dataset.roomId : undefined;
   const fragment = document.createDocumentFragment();
   for (const room of rooms.values()) {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.roomId = room.id;
     button.className = `channel${room === active ? " active" : ""}`;
     button.setAttribute("aria-current", room === active ? "page" : "false");
     button.setAttribute("aria-label", `${room.name}${room.unread ? `, ${room.unread} unread messages` : ""}${room.session ? "" : ", not joined"}`);
@@ -63,12 +66,28 @@ function drawChannels() {
     fragment.append(button);
   }
   $("channels").replaceChildren(fragment);
+  if (focusedRoom) [...$("channels").children].find(button => button.dataset.roomId === focusedRoom)?.focus({preventScroll: true});
 }
-function menu(open) {
-  $("sidebar").classList.toggle("open", open);
-  $("scrim").hidden = !open;
-  $("mobile-menu").setAttribute("aria-expanded", String(open));
-  if (open) $("channels").querySelector("button[aria-current=page]")?.focus();
+function menu(open, restoreFocus = true) {
+  const shown = mobileLayout.matches && open;
+  const focusWasInside = $("sidebar").contains(document.activeElement) || document.activeElement === $("scrim");
+  $("sidebar").classList.toggle("open", shown);
+  $("scrim").hidden = !shown;
+  $("mobile-menu").setAttribute("aria-expanded", String(shown));
+  $("sidebar").inert = mobileLayout.matches && !shown;
+  $("main-content").inert = shown;
+  document.querySelector(".skip-link").inert = shown;
+  if (mobileLayout.matches) $("sidebar").setAttribute("aria-hidden", String(!shown));
+  else $("sidebar").removeAttribute("aria-hidden");
+  if (shown) {
+    $("sidebar").setAttribute("role", "dialog");
+    $("sidebar").setAttribute("aria-modal", "true");
+    $("channels").querySelector("button[aria-current=page]")?.focus();
+  } else {
+    $("sidebar").removeAttribute("role");
+    $("sidebar").removeAttribute("aria-modal");
+    if (mobileLayout.matches && restoreFocus && focusWasInside) $("mobile-menu").focus();
+  }
 }
 function nearBottom() {return $("timeline").scrollHeight - $("timeline").scrollTop - $("timeline").clientHeight < 100;}
 function bottom() {$("timeline").scrollTop = $("timeline").scrollHeight; $("new-messages").hidden = true;}
@@ -114,8 +133,8 @@ function drawMessages(scroll = false) {
   if (scroll || wasBottom) bottom();
 }
 function receive(room, messages, live = false) {
-  let added = 0;
-  for (const message of messages) if (!room.messages.has(message.seq)) added++;
+  const fresh = messages.filter(message => !room.messages.has(message.seq));
+  const added = fresh.length;
   mergeMessages(room.messages, messages);
   // Only consecutive stream messages can advance a catch-up cursor.
   while (room.messages.has(room.cursor + 1)) room.cursor++;
@@ -124,6 +143,13 @@ function receive(room, messages, live = false) {
     const follow = nearBottom();
     drawMessages();
     if (live && added && !follow) $("new-messages").hidden = false;
+    const incoming = fresh.filter(message => message.author !== room.session?.author);
+    if (live && incoming.length) {
+      const last = incoming.at(-1);
+      $("message-announcement").textContent = incoming.length === 1 ?
+        `${last.webName || `Radio sender ${last.author.slice(0, 8)}`} in ${room.name}: ${messageBody(last)}` :
+        `${incoming.length} new messages in ${room.name}.`;
+    }
   }
   if (added) drawChannels();
 }
@@ -229,13 +255,15 @@ function showRoom() {
   if (joined) drawMessages(true);
 }
 async function select(room) {
+  const focusHeading = mobileLayout.matches && $("sidebar").classList.contains("open");
   if (active) {
     active.draft = $("message-input").value;
     save(`draft.${active.id}`, active.draft);
   }
   active = room; room.unread = 0;
   save("channel", room.id);
-  menu(false); drawChannels(); showRoom();
+  menu(false, !focusHeading); drawChannels(); showRoom();
+  if (focusHeading) $("room-name").focus();
   if (room.session && !room.loaded) {
     await history(room, true);
     connect(room);
@@ -246,14 +274,18 @@ function updateComposer() {
   const used = postBytes(active.session.name, $("message-input").value);
   $("byte-count").textContent = `${used} / ${MAX_BYTES} bytes`;
   $("byte-count").classList.toggle("over", used > MAX_BYTES);
+  $("message-input").setAttribute("aria-invalid", String(used > MAX_BYTES));
+  $("compose-error").hidden = used <= MAX_BYTES;
+  $("compose-form").setAttribute("aria-busy", String(!!active.sending));
   $("send-button").disabled = !active.session || used > MAX_BYTES || !$("message-input").value.trim() || !!active.outbox || !!active.sending;
-  $("message-input").disabled = !!active.outbox || !!active.sending;
+  $("message-input").readOnly = !!active.outbox || !!active.sending;
   $("pending-post").hidden = !active.outbox;
   $("pending-text").textContent = active.sending ? "Saving to the room…" : "Send result uncertain. Check or retry this same post before sending another.";
   $("retry-post").disabled = !!active.sending;
 }
 async function transmit(room) {
   if (room.sending || !room.outbox) return;
+  const focusComposer = $("compose-form").contains(document.activeElement) || document.activeElement === $("retry-post");
   room.sending = true;
   if (room === active) updateComposer();
   try {
@@ -262,7 +294,10 @@ async function transmit(room) {
     save(`outbox.${room.id}`, null);
     room.outbox = null; room.draft = "";
     save(`draft.${room.id}`, "");
-    if (room === active) {$("message-input").value = ""; bottom();}
+    if (room === active) {
+      $("message-input").value = ""; bottom();
+      $("message-announcement").textContent = `Message saved to ${room.name}.`;
+    }
   } catch (error) {
     if (error instanceof ApiError && [400, 413, 415].includes(error.status)) {
       save(`outbox.${room.id}`, null);
@@ -272,7 +307,12 @@ async function transmit(room) {
     report(error instanceof ApiError ? error : new Error(`Could not confirm the send: ${error.message}. Use Check / retry; it will not create a second copy.`));
   } finally {
     room.sending = false;
-    if (room === active) updateComposer();
+    if (room === active) {
+      updateComposer();
+      if (!room.outbox && room.session && focusComposer &&
+          ($("composer-area").contains(document.activeElement) || document.activeElement === document.body))
+        $("message-input").focus({preventScroll: true});
+    }
   }
 }
 async function boot() {
@@ -318,7 +358,11 @@ async function boot() {
 $("join-form").addEventListener("submit", async event => {
   event.preventDefault();
   const room = active, display = $("display-name").value.trim();
-  if (!validName(display)) {$("join-error").textContent = "Use 1–24 UTF-8 bytes, without colons or control characters."; $("join-error").hidden = false; return;}
+  if (!validName(display)) {
+    $("join-error").textContent = "Use 1–24 UTF-8 bytes, without colons or control characters.";
+    $("join-error").hidden = false;
+    $("display-name").setAttribute("aria-invalid", "true"); $("display-name").focus(); return;
+  }
   $("join-button").disabled = true; $("join-error").hidden = true;
   try {
     const session = await api(endpoint(room, "login"), {identity, name: display, password: $("room-password").value});
@@ -329,8 +373,12 @@ $("join-form").addEventListener("submit", async event => {
     if (room === active) showRoom();
     await history(room, true); connect(room);
     $("room-password").value = "";
+    if (room === active && document.activeElement === document.body) $("message-input").focus({preventScroll: true});
   } catch (error) {
-    $("join-error").textContent = error.message; $("join-error").hidden = false;
+    if (room === active) {
+      $("join-error").textContent = error.message; $("join-error").hidden = false;
+      if (error.status === 403) {$("room-password").setAttribute("aria-invalid", "true"); $("room-password").focus();}
+    } else report(new Error(`${room.name}: ${error.message}`));
   } finally {$("join-button").disabled = false;}
 });
 $("compose-form").addEventListener("submit", async event => {
@@ -372,8 +420,22 @@ $("load-older").addEventListener("click", async () => {
 $("new-messages").addEventListener("click", bottom);
 $("timeline").addEventListener("scroll", () => {if (nearBottom()) $("new-messages").hidden = true;});
 $("mobile-menu").addEventListener("click", () => menu(!$("sidebar").classList.contains("open")));
+$("close-channels").addEventListener("click", () => menu(false));
 $("scrim").addEventListener("click", () => menu(false));
-document.addEventListener("keydown", event => {if (event.key === "Escape") menu(false);});
+mobileLayout.addEventListener("change", () => menu(false));
+menu(false);
+document.addEventListener("keydown", event => {
+  if (!$("sidebar").classList.contains("open") || document.querySelector("dialog[open]")) return;
+  if (event.key === "Escape") {event.preventDefault(); menu(false); return;}
+  if (event.key !== "Tab") return;
+  const controls = [...$("sidebar").querySelectorAll("a[href], button:not(:disabled)")].filter(element => element.getClientRects().length);
+  const first = controls[0], last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus();}
+  else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}
+});
+for (const id of ["display-name", "room-password", "profile-input"]) {
+  $(id).addEventListener("input", () => $(id).removeAttribute("aria-invalid"));
+}
 $("notice-dismiss").addEventListener("click", () => {$("notice").hidden = true;});
 $("room-info").addEventListener("click", () => {
   if (!active) return;
@@ -395,13 +457,17 @@ $("leave-room").addEventListener("click", async () => {
   finally {$("leave-room").disabled = false;}
 });
 $("edit-profile").addEventListener("click", () => {
+  if (mobileLayout.matches) menu(false);
   $("profile-input").value = name ?? ""; $("profile-error").hidden = true; $("profile-dialog").showModal();
 });
 $("close-profile").addEventListener("click", () => $("profile-dialog").close());
 $("profile-form").addEventListener("submit", event => {
   event.preventDefault();
   const next = $("profile-input").value.trim();
-  if (!validName(next)) {$("profile-error").textContent = "Use 1–24 UTF-8 bytes, without colons or control characters."; $("profile-error").hidden = false; return;}
+  if (!validName(next)) {
+    $("profile-error").textContent = "Use 1–24 UTF-8 bytes, without colons or control characters."; $("profile-error").hidden = false;
+    $("profile-input").setAttribute("aria-invalid", "true"); $("profile-input").focus(); return;
+  }
   try {save("name", next); name = next; setProfile(); $("profile-dialog").close();}
   catch (error) {report(error);}
 });

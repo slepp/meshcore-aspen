@@ -232,7 +232,12 @@ npm run build
 `npm run test:browser` also exercises desktop and mobile conversations in a
 local Worker using Google Chrome and public fixture identities. Set
 `CHROME_BIN` if Chrome uses another executable name. It creates isolated
-temporary room/browser storage and sends no RF packets. CI runs this check too.
+temporary room/browser storage and sends no RF packets. It checks both system
+themes with axe-core, measured text/control contrast, 44-pixel controls,
+320-pixel reflow, enlarged text, keyboard focus and message announcements.
+The checks use [WCAG 2.2](https://www.w3.org/TR/WCAG22/) AA thresholds;
+automated checks do not replace testing with assistive technology.
+CI runs this check too.
 
 The focused checks cover two-front reception, one durable post, native login
 and PATH replies, pushed encrypted history, cursor/receipt behavior,

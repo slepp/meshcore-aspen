@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#f3f2ed">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f0f0e9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#181e1a" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Join shared Aspen rooms from the web. One conversation across IP and mesh radios.">
   <title>Aspen Rooms</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
@@ -11,6 +13,7 @@
   <script type="module" src="/rooms.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to conversation</a>
   <div class="shell">
     <button class="scrim" id="scrim" aria-label="Close channel list" hidden></button>
     <aside class="sidebar" id="sidebar" aria-label="Channels">
@@ -18,6 +21,7 @@
         <img src="/icon.svg" width="36" height="36" alt="">
         <span>Aspen<span class="brand-caption">ROOMS</span></span>
       </a>
+      <button class="icon-button mobile-close" id="close-channels" aria-label="Close channels">×</button>
       <div class="workspace">
         <span class="workspace-mark" aria-hidden="true">A</span>
         <div><strong>Shared rooms</strong><span id="service-name">Connecting to service</span></div>
@@ -33,13 +37,13 @@
         </button>
       </div>
     </aside>
-    <main class="main">
+    <main class="main" id="main-content" tabindex="-1">
       <header class="room-header">
         <button class="icon-button mobile-menu" id="mobile-menu" aria-label="Show channels" aria-expanded="false" aria-controls="sidebar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <span class="header-hash" aria-hidden="true">#</span>
-        <div class="room-title"><h1 id="room-name">Aspen Rooms</h1><p id="room-subtitle">Shared conversations, wherever you join.</p></div>
+        <div class="room-title"><h1 id="room-name" tabindex="-1">Aspen Rooms</h1><p id="room-subtitle">Shared conversations, wherever you join.</p></div>
         <div class="connection" id="connection" role="status"><span class="status-dot"></span><span id="connection-text">Connecting</span></div>
         <button class="icon-button" id="room-info" aria-label="Room details" title="Room details">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></svg>
@@ -53,9 +57,9 @@
         <p class="join-description">Connect over IP. Read and send the same messages as the people joining through mesh radios.</p>
         <form id="join-form">
           <label for="display-name">Display name</label>
-          <input id="display-name" name="displayName" autocomplete="nickname" required maxlength="24" placeholder="How people will see you">
+          <input id="display-name" name="displayName" autocomplete="nickname" required maxlength="24" placeholder="How people will see you" aria-describedby="join-error">
           <label for="room-password">Room password</label>
-          <input id="room-password" name="password" type="password" autocomplete="current-password" placeholder="Ask the room operator">
+          <input id="room-password" name="password" type="password" autocomplete="current-password" placeholder="Ask the room operator" aria-describedby="join-error">
           <p class="form-error" id="join-error" role="alert" hidden></p>
           <button class="primary-button" id="join-button" type="submit">Join room <span aria-hidden="true">→</span></button>
         </form>
@@ -78,7 +82,7 @@
         </div>
         <form id="compose-form" class="composer">
           <label class="sr-only" for="message-input">Message this room</label>
-          <textarea id="message-input" rows="2" placeholder="Message this room" aria-describedby="composer-hint byte-count"></textarea>
+          <textarea id="message-input" rows="2" placeholder="Message this room" aria-describedby="composer-hint byte-count compose-error"></textarea>
           <div class="composer-actions">
             <span class="composer-hint" id="composer-hint">Name counts toward the limit</span>
             <span class="byte-count" id="byte-count">0 / 151 bytes</span>
@@ -87,19 +91,21 @@
             </button>
           </div>
         </form>
+        <p class="compose-error" id="compose-error" role="status" hidden>Message too long. The 151-byte limit includes your name and UTF-8 text.</p>
         <div class="composer-footer"><span>IP connection · Messages also reach radio participants</span><span class="desktop-hint">Enter to send · Shift + Enter for a new line</span></div>
       </footer>
     </main>
   </div>
-  <dialog id="details-dialog">
-    <div class="dialog-heading"><h2>Room details</h2><button id="close-details" class="icon-button" aria-label="Close room details">×</button></div>
+  <div class="sr-only" id="message-announcement" role="status" aria-atomic="true"></div>
+  <dialog id="details-dialog" aria-labelledby="details-title">
+    <div class="dialog-heading"><h2 id="details-title">Room details</h2><button id="close-details" class="icon-button" aria-label="Close room details">×</button></div>
     <dl><dt>Room</dt><dd id="detail-name"></dd><dt>Alias</dt><dd id="detail-alias"></dd><dt>Radio identity</dt><dd class="key" id="detail-key"></dd><dt>Your web identity</dt><dd class="key" id="detail-author"></dd></dl>
     <p>Web posts enter the room's stored history. Radio delivery depends on each participant's connection and acknowledgement; a saved post does not confirm RF reception.</p>
     <button class="danger-button" id="leave-room">Leave room on this browser</button>
   </dialog>
-  <dialog id="profile-dialog">
-    <div class="dialog-heading"><h2>Your display name</h2><button id="close-profile" class="icon-button" aria-label="Close display name editor">×</button></div>
-    <form id="profile-form"><label for="profile-input">Name for new room logins</label><input id="profile-input" autocomplete="nickname" required maxlength="24"><p>Joined rooms keep the name used when you joined. Leave and rejoin a room to change it there.</p><p id="profile-error" class="form-error" role="alert" hidden></p><button class="primary-button">Save name</button></form>
+  <dialog id="profile-dialog" aria-labelledby="profile-title">
+    <div class="dialog-heading"><h2 id="profile-title">Your display name</h2><button id="close-profile" class="icon-button" aria-label="Close display name editor">×</button></div>
+    <form id="profile-form"><label for="profile-input">Name for new room logins</label><input id="profile-input" autocomplete="nickname" required maxlength="24" aria-describedby="profile-error"><p>Joined rooms keep the name used when you joined. Leave and rejoin a room to change it there.</p><p id="profile-error" class="form-error" role="alert" hidden></p><button class="primary-button">Save name</button></form>
   </dialog>
 </body>
 </html>
