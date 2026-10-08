@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,28 @@ SPEC = BUILD/"native-worker.json"
 INPUTS = BUILD/"native-worker.inputs"
 PIN = "d92964352441e53b93e8667b802e04f6e072b39e"
 SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".inc", ".py", ".mk", ".cmake", ".S", ".patch"}
+
+def source_identity(root=ROOT):
+    if (root / ".git").exists():
+        top = Path(subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root, text=True).strip()).resolve()
+        if top != root.resolve():
+            raise ValueError("native worker source must be the selected repository root")
+        commit, epoch = subprocess.check_output(
+            ["git", "show", "-s", "--format=%H%n%ct", "HEAD"], cwd=root, text=True).splitlines()
+    else:
+        metadata = json.loads((root / "release/source.json").read_text())
+        if not isinstance(metadata, dict) or set(metadata) != {"commit", "commit_epoch"}:
+            raise ValueError("native worker source archive release metadata is invalid")
+        commit, epoch = metadata["commit"], metadata["commit_epoch"]
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("native worker source archive has no valid release commit")
+    if not isinstance(epoch, str) or not epoch.isascii() or not epoch.isdecimal():
+        raise ValueError("native worker source archive has no valid release epoch")
+    timestamp = int(epoch)
+    if not 1715770351 <= timestamp <= 4102444800:
+        raise ValueError("native worker release epoch is outside May 2024–January 2100")
+    return commit, timestamp
 
 
 def digest(path):
@@ -40,7 +63,8 @@ def local_inputs():
     result = inventory([ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
                         ROOT/"internal/nativebot", ROOT/"test_support/phy_parity",
                         ROOT/"test_support/parity"])
-    for path in (ROOT/"Makefile", HERE/"build_worker.py", HERE/"compiler_capture.py"):
+    for path in (ROOT/"Makefile", ROOT/"release/source.json",
+                 HERE/"build_worker.py", HERE/"compiler_capture.py"):
         result[str(path)] = digest(path)
     return result
 
@@ -77,6 +101,7 @@ def run(command, log, env, cwd=ROOT):
 
 
 def ensure():
+    source_commit, source_epoch = source_identity()
     try:
         spec = verify()
         write_identity(spec)
@@ -179,8 +204,7 @@ def ensure():
             text = prepare.replace_once(text, "                uint8_t hash_count = path_len & 63;",
                                         "                uint8_t hash_count = path_len & 63;\n"+guard)
             mesh_source.write_text(text)
-        epoch = int(subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT))
-        baseline = epoch - epoch % 86400
+        baseline = source_epoch - source_epoch % 86400
         if not 1715770351 <= baseline <= 4102444800:
             raise ValueError("build clock baseline outside the shared May 2024–January 2100 range")
         clock.write_text("// Build-day clock baseline for offline startup.\n"
@@ -218,7 +242,7 @@ def ensure():
             if "\n" in path or "\t" in path:
                 raise ValueError("native build path contains unsupported newline/tab")
         INPUTS.write_text("".join(value+"\t"+path+"\n" for path, value in sorted(inputs.items())))
-        spec = {"format": 1, "base": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        spec = {"format": 1, "base": source_commit, "source_date_epoch": source_epoch,
                 "worker": str(WORKER), "worker_sha256": digest(WORKER), "source_fingerprint": fingerprint,
                 "upstream": PIN, "lua_archive_sha256": digest(NATIVE/"lua/lua-5.5.1.tar.gz"),
                 "wamr_revision": wasm.REVISION, "wamr_archive_sha256": wasm.SHA256,

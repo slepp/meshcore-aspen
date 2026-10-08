@@ -18,10 +18,10 @@ The project and community documentation are public at
 Get the [published Aspen release](https://github.com/slepp/meshcore-aspen/releases/latest)
 for the XIAO ESP32-S3R8 + Wio SX1262, or see
 [other firmware downloads](https://ve6slp.ca/projects/meshcore/#downloads).
-The first independent host/device releases are
-[Birch 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0),
+The host/device releases are
+[Birch 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.1),
 [Pine 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and
-[Willow 0.0.1](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.1).
+[Willow 0.0.2](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.2).
 Birch includes Linux binaries; Pine is an initialized-node application update;
 Willow is a source-build release requiring the pinned Hew compiler.
 First-install procedures differ
@@ -86,8 +86,8 @@ existing installation. Aspen, Birch and Pine retain their own setup guides.
 | Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
 
 Aspen, Birch, Pine and Willow use independent product versions, separately
-from their MeshCore base. This source reports Aspen 0.1.9, Birch 0.1.0,
-Pine 0.1.0 and Willow 0.0.1. Product tags are `NAME-vVERSION`.
+from their MeshCore base. This source reports Aspen 0.1.10, Birch 0.1.1,
+Pine 0.1.0 and Willow 0.0.2. Product tags are `NAME-vVERSION`.
 Birch contains a matching host and native worker for a separately configured
 modem. Pine's `pine-0.1.0` firmware identity replaces the older
 `1.17.1-slp-pine` version label without changing saved radio identities.

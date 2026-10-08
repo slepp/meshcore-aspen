@@ -25,7 +25,8 @@ FIELDS = {
     "operator_public_key", "trusted_companion_public_key",
     "wifi_ssid", "wifi_password", "wifi_enabled",
 }
-BANDWIDTHS = {7800, 10400, 15600, 20800, 31250, 41700, 62500, 125000, 250000, 500000}
+BANDWIDTHS = {7800, 7810, 10400, 10420, 15600, 15630, 20800, 20830,
+              31250, 41700, 62500, 125000, 250000, 500000}
 
 
 def private_parent(value):

@@ -68,8 +68,10 @@ bool validatePublicProvisioning(const PublicProvisioningRecord &record) {
   wipe(digest, sizeof(digest));
   const uint32_t frequency = provisioningUint32(record.frequencyHz);
   const uint32_t bandwidth = provisioningUint32(record.bandwidthHz);
-  const bool validBandwidth = bandwidth == 7800 || bandwidth == 10400 ||
-      bandwidth == 15600 || bandwidth == 20800 || bandwidth == 31250 ||
+  const bool validBandwidth = bandwidth == 7800 || bandwidth == 7810 ||
+      bandwidth == 10400 || bandwidth == 10420 ||
+      bandwidth == 15600 || bandwidth == 15630 ||
+      bandwidth == 20800 || bandwidth == 20830 || bandwidth == 31250 ||
       bandwidth == 41700 || bandwidth == 62500 || bandwidth == 125000 ||
       bandwidth == 250000 || bandwidth == 500000;
   const size_t wifiLength = strnlen(record.wifiPassword, sizeof(record.wifiPassword));

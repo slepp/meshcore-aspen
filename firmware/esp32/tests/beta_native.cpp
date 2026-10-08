@@ -3331,7 +3331,79 @@ static void adaptive_policy_admin() {
   puts("PASS adaptive owner admin: unauthenticated denial, encrypted owner ON/OFF, corrupt magic/size/value repair and reportable fault");
 }
 
+#ifdef ONCHIP_WIFI_PROVISIONING_TEST
+static void wifi_provisioning_fields() {
+  PublicProvisioningRecord record{};
+  memcpy(record.magic, "MCP\1", 4);
+  record.pathWidth = 1;
+  for (unsigned i = 0; i < 4; ++i) {
+    record.frequencyHz[i] = 912525000u >> (8 * i);
+    record.bandwidthHz[i] = 250000u >> (8 * i);
+  }
+  record.sf = 7; record.cr = 5; record.txDbm = 2;
+  strcpy(record.adminPassword, "test-admin");
+  strcpy(record.mastPassword, "mast-pass-12");
+  Peer owner;
+  strcpy(record.operatorPublicKey, encode(owner.self_id.pub_key, 32).c_str());
+  strcpy(record.wifiSsid, "provisioned-network");
+  strcpy(record.wifiPassword, "provisioned-password");
+  record.wifiEnabled = 1;
+  mesh::Utils::sha256(record.digest, sizeof(record.digest),
+      reinterpret_cast<const uint8_t *>(&record), offsetof(PublicProvisioningRecord, digest));
+  const auto *bytes = reinterpret_cast<const uint8_t *>(&record);
+  filesystem_test::files["/public-setup.bin"] = {bytes, bytes + sizeof(record)};
+  const char layout[] = "meshcore-onchip-fs-v1\n";
+  filesystem_test::files["/onchip-layout"] = {layout, layout + sizeof(layout) - 1};
+  assert(beginPublicProvisioning() && initializePublicRuntimePreferences() && saveBotEnabled(true));
+  struct Case { const char *command, *ssid, *password; };
+  for (const auto &test : {
+      Case{"wifi password replacement-password", "provisioned-network", "replacement-password"},
+      Case{"wifi ssid replacement-network", "replacement-network", "provisioned-password"},
+      Case{"wifi password hex 7265706c6163656d656e742d70617373776f7264",
+           "provisioned-network", "replacement-password"},
+      Case{"wifi ssid hex 7265706c6163656d656e742d6e6574776f726b",
+           "replacement-network", "provisioned-password"},
+      Case{"set wifi.pwd replacement-password", "provisioned-network", "replacement-password"},
+      Case{"set wifi.ssid replacement-network", "replacement-network", "provisioned-password"}}) {
+    {
+      BetaFixture f;
+      assert(!f.send(owner, "mast-pass-12", true).empty());
+      const auto rf = [&](const char *command) {
+        const auto response = f.send(owner, command, false);
+        assert(response.size() > 5 && response[4] == 4);
+        return std::string(response.begin() + 5, std::find(response.begin() + 5, response.end(), 0));
+      };
+      assert(rf(test.command).find("Error:") != 0);
+      assert(rf("get wifi.ssid") == std::string("> ") + test.ssid);
+      assert(rf("get wifi.pwd") == std::string("> ") + test.password);
+      MastAdmin::Reply reply;
+      f.management.admin().execute("wifi apply", reply);
+      assert(reply.ticket);
+      f.management.admin().acknowledged(reply.ticket, true);
+      f.step(250);
+    }
+    {
+      BetaFixture restarted;
+      MastAdmin::WifiCredentials actual;
+      bool present;
+      assert(MastAdmin::loadWifi(actual, present) && present);
+      assert(!strcmp(actual.ssid, test.ssid) && !strcmp(actual.password, test.password));
+      assert(!restarted.send(owner, "mast-pass-12", true).empty());
+      const auto response = restarted.send(owner, "wifi forget", false);
+      assert(response.size() > 5 && response[4] == 4);
+      assert(MastAdmin::loadWifi(actual, present) && present);
+      assert(!strcmp(actual.ssid, record.wifiSsid) && !strcmp(actual.password, record.wifiPassword));
+    }
+  }
+  puts("Public WiFi first-field edits, literal/hex aliases, apply, restart and forgotten-override fallback passed");
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef ONCHIP_WIFI_PROVISIONING_TEST
+  wifi_provisioning_fields();
+  return 0;
+#endif
 #ifdef ONCHIP_CONTACT_RECOVERY_TEST
   companion_contact_recovery();
   return 0;

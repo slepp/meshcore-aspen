@@ -3,10 +3,107 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"meshcore.local/meshcore/internal/policy"
 )
+
+func TestRelativeConfigStateIsAbsolute(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "meshcore-host.json")
+	if err := os.WriteFile(path, []byte(`{"state_dir":"data"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(relative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StateDir != filepath.Join(root, "data") || !filepath.IsAbs(cfg.StateDir) {
+		t.Fatalf("state resolved to %q", cfg.StateDir)
+	}
+	if _, err := os.Stat(cfg.StateDir); !os.IsNotExist(err) {
+		t.Fatal("configuration loading created state")
+	}
+}
+
+func TestPreflightChecksStartupInputsWithoutCreatingState(t *testing.T) {
+	t.Setenv("MESHCORE_HOST_ADMIN_HTTP", "")
+	t.Setenv("MESHCORE_TEST_PREFLIGHT_ROOM", "")
+	t.Setenv("MESHCORE_TEST_PREFLIGHT_ADMIN", "")
+	t.Setenv("MESHCORE_TEST_PREFLIGHT_MQTT", "")
+	root := t.TempDir()
+	base := DefaultConfig()
+	base.StateDir = filepath.Join(root, "state")
+	for _, test := range []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{"room password", func(c *Config) {
+			c.EnabledRoles = RoleSelection{"room"}
+			c.RoomPasswordEnv = "MESHCORE_TEST_PREFLIGHT_ROOM"
+		}, "MESHCORE_TEST_PREFLIGHT_ROOM"},
+		{"admin password", func(c *Config) {
+			c.EnabledRoles = RoleSelection{"repeater"}
+			c.AdminPasswordEnv = "MESHCORE_TEST_PREFLIGHT_ADMIN"
+		}, "MESHCORE_TEST_PREFLIGHT_ADMIN"},
+		{"MQTT password", func(c *Config) {
+			c.EnabledRoles = RoleSelection{"observer"}
+			c.MQTT.PasswordEnv = "MESHCORE_TEST_PREFLIGHT_MQTT"
+		}, "MESHCORE_TEST_PREFLIGHT_MQTT"},
+		{"missing worker", func(c *Config) {
+			c.EnabledRoles = RoleSelection{"bot"}
+			c.BotRuntime = "native_lua"
+			c.BotNativeWorker = filepath.Join(root, "missing")
+		}, "bot_native_worker"},
+		{"relative state", func(c *Config) { c.EnabledRoles = RoleSelection{}; c.StateDir = "relative" }, "state_dir"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := base
+			test.edit(&cfg)
+			if err := cfg.Preflight(false); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("preflight error = %v, want %s", err, test.want)
+			}
+			if _, err := os.Stat(base.StateDir); !os.IsNotExist(err) {
+				t.Fatal("preflight created persistent state")
+			}
+		})
+	}
+	worker := filepath.Join(root, "worker")
+	if err := os.WriteFile(worker, []byte("#!/bin/sh\nexit 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base.EnabledRoles = RoleSelection{"bot"}
+	base.BotRuntime, base.BotNativeWorker = "native_lua", worker
+	if err := base.Preflight(false); err == nil || !strings.Contains(err.Error(), "executable") {
+		t.Fatalf("non-executable worker accepted: %v", err)
+	}
+	if err := os.Chmod(worker, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := base.Preflight(false); err != nil {
+		t.Fatal(err)
+	}
+	// Broker-only mode must not require a native worker or room credentials.
+	base.BotNativeWorker = filepath.Join(root, "missing")
+	base.EnabledRoles = RoleSelection{"room", "bot"}
+	if err := base.Preflight(true); err != nil {
+		t.Fatal(err)
+	}
+	base.MQTT.PasswordEnv = "MESHCORE_TEST_PREFLIGHT_MQTT"
+	if err := base.Preflight(true); err == nil {
+		t.Fatal("broker preflight ignored a missing credential")
+	}
+}
 
 func TestRadioAddressDefaultsToMDNSAndPreservesExplicitAddress(t *testing.T) {
 	for _, tc := range []struct {

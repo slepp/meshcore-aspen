@@ -174,7 +174,51 @@ func LoadConfig(path string) (Config, error) {
 	if !filepath.IsAbs(cfg.StateDir) {
 		cfg.StateDir = filepath.Join(filepath.Dir(path), cfg.StateDir)
 	}
+	cfg.StateDir, err = filepath.Abs(cfg.StateDir)
+	if err != nil {
+		return cfg, fmt.Errorf("state_dir: %w", err)
+	}
 	return cfg, nil
+}
+
+func (c Config) Preflight(brokerOnly bool) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if brokerOnly {
+		if c.MQTT.BrokerListen == "" {
+			return errors.New("mqtt.broker_listen is required for broker-only mode")
+		}
+	} else {
+		if _, err := c.roomAccessPassword(); err != nil {
+			return err
+		}
+		if c.roleEnabled("room") || c.roleEnabled("repeater") {
+			if _, err := envSecret(c.AdminPasswordEnv); err != nil {
+				return fmt.Errorf("role administrator password: %w", err)
+			}
+		}
+		if !filepath.IsAbs(c.StateDir) {
+			return errors.New("state_dir must be an absolute path")
+		}
+		if c.roleEnabled("bot") && c.BotRuntime == "native_lua" {
+			info, err := os.Stat(c.BotNativeWorker)
+			if err != nil {
+				return fmt.Errorf("bot_native_worker %s: %w", c.BotNativeWorker, err)
+			}
+			if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+				return fmt.Errorf("bot_native_worker %s must be an executable file", c.BotNativeWorker)
+			}
+		}
+	}
+	if brokerOnly || c.roleEnabled("observer") {
+		for _, name := range []string{c.MQTT.UsernameEnv, c.MQTT.PasswordEnv} {
+			if _, err := envSecret(name); err != nil {
+				return fmt.Errorf("MQTT credentials: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (c Config) Validate() error {

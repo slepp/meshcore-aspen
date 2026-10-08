@@ -140,7 +140,7 @@ func (c Config) openRoleSourceOn(ctx context.Context, role string, identity mesh
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) (result error) {
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Preflight(false); err != nil {
 		return err
 	}
 	roomPassword, err := cfg.roomAccessPassword()

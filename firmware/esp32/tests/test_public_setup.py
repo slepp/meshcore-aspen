@@ -42,6 +42,13 @@ class PublicSetup(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<II", record, 8), (912525000, 250000))
         self.assertEqual(record[304:], hashlib.sha256(record[:304]).digest())
 
+    def test_narrow_bandwidth_aliases(self):
+        for bandwidth in (7800, 7810, 10400, 10420, 15600, 15630, 20800, 20830):
+            with self.subTest(bandwidth=bandwidth):
+                record = setup.encode_profile(json.dumps(profile() | {"bandwidth_hz": bandwidth}))
+                self.assertEqual(struct.unpack_from("<I", record, 12)[0], bandwidth)
+                self.assertEqual(record[304:], hashlib.sha256(record[:304]).digest())
+
     def test_unknown_missing_duplicate_and_malformed_fields(self):
         for value in (
             profile() | {"seed": "private"}, {k: v for k, v in profile().items() if k != "roles"},

@@ -68,6 +68,12 @@ int main(int argc, char **argv) {
   assert(fgetc(input) == EOF);
   fclose(input);
   assert(onchip::validatePublicProvisioning(record));
+  for (uint32_t bandwidth : {7800u, 7810u, 10400u, 10420u, 15600u, 15630u, 20800u, 20830u}) {
+    auto narrow = record;
+    for (unsigned i = 0; i < 4; ++i) narrow.bandwidthHz[i] = bandwidth >> (8 * i);
+    digest(narrow);
+    assert(onchip::validatePublicProvisioning(narrow));
+  }
   filesystem_test::files["/command-bot/retained.lua"] = {'r', 'e', 't', 'a', 'i', 'n'};
   identity_test::durable[{"mc-onchip", "observer"}] = {1, 2, 3};
   const auto retainedFiles = filesystem_test::files;

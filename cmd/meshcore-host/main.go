@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"meshcore.local/meshcore/internal/app"
@@ -24,7 +25,15 @@ func main() {
 		os.Exit(1)
 	}
 	if *stateDir != "" {
-		cfg.StateDir = *stateDir
+		cfg.StateDir, err = filepath.Abs(*stateDir)
+		if err != nil {
+			logger.Error("state directory", "error", err)
+			os.Exit(1)
+		}
+	}
+	if err := cfg.Preflight(*brokerOnly); err != nil {
+		logger.Error("startup preflight", "error", err)
+		os.Exit(1)
 	}
 	if *check {
 		logger.Info("configuration valid")

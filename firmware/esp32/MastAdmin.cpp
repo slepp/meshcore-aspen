@@ -934,9 +934,12 @@ void MastAdmin::wifiCommand(char *command, Reply &reply, Transport transport,
         strcpy(reply.text, password ? "Error: wifi.pwd needs 0 or 8..63 bytes, or 64 ASCII hex digits" :
                "Error: wifi.ssid needs 1..32 bytes"); return;
       }
+      bool present;
+      if (!loadWifi(next.wifi, present)) {
+        strcpy(reply.text, "Error: saved WiFi credentials unavailable; field unchanged"); return;
+      }
       strcpy(password ? next.wifi.password : next.wifi.ssid, value);
       next.wifiSet = next.wifi.ssid[0] != 0;
-      bool present;
       const bool saved = mastRecord("settings", &next, sizeof(next), true, present) &&
                          mastRecord("settings", &actual, sizeof(actual), false, present) &&
                          present && !memcmp(&next, &actual, sizeof(next));
@@ -2077,6 +2080,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     }
     if (encoded) value += 4;
     Settings next = settings_;
+    bool present;
+    if (!loadWifi(next.wifi, present)) {
+      strcpy(reply.text, "Error: saved WiFi credentials unavailable; field unchanged"); return;
+    }
     char *destination = ssid ? next.wifi.ssid : next.wifi.password;
     const size_t maximum = ssid ? 32 : 64, n = strlen(value) / 2;
     memset(destination, 0, maximum + 1);
@@ -2090,7 +2097,6 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: WPA password must be 8..63 bytes or 64 hex digits"); return;
     }
     next.wifiSet = next.wifi.ssid[0] != 0;
-    bool present;
     if (!mastRecord("settings", &next, sizeof(next), true, present)) {
       strcpy(reply.text, "Error: WiFi field commit failed"); return;
     }
@@ -2140,7 +2146,8 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     }
     const auto *p = values + (temporary ? 1 : 0);
     if (p[0] < 150000000 || p[0] > 960000000 ||
-        (p[1] != 7810 && p[1] != 10420 && p[1] != 15630 && p[1] != 20830 &&
+        (p[1] != 7800 && p[1] != 7810 && p[1] != 10400 && p[1] != 10420 &&
+         p[1] != 15600 && p[1] != 15630 && p[1] != 20800 && p[1] != 20830 &&
          p[1] != 31250 && p[1] != 41700 && p[1] != 62500 && p[1] != 125000 &&
          p[1] != 250000 && p[1] != 500000) ||
         p[2] < 5 || p[2] > 12 || p[3] < 5 || p[3] > 8 || p[4] > 22 ||

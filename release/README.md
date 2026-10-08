@@ -6,12 +6,12 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | As needed | `aspen-v0.1.9` | `aspen-v0.1.10` |
-| Birch | `birch-v0.1.0-rc.1` | `birch-v0.1.0` | `birch-v0.1.1` |
+| Aspen | As needed | `aspen-v0.1.10` | `aspen-v0.1.11` |
+| Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
 | Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental series | `willow-v0.0.1` | `willow-v0.0.2` |
+| Willow | Experimental series | `willow-v0.0.2` | `willow-v0.0.3` |
 
-Show users **Aspen 0.1.9 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.10 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -21,17 +21,17 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header, Go constants and Willow version modules share
-this authority. Companion device information reports `aspen-0.1.9`,
-`birch-0.1.0` or `pine-0.1.0`;
+this authority. Companion device information reports `aspen-0.1.10`,
+`birch-0.1.1` or `pine-0.1.0`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
 Keep full source/build information in each candidate manifest.
 
-Willow 0.0.1 is the first experimental Hew source-build release. Its native
+Willow is an experimental Hew source-build release. Its native
 worker is verified against the local source/build tree, so the source release
 must be built at its final installation path. Use its
 [setup and retained-state upgrade guide](../experiments/hew-roles/README.md).
-**Birch 0.1.0 is a Linux x86_64 host-tools and native-worker
+**Birch 0.1.1 is a Linux x86_64 host-tools and native-worker
 bundle for an already configured queued-v1 WiFi/TCP shared modem.** The host
 and worker share one product commit. Modem firmware is built and privately
 provisioned separately; the host download contains no blank-credential modem
@@ -83,12 +83,12 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The Aspen bundle name is `aspen-v0.1.9-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The Aspen bundle name is `aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Its files include `manifest.json`, checksums, application and separate
 initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
 tag/full SHA and public source full SHA. Hashes identify the packaged files.
-The host-only Birch name is `birch-v0.1.0-linux-x86_64-SOURCE12.zip`.
+The host-only Birch name is `birch-v0.1.1-linux-x86_64-SOURCE12.zip`.
 It includes four host binaries, the installer and example configuration,
 host guide, source, native relink material and dependency notices. Its
 `public_birch_host` profile and `host_only` scope require an external queued-v1
@@ -177,6 +177,25 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Aspen 0.1.10, Birch 0.1.1 and Willow 0.0.2
+
+Aspen preserves the effective WiFi credential pair when changing only the SSID
+or password, including literal and hex commands. USB setup accepts both
+supported narrow-bandwidth integer spellings and the first-install guide
+starts from the downloaded ZIP and its included source and boot files.
+
+Birch's `-check` reads required password environments and checks the configured
+native worker before a radio connection or state creation. Relative state
+paths resolve from the configuration file, independent of the current working
+directory. The browser command selector matches the native contacts,
+membership, access and thread commands. Standard user-service backups include
+the configured native worker and state; downloaded hosts have a separate
+stopped, versioned-prefix upgrade and rollback route.
+
+Willow source archives carry their release commit and epoch, so the native
+worker builds outside a Git checkout and does not adopt an enclosing
+repository's revision. Build and retain the extracted tree at its final path.
 
 ## Aspen 0.1.9
 
@@ -293,12 +312,3 @@ current Birch host and Pine Lua source builds use the same archive and operator
 tool. Saved snapshots and interrupted downloads can resume after a restart.
 See the [node backup guide](../NODE_BACKUP.md) for commands, privacy, storage
 limits and the distinction from scoped bot-data restoration.
-
-## Historical artifacts
-
-Keep the website's `8b41d9c` Aspen application identified as
-`1.17.1-slp-aspen`. The older draft `v1.17.1-slp-4439ad5` contains images from
-`4439ad53548b4ad2610e9c94f0bcfa0e7239c336`. Neither is a build of the new public
-history or of `aspen-v0.1.0-rc.1`. Do not rename or re-upload those binaries as a
-new product release. Retain their original manifests and links until a separately
-approved migration of downloads replaces them with verified new builds.

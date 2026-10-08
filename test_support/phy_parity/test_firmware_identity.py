@@ -16,7 +16,8 @@ class FirmwareIdentityTests(unittest.TestCase):
         profiles = (
             ("birch", [], "birch-" + RELEASE["products"]["birch"]["version"]),
             ("aspen", ["-DMESHCORE_ONCHIP=1"], "aspen-" + RELEASE["products"]["aspen"]["version"]),
-            ("pine", ["-DMESHCORE_ONCHIP=1", "-DNRF52_PLATFORM=1"], "1.17.1-slp-pine"),
+            ("pine", ["-DMESHCORE_ONCHIP=1", "-DNRF52_PLATFORM=1"],
+             "pine-" + RELEASE["products"]["pine"]["version"]),
             ("onchip-override", ["-DMESHCORE_ONCHIP=1",
                                  '-DONCHIP_FIRMWARE_VERSION="operator-profile"'], "operator-profile"),
         )

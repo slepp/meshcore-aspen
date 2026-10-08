@@ -2,3 +2,4 @@
 services/shared-room/native/ed25519/** linguist-vendored whitespace=-blank-at-eol
 services/shared-room/native/crypto/** linguist-vendored
 services/shared-room/src/native-crypto.wasm linguist-generated
+release/source.json export-subst

@@ -18,6 +18,25 @@ import (
 	"time"
 )
 
+func TestHostBrowserCommandAllowlistMatchesServer(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		pattern *regexp.Regexp
+	}{
+		{"readOnly", hostAdminRead},
+		{"writeOnly", hostAdminWrite},
+	} {
+		_, body, found := strings.Cut(hostAdminPage, "const "+test.name+"=/")
+		if !found {
+			t.Fatalf("browser %s allowlist missing", test.name)
+		}
+		pattern, _, found := strings.Cut(body, "/;")
+		if !found || pattern != test.pattern.String() {
+			t.Fatalf("browser %s allowlist differs from server", test.name)
+		}
+	}
+}
+
 func TestHostAdminStalledBodiesNeverReachOwner(t *testing.T) {
 	for _, route := range []string{"/admin/command", "/admin/role/repeater"} {
 		t.Run(route, func(t *testing.T) {

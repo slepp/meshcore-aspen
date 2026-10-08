@@ -16,11 +16,11 @@ connections, installation, radio maintenance and external KISS clients.
 For standalone deployment, use the [ESP32 guide](firmware/esp32/README.md)
 or [nRF52840 guide](firmware/nrf52840/README.md).
 
-Host roles use the **Birch 0.1.0** product version. Their `ver` command reports the
+Host roles use the **Birch 0.1.1** product version. Their `ver` command reports the
 MeshCore protocol/reference separately from the host implementation; companion
-and native owner-information replies identify `birch-0.1.0`.
+and native owner-information replies identify `birch-0.1.1`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
-The Birch 0.1.0 download contains the Linux x86_64 host tools and native
+The Birch 0.1.1 download contains the Linux x86_64 host tools and native
 worker. Connect an already configured WiFi/TCP shared modem implementing queued
 PHY v1, or build and privately provision the modem separately. The download
 does not contain a modem image or station credentials. See the
@@ -54,14 +54,14 @@ The host needs `libcjson1` and `libssl3`; installing the download does not need
 Go, a compiler or PlatformIO. Python 3.11 or newer runs the installer.
 
 Download the ZIP, manifest and checksums from
-[Birch 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.0)
+[Birch 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.1)
 into a new directory. Extract the ZIP there, then run `sha256sum --check` on the
 downloaded SHA256SUMS file: both the ZIP and extracted manifest must match.
 Replace `SOURCE12` below with the suffix of the extracted directory.
 
 ```sh
-python3 birch-v0.1.0-linux-x86_64-SOURCE12/install-birch.py \
-  --prefix "$HOME/.local/opt/birch-0.1.0"
+python3 birch-v0.1.1-linux-x86_64-SOURCE12/install-birch.py \
+  --prefix "$HOME/.local/opt/birch-0.1.1"
 ```
 
 The installer refuses an existing prefix. It installs four binaries and a
@@ -69,7 +69,7 @@ private example configuration, but does not start services, connect to the
 modem or change an existing host's identities, state or configuration.
 Keep the source and native relink archives from the download.
 
-Edit `~/.local/opt/birch-0.1.0/config/meshcore-host.json`: set
+Edit `~/.local/opt/birch-0.1.1/config/meshcore-host.json`: set
 `radio_address`, select `enabled_roles` for the modem's available client slots,
 and set the room password environment variable if enabling the room.
 The installed example selects the bundled native Lua worker and follows the
@@ -77,14 +77,16 @@ modem's PHY without retuning it. Keep all listeners on trusted interfaces.
 
 ```sh
 export MESHCORE_ROOM_PASSWORD='choose-a-private-room-password'
-~/.local/opt/birch-0.1.0/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.0/config/meshcore-host.json -check
-~/.local/opt/birch-0.1.0/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.0/config/meshcore-host.json
+~/.local/opt/birch-0.1.1/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.1/config/meshcore-host.json -check
+~/.local/opt/birch-0.1.1/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.1/config/meshcore-host.json
 ```
 
-`-check` validates configuration without opening the radio or creating
-identities. After starting the host, `http://127.0.0.1:9080/status` shows the
+`-check` validates configuration, required password environments and the
+selected native worker without opening the radio or creating identities.
+Relative `state_dir` paths resolve from the configuration file's directory,
+not the shell's working directory. After starting the host, `http://127.0.0.1:9080/status` shows the
 connection and selected roles; a MeshCore companion application connects to
 the companion listener on port 5000 when that role is enabled.
 Do not point a new installation at an existing host's state directory as an
@@ -1021,9 +1023,52 @@ are trusted-LAN interfaces, not public Internet services.
 
 ### Upgrade and rollback
 
+#### Downloaded Birch host
+
+Upgrade a host-only download without building Go or flashing the shared modem.
+Install the new ZIP into a **new versioned prefix** using
+[the download installer](#install-the-birch-host-download). Keep the old prefix.
+Stop the old host (or its service) and wait for it to exit before copying state.
+Never run two versions against the same state directory.
+
+For example, after installing the next release:
+
+```sh
+OLD="$HOME/.local/opt/birch-0.1.0"
+NEW="$HOME/.local/opt/birch-0.1.1"
+# Stop the old host before these copies.
+umask 077
+cp -a "$OLD/state" "$NEW/state-before-upgrade"
+cp -a "$OLD/state/." "$NEW/state/"
+cp -a "$OLD/config/meshcore-host.json" "$NEW/config/meshcore-host.json"
+```
+
+Edit the copied configuration: set `state_dir` to the new prefix's `state` and
+`bot_native_worker` to its `bin/bot-native-worker`. Keep radio settings, role
+selection and password environment settings. If the old configuration uses a
+different state directory, copy that directory instead. Retain the same
+private environment file used to start the old service.
+
+Run the new `bin/meshcore-host -config ... -check`, then start it and check
+`http://127.0.0.1:9080/readyz`. A user service must select both the new binary
+and new configuration; run `systemctl --user daemon-reload` after editing it.
+Keep all four old binaries, configuration and the stopped pre-upgrade state
+until satisfied with the upgrade.
+
+To roll back, stop the new host first. Start the old binary with its unchanged
+old configuration and state, or switch the service back to those paths.
+Messages and changes made after upgrading stay in the new state directory;
+they are not merged into the restored state. No modem firmware operation is
+needed for a compatible host-only upgrade.
+
+#### Standard source-built user service
+
 Back up a running installation before upgrading its host and modem together.
 The host backup stops the standard user service and keeps configuration,
-identities, messages, binaries and unit files in a private directory. Flash
+configured state, identities, messages, binaries, the configured native Lua
+worker and unit files in a private directory. It refuses a state directory
+still locked by another host. All configured paths must be inside the user's
+home directory and separate from the backup. Flash
 images also contain private configuration; do not publish either backup.
 
 ```bash

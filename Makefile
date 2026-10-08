@@ -70,6 +70,7 @@ test-native-smoke:
 	TMPDIR=$(CURDIR)/.tmp python3 -m unittest -v test_support.phy_parity.test_firmware_identity test_support.phy_parity.test_source_layout
 	python3 -m unittest discover -s test_support/resource_budget -v
 	$(MAKE) -C internal/nativebot test spiffs-test
+	python3 -m unittest discover -s experiments/hew-roles/tests -p 'test_build_worker.py' -v
 
 .PHONY: host-build host-test host-run host-config host-install host-readiness test-host-live test-host-reconnect test-host-rf
 

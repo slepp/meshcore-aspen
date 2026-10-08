@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	"meshcore.local/meshcore/internal/observer"
@@ -10,8 +9,8 @@ import (
 
 // RunBroker serves MQTT without opening a radio or starting host-side roles.
 func RunBroker(ctx context.Context, cfg Config, logger *slog.Logger) error {
-	if cfg.MQTT.BrokerListen == "" {
-		return errors.New("mqtt.broker_listen is required for broker-only mode")
+	if err := cfg.Preflight(true); err != nil {
+		return err
 	}
 	username, err := envSecret(cfg.MQTT.UsernameEnv)
 	if err != nil {

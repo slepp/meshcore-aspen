@@ -3,13 +3,12 @@
 Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
 Aspen application. The application needs your **private setup record in SPIFFS
 before it starts RF or administration**. On a blank board, provision your
-credentials offline over USB. An initialized private build can
-[save its setup without replacing SPIFFS](#move-an-initialized-private-build-to-a-generic-application).
+credentials offline over USB.
 This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
-per-node setup image. Current source builds identify `aspen-0.1.4`; see the
+per-node setup image. See the
 [release guide](../../release/README.md) for source builds.
 
 The application supports repeater, room, companion, Management and Lua/Wasm
@@ -30,38 +29,46 @@ Before maintaining an initialized node, download its
 [encrypted logical backup](../../NODE_BACKUP.md) over authenticated WiFi or RF.
 Keep the matching operator seed; an application image is not a state backup.
 
-## Move an initialized private build to a generic application
+## Download and prepare the USB tools
 
-Current source builds can save their initial private settings without
-replacing SPIFFS. First install the updated **private application only**, keeping
-its existing operator authority, WiFi and role defaults. Then use authenticated
-Management administration:
+On a Linux host, install Python 3.11 or newer with its `venv` support, `unzip`
+and `tar`. Download the Aspen ZIP, manifest and SHA256SUMS from the
+[GitHub release](https://github.com/slepp/meshcore-aspen/releases/latest) into
+one new working directory. Extract the ZIP **before** checking SHA256SUMS:
+the checksums cover both the ZIP and its extracted manifest.
 
-```text
-setup migrate
-setup status
-mqtt commit
-bot https retain home
-bot https commit
+```sh
+WORK="$HOME/aspen-install"
+mkdir -p "$WORK"
+cd "$WORK"
+# Put the three downloaded release files here.
+unzip aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.zip
+sha256sum --check aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.SHA256SUMS
+APP="$WORK/aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12"
+mkdir "$WORK/source"
+tar -xzf "$APP/source.tar.gz" -C "$WORK/source"
+cd "$WORK/source"
 ```
 
-`setup migrate` adds and reads back only `/public-setup.bin`. It uses the current
-committed radio profile, role selection, WiFi settings, initial role passwords,
-current Management password and public
-authorities; identities and existing files/NVS records stay in place. An
-existing different setup record is never replaced. `mqtt commit` saves the
-private build's initial observer settings as ordinary runtime configuration.
-If that build has a configured home HTTPS endpoint, `bot https retain home`
-stages its address, CA, token and allowed operations without printing them;
-`bot https commit` saves it. Omit the HTTPS commands when home HTTPS is unused.
-If home is already staged/saved, inspect `bot https status` rather than replacing it.
+Replace `SOURCE12` with the suffix in the downloaded filenames. The commands
+below run from this extracted source directory; no Git checkout or firmware
+compiler is needed. The release bundle supplies all four initial-install BIN
+files, including `boot_app0.bin`.
 
-Reboot the private application and check `setup status`, `mqtt status`,
-`bot https status` and the running role identities before uploading a generic
-application. Use the same signed [application-only update](ESP_FIELD_UPDATES.md)
-path and verification authority. After the generic boot, check the exact
-running image, saved settings, identities and normal radio/observer operation.
-Do **not** run `install-config` or `uploadfs` on the initialized node.
+Install the USB and image tools in an isolated Python environment:
+
+```sh
+python3 -m venv "$HOME/.local/share/aspen-setup-venv"
+. "$HOME/.local/share/aspen-setup-venv/bin/activate"
+python3 -m pip install 'esptool==4.5.1' 'platformio==6.1.19' 'cryptography>=37,<46'
+pio pkg install --global --tool 'platformio/tool-mkspiffs@2.230.0'
+ESPTOOL="$HOME/.local/share/aspen-setup-venv/bin/esptool.py"
+MKSPIFS="$HOME/.platformio/packages/tool-mkspiffs/mkspiffs_espressif32_arduino"
+```
+
+Keep this shell open so `APP` and the Python environment remain selected.
+Reopen it by activating the same environment and setting `APP`, `ESPTOOL` and
+`MKSPIFS` again. Fit the antenna before the first normal boot.
 
 ## Make your private setup image
 
@@ -113,24 +120,18 @@ MQTT credentials in this minimal setup; MQTT is disabled in the public profile.
 All documented JSON fields are required; unknown, duplicate, wrong-type and
 out-of-range fields are rejected without printing their values.
 
-Set `APP` to the extracted public bundle directory containing `partitions.bin`
-and `firmware.bin`, or your local generic build output, and build your private
-filesystem image with the installed
-PlatformIO SPIFFS tool:
+With `APP` still pointing to the extracted bundle, build your private
+filesystem image:
 
 ```sh
-APP="$PWD/public-aspen"
-ESPTOOL="$HOME/.platformio/packages/tool-esptoolpy/esptool.py"
-MKSPIFS="$HOME/.platformio/packages/tool-mkspiffs/mkspiffs_espressif32_arduino"
 python3 firmware/esp32/public_setup.py image \
   --profile "$HOME/.config/aspen-private/profile.json" \
   --output "$HOME/.config/aspen-private/setup-spiffs.bin" \
   --partitions "$APP/partitions.bin" --mkspiffs "$MKSPIFS"
 ```
 
-Replace `public-aspen` with your extracted bundle's actual directory.
-For the local build below, use
-`.tmp/public-aspen-setup-validation/.pio/build/public_aspen`.
+For a local source build, set `APP` to the absolute
+`.tmp/public-aspen-setup-validation/.pio/build/public_aspen` directory instead.
 
 `image` accesses no hardware. The output is a private mode-0600 regular file;
 the tool refuses symlinks, public directories and overwriting an existing file.
@@ -145,7 +146,9 @@ board in its ROM bootloader until both configuration and application have been
 written. This operation needs esptool **4.5.1** and its Python dependencies.
 
 ```sh
-PORT=/dev/ttyACM0
+ls -l /dev/serial/by-id/
+PORT='/dev/serial/by-id/<selected-radio>'
+python3 "$ESPTOOL" --chip esp32s3 --port "$PORT" --after no_reset read_mac
 python3 firmware/esp32/public_setup.py install-config \
   --image "$HOME/.config/aspen-private/setup-spiffs.bin" \
   --partitions "$APP/partitions.bin" \
@@ -153,7 +156,9 @@ python3 firmware/esp32/public_setup.py install-config \
   --esptool "$ESPTOOL" --port "$PORT"
 ```
 
-The installer checks the connected chip, partition table and NVS/SPIFFS
+Confirm the printed MAC belongs to the intended board before running
+`install-config`, especially when several radios are attached. The installer
+checks the connected chip, partition table and NVS/SPIFFS
 contents, saves a private **SPIFFS-only** backup, then writes and verifies only
 the existing `0x180000`-byte SPIFFS partition at `0x670000`; it does not write the
 separate coredump partition. It leaves USB bootloader mode active. NVS is
@@ -162,15 +167,14 @@ exported. Existing storage is refused by default. An already-run generic app
 may have initialized NVS; this counts as existing storage too.
 
 For a truly blank first install, write the bootloader, unchanged partition
-table, initial OTA selection and app0. These exact commands use the PlatformIO
-build outputs; the release's initial-install files must match them:
+table, initial OTA selection and app0 using the files in the downloaded bundle:
 
 ```sh
 python3 "$ESPTOOL" --chip esp32s3 --port "$PORT" --after no_reset write_flash \
   --flash_size 8MB \
   0x0 "$APP/bootloader.bin" \
   0x8000 "$APP/partitions.bin" \
-  0xe000 "$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin" \
+  0xe000 "$APP/boot_app0.bin" \
   0x10000 "$APP/firmware.bin"
 ```
 
@@ -181,6 +185,13 @@ the selected native roles becoming ready. With WiFi enabled, use
 to log in. The dashboard shows the roles and shared PHY; confirm the intended
 frequency/power before sending messages. With WiFi disabled there is no Web UI;
 use your companion radio for authenticated Management RF interaction.
+
+From a **separate companion radio** on the same RF profile, advertise once so
+the bot learns its contact, then send a private `!ping` to the Aspen bot.
+Expect `Pong`. This checks the radio path; messaging through Aspen's own
+companion endpoint can deliver a local copy instead. Restart Aspen and confirm
+that the dashboard shows the same role public keys, radio settings and WiFi,
+then send another `!ping` from the separate radio.
 
 Missing/malformed setup, failed SPIFFS mount or a wrong layout reports
 `Public setup ...; RF and administration disabled; restore private setup over USB`.
@@ -198,7 +209,7 @@ setting changes.
 
 ## Optional telemetry and HTTPS
 
-The Aspen 0.1.1 public application includes native HTTPS and telemetry, with
+The public application includes native HTTPS and telemetry, with
 no configured endpoint, CA or token. It sends no telemetry until an
 administrator configures the collector and enables publishing. Use
 [telemetry setup](TELEMETRY.md) through authenticated Management RF to stage
@@ -234,6 +245,34 @@ A pending, invalid or ambiguous OTA selection is refused; confirm or roll back
 the previous signed update first. This writes **one application slot only**.
 Do not write a merged/factory image, bootloader, partitions, OTA selection,
 SPIFFS or NVS for ordinary updates.
+
+## Move an initialized private build to a generic application
+
+An initialized private build can save its initial settings without replacing
+SPIFFS. First install the updated **private application only**, keeping its
+operator authority, WiFi and role defaults. Through authenticated Management:
+
+```text
+setup migrate
+setup status
+mqtt commit
+bot https retain home
+bot https commit
+```
+
+`setup migrate` adds and reads back only `/public-setup.bin`, using committed
+radio settings, roles, WiFi, passwords and public authorities. Identities and
+existing files/NVS remain; a different existing setup record is refused.
+`mqtt commit` saves the private build's initial observer settings. If a home
+HTTPS endpoint is configured, the last two commands retain and save its
+address, CA, token and allowed operations without printing them. Omit them
+when unused; inspect `bot https status` if already staged or saved.
+
+Restart the private application and check setup, MQTT, HTTPS and role keys.
+Then use the same signed [application-only update](ESP_FIELD_UPDATES.md)
+authority to install the generic application. Check the running image,
+settings, keys and RF operation afterward. Do **not** run `install-config`
+or `uploadfs` on this initialized node.
 
 ## Build and offline checks
 
