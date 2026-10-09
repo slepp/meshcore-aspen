@@ -230,3 +230,9 @@ dd {margin: 0; font-size: 1rem}
   .send-button, .primary-button, .danger-button, .new-messages {border: 1px solid ButtonText}
 }
 @media (prefers-reduced-motion: reduce) {*, *::before, *::after {animation: none !important; transition: none !important; scroll-behavior: auto !important}}
+#device-dialog a {overflow-wrap: anywhere;}
+#device-link-url {display: block; min-height: 44px;}
+#device-qr {display: block; max-width: 100%; height: auto; margin: 1rem auto;}
+#account-devices {padding-left: 1rem;}
+#account-devices li {margin-bottom: 1rem;}
+#account-devices .key {display: block;}

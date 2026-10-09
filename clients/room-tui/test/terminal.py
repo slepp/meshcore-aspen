@@ -16,9 +16,11 @@ import sys
 import termios
 import time
 import urllib.request
+from urllib.parse import urlparse
 
 binary, origin, directory = sys.argv[1:4]
 login_only = len(sys.argv) > 4 and sys.argv[4] == "--login-only"
+passkey_mode = len(sys.argv) > 4 and sys.argv[4] == "--passkeys"
 username, password, alias = "alice", "fixture password only", "A"
 if login_only:
     username, password_file, alias = sys.argv[5:]
@@ -165,14 +167,37 @@ def quit_client():
     assert process.returncode == 0
     os.close(master)
 
+def approve(path, body):
+    request = urllib.request.Request(
+        origin + "/v1/auth/" + path,
+        data=json.dumps(body).encode(),
+        headers={"Origin": origin, "Content-Type": "application/json",
+                 "Cookie": os.environ["ASPEN_ROOM_TEST_APPROVER"], "User-Agent": "aspen-room-tui/1"},
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.load(response)
 
 try:
     start()
-    until(lambda: b"Not joined" in output and b"Username" in output, "login screen")
-    send(("\r" + username + "\r").encode())
-    for _ in range(5):
-        pump()
-    send((password + "\r").encode())
+    if passkey_mode:
+        parsed = urlparse(origin)
+        assert parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"), "Fixture approval is local only"
+        until(lambda: "Not joined" in visible() and "browser passkey" in visible(), "passkey login screen")
+        assert "Password" not in visible() and "Username" not in visible()
+        send(b"\r\r")
+        until(lambda: re.search(r"Code: ([A-F0-9]{24})", visible()), "TUI QR/code request")
+        code = re.search(r"Code: ([A-F0-9]{24})", visible()).group(1)
+        inspected = approve("link/inspect", {"code": code})
+        assert inspected["publicKey"] == state()["publicKey"] and inspected["label"] == "Aspen Linux TUI"
+        assert 0 < inspected["expires"] - time.time() <= 300
+        assert state()["publicKey"] in visible()
+        assert approve("link/approve", {"code": code, "publicKey": inspected["publicKey"]})["approved"]
+    else:
+        until(lambda: b"Not joined" in output and b"Username" in output, "login screen")
+        send(("\r" + username + "\r").encode())
+        for _ in range(5):
+            pump()
+        send((password + "\r").encode())
     until(lambda: "Connected" in visible() and state()["username"] == username, "account login")
     assert password.encode() not in output, "password was echoed"
     public_key = state()["publicKey"]
@@ -227,7 +252,8 @@ try:
     until(lambda: "Connected" in visible() and "Draft after restart" in visible(), "session/draft restoration")
     assert state()["publicKey"] == public_key
     quit_client()
-    print("PASS: PTY masked login, keyboard send, canonical post, private draft/key/cookie persistence and resize.")
+    print("PASS: PTY " + ("browser-passkey QR/code approval" if passkey_mode else "masked login") +
+          ", keyboard send, canonical post, private draft/key/cookie persistence and resize.")
 finally:
     if process is not None and process.poll() is None:
         process.terminate()

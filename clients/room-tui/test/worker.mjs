@@ -27,6 +27,7 @@ try {
   const config = JSON.parse(await readFile(resolve(service, "wrangler.jsonc"), "utf8"));
   const fixture = JSON.parse(await readFile(resolve(service, "test/native-fixtures.json"), "utf8"));
   config.name = "aspen-room-tui-test";
+  config.routes = [];
   config.main = resolve(service, config.main);
   config.assets.directory = resolve(service, config.assets.directory);
   config.vars = {

@@ -1,4 +1,5 @@
 import type {Room} from "./room";
+import type {Accounts} from "./authority";
 
 export interface Alias {backend: string; publicKey: string; name: string; password: string}
 export interface Frontend {token: string; aliases: string[]; region?: string}
@@ -10,6 +11,11 @@ export interface Env {
   MODE?: string;
   ROOM_KEYS?: string;
   WEB_USERS?: string;
+  ACCOUNTS: DurableObjectNamespace<Accounts>;
+  WEB_AUTH_MODE?: string;
+  PASSKEY_ORIGIN?: string;
+  PASSKEY_RP_ID?: string;
+  WEB_ENROLLMENTS?: string;
   ASSETS?: Fetcher;
 }
 export interface Connection {alias: string; frontend: string; credential: string}

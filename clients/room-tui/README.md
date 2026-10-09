@@ -9,15 +9,19 @@ With Go 1.26.7 or newer:
 ```sh
 cd clients/room-tui
 go build -o room-tui .
-./room-tui --service https://YOUR_ROOM_WORKER
+./room-tui --service https://aspen.ve6slp.ca
 ```
 
-Select a channel with the arrow keys, press Enter, enter your operator-created
-username and account password, then press Enter to join. A service without
-`WEB_USERS` instead asks for a display name and that channel's shared password.
-An account needs a grant for each channel you join. The terminal masks password
-entry and does not save it. Use the Worker's HTTPS origin, without a path;
-HTTP is accepted only for loopback development.
+Select a channel with the arrow keys and press Enter to focus sign-in, then
+Enter again to resume an approved device or show a five-minute QR/copy code.
+On a browser signed into `https://aspen.ve6slp.ca` with your passkey, scan the QR
+or open **Devices**, paste the code, inspect the full requesting key and approve
+it. The TUI claims the approval and joins as another device on that account.
+No password or passkey private key is copied into the terminal.
+An account needs a grant for each channel you join. Use the configured passkey
+origin, without a path; HTTP is accepted only for loopback development.
+Isolated services that have not enabled passkeys retain their older
+account-password or room-password development flows.
 
 Joined channels remain connected while you switch, with unread counts for
 other channels. Messages show the author's name and key fingerprint. Radio names
@@ -44,7 +48,7 @@ also cover multiple room aliases and history saved before ACK tracking.
 | Ctrl+S | Send, within 151 UTF-8 bytes including `Name: ` |
 | Ctrl+R | Explicitly check/retry an uncertain post, or reconnect |
 | Ctrl+O | Load older history |
-| Ctrl+L | Leave the selected room; retain unsent work |
+| Ctrl+L | Leave the selected room or cancel a pending device request; retain unsent work |
 | Ctrl+Q | Save and quit |
 
 The layout uses a sidebar at 80 columns, collapses it below that, and requires
@@ -54,8 +58,9 @@ Radio text and names are stripped of terminal control sequences for rendering.
 
 ## Device state and reconnecting
 
-The first run creates a local Ed25519 keypair. Account login signs the Worker's
-single-use challenge; the public key is this desktop's message author. Another
+The first run creates a local Ed25519 keypair. Device linking and later sign-in
+sign the Worker's origin/action/key-bound single-use challenge; the public key
+is this desktop's message author. Another
 terminal state directory or browser profile is another device, even for the
 same account. This key is not moved to radios or advertised over RF.
 
@@ -80,10 +85,17 @@ checking the pending post. A different author cannot resend it.
 
 The client catches up history and reconnects its room sockets automatically.
 Cookies retain their original expiry after restart. A changed account password,
-name, grant or room configuration ends those sessions; log in again with the
+name, grant or room configuration ends those sessions; sign in again with the
 same device state. If saving state fails, resolve the displayed file error
 before sending. A second Ctrl+Q after a quit-save warning exits with an error
 and does not claim the latest changes were saved.
+
+Link receipts stay in memory and expire five minutes after creation. Cancelling
+or restarting requires a new code; it does not erase the private key or drafts.
+The small QR is shown when there is room, and the copy code/URL remains available
+in narrower layouts. Device revocation in the browser ends TUI room access.
+A revoked key stays revoked; use a new state directory rather than deleting
+the original device's drafts.
 
 ## Local checks
 
@@ -100,3 +112,6 @@ restart through a PTY. It also waits for a real Worker alarm to retry native
 history after a missing ACK, without another client request. It uses no
 production credentials and sends nothing
 over RF. It removes its local Worker state and test binary on completion.
+`npm run test:browser` in `services/shared-room` also registers and authenticates
+a local Chrome virtual passkey, approves distinct browser and TUI keys, and
+drives the real TUI through QR/code approval, posting, resize and restart.

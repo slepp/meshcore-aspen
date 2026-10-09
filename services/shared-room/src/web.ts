@@ -59,7 +59,7 @@ export function sequence(value: string | null, label: string): number {
   if (!Number.isSafeInteger(n)) fail(400, `Invalid ${label}`);
   return n;
 }
-export async function webBody(request: Request): Promise<Record<string, unknown>> {
+export async function webBody(request: Request, maxBytes = 4096): Promise<Record<string, unknown>> {
   if (request.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/json")
     fail(415, "Use application/json");
   const reader = request.body?.getReader();
@@ -70,7 +70,7 @@ export async function webBody(request: Request): Promise<Record<string, unknown>
     const chunk = await reader.read();
     if (chunk.done) break;
     size += chunk.value.length;
-    if (size > 4096) {await reader.cancel(); fail(413, "Web request exceeds 4096 bytes");}
+    if (size > maxBytes) {await reader.cancel(); fail(413, `Web request exceeds ${maxBytes} bytes`);}
     chunks.push(chunk.value);
   }
   const bytes = new Uint8Array(size);

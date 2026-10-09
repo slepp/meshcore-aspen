@@ -1,5 +1,6 @@
 import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryLabel, validName} from "./model.js";
 import {loadDevice, signChallenge} from "./device.js";
+import {accountAuth} from "./auth.js";
 
 const $ = id => document.getElementById(id);
 const STORAGE = "aspen.rooms.v1.";
@@ -8,6 +9,7 @@ const rooms = new Map();
 const mobileLayout = matchMedia("(max-width: 640px)");
 let active, identity, name, booted = false;
 let device, accountMode = false;
+let passkeyMode = false, auth;
 class ApiError extends Error {
   constructor(status, message) {super(message); this.status = status;}
 }
@@ -275,9 +277,9 @@ function showRoom() {
   $("timeline").hidden = !joined;
   $("composer-area").hidden = !joined;
   $("room-info").disabled = false;
-  $("join-title").textContent = `Join ${room.name}.`;
+  $("join-title").textContent = auth?.enrolling ? "Register your Aspen passkey." : `Join ${room.name}.`;
   $("display-name").value = name;
-  $("account-username").value = read("username", "");
+  $("account-username").value = auth?.username ?? read("username", "");
   $("room-password").value = "";
   $("join-error").hidden = true;
   $("message-input").value = room.draft;
@@ -363,7 +365,8 @@ async function boot() {
   setProfile();
   const listing = await api("/v1/web/rooms");
   if (listing.maxPostBytes !== MAX_BYTES || !Array.isArray(listing.rooms)) throw new Error("Unsupported room service response");
-  accountMode = listing.loginMode === "account";
+  passkeyMode = listing.loginMode === "passkey";
+  accountMode = listing.loginMode === "account" || passkeyMode;
   if (accountMode) {
     if (listing.deviceProtocol !== "aspen-room.device.v1") throw new Error("Unsupported desktop identity protocol");
     device = await loadDevice();
@@ -372,6 +375,18 @@ async function boot() {
     $("password-label").textContent = "Account password";
     $("login-note").textContent = "This browser holds its own private key. Your operator assigns your display name and room access. Clearing site data loses this device identity.";
     $("edit-profile").hidden = true;
+    if (passkeyMode) {
+      if (listing.authOrigin !== location.origin) throw new Error(`Use ${listing.authOrigin} to sign in with a passkey. Device keys and drafts remain on this origin.`);
+      if (listing.accountDeviceProtocol !== "aspen-account.device.v1") throw new Error("Unsupported account device protocol");
+      $("password-label").hidden = true; $("room-password").hidden = true;
+      $("join-button").textContent = "Join with passkey";
+      $("link-device").hidden = false; $("manage-account").hidden = false;
+      $("login-note").textContent = "Use your passkey or approve this browser from a signed-in device. Each device keeps its own private message-author key. Clearing site data loses this device identity.";
+      auth = accountAuth(api, device, async account => {
+        save("username", account.username); $("account-username").value = account.username;
+        await joinRoom(active, await auth.ticket(active));
+      }, report);
+    }
   }
   const legacyAuthor = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
     new TextEncoder().encode(`aspen-web-author:${identity}`))), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -397,6 +412,7 @@ async function boot() {
     $("room-info").disabled = true; return;
   }
   await Promise.all([...rooms.values()].map(async room => {
+    if (auth?.enrolling) return;
     try {
       room.session = await api(endpoint(room, "session"));
       if (accountMode && room.session.author !== device.publicKey)
@@ -411,6 +427,18 @@ async function boot() {
     await history(room, true); connect(room);
   }));
   booted = true;
+  if (auth) await auth.afterLogin();
+}
+async function joinRoom(room, body) {
+  const session = await api(endpoint(room, "login"), body);
+  save("name", session.name); name = session.name; setProfile();
+  if (accountMode) save("username", session.username);
+  room.session = session;
+  room.messages.clear(); room.loaded = false; room.cursor = 0;
+  drawChannels();
+  if (room === active) showRoom();
+  await history(room, true); connect(room);
+  if (auth) await auth.afterLogin();
 }
 $("join-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -429,25 +457,21 @@ $("join-form").addEventListener("submit", async event => {
   $("join-button").disabled = true; $("join-error").hidden = true;
   try {
     let body = {identity, name: display, password: $("room-password").value};
-    if (accountMode) {
+    if (passkeyMode) {
+      await auth.ensure(username);
+      body = await auth.ticket(room);
+    } else if (accountMode) {
       const challenge = await api(endpoint(room, "challenge"), {username, publicKey: device.publicKey});
       const signature = await signChallenge(device, challenge, location.origin, room.id, username);
       body = {username, publicKey: device.publicKey, nonce: challenge.nonce, signature, password: $("room-password").value};
     }
-    const session = await api(endpoint(room, "login"), body);
-    save("name", session.name); name = session.name; setProfile();
-    if (accountMode) save("username", username);
-    room.session = session;
-    room.messages.clear(); room.loaded = false; room.cursor = 0;
-    drawChannels();
-    if (room === active) showRoom();
-    await history(room, true); connect(room);
+    await joinRoom(room, body);
     $("room-password").value = "";
     if (room === active && document.activeElement === document.body) $("message-input").focus({preventScroll: true});
   } catch (error) {
     if (room === active) {
       $("join-error").textContent = error.message; $("join-error").hidden = false;
-      if (error.status === 403) {$("room-password").setAttribute("aria-invalid", "true"); $("room-password").focus();}
+      if (error.status === 403 && !passkeyMode) {$("room-password").setAttribute("aria-invalid", "true"); $("room-password").focus();}
     } else report(new Error(`${room.name}: ${error.message}`));
   } finally {$("join-button").disabled = false; $("room-password").value = "";}
 });

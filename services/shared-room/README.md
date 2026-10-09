@@ -3,10 +3,12 @@
 Run one Cloudflare Worker with one SQLite Durable Object per backend room.
 The Worker owns the room keys, canonical membership, ordered messages,
 deduplication and ACK-confirmed radio cursors. Open the Worker's HTTPS address
-on a desktop or phone to use **Aspen Rooms**: select a channel, enter your
-operator-created username and account password, then read and send messages
-over IP. The [terminal client](../../clients/room-tui/README.md) follows the same
-flow. Each browser or terminal device keeps its own local keypair.
+on a desktop or phone to use **Aspen Rooms**: select a channel and sign in with
+your operator-created account's passkey. The
+[terminal client](../../clients/room-tui/README.md) shows a five-minute QR/copy
+code to approve on a signed-in browser. Each device keeps its own local
+message-author keypair; the `Accounts` Durable Object links those keys to
+accounts across room backends.
 Thin radio frontends connect with inbound hibernating WebSockets and carry
 opaque MeshCore packets. Both paths use the same stored conversation.
 
@@ -30,6 +32,9 @@ variables. Keep those three names out of Wrangler's public `vars`.
 | `ROOM_KEYS[id] = "<128 lowercase hex characters>"` | Expanded native 64-byte private key, held only in the Worker |
 | `FRONTENDS[id] = {token, aliases:[...], region?:"ab"}` | Restricted frontend credential, aliases and optional public flood region |
 | `WEB_USERS[username] = {name,salt,hash,iterations,aliases}` | Operator-created desktop accounts and per-channel grants; upload as a secret with [the account tool](WEB.md#operator-created-accounts) |
+| `WEB_AUTH_MODE="passkey"` | Disable password sign-in and enable the account authority |
+| `PASSKEY_ORIGIN`, `PASSKEY_RP_ID` | Exact sign-in origin and WebAuthn relying-party ID; this deployment uses `https://aspen.ve6slp.ca` and `ve6slp.ca` |
+| `WEB_ENROLLMENTS[tokenHash] = {username,grant,expires}` | One-use first-passkey enrollment hashes; upload as a secret with [the enrollment tool](WEB.md#operator-created-accounts) |
 
 Several frontends can serve the same public key/name without receiving its
 private key. Distinct aliases can share one backend history; membership,
@@ -43,8 +48,8 @@ a different history; this does not migrate the old room.
 The Worker serves the interface and browser API on the same origin. Each
 configured alias appears as a channel; aliases with the same `backend` share
 messages, and different backends remain separate. Join with an account granted
-access to that channel. A development service without `WEB_USERS` retains the
-display-name and shared room-password flow. No radio, companion application or
+access to that channel. A development service without `WEB_AUTH_MODE` retains
+the older account-password or room-password flow. No radio, companion application or
 frontend bearer token is needed for web access.
 
 Messages update live, with earlier history available on demand. The browser
@@ -69,11 +74,14 @@ npm run build
 npx wrangler deploy
 ```
 
-Use the existing Worker name, Cloudflare account and `ROOMS` namespace. Keep
+Use the existing Worker name, Cloudflare account, `ROOMS` and `ACCOUNTS` namespaces. Keep
 the configured secrets; do not regenerate room identities. The browser session
 tables and optional message display-name field are added without replacing
 history, radio membership or pending deliveries. The assets deploy with the
 Worker, and existing radio frontends need no firmware update.
+The `v2` migration adds `Accounts` without changing the existing room namespace.
+See [WEB.md](WEB.md#operator-created-accounts) to enable passkey mode and issue
+private enrollment links.
 See [WEB.md](WEB.md) for browser access, storage and API details.
 
 ## Small opaque API

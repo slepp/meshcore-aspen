@@ -10,7 +10,7 @@
   <title>Aspen Rooms</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/rooms.css">
-  <script type="module" src="/rooms.js"></script>
+  <script type="module" src="/app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to conversation</a>
@@ -35,6 +35,7 @@
         <button class="icon-button" id="edit-profile" aria-label="Edit display name" title="Edit display name">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15z"/></svg>
         </button>
+        <button class="quiet-button" id="manage-account" hidden>Devices</button>
       </div>
     </aside>
     <main class="main" id="main-content" tabindex="-1">
@@ -65,6 +66,7 @@
           <p class="form-error" id="join-error" role="alert" hidden></p>
           <button class="primary-button" id="join-button" type="submit">Join room <span aria-hidden="true">→</span></button>
         </form>
+        <button class="quiet-button" id="link-device" hidden>Link this browser from a signed-in device</button>
         <p class="privacy-note" id="login-note">Your identity stays with this browser. Your display name is included in messages sent to the room.</p>
       </section>
       <section class="timeline" id="timeline" aria-label="Room messages" tabindex="0">
@@ -108,6 +110,28 @@
   <dialog id="profile-dialog" aria-labelledby="profile-title">
     <div class="dialog-heading"><h2 id="profile-title">Your display name</h2><button id="close-profile" class="icon-button" aria-label="Close display name editor">×</button></div>
     <form id="profile-form"><label for="profile-input">Name for new room logins</label><input id="profile-input" autocomplete="nickname" required maxlength="24" aria-describedby="profile-error"><p>Joined rooms keep the name used when you joined. Leave and rejoin a room to change it there.</p><p id="profile-error" class="form-error" role="alert" hidden></p><button class="primary-button">Save name</button></form>
+  </dialog>
+  <dialog id="device-dialog" aria-labelledby="device-title">
+    <div class="dialog-heading"><h2 id="device-title">Account devices</h2><button id="close-device" class="icon-button" aria-label="Close account devices">×</button></div>
+    <p id="device-error" class="form-error" role="alert" hidden></p>
+    <section id="device-request" hidden>
+      <p>On a signed-in device, scan this QR code or open Devices and copy this code. Approve only when both devices show the same full device key.</p>
+      <canvas id="device-qr" role="img" aria-label="QR code for device approval"></canvas>
+      <label for="device-link-code">Five-minute linking code</label><input id="device-link-code" readonly>
+      <button class="quiet-button" id="copy-link-code">Copy code</button>
+      <p><a id="device-link-url"></a></p><p id="device-expiry" role="status"></p>
+      <p>Your requesting device key</p><p class="key" id="device-key"></p>
+    </section>
+    <section id="device-manage" hidden>
+      <label for="approval-code">Code from the new device</label><input id="approval-code" maxlength="24" autocomplete="off">
+      <button class="quiet-button" id="inspect-link">Inspect device request</button>
+      <h3>Your devices</h3><ul id="account-devices"></ul>
+      <button class="quiet-button" id="add-passkey">Add another passkey</button>
+    </section>
+    <section id="device-approval" hidden>
+      <h3>Approve this new device</h3><p id="approval-label"></p><p class="key" id="approval-key"></p>
+      <p id="approval-expiry"></p><button class="primary-button" id="approve-link">Approve device</button>
+    </section>
   </dialog>
 </body>
 </html>

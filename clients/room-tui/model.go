@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 type listingResult struct {
@@ -50,34 +51,45 @@ type roomState struct {
 }
 
 type radioTick struct{}
+type linkResult struct {
+	Link     deviceLink
+	Approved bool
+	Alias    string
+	Started  bool
+	Err      error
+}
+type linkTick struct{ Code string }
 
 func radioRefreshTick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return radioTick{} })
 }
 
 type model struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	client     *roomClient
-	store      *stateStore
-	saved      *savedState
-	events     chan streamEvent
-	rooms      []*roomState
-	selected   int
-	focus      int
-	width      int
-	height     int
-	loginMode  string
-	name       textinput.Model
-	password   textinput.Model
-	composer   textarea.Model
-	history    viewport.Model
-	notice     string
-	dark       bool
-	noColor    bool
-	quitting   bool
-	quitWarned bool
-	exitErr    error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	client      *roomClient
+	store       *stateStore
+	saved       *savedState
+	events      chan streamEvent
+	rooms       []*roomState
+	selected    int
+	focus       int
+	width       int
+	height      int
+	loginMode   string
+	name        textinput.Model
+	password    textinput.Model
+	composer    textarea.Model
+	history     viewport.Model
+	notice      string
+	dark        bool
+	noColor     bool
+	quitting    bool
+	quitWarned  bool
+	exitErr     error
+	handoff     *deviceLink
+	handoffQR   string
+	handoffBusy bool
 }
 
 func newModel(ctx context.Context, cancel context.CancelFunc, client *roomClient, store *stateStore, saved *savedState) *model {
@@ -199,7 +211,7 @@ func (m *model) choose(index int) tea.Cmd {
 	room.unread = 0
 	m.saved.Selected = room.info.ID
 	m.password.SetValue("")
-	if m.loginMode == "account" {
+	if m.loginMode == "account" || m.loginMode == "passkey" {
 		m.name.SetValue(m.saved.Username)
 	} else {
 		m.name.SetValue(m.saved.Name)
@@ -343,9 +355,10 @@ func (m *model) refreshHistory(bottom bool) {
 }
 
 func (m *model) login(room *roomState) tea.Cmd {
-	if room.busy {
+	if room.busy || m.loginMode == "passkey" && (m.handoff != nil || m.handoffBusy) {
 		return nil
 	}
+	m.handoffBusy = m.loginMode == "passkey"
 	user, password := m.name.Value(), m.password.Value()
 	m.password.SetValue("")
 	identity := savedState{Seed: m.saved.Seed, PublicKey: m.saved.PublicKey, LegacyIdentity: m.saved.LegacyIdentity}
@@ -353,7 +366,22 @@ func (m *model) login(room *roomState) tea.Cmd {
 	room.busy, room.status = true, "Signing in"
 	return func() tea.Msg {
 		session, err := m.client.login(m.ctx, alias, user, password, mode, &identity)
+		if mode == "passkey" && statusIs(err, 401) {
+			link, linkErr := m.client.beginLink(m.ctx, &identity)
+			return linkResult{Link: link, Alias: alias, Started: true, Err: linkErr}
+		}
 		return roomResult{Alias: alias, Generation: generation, Kind: "login", Session: session, Username: user, Err: err}
+	}
+}
+
+func linkWait(code string) tea.Cmd {
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return linkTick{Code: code} })
+}
+
+func (m *model) pollLink(link deviceLink) tea.Cmd {
+	return func() tea.Msg {
+		approved, err := m.client.pollLink(m.ctx, link)
+		return linkResult{Link: link, Approved: approved, Err: err}
 	}
 }
 
@@ -445,14 +473,14 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 			m.notice = "RF delivery status: " + err.Error()
 		}
 	case "session", "login":
-		if m.loginMode == "account" && result.Session.Author != m.saved.PublicKey {
+		if (m.loginMode == "account" || m.loginMode == "passkey") && result.Session.Author != m.saved.PublicKey {
 			m.notice = "Saved session belongs to a different device. Ctrl+L leaves it; keep the original device state."
 			room.session = &result.Session
 			return nil
 		}
 		room.session = &result.Session
 		m.saved.Name = result.Session.Name
-		if m.loginMode == "account" {
+		if m.loginMode == "account" || m.loginMode == "passkey" {
 			m.saved.Username = result.Session.Username
 		}
 		m.persist()
@@ -510,6 +538,45 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := msg.(type) {
+	case linkTick:
+		if m.handoff != nil && m.handoff.Code == value.Code {
+			return m, m.pollLink(*m.handoff)
+		}
+		return m, nil
+	case linkResult:
+		if value.Started {
+			m.handoffBusy = false
+			if room := m.find(value.Alias); room != nil {
+				room.busy = false
+				room.status = "Waiting for device approval"
+			}
+		} else if m.handoff == nil || value.Link.Code != m.handoff.Code {
+			return m, nil
+		}
+		if value.Err != nil {
+			m.handoff, m.handoffQR = nil, ""
+			m.notice = "Device sign-in: " + value.Err.Error()
+			return m, nil
+		}
+		if value.Approved {
+			m.handoff, m.handoffQR = nil, ""
+			if !m.persist() {
+				return m, nil
+			}
+			if room := m.active(); room != nil && room.session == nil {
+				return m, m.login(room)
+			}
+			return m, nil
+		}
+		if value.Started {
+			qr, err := qrcode.New(value.Link.URL, qrcode.Medium)
+			if err != nil {
+				m.notice = "Could not render device approval QR code: " + err.Error()
+				return m, nil
+			}
+			m.handoff, m.handoffQR = &value.Link, qr.ToSmallString(false)
+		}
+		return m, linkWait(value.Link.Code)
 	case radioTick:
 		var refresh tea.Cmd
 		if room := m.active(); room != nil && room.session != nil && room.stop != nil && !room.busy && !room.rfBusy {
@@ -555,6 +622,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, m.choose(m.selected))
 		return m, tea.Batch(commands...)
 	case roomResult:
+		if value.Kind == "login" {
+			m.handoffBusy = false
+		}
 		return m, m.handleResult(value)
 	case streamEvent:
 		room := m.find(value.Alias)
@@ -600,7 +670,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.choose(m.selected - 1)
 		case "tab", "shift+tab":
 			count, delta := 3, 1
-			if room == nil || room.session == nil {
+			if (room == nil || room.session == nil) && m.loginMode != "passkey" {
 				count = 4
 			}
 			if value.String() == "shift+tab" {
@@ -643,6 +713,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+l":
+			if m.handoff != nil {
+				m.handoff, m.handoffQR = nil, ""
+				m.notice = "Device approval request cancelled on this TUI; its code expires after five minutes."
+				return m, nil
+			}
 			if room != nil && room.session != nil && !room.busy {
 				room.busy = true
 				alias, generation := room.info.ID, room.generation
@@ -668,6 +743,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if room.session == nil && value.String() == "enter" {
+			if m.loginMode == "passkey" {
+				return m, m.login(room)
+			}
 			if m.focus == 2 {
 				m.focus = 3
 				return m, m.setFocus()
@@ -691,7 +769,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.persist()
 			}
 		}
-	} else if room != nil && room.session == nil {
+	} else if room != nil && room.session == nil && m.loginMode != "passkey" {
 		if m.focus == 2 {
 			m.name, command = m.name.Update(msg)
 		} else if m.focus == 3 {
@@ -710,6 +788,9 @@ func (m *model) setFocus() tea.Cmd {
 		return nil
 	}
 	if room.session == nil {
+		if m.loginMode == "passkey" {
+			return nil
+		}
 		if m.focus == 2 {
 			return m.name.Focus()
 		}
@@ -781,12 +862,26 @@ func (m *model) View() tea.View {
 	body.WriteString(m.accent().Render(title))
 	body.WriteString("\n" + ansi.Truncate(clean(m.client.origin), m.contentWidth(), "...") + "\n")
 	if room.session == nil {
-		userLabel, passwordLabel := "Username", "Account password"
-		if m.loginMode != "account" {
-			userLabel, passwordLabel = "Display name", "Room password"
+		if m.loginMode == "passkey" {
+			if m.handoff == nil {
+				body.WriteString("\nSign in through your browser passkey.\n\nEnter resumes an approved device or creates a five-minute QR / copy-code request.\nApprove the request in Devices on a signed-in browser.\nPrivate message-author keys stay on this device.\n")
+			} else {
+				link := m.handoff
+				body.WriteString("\nApprove this TUI on a signed-in browser.\nCode: " + link.Code + "\n" + link.URL +
+					"\nRequesting device key:\n" + link.PublicKey + fmt.Sprintf("\nExpires in %d seconds.\n", max(0, link.Expires-time.Now().Unix())))
+				if m.contentWidth() >= 60 {
+					body.WriteString(m.handoffQR)
+				}
+				body.WriteString("\nCompare the full key on both devices before approving. Ctrl+L cancels.\n")
+			}
+		} else {
+			userLabel, passwordLabel := "Username", "Account password"
+			if m.loginMode != "account" {
+				userLabel, passwordLabel = "Display name", "Room password"
+			}
+			body.WriteString("\nJoin the shared IP / radio conversation.\n\n" + userLabel + "\n" + m.name.View() + "\n\n" +
+				passwordLabel + "\n" + m.password.View() + "\n\nEnter signs in. Private keys stay on this device.\n")
 		}
-		body.WriteString("\nJoin the shared IP / radio conversation.\n\n" + userLabel + "\n" + m.name.View() + "\n\n" +
-			passwordLabel + "\n" + m.password.View() + "\n\nEnter signs in. Private keys stay on this device.\n")
 	} else {
 		header := fmt.Sprintf("%s [%s]  |  History %d%%", clean(room.session.Name), room.session.Author[:8], int(m.history.ScrollPercent()*100))
 		if m.focus == 1 {

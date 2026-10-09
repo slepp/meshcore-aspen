@@ -57,3 +57,15 @@ export async function signChallenge(device, challenge, origin, alias, username) 
     throw new Error("Device login challenge belongs to a different service, room or account");
   return hex(new Uint8Array(await crypto.subtle.sign("Ed25519", device.privateKey, new TextEncoder().encode(message))));
 }
+export async function signAccountChallenge(device, challenge, origin, purpose) {
+  const protocol = "aspen-account.device.v1";
+  if (!challenge || challenge.protocol !== protocol || !/^[a-f0-9]{64}$/.test(challenge.id) ||
+      !Number.isSafeInteger(challenge.expires) || challenge.expires <= Math.floor(Date.now() / 1000) ||
+      challenge.expires > Math.floor(Date.now() / 1000) + 125)
+    throw new Error("Account challenge is invalid or expired; start again");
+  const message = [protocol, origin, purpose, device.publicKey, challenge.id].join("\n");
+  if (challenge.origin !== origin || challenge.purpose !== purpose || challenge.publicKey !== device.publicKey ||
+      challenge.message !== message || new TextEncoder().encode(message).length > 512)
+    throw new Error("Account challenge belongs to a different website, device or action");
+  return hex(new Uint8Array(await crypto.subtle.sign("Ed25519", device.privateKey, new TextEncoder().encode(message))));
+}

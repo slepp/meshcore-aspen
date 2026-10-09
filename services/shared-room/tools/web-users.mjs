@@ -30,7 +30,7 @@ export function passwordRecord(password, name, aliases) {
     hash: pbkdf2Sync(input, salt, 100000, 32, "sha256").toString("hex")};}
   finally {input.fill(0);}
 }
-async function privateFile(path, maxBytes) {
+export async function privateFile(path, maxBytes) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await file.stat();
@@ -38,6 +38,23 @@ async function privateFile(path, maxBytes) {
         process.getuid && info.uid !== process.getuid()) throw Error("Use an operator-owned private file (0600 or 0400)");
     return await file.readFile();
   } finally {await file.close();}
+}
+export async function savePrivateFile(path, content) {
+  const parent = dirname(path);
+  await mkdir(parent, {recursive: true, mode: 0o700});
+  const directory = await lstat(parent);
+  if (!directory.isDirectory() || (directory.mode & 0o077) ||
+      process.getuid && directory.uid !== process.getuid()) throw Error("Use an operator-owned private directory (0700)");
+  const temporary = path + "." + randomBytes(8).toString("hex") + ".tmp";
+  let created = false;
+  try {
+    const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    created = true;
+    try {await file.writeFile(content); await file.sync();} finally {await file.close();}
+    await rename(temporary, path); created = false;
+    const dir = await open(parent, constants.O_RDONLY);
+    try {await dir.sync();} finally {await dir.close();}
+  } finally {if (created) await unlink(temporary);}
 }
 async function hiddenPassword(label) {
   if (!process.stdin.isTTY) throw Error("Use a terminal password prompt or --password-file PRIVATE_FILE");
@@ -62,7 +79,8 @@ async function hiddenPassword(label) {
     process.stdin.on("data", read);
   });
 }
-async function upload(users, account) {
+export async function uploadSecret(value, account, binding = "WEB_USERS") {
+  if (!["WEB_USERS", "WEB_ENROLLMENTS"].includes(binding)) throw Error("Invalid account secret binding");
   if (!/^[a-f0-9]{32}$/.test(account ?? "")) throw Error("Use --account CLOUDFLARE_ACCOUNT_ID with --upload");
   const wrangler = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
   const config = fileURLToPath(new URL("../wrangler.jsonc", import.meta.url));
@@ -84,13 +102,13 @@ async function upload(users, account) {
   let inputError;
   child.stdin.on("error", error => {inputError = error;});
   const done = new Promise((resolveCode, reject) => {child.once("error", reject); child.once("exit", resolveCode);});
-  child.stdin.end(JSON.stringify({WEB_USERS: JSON.stringify(users)}));
+  child.stdin.end(JSON.stringify({[binding]: JSON.stringify(value)}));
   if (await done !== 0 || inputError) throw Error("Worker account upload was not confirmed");
 }
 export async function main(args) {
   const {values} = parseArgs({args, options: {
     file: {type: "string"}, username: {type: "string"}, name: {type: "string"}, aliases: {type: "string"},
-    "password-file": {type: "string"}, remove: {type: "boolean"}, upload: {type: "boolean"}, account: {type: "string"},
+    "password-file": {type: "string"}, passkey: {type: "boolean"}, remove: {type: "boolean"}, upload: {type: "boolean"}, account: {type: "string"},
   }});
   if (!values.file) throw Error("Use --file PRIVATE_ACCOUNT_JSON and --username USER, or --upload --account ACCOUNT_ID");
   const path = resolve(values.file), parent = dirname(path);
@@ -109,7 +127,10 @@ export async function main(args) {
     } else {
       if (!values.name || !values.aliases) throw Error("Creating an account requires --name and --aliases ALIAS[,ALIAS]");
       let password;
-      if (values["password-file"]) {
+      if (values.passkey) {
+        if (values["password-file"]) throw Error("Use --passkey without --password-file");
+        password = randomBytes(32).toString("hex");
+      } else if (values["password-file"]) {
         const raw = await privateFile(resolve(values["password-file"]), 1024);
         try {password = new TextDecoder("utf-8", {fatal: true}).decode(raw).replace(/\r?\n$/, "");} finally {raw.fill(0);}
       } else {
@@ -120,20 +141,12 @@ export async function main(args) {
       password = undefined;
     }
     validateUsers(users);
-    const content = JSON.stringify(users, null, 2) + "\n", temporary = path + "." + randomBytes(8).toString("hex") + ".tmp";
-    let created = false;
-    try {
-      const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      created = true;
-      try {await file.writeFile(content); await file.sync();} finally {await file.close();}
-      await rename(temporary, path); created = false;
-      const dir = await open(parent, constants.O_RDONLY);
-      try {await dir.sync();} finally {await dir.close();}
-      if ((await privateFile(path, 128 * 1024)).toString("utf8") !== content) throw Error("Saved account file did not match");
-    } finally {if (created) await unlink(temporary);}
+    const content = JSON.stringify(users, null, 2) + "\n";
+    await savePrivateFile(path, content);
+    if ((await privateFile(path, 128 * 1024)).toString("utf8") !== content) throw Error("Saved account file did not match");
     console.log("Private account file saved; passwords were not stored in plaintext.");
   } else if (!values.upload) throw Error("Use --username to edit an account, or --upload to publish the existing file");
-  if (values.upload) {await upload(users, values.account); console.log("WEB_USERS uploaded; account passwords and room grants now control desktop access.");}
+  if (values.upload) {await uploadSecret(users, values.account); console.log("WEB_USERS uploaded; account names and room grants now control desktop access.");}
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch(error => {

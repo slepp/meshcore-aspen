@@ -34,10 +34,12 @@ type roomInfo struct {
 }
 
 type roomListing struct {
-	Rooms          []roomInfo `json:"rooms"`
-	MaxPostBytes   int        `json:"maxPostBytes"`
-	LoginMode      string     `json:"loginMode"`
-	DeviceProtocol string     `json:"deviceProtocol"`
+	Rooms                 []roomInfo `json:"rooms"`
+	MaxPostBytes          int        `json:"maxPostBytes"`
+	LoginMode             string     `json:"loginMode"`
+	DeviceProtocol        string     `json:"deviceProtocol"`
+	AccountDeviceProtocol string     `json:"accountDeviceProtocol"`
+	AuthOrigin            string     `json:"authOrigin"`
 }
 
 type session struct {
@@ -168,6 +170,13 @@ func (c *roomClient) cookieForJar(cookie *http.Cookie) *http.Cookie {
 }
 
 func validateCookie(cookie *http.Cookie) error {
+	if cookie != nil && cookie.Name == "aspen_account" {
+		if cookie.Domain != "" || !cookie.Secure || !cookie.HttpOnly || cookie.Path != "/v1/auth/" ||
+			(cookie.MaxAge >= 0 && cookie.Value != "" && !publicKeyPattern.MatchString(cookie.Value)) {
+			return errors.New("room service returned an invalid scoped account cookie")
+		}
+		return nil
+	}
 	if cookie == nil || !strings.HasPrefix(cookie.Name, "aspen_room_") ||
 		!aliasPattern.MatchString(strings.TrimPrefix(cookie.Name, "aspen_room_")) ||
 		cookie.Domain != "" || !cookie.Secure || !cookie.HttpOnly ||
@@ -282,9 +291,13 @@ func (c *roomClient) listing(ctx context.Context) (roomListing, error) {
 		return listing, err
 	}
 	if listing.MaxPostBytes != 151 || len(listing.Rooms) > 256 ||
-		(listing.LoginMode != "account" && listing.LoginMode != "room-password") ||
-		(listing.LoginMode == "account" && listing.DeviceProtocol != deviceProtocol) {
+		(listing.LoginMode != "account" && listing.LoginMode != "room-password" && listing.LoginMode != "passkey") ||
+		((listing.LoginMode == "account" || listing.LoginMode == "passkey") && listing.DeviceProtocol != deviceProtocol) {
 		return listing, errors.New("room service uses an unsupported login protocol or message limit")
+	}
+	if listing.LoginMode == "passkey" && (listing.AuthOrigin != c.origin ||
+		listing.AccountDeviceProtocol != accountDeviceProtocol) {
+		return listing, errors.New("use the configured passkey service origin; keep the original device state and drafts")
 	}
 	seen := make(map[string]bool)
 	for _, room := range listing.Rooms {
@@ -316,7 +329,16 @@ func (c *roomClient) getSession(ctx context.Context, alias string) (session, err
 func (c *roomClient) login(ctx context.Context, alias, user, password, mode string, saved *savedState) (session, error) {
 	var s session
 	var body any
-	if mode == "account" {
+	if mode == "passkey" {
+		if err := c.deviceLogin(ctx, saved); err != nil {
+			return s, err
+		}
+		body, err := c.roomTicket(ctx, alias, saved.PublicKey)
+		if err != nil {
+			return s, err
+		}
+		return c.ticketLogin(ctx, alias, saved.PublicKey, body)
+	} else if mode == "account" {
 		if !usernamePattern.MatchString(user) {
 			return s, errors.New("use the lowercase username assigned by your room operator")
 		}

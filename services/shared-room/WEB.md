@@ -1,24 +1,27 @@
 # Join an Aspen room from the web
 
-Open the room Worker's HTTPS address on your desktop or phone. Select a channel,
-enter your operator-created username and account password, and choose **Join
-room**. The operator grants each account access to particular channels and sets
-its display name. [Create accounts](#operator-created-accounts) before enabling
-account login. A development service without `WEB_USERS` keeps the display-name
-and shared room-password flow.
+Open `https://aspen.ve6slp.ca` on your desktop or phone. Select a channel, enter
+your operator-created username and choose **Join with passkey**. Your device
+asks for its usual PIN, fingerprint or other passkey verification. The operator
+sets your display name and grants access to each channel.
+[Register your first passkey](#operator-created-accounts) using the operator's
+private enrollment link, or [link a new device](#link-another-device) from one
+that is already signed in. Password sign-in is disabled in passkey mode.
 Aliases pointing to the same backend show the same ordered messages; another
 backend has its own conversation.
 
 The configured deployment also serves `https://aspen.ve6slp.ca`; its
-`workers.dev` address remains available to the radio frontend. Change or remove
+`workers.dev` address remains available to the radio frontend, but passkey
+sign-in uses only the configured `PASSKEY_ORIGIN`. Change or remove
 the custom-domain route in `wrangler.jsonc` when deploying in another Cloudflare
 zone. Browser keys, cookies and unsent work belong to an origin: opening the
 other address creates a separate browser device. Keep the original origin's
 site data to retain its identity and drafts.
 
 For the same flow in a Linux terminal, [build and run the terminal
-client](../../clients/room-tui/README.md). It uses the same account grants and
-shared history, with a separate locally stored desktop keypair.
+client](../../clients/room-tui/README.md). Press Enter to show its five-minute
+QR/copy-code request, then approve it in your signed-in browser. It joins the
+same account and history with a separate locally stored device keypair.
 
 The interface follows the system's light/dark preference, including changes
 while it is open. Text and controls also adapt to browser text sizing and
@@ -91,7 +94,7 @@ applies to both browser history and radio catch-up.
 For account login, this browser generates an Ed25519 keypair compatible with
 MeshCore. Its private key is nonextractable and stays in this origin's IndexedDB
 key store; the public key is its message author. A one-use, two-minute challenge
-binds its ownership signature to the service origin, alias, username and key.
+binds its ownership signature to the service origin, action and device key.
 Each browser profile or terminal client is a separate device, even when both use
 the same account. A device key belongs to one account; use another browser
 profile or terminal state directory for another account.
@@ -105,19 +108,37 @@ the private key; keep its profile if you need to keep that device identity.
 Account login does not create radio membership, announce this desktop over RF,
 select a home tower, or add direct messages. Display names are not unique.
 
+## Link another device
+
+On the new browser, choose **Link this browser from a signed-in device**. In the
+TUI, select a room and press Enter. Both show a QR code, a 24-character copy code
+and the requesting device's full public key. The request expires after five
+minutes; restarting the TUI or closing the request requires a new code.
+
+On a signed-in browser, scan the QR code or open **Devices**, paste the code and
+choose **Inspect device request**. Compare the full key with the requesting
+device before choosing **Approve device**. Never approve an unsolicited code.
+The requesting device claims the approval once and joins with its own key.
+Nothing copies the approving device's key or passkey.
+
+In **Devices**, add a second passkey or revoke a device. Revocation ends that
+key's account and room access, including existing room sessions. It also
+cancels unclaimed approvals made by that device. Keys and drafts are not
+deleted. A revoked key cannot be reassigned or re-enabled; use a new browser
+profile or TUI state directory. Keep a second passkey or another approved
+device available before losing access to your only sign-in device.
+
 ## Operator-created accounts
 
-From `services/shared-room`, create a private account file. The command prompts
-twice for a password without echoing it; use a long, unique passphrase of at least
-16 UTF-8 bytes. Passwords are salted PBKDF2-SHA256 hashes with 100,000 iterations,
-the Workers WebCrypto iteration limit, and logins are limited to ten attempts
-per address, per backend, per minute. Keep this temporary password login behind
-HTTPS; passkeys and person/device linking are not implemented.
+From `services/shared-room`, create an account and upload its name and room
+grants as a secret. `--passkey` does not ask for or save a usable password.
+Existing account records can be retained without changing device authors or
+drafts; their old password hashes are no longer accepted for sign-in.
 
 ```sh
 node tools/web-users.mjs \
   --file "$HOME/.config/aspen-room-operator/users.json" \
-  --username alice --name Alice --aliases A,SharedB
+  --username alice --name Alice --aliases A,SharedB --passkey
 node tools/web-users.mjs \
   --file "$HOME/.config/aspen-room-operator/users.json" \
   --upload --account CLOUDFLARE_ACCOUNT_ID
@@ -126,17 +147,52 @@ node tools/web-users.mjs \
 Use alias IDs from `ALIASES`, not room labels. The tool creates a `0700` directory
 and `0600` file, refuses public files and symlinks, and uploads `WEB_USERS` only
 as a secret after checking the active Worker binding types. Never put it in
-Wrangler `vars`. Uploading even an empty `{}` switches desktop login to accounts
-and disables shared room-password web login; radio passwords stay unchanged.
-Run the creation command again to replace a password, name or grants. Use
+Wrangler `vars`. Radio passwords stay unchanged. Run the creation command again
+to change a name or grants. Use
 `--username alice --remove` followed by `--upload` to revoke an account.
 Any change to an account or its room configuration invalidates its sessions;
 its signed-in devices must log in again, retaining their keys and unsent work.
 
-For unattended local setup, `--password-file PRIVATE_FILE` reads an
-operator-owned `0600`/`0400` file instead of prompting. It may end with one
-newline. The tool does not delete that file. Keep account files outside the
-checkout and do not pass passwords as command arguments.
+Enable the account authority at the canonical origin:
+
+```sh
+CLOUDFLARE_ACCOUNT_ID=CLOUDFLARE_ACCOUNT_ID npx wrangler deploy --keep-vars \
+  --var WEB_AUTH_MODE:passkey \
+  --var PASSKEY_ORIGIN:https://aspen.ve6slp.ca \
+  --var PASSKEY_RP_ID:ve6slp.ca
+node tools/web-passkeys.mjs \
+  --users "$HOME/.config/aspen-room-operator/users.json" \
+  --username alice --origin https://aspen.ve6slp.ca \
+  --enrollments "$HOME/.config/aspen-room-operator/enrollments.json" \
+  --link "$HOME/.config/aspen-room-operator/alice-enrollment.txt" \
+  --upload --account CLOUDFLARE_ACCOUNT_ID
+```
+
+The enrollment tool stores only token hashes in `WEB_ENROLLMENTS`. Deliver the
+private link file only to its account owner. It expires in 30 minutes and
+registers the first passkey once; the page removes the token from its address
+bar before using it. The owner completes passkey verification in a real browser.
+Additional passkeys are added from **Devices** on an approved device.
+Never put enrollment tokens, account records or room keys in Wrangler `vars`.
+
+The `Accounts` SQLite Durable Object owns passkeys, global device/account
+bindings, approvals and account sessions. Its `v2` migration adds a namespace;
+it does not recreate or erase `ROOMS`. Keep both migrations and bindings when
+deploying. `--keep-vars` retains the live origin and mode on later deployments.
+Changing origin creates a new browser key store; changing RP ID can make old
+passkeys unusable.
+
+Registration and sign-in require user verification and check the exact origin,
+RP ID, challenge, credential and authenticator counter. Challenges last two
+minutes and are single use. Account endpoints allow 60 requests per source
+address per minute; queues are bounded. Account and room cookies last up to 30
+days, use distinct paths and are HttpOnly/Secure/SameSite=Strict. Previously
+issued account-mode room cookies remain valid until their original expiry or
+a grant/device revocation; password sign-in cannot issue new ones.
+
+For isolated development, leaving `WEB_AUTH_MODE` unset retains the older
+account-password mode with `WEB_USERS`, or the room-password mode without it.
+Those paths are not available on a passkey-mode deployment.
 
 Before switching an existing service to accounts, confirm or retry any uncertain
 posts under their old login. Old shared-password messages remain in history
@@ -155,9 +211,9 @@ The browser API does not accept radio operations or expose room private keys.
 
 | Route | Request / result |
 | --- | --- |
-| `GET /v1/web/rooms` | Public `{rooms:[{id,name,publicKey}],maxPostBytes:151,loginMode,deviceProtocol}`; no login required |
-| `POST /v1/web/rooms/{alias}/challenge` | Account mode: `{username,publicKey}`; returns `{nonce,message,expires,protocol:"aspen-room.device.v1"}` |
-| `POST /v1/web/rooms/{alias}/login` | Account mode: `{username,password,publicKey,nonce,signature}`; development room-password mode: `{identity,name,password}`. Returns `{author,name,username,expires,maxPostBytes}` and a scoped HttpOnly cookie |
+| `GET /v1/web/rooms` | Public `{rooms:[{id,name,publicKey}],maxPostBytes:151,loginMode,deviceProtocol,accountDeviceProtocol,authOrigin}`; no login required |
+| `POST /v1/web/rooms/{alias}/challenge` | Disabled in passkey mode; legacy development account challenge |
+| `POST /v1/web/rooms/{alias}/login` | Passkey mode: `{ticket}` from the account authority. Returns `{author,name,username,expires,maxPostBytes}` and a scoped HttpOnly room cookie |
 | `GET /v1/web/rooms/{alias}/session` | Returns the current browser author, name and expiry |
 | `POST /v1/web/rooms/{alias}/logout` | Ends this session and closes its sockets |
 | `GET /v1/web/rooms/{alias}/history` | Latest 100 visible messages, oldest first, and `{more,floor,profiles}` |
@@ -165,6 +221,40 @@ The browser API does not accept radio operations or expose room private keys.
 | `GET .../history?after={seq}` | Catch-up page; `more` means another forward page |
 | `POST /v1/web/rooms/{alias}/posts` | `{id:"<UUID v4>",text}`; returns `{message,duplicate}` only after storage has synced |
 | `GET /v1/web/rooms/{alias}/socket?since={seq}` | Same-origin WebSocket with `aspen-room.web.v1`; cookie authentication |
+
+Account routes are under `/v1/auth/` at `PASSKEY_ORIGIN` and use the
+`aspen_account` cookie scoped to that path. POST bodies are limited to 16 KiB.
+An account ownership challenge returns `{id,purpose,origin,publicKey,message,
+protocol:"aspen-account.device.v1",expires}`. The signed UTF-8 message is exactly
+`protocol + "\n" + origin + "\n" + purpose + "\n" + publicKey + "\n" + id`.
+Keys and signatures are lowercase hex; WebAuthn JSON fields use base64url.
+
+| Account endpoint | POST request / result |
+| --- | --- |
+| `register/options` | `{username,publicKey,enrollment?}`; first registration needs the enrollment token, later registration needs that device's account cookie. Returns a device challenge and WebAuthn `options` |
+| `register/verify` | `{id,signature,response}`; verifies the device and WebAuthn registration, then issues an account cookie |
+| `authenticate/options` | `{username,publicKey}`; returns a device challenge and WebAuthn `options` |
+| `authenticate/verify` | `{id,signature,response}`; verifies both proofs and issues an account cookie |
+| `device-challenge` | `{publicKey,purpose:"device-login"|"link"}`; returns a two-minute device challenge |
+| `device-login` | `{id,signature}`; an already approved key obtains a fresh account cookie without moving or exporting a passkey |
+| `link/start` | `{id,signature,label}` for purpose `link`; returns `{code,claim,publicKey,expires,url}`. The URL contains only the public approval code in its fragment |
+| `link/inspect` | `{code}` with approving account cookie; returns `{code,publicKey,label,expires}` but never the private `claim` |
+| `link/approve` | `{code,publicKey}` with approving account cookie; approves the exact inspected key |
+| `link/status` | `{code,claim}`; requester polls for `{approved,publicKey,expires}` |
+| `link/claim` | `{code,claim}`; requester consumes an approved, unexpired link and obtains its account cookie |
+| `room-ticket` | `{alias,publicKey}` with account cookie; returns a one-use, 60-second `{ticket,alias,publicKey,expires}` for the same device and a granted alias |
+| `devices` | `{}` with account cookie; returns that account's device keys and revocation state |
+| `device/revoke` | `{publicKey}` with account cookie; revokes one of that account's keys |
+| `logout` | `{}` with account cookie; ends only that account cookie |
+
+`GET /v1/auth/session` returns the account's `{username,publicKey,name,expires}`.
+Links, tickets and authentication challenges expire or consume once across
+Worker restarts. Codes and claims use random 96-bit and 256-bit values
+respectively; knowing a code cannot claim the requesting device's session.
+The requesting key is bound by an Ed25519 proof before a link is created.
+Grant changes, account removal and device revocation are checked again before
+claiming or using a ticket. Global device ownership also checks pre-existing
+room device records across all configured backends.
 
 Browser history, post results and socket messages include an `rf` summary on
 each message: nonnegative integer `recipients`, `queued`, `sent`,

@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import {createDevice, checkDevice, hex, signChallenge} from "../web/device.js";
+import {createDevice, checkDevice, hex, signChallenge, signAccountChallenge} from "../web/device.js";
 
 test("desktop keys are nonextractable and browser signatures verify with native MeshCore", async () => {
   const device = await checkDevice(await createDevice());
@@ -24,4 +24,17 @@ test("desktop keys are nonextractable and browser signatures verify with native 
   await assert.rejects(signChallenge(device, challenge, origin, "B", username), /different/);
   await assert.rejects(signChallenge(device, {...challenge, expires: 0}, origin, alias, username), /expired/);
   await assert.rejects(checkDevice({...device, publicKey: "00".repeat(32)}), /do not match/);
+});
+
+test("account proofs bind their origin, action, key and two-minute nonce", async () => {
+  const device = await createDevice(), origin = "https://aspen.example", purpose = "link", id = "bb".repeat(32);
+  const challenge = {id, origin, purpose, publicKey: device.publicKey, protocol: "aspen-account.device.v1",
+    expires: Math.floor(Date.now()/1000)+120,
+    message: ["aspen-account.device.v1", origin, purpose, device.publicKey, id].join("\n")};
+  const signature = await signAccountChallenge(device, challenge, origin, purpose);
+  assert.equal(await crypto.subtle.verify("Ed25519", device.verificationKey, Buffer.from(signature, "hex"),
+    new TextEncoder().encode(challenge.message)), true);
+  for (const altered of [{origin: "https://other.example"}, {purpose: "device-login"}, {publicKey: "00".repeat(32)}, {id: "aa".repeat(32)}])
+    await assert.rejects(signAccountChallenge(device, {...challenge, ...altered}, origin, purpose), /different/);
+  await assert.rejects(signAccountChallenge(device, {...challenge, expires: Math.floor(Date.now()/1000)+300}, origin, purpose), /expired/);
 });

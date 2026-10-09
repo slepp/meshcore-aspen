@@ -61,10 +61,11 @@ For MQTT packet collection, choose the host or on-device
 For shared room history across radio frontends and desktop/mobile web clients, the
 [shared room Worker/API](services/shared-room/README.md) provides one canonical
 backend with several advertised room identities, login catch-up and live push.
-Its **Aspen Rooms** interface connects directly over IP: open the Worker URL,
-choose a channel and join with an operator-created account. The
-[terminal client](clients/room-tui/README.md) uses the same channels and login
-flow. Each browser or terminal device keeps its own keypair; radio names are
+Its **Aspen Rooms** interface connects directly over IP: open
+`https://aspen.ve6slp.ca`, choose a channel and sign in with your account's
+passkey. The [terminal client](clients/room-tui/README.md) shows a five-minute
+QR/copy code to approve in your signed-in browser. Each browser or terminal
+device keeps its own keypair; radio names are
 resolved from signed adverts received by the frontends.
 The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
 frontend carries opaque radio bytes and final transmission receipts.

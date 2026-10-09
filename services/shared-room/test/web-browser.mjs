@@ -6,6 +6,7 @@ import {resolve} from "node:path";
 import {createServer} from "node:net";
 import {setTimeout as sleep} from "node:timers/promises";
 import {passwordRecord} from "../tools/web-users.mjs";
+import {createHash} from "node:crypto";
 
 const root = resolve(import.meta.dirname, "..");
 const scratchRoot = resolve(root, ".tmp");
@@ -21,9 +22,10 @@ const port = portProbe.address().port;
 await new Promise(resolveClose => portProbe.close(resolveClose));
 const base = `http://localhost:${port}`;
 const accountTest = process.argv.includes("--accounts");
+const passkeyTest = process.argv.includes("--passkeys");
 
-function start(command, args) {
-  const child = spawn(command, args, {cwd: root, stdio: ["ignore", "pipe", "pipe"]});
+function start(command, args, options = {}) {
+  const child = spawn(command, args, {cwd: root, stdio: ["ignore", "pipe", "pipe"], ...options});
   children.push(child);
   let output = "";
   const append = chunk => {output += chunk;};
@@ -82,8 +84,18 @@ async function page(context, width = 1280, height = 900) {
     return result.result.value;
   };
   const wait = (expression, label) => until(() => evaluate(expression), label);
-  const open = async () => {
-    await call("Page.navigate", {url: base});
+  const open = async (suffix = "") => {
+    let loaded = false;
+    const remove = cdp.listen(event => {
+      if (event.sessionId === sessionId && event.method === "Page.loadEventFired") loaded = true;
+    });
+    try {
+      const target = new URL(base + suffix);
+      target.searchParams.set("test-navigation", crypto.randomUUID());
+      const navigation = await call("Page.navigate", {url: target.href});
+      if (!navigation.loaderId) await call("Page.reload");
+      await until(() => loaded, "page load");
+    } finally {remove();}
     await wait(`document.getElementById('channel-count')?.textContent === '3'`, "room listing");
     await wait(`!document.getElementById('join-panel').hidden || !document.getElementById('composer-area').hidden`, "room selection");
   };
@@ -95,10 +107,14 @@ async function page(context, width = 1280, height = 900) {
       await wait(`document.getElementById('room-name').textContent === ${JSON.stringify(name)}`, `select ${name}`);
     },
     async join(name, password = "room") {
-      await evaluate(`document.getElementById(${JSON.stringify(accountTest ? "account-username" : "display-name")}).value = ${JSON.stringify(name)};
+      await evaluate(`document.getElementById(${JSON.stringify(accountTest || passkeyTest ? "account-username" : "display-name")}).value = ${JSON.stringify(name)};
         document.getElementById('room-password').value = ${JSON.stringify(password)};
         document.getElementById('join-form').requestSubmit()`);
-      await wait(`document.getElementById('connection-text').textContent === 'Connected'`, "room login and socket");
+      await until(async () => {
+        const failure = await evaluate(`!document.getElementById('join-error').hidden && document.getElementById('join-error').textContent`);
+        if (failure) throw new Error("Browser login failed: " + failure);
+        return evaluate(`document.getElementById('connection-text').textContent === 'Connected'`);
+      }, "room login and socket");
     },
     async type(text) {
       await evaluate(`document.getElementById('message-input').value = ${JSON.stringify(text)};
@@ -194,6 +210,91 @@ async function accountsFlow(desktop, mobile) {
   assert.deepEqual(browserErrors, []); assert.deepEqual(errors, []);
   console.log("PASS: operator accounts, nonextractable persistent desktop keys, light/dark account a11y, shared content, signed radio names, drafts and same-author idempotent recovery.");
 }
+async function passkeysFlow(desktop, mobile) {
+  await accessibility(desktop, "passkey sign-in");
+  assert.equal(await desktop.evaluate(`document.getElementById('room-password').hidden`), true);
+  await desktop.call("WebAuthn.enable");
+  const {authenticatorId} = await desktop.call("WebAuthn.addVirtualAuthenticator", {options: {
+    protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true,
+    isUserVerified: true, automaticPresenceSimulation: true,
+  }});
+  await desktop.open("/#enroll=" + "aa".repeat(32) + "&user=alice");
+  assert.equal(await desktop.evaluate("location.hash"), "");
+  assert.equal(await desktop.evaluate(`document.getElementById('account-username').value`), "alice",
+    await desktop.evaluate(`JSON.stringify({title:document.getElementById('join-title').textContent,notice:document.getElementById('notice-text').textContent})`));
+  await desktop.join("alice");
+  const credentials = await desktop.call("WebAuthn.getCredentials", {authenticatorId});
+  assert.equal(credentials.credentials.length, 1);
+  assert.equal(credentials.credentials[0].rpId, "localhost");
+  const firstKey = await desktop.evaluate(`document.getElementById('room-info').click(); document.getElementById('detail-author').textContent`);
+  await key(desktop, "Escape", "Escape");
+  await desktop.type("Passkey draft remains on this browser.");
+  await desktop.open();
+  await desktop.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "passkey room cookie restore");
+  assert.equal(await desktop.evaluate(`document.getElementById('message-input').value`), "Passkey draft remains on this browser.");
+  await mobile.select("Uplink");
+  await mobile.evaluate(`document.getElementById('link-device').click()`);
+  await mobile.wait(`!document.getElementById('device-request').hidden && document.getElementById('device-link-code').value.length === 24`, "five-minute browser link");
+  const code = await mobile.evaluate(`document.getElementById('device-link-code').value`);
+  const secondKey = await mobile.evaluate(`document.getElementById('device-key').textContent`);
+  assert.notEqual(secondKey, firstKey);
+  await accessibility(mobile, "mobile QR and copy-code request");
+  assert.equal(await mobile.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
+  await desktop.evaluate(`document.getElementById('manage-account').click()`);
+  await desktop.wait(`!document.getElementById('device-manage').hidden`, "signed-in device management");
+  await desktop.evaluate(`document.getElementById('approval-code').value = ${JSON.stringify(code)}; document.getElementById('inspect-link').click()`);
+  await desktop.wait(`!document.getElementById('device-approval').hidden`, "inspect browser link");
+  assert.equal(await desktop.evaluate(`document.getElementById('approval-key').textContent`), secondKey);
+  await accessibility(desktop, "device approval");
+  await desktop.evaluate(`document.getElementById('approve-link').click()`);
+  await desktop.wait(`document.getElementById('device-title').textContent.includes('Device approved')`, "device approval saved");
+  await desktop.evaluate(`document.getElementById('close-device').click()`);
+  await mobile.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "linked browser claims and joins");
+  await mobile.send("Linked device keeps a distinct author key.");
+  await desktop.sees("Linked device keeps a distinct author key.");
+  await mobile.open();
+  await mobile.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "linked room restore");
+  assert.equal(await mobile.evaluate(`document.getElementById('profile-name').textContent`), "Alice");
+  const passwordResponse = await desktop.evaluate(`fetch('/v1/web/rooms/A/login', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:'alice',password:'fixture password only'})}).then(r => r.status)`);
+  assert.equal(passwordResponse, 400);
+  await desktop.evaluate(`(async () => {
+    for (const path of ['/v1/auth/logout','/v1/web/rooms/A/logout']) {
+      const response = await fetch(path, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      if (!response.ok) throw new Error('Fixture logout failed');
+    }
+  })()`);
+  await desktop.open();
+  const thirdContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
+  const third = await page(thirdContext);
+  await third.call("WebAuthn.enable");
+  const thirdAuthenticator = await third.call("WebAuthn.addVirtualAuthenticator", {options: {
+    protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true,
+    isUserVerified: true, automaticPresenceSimulation: true,
+  }});
+  await third.call("WebAuthn.addCredential", {authenticatorId: thirdAuthenticator.authenticatorId, credential: credentials.credentials[0]});
+  await third.join("alice");
+  const thirdKey = await third.evaluate(`document.getElementById('room-info').click(); document.getElementById('detail-author').textContent`);
+  assert.notEqual(thirdKey, firstKey); assert.notEqual(thirdKey, secondKey);
+  await key(third, "Escape", "Escape");
+  for (const scheme of ["light", "dark"]) {
+    await palette(third, scheme); await accessibility(third, scheme + " passkey conversation");
+  }
+  const tuiRoot = resolve(root, "../../clients/room-tui"), binary = resolve(scratch, "room-tui");
+  const build = start("go", ["build", "-o", binary, "."], {cwd: tuiRoot});
+  await until(() => build.child.exitCode !== null, "TUI build", 60000);
+  assert.equal(build.child.exitCode, 0, build.output());
+  const cookies = await third.call("Network.getCookies", {urls: [base + "/v1/auth/"]});
+  const approver = cookies.cookies.find(cookie => cookie.name === "aspen_account");
+  assert(approver);
+  const terminal = start("python3", [resolve(tuiRoot, "test/terminal.py"), binary, base, resolve(scratch, "tui"), "--passkeys"],
+    {env: {...process.env, ASPEN_ROOM_TEST_APPROVER: approver.name + "=" + approver.value}});
+  await until(() => terminal.child.exitCode !== null, "TUI browser-passkey approval PTY", 60000);
+  assert.equal(terminal.child.exitCode, 0, terminal.output());
+  process.stdout.write(terminal.output());
+  assert.deepEqual(browserErrors, []); assert.deepEqual(errors, []);
+  console.log("PASS: real browser WebAuthn registration/assertion with UV, distinct Ed25519 keys, five-minute QR/code inspection/approval/claim, persistent cookies/drafts, password disabled, mobile reflow and light/dark accessibility.");
+}
 function contrast(a, b) {
   const luminance = color => {
     const hex = color.trim().replace("#", "");
@@ -249,6 +350,7 @@ async function key(page, key, code, modifiers = 0) {
 try {
   const config = JSON.parse(await readFile(resolve(root, "wrangler.jsonc"), "utf8"));
   config.name = "aspen-room-browser-test";
+  config.routes = [];
   config.main = resolve(root, config.main);
   config.assets.directory = resolve(root, config.assets.directory);
   config.vars = {MODE: "decoded", HISTORY_LIMIT: "0", ALIASES: JSON.stringify({
@@ -256,7 +358,7 @@ try {
     B: {backend: "shared", publicKey: "22".repeat(32), name: "Uplink", password: "room"},
     C: {backend: "field", publicKey: "33".repeat(32), name: "Field notes", password: "private"},
   }), FRONTENDS: "{}"};
-  if (accountTest) {
+  if (accountTest || passkeyTest) {
     const fixture = JSON.parse(await readFile(resolve(root, "test/native-fixtures.json"), "utf8"));
     config.vars.MODE = "opaque";
     const aliases = JSON.parse(config.vars.ALIASES);
@@ -268,6 +370,12 @@ try {
       alice: passwordRecord("fixture password only", "Alice", ["A","B","C"]),
       sam: passwordRecord("second fixture password", "Sam", ["A","B"]),
     });
+    if (passkeyTest) {
+      const users = JSON.parse(config.vars.WEB_USERS), hash = value => createHash("sha256").update(value).digest("hex");
+      config.vars.WEB_AUTH_MODE = "passkey"; config.vars.PASSKEY_ORIGIN = base; config.vars.PASSKEY_RP_ID = "localhost";
+      config.vars.WEB_ENROLLMENTS = JSON.stringify({[hash("aa".repeat(32))]:
+        {username:"alice", grant:hash(JSON.stringify(["alice", users.alice])), expires:Math.floor(Date.now()/1000)+1800}});
+    }
   }
   await writeFile(resolve(scratch, "wrangler.json"), JSON.stringify(config));
   const worker = start(process.execPath, [resolve(root, "node_modules/wrangler/bin/wrangler.js"),
@@ -292,7 +400,9 @@ try {
   const desktopContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const mobileContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const desktop = await page(desktopContext), mobile = await page(mobileContext, 390, 844);
-  if (accountTest) {
+  if (passkeyTest) {
+    await passkeysFlow(desktop, mobile);
+  } else if (accountTest) {
     await accountsFlow(desktop, mobile);
   } else {
   for (const scheme of ["light", "dark"]) {

@@ -3,14 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@simplewebauthn/server": "14.0.3",
+    "@simplewebauthn/browser": "14.0.0",
+    "qrcode": "1.5.4"
+  },
   "scripts": {
+    "bundle:web": "esbuild web/rooms.js --bundle --format=esm --outfile=web/app.js",
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/bindings.test.mjs test/web-model.test.mjs test/web-device.test.mjs test/web-users.test.mjs && vitest run && vitest run --config vitest.native.config.ts && vitest run --config vitest.independent.config.ts && vitest run --config vitest.region.config.ts && vitest run --config vitest.accounts.config.ts",
-    "test:browser": "node test/web-browser.mjs && node test/web-browser.mjs --accounts"
+    "test": "node --test test/bindings.test.mjs test/web-model.test.mjs test/web-device.test.mjs test/web-users.test.mjs && vitest run && vitest run --config vitest.native.config.ts && vitest run --config vitest.independent.config.ts && vitest run --config vitest.region.config.ts && vitest run --config vitest.accounts.config.ts && vitest run --config vitest.passkeys.config.ts",
+    "test:browser": "node test/web-browser.mjs && node test/web-browser.mjs --accounts && node test/web-browser.mjs --passkeys"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "axe-core": "4.14.0",
     "@cloudflare/vitest-pool-workers": "0.22.0",
     "@cloudflare/workers-types": "5.20261007.1",

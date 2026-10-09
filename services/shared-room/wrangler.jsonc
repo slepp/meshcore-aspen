@@ -2,14 +2,17 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "aspen-shared-room",
   "main": "src/index.ts",
+  "build": {"command": "npm run bundle:web"},
   "compatibility_date": "2026-10-07",
+  "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
   "workers_dev": true,
   "routes": [{"pattern": "aspen.ve6slp.ca", "custom_domain": true}],
   "assets": {"directory": "./web", "binding": "ASSETS", "run_worker_first": ["/v1/*"]},
   "durable_objects": {
-    "bindings": [{"name": "ROOMS", "class_name": "Room"}]
+    "bindings": [{"name": "ROOMS", "class_name": "Room"}, {"name": "ACCOUNTS", "class_name": "Accounts"}]
   },
-  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Room"]}],
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Room"]},
+    {"tag": "v2", "new_sqlite_classes": ["Accounts"]}],
   "vars": {"HISTORY_LIMIT": "0", "MODE": "opaque"}
 }

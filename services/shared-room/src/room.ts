@@ -4,6 +4,7 @@ import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 import {RadioCodec, opaque, OPAQUE_PROTOCOL, type ParticipantProfile} from "./native";
 import {base64, fromHex, unbase64} from "./native-crypto";
 import {accountCredential, checkPassword, deviceChallenge, DEVICE_PROTOCOL, username, webUsers} from "./accounts";
+import {passkeyMode} from "./authority";
 import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOrigin, sequence, sessionCookie,
   webBody, webCredential, webPath, webResponse, webText, WEB_PROTOCOL, WEB_SESSION_SECONDS,
   type WebConnection, type WebSession} from "./web";
@@ -764,7 +765,14 @@ export class Room extends DurableObject<Env> {
         (users === undefined ? !!found.username || found.credential !== await webCredential(config) :
           !found.username || found.credential !== await accountCredential(this.env, session.alias, found.username)))
       fail(401, "Room access expired; sign in again");
+    if (passkeyMode(this.env) && found.username &&
+        !await this.env.ACCOUNTS.getByName("accounts").deviceAllowed(found.username, found.author))
+      fail(401, "This device's account access was revoked; use another device");
     return found;
+  }
+
+  async deviceOwner(publicKey: string): Promise<string | null> {
+    return this.rows<{username: string}>("SELECT username FROM web_devices WHERE public_key=?", publicKey)[0]?.username ?? null;
   }
 
   private async browserSession(request: Request, alias: string): Promise<WebSession> {
@@ -792,6 +800,7 @@ export class Room extends DurableObject<Env> {
       if (!permitted) fail(429, "Too many room login attempts; wait one minute");
       const users = webUsers(this.env);
       if (endpoint === "challenge") {
+        if (passkeyMode(this.env)) fail(403, "Use passkey sign-in or device linking; password sign-in is disabled");
         if (users === undefined) fail(503, "Operator accounts are not configured on this room service");
         const user = username(body.username), publicKey = hex(body.publicKey, "device public key", 32);
         const nonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
@@ -806,7 +815,16 @@ export class Room extends DurableObject<Env> {
         return webResponse({nonce, message, expires: now + 120, protocol: DEVICE_PROTOCOL});
       }
       let author: string, name: string, user: string | undefined, sessionCredential: string;
-      if (users !== undefined) {
+      if (passkeyMode(this.env)) {
+        const ticket = hex(body.ticket, "account room ticket", 32);
+        const account = await this.env.ACCOUNTS.getByName("accounts").consumeTicket(ticket, alias);
+        if (!account) fail(401, "Account room ticket expired or invalid; sign in again");
+        const owner = await this.deviceOwner(account.publicKey);
+        if (owner && owner !== account.username) fail(409, "This device key belongs to another account");
+        user = account.username; author = account.publicKey; name = account.name;
+        this.sql.exec("INSERT OR IGNORE INTO web_devices VALUES (?, ?)", author, user);
+        sessionCredential = await accountCredential(this.env, alias, user);
+      } else if (users !== undefined) {
         user = username(body.username);
         const account = users[user], publicKey = hex(body.publicKey, "device public key", 32);
         const nonce = hex(body.nonce, "device login challenge", 32), signature = hex(body.signature, "device signature", 64);
