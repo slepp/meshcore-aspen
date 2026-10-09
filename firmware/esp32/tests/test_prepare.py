@@ -133,6 +133,8 @@ class BuildIsolation(unittest.TestCase):
             self.assertIn(f'#define ONCHIP_NATIVE_REVISION "{revision}"',
                           (build / "examples/kiss_modem/onchip/BuildClock.h").read_text())
             native = build / "examples/kiss_modem/onchip"
+            self.assertEqual((native / "NativeServices.h").read_bytes(),
+                             (ROOT / "firmware/runtime/NativeServices.h").read_bytes())
             for unit in ("BotVm", "BotWorker", "CommandBot", "MastSource"):
                 self.assertEqual(
                     (native / f"{unit}.cpp").read_bytes(),

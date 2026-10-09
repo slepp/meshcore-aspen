@@ -12,6 +12,11 @@ accounts across room backends.
 Thin radio frontends connect with inbound hibernating WebSockets and carry
 opaque MeshCore packets. Both paths use the same stored conversation.
 
+The [on-device service hooks](../../firmware/runtime/NATIVE_SERVICES.md)
+separate the room frontend from bot execution. Desktop RF identities,
+home-tower selection and DMs remain [deferred](DESKTOP_RF_DM.md); the current
+browser/TUI device keys are room-message authors, not advertised companions.
+
 ```sh
 cd services/shared-room
 npm ci

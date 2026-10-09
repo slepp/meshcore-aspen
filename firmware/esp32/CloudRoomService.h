@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "CloudRoomSocket.h"
+#include "NativeServices.h"
 #include "cloudroom/RadioBridge.h"
 #include "cloudroom/OpaqueFrontend.h"
 
 class WifiKissMultiplexer;
 namespace onchip {
-class CommandBot;
 // Opaque transport implementation supplies this interface. All callbacks run
 // on the network task. Config/public keys remain immutable for its lifetime.
 // No local history, membership replica or credentials are supplied by default.
@@ -36,7 +36,7 @@ struct CloudRoomConfiguration {
 // Operator's private build supplies public alias metadata and frontend tokens.
 // The default nullptr keeps both radio identities and connections disabled.
 const CloudRoomConfiguration *cloudRoomConfiguration();
-bool beginCloudRoom(WifiKissMultiplexer &,CommandBot &);
+bool beginCloudRoom(WifiKissMultiplexer &,NativeNetworkHost &);
 void loopCloudRoom(); // Dispatch task only, like LocalRadio.
 unsigned cloudRoomAliases();
 const uint8_t *cloudRoomPublicKey(unsigned alias);

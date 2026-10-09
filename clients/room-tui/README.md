@@ -4,7 +4,28 @@ Join the same IP/radio conversation as the web interface from a Linux terminal.
 This client uses Bubble Tea v2, Bubbles and Lip Gloss, in its own Go module; it
 does not run room services or require a local radio.
 
-With Go 1.26.7 or newer:
+## Install on Linux
+
+Download the archive for **amd64** (Intel/AMD 64-bit) or **arm64** (64-bit ARM,
+including a Raspberry Pi running a 64-bit OS) from
+[Room TUI 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/room-tui-v0.1.0).
+These are static Linux binaries; no Go compiler or local radio is needed.
+Download `SHA256SUMS` alongside the archive, then, for amd64:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf room-tui-v0.1.0-linux-amd64.tar.gz
+cd room-tui-v0.1.0-linux-amd64
+./room-tui --version
+./room-tui --service https://aspen.ve6slp.ca
+```
+
+For arm64, replace `amd64` with `arm64` in the archive and directory names.
+Keep the default state directory when upgrading: replacing the executable
+does not replace your device key, login, drafts or uncertain posts.
+Each archive includes its source revision, dependency licenses and source.
+
+To build from source instead, with Go 1.26.7 or newer:
 
 ```sh
 cd clients/room-tui

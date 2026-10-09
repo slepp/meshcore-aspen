@@ -8,7 +8,11 @@
 #include <helpers/ArduinoHelpers.h>
 
 namespace onchip {
-class CommandBot {
+class CommandBot
+#if ONCHIP_BOT_HTTPS
+    : public NativeNetworkHost
+#endif
+{
   struct Core;
   Core *core_ = nullptr;
   LocalRadio radio_;
@@ -142,8 +146,8 @@ public:
   void radioPolicyCommand(const char *command, char *reply, size_t capacity);
   unsigned repeaterSnapshots(BotRepeaterSnapshot *snapshots, unsigned capacity) const;
 #if ONCHIP_BOT_HTTPS
-  bool ensureNativeHttps() { return worker_.ensureNativeHttps(); }
-  bool attachNetworkService(BotNetworkService &service) { return worker_.attachNetworkService(service); }
+  bool ensureNativeHttps() override { return worker_.ensureNativeHttps(); }
+  bool attachNetworkService(NativeNetworkService &service) override { return worker_.attachNetworkService(service); }
   bool submitTelemetry(const char *body, size_t size) { return worker_.submitTelemetry(body, size); }
   bool pollTelemetry(TelemetryCompletion &result) { return worker_.pollTelemetry(result); }
   void cancelTelemetry() { worker_.cancelTelemetry(); }

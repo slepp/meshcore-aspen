@@ -6,7 +6,6 @@
 #include "LocalRadio.h"
 #include "RoleStorage.h"
 #include "Capacity.h"
-#include "CommandBot.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -58,7 +57,7 @@ struct Buffers {
 };
 // Only payloads/dispatch-owned radio live in PSRAM. SPSC atomics and the task
 // stack remain in internal memory; no shared LocalRadio calls cross tasks.
-struct Service final : BotNetworkService {
+struct Service final : NativeNetworkService {
   cloudroom::RadioBridge bridge;
   Buffers *buffers = nullptr;
   LocalRadio *radio = nullptr;
@@ -140,7 +139,7 @@ struct Service final : BotNetworkService {
     delete driver; driver = nullptr;
     releaseRoleStorage(radio); releaseRoleStorage(buffers); aliases = 0;
   }
-  bool begin(WifiKissMultiplexer &mux,CommandBot &worker) {
+  bool begin(WifiKissMultiplexer &mux,NativeNetworkHost &worker) {
     if (active.load()) return true;
     if (!worker.ensureNativeHttps()) return false;
     driver = createCloudRoomDriver(bridge);
@@ -210,7 +209,7 @@ struct Service final : BotNetworkService {
 };
 Service service;
 } // namespace
-bool beginCloudRoom(WifiKissMultiplexer &mux,CommandBot &worker) { return service.begin(mux,worker); }
+bool beginCloudRoom(WifiKissMultiplexer &mux,NativeNetworkHost &worker) { return service.begin(mux,worker); }
 void loopCloudRoom() { service.dispatch(); }
 unsigned cloudRoomAliases() { return service.aliases; }
 const uint8_t *cloudRoomPublicKey(unsigned alias) { return alias < service.aliases ? service.keys[alias] : nullptr; }
@@ -256,7 +255,7 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
 namespace onchip {
 const CloudRoomConfiguration *cloudRoomConfiguration() { return nullptr; }
 CloudRoomDriver *createCloudRoomDriver(cloudroom::RadioBridge &) { return nullptr; }
-bool beginCloudRoom(WifiKissMultiplexer &,CommandBot &) { return false; }
+bool beginCloudRoom(WifiKissMultiplexer &,NativeNetworkHost &) { return false; }
 void loopCloudRoom() {}
 unsigned cloudRoomAliases() { return 0; }
 const uint8_t *cloudRoomPublicKey(unsigned) { return nullptr; }

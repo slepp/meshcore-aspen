@@ -63,12 +63,16 @@ For shared room history across radio frontends and desktop/mobile web clients, t
 backend with several advertised room identities, login catch-up and live push.
 Its **Aspen Rooms** interface connects directly over IP: open
 `https://aspen.ve6slp.ca`, choose a channel and sign in with your account's
-passkey. The [terminal client](clients/room-tui/README.md) shows a five-minute
+passkey. The [Linux terminal download](clients/room-tui/README.md#install-on-linux)
+supports amd64 and arm64 and shows a five-minute
 QR/copy code to approve in your signed-in browser. Each browser or terminal
 device keeps its own keypair; radio names are
 resolved from signed adverts received by the frontends.
 The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
 frontend carries opaque radio bytes and final transmission receipts.
+The [native service boundary](firmware/runtime/NATIVE_SERVICES.md) keeps the
+room frontend separate from bot execution; desktop RF identities and DMs
+remain [deferred](services/shared-room/DESKTOP_RF_DM.md).
 Additional role instances can run on a host, but each enabled built-in ESP32
 role runs at most once. A second repeater can duplicate forwarding and consume
 extra airtime; choose placement deliberately.

@@ -149,6 +149,39 @@ image. Installing the host does not flash or provision the radio.
 
 ## Publish a release
 
+### Room terminal client
+
+The independently versioned terminal client uses
+`clients/room-tui/VERSION` and tags `room-tui-vVERSION`; it does not bump a
+firmware product or replace the latest Aspen firmware download.
+
+From a clean, signed source commit already published on `main`, with the
+Go version pinned in the client's `go.mod` and Python 3.12 or newer:
+
+```sh
+python3 clients/room-tui/package_release.py \
+  --public-ref refs/heads/main --out .tmp/room-tui-v0.1.0
+cd .tmp/room-tui-v0.1.0
+sha256sum -c SHA256SUMS
+```
+
+The packager builds from a new archive of tracked public source. It emits
+static Linux amd64/arm64 archives, per-platform manifests and `SHA256SUMS`.
+Each archive includes source, the Apache project license and Go/dependency
+license notices. Its manifest records the exact source revision, Go version,
+dependency versions/sums and binary hash. `room-tui --version` reports the
+client version and source revision without opening device state.
+
+Check the packaged executable's version/help and sign-in/restart behavior;
+reuse the established Worker/browser/TUI integration results for unchanged
+code. Execute arm64 version/help on ARM or a user-mode emulator as well as
+checking its ELF machine type and static linkage. Publish with a signed
+`room-tui-vVERSION` tag and `gh release create --latest=false`, then verify
+downloaded asset hashes. Upgrading replaces only the executable; retain the
+existing private state directory.
+
+### Firmware and host products
+
 1. Build from the selected clean, signed public source commit. Check package
    hashes, image layout, installation instructions and licensing/relink files.
 2. Test changed behavior and the relevant install/update path, including retained

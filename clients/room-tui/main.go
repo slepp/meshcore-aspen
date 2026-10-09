@@ -10,12 +10,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+var releaseVersion = "dev"
+var sourceRevision = "unknown"
+
 func run() error {
 	service := flag.String("service", "", "Room Worker origin (HTTPS, or localhost for development)")
 	stateDir := flag.String("state-dir", "", "Private state directory; default is scoped to the service under the user config directory")
+	version := flag.Bool("version", false, "Print terminal client version and source revision")
 	flag.Parse()
+	if *version {
+		fmt.Printf("Aspen Rooms TUI %s (%s)\n", releaseVersion, sourceRevision)
+		return nil
+	}
 	if flag.NArg() != 0 || *service == "" {
-		return errors.New("use room-tui --service https://YOUR_ROOM_WORKER; passwords are entered in the terminal")
+		return errors.New("use room-tui --service https://aspen.ve6slp.ca; approve this device in your signed-in browser")
 	}
 	client, err := newClient(*service)
 	if err != nil {

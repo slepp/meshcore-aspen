@@ -5,6 +5,7 @@
 #include "BotReminders.h"
 #if ONCHIP_BOT_HTTPS
 #include "TelemetryEndpoint.h"
+#include "NativeServices.h"
 #endif
 #include <atomic>
 #ifdef ARDUINO_ARCH_ESP32
@@ -20,15 +21,6 @@ namespace onchip {
 constexpr char BotStagedSourcePath[] = "/command-bot/staged.lua";
 constexpr uint32_t BotSourceReadBudgetMs = 100;
 constexpr uint32_t BotSourceCopyBudgetMs = 2000;
-
-#if ONCHIP_BOT_HTTPS
-class BotNetworkService {
-public:
-  virtual ~BotNetworkService() = default;
-  virtual void poll() = 0;
-  virtual void close() = 0;
-};
-#endif
 
 class BotWorker {
 public:
