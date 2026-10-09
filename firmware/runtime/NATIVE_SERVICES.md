@@ -13,6 +13,10 @@ Each registration declares a unique name, a socket reservation and a cooperative
 work limit. Services, their configuration and their name strings must outlive
 the host. An unconfigured room frontend stays disabled.
 
+For dispatch-task raw packet modules, use the separate
+[native packet engine interface](PACKET_ENGINES.md). Network callbacks must
+not call those hooks or the physical radio.
+
 ## Hooks and ownership
 
 | Hook | Caller | Contract |

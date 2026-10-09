@@ -555,9 +555,10 @@ void loop() {
       const float rssi = radio_driver.getLastRSSI();
       getDashboard().received(millis(), rx_buf, rx_len, rssi, snr,
                          radio_driver.getEstAirtimeFor(rx_len));
-      kiss_stream.received(rx_buf, rx_len, rssi, snr);
-      if (KISS_STREAM_ENDPOINT || kiss_stream.clientCount() > 0)
-        modem->onPacketReceived((int8_t)(snr * 4), (int8_t)rssi, rx_buf, rx_len);
+      uint16_t deliveredLength = rx_len;
+      if (kiss_stream.receiveRaw(rx_buf, deliveredLength, KISS_MAX_PACKET_SIZE, rssi, snr) &&
+          (KISS_STREAM_ENDPOINT || kiss_stream.clientCount() > 0))
+        modem->onPacketReceived((int8_t)(snr * 4), (int8_t)rssi, rx_buf, deliveredLength);
     }
   }
 

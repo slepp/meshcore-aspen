@@ -165,7 +165,7 @@ def main():
                 dest = build / "examples/kiss_modem"
                 shutil.copyfile(ROOT / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
                 for filename in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp",
-                                 "QueuedTxProtocol.h", "RadioDashboard.h", "RadioDashboard.cpp",
+                                 "PacketPipeline.h", "QueuedTxProtocol.h", "RadioDashboard.h", "RadioDashboard.cpp",
                                  "RadioDashboardPage.h", "RadioNetwork.h"):
                     shutil.copyfile(ROOT / "firmware/shared" / filename, dest / filename)
                 modem_config = (ROOT / "firmware/esp32/platformio.modem.ini.example").read_text()

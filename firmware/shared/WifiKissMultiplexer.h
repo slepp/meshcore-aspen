@@ -5,6 +5,7 @@
 #include "KissModem.h"
 #include "QueuedTxProtocol.h"
 #include "RadioDashboard.h"
+#include "PacketPipeline.h"
 
 #ifndef KISS_LOCAL_SOURCES
 #define KISS_LOCAL_SOURCES 0
@@ -90,6 +91,11 @@ public:
     return _dashboard && _dashboard->totals(totals, radio);
   }
   void observePackets(KissPacketObserver& observer) { _packet_observer = &observer; }
+  void packetPipeline(packet_engine::Pipeline* pipeline) { _packet_pipeline = pipeline; }
+  bool beginEngineSource(float factor = 1);
+  void stopEngineSource();
+  bool admitEnginePackets(const packet_engine::Emission*, uint8_t count);
+  uint8_t engineSourceSlot() const { return ENGINE_SLOT; }
   void dashboardStatus(RadioDashboard::RadioStatus& status) const;
   int attachLocal(KissLocalSource& source);
   void detachLocal(uint8_t slot);
@@ -97,6 +103,9 @@ public:
   bool submitLocal(uint8_t slot, const uint8_t* packet, uint16_t length,
                    uint32_t job, uint8_t priority, uint32_t delay, uint32_t expiry);
   void received(const uint8_t* packet, uint16_t length, float rssi, float snr);
+  // Filter RF once, then deliver the same bytes to native roles and the modem.
+  bool receiveRaw(uint8_t* packet, uint16_t& length, uint16_t capacity,
+                  float rssi, float snr);
   bool localReady() const { return _configuration_generation && !_configuration_fault; }
   RadioConfig currentConfiguration() const {
     return {queued_tx::get32(_profile), queued_tx::get32(_profile + 4),
@@ -122,7 +131,8 @@ private:
   static constexpr uint16_t CLIENT_INPUT_BUDGET = 512;
   static constexpr uint8_t SESSION_BASE =
       KISS_MAX_TCP_CLIENTS + KISS_LOCAL_SOURCES + KISS_STREAM_ENDPOINT;
-  static_assert(SESSION_BASE + queued_tx::SESSION_PORTS - 1 <= UINT8_MAX,
+  static constexpr uint8_t ENGINE_SLOT = SESSION_BASE + queued_tx::SESSION_PORTS - 1;
+  static_assert(SESSION_BASE + queued_tx::SESSION_PORTS - 1 < UINT8_MAX,
                 "KISS source slots must fit uint8_t");
 
   struct ClientTarget {
@@ -169,6 +179,8 @@ private:
 
   ClientState _clients[KISS_MAX_TCP_CLIENTS];
   WireState _session_ports[queued_tx::SESSION_PORTS - 1]{};
+  SourceState _engine_source{};
+  uint32_t _engine_job = 0;
   uint8_t _session_slot = KISS_MAX_TCP_CLIENTS;
   uint8_t _session_cursor = 0;
 #if KISS_STREAM_ENDPOINT
@@ -212,6 +224,7 @@ private:
   struct TxJob {
     bool used;
     bool extended;
+    bool engineOrigin;
     ClientTarget source;
     uint32_t id;
     uint32_t sequence;
@@ -228,6 +241,13 @@ private:
   mesh::Radio* _radio = nullptr;
   RadioDashboard* _dashboard = nullptr;
   KissPacketObserver* _packet_observer = nullptr;
+  packet_engine::Pipeline* _packet_pipeline = nullptr;
+  bool filterPacket(packet_engine::Stage stage, uint8_t* packet, uint16_t& length,
+                    uint16_t capacity, uint8_t source = UINT8_MAX,
+                    uint32_t generation = 0, uint32_t job = 0,
+                    uint8_t destination = UINT8_MAX, bool local = false,
+                    float rssi = 0, float snr = 0, bool engineOrigin = false);
+  void deliverReceived(const uint8_t* packet, uint16_t length, float rssi, float snr);
   mesh::RNG* _rng = nullptr;
   SetRadioCallback _configure = nullptr;
   SetTxPowerCallback _power = nullptr;

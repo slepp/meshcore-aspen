@@ -236,7 +236,7 @@ firmware-prepare: prepare
 	cd $(ROOT)/.tmp/phy-firmware && patch --forward -p1 < $(ROOT)/firmware/shared/radio-reconfigure.patch
 	cd $(ROOT)/.tmp/phy-firmware && patch --forward -p1 < $(ROOT)/firmware/shared/queued-dispatch.patch
 	cp $(ROOT)/firmware/esp32/wifi_kiss_main.cpp $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/main.cpp
-	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/QueuedTxProtocol.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
+	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/PacketPipeline.h $(ROOT)/firmware/shared/QueuedTxProtocol.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	cp $(ROOT)/firmware/shared/RadioDashboard.h $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboardPage.h $(ROOT)/firmware/shared/RadioFirmwareIdentity.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	cp $(ROOT)/firmware/shared/RadioNetwork.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/
 	cp $(ROOT)/firmware/esp32/FirmwareIdentity.h $(ROOT)/.tmp/phy-firmware/examples/kiss_modem/

@@ -81,7 +81,7 @@ esp-field-update-test:
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" rollback-error
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-rollback-error
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v test_esp_field_update tools.hardware.tests.test_esp32_slot
-.PHONY: prepare firmware buildfs provision-fs test local-test python-test mast-phy-test lifecycle-test clock-network-test
+.PHONY: prepare firmware buildfs provision-fs test local-test arbiter-test python-test mast-phy-test lifecycle-test clock-network-test
 prepare:
 	$(MAKE) -C $(ROOT) onchip-upstream
 	python3 prepare.py --upstream $(UPSTREAM) --target $(BUILD) --check-target
@@ -91,7 +91,7 @@ prepare:
 	git -C $(BUILD) apply $(ROOT)/firmware/shared/radio-reconfigure.patch
 	git -C $(BUILD) apply $(ROOT)/firmware/shared/queued-dispatch.patch
 	cp $(ROOT)/firmware/esp32/wifi_kiss_main.cpp $(BUILD)/examples/kiss_modem/main.cpp
-	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/QueuedTxProtocol.h \
+	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/PacketPipeline.h $(ROOT)/firmware/shared/QueuedTxProtocol.h \
 		$(ROOT)/firmware/shared/RadioDashboard.* $(ROOT)/firmware/shared/RadioDashboardPage.h \
 		$(ROOT)/firmware/shared/RadioFirmwareIdentity.h \
 		$(ROOT)/firmware/shared/RadioNetwork.h $(BUILD)/examples/kiss_modem/
@@ -152,7 +152,8 @@ python-test: bot-host-runner
 	PYTHONDONTWRITEBYTECODE=1 BOT_HOST_RUNNER="$(BOT_HOST_RUNNER)" python3 -m unittest discover -s tests -p 'test_*.py' -v
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(ROOT)/tools/hardware/tests -p 'test_*.py' -v
 
-local-test: prepare mast-phy-test python-test
+local-test: mast-phy-test python-test arbiter-test
+arbiter-test: prepare
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	$(PHY_BUILD)/combined
 	@mkdir -p $(TEST_BUILD)

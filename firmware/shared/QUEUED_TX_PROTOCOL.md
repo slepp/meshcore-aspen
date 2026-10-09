@@ -170,7 +170,10 @@ state:u8, reason:u8, queue-wait-ms:u32, measured-RF-ms:u32,
 estimated-RF-ms:u32 (23 bytes). States: rejected-before-admission=0,
 accepted=1, succeeded=2, failed=3, unknown=4. Reasons: none=0, invalid=1,
 full=2, stale-generation-or-ID=3, not-owner=4, busy=5, expired=6,
-start-failed=7, RF-timeout=8, disconnected=9, not-configured=10.
+start-failed=7, RF-timeout=8, disconnected=9, not-configured=10,
+packet-engine-drop=11. An engine drop reports rejected=0 at admission, or
+failed=3 before RF starts for an already admitted job. Neither means a
+transmission occurred.
 Job IDs strictly increase within a negotiated connection generation, so an
 ambiguous submission must never be retried with a new ID. Rejections are final.
 Accepted work can fail before RF starts (expiry); measured RF duration is zero.

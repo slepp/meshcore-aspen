@@ -36,7 +36,7 @@ HOST_MATERIAL = {"install-birch.py": "tools/install_birch.py",
 def stage_birch_files(work, root=ROOT):
     dest = work / "examples/kiss_modem"
     shutil.copy2(root / "firmware/esp32/wifi_kiss_main.cpp", dest / "main.cpp")
-    for name in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp", "QueuedTxProtocol.h",
+    for name in ("WifiKissMultiplexer.h", "WifiKissMultiplexer.cpp", "PacketPipeline.h", "QueuedTxProtocol.h",
                  "RadioDashboard.h", "RadioDashboard.cpp", "RadioDashboardPage.h",
                  "RadioNetwork.h", "RadioFirmwareIdentity.h", "EspSntpClock.h", "SntpConfig.h"):
         shutil.copy2(root / "firmware/shared" / name, dest / name)

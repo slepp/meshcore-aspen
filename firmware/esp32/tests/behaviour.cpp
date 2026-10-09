@@ -9,6 +9,7 @@
 #undef main
 #include "../CommandPolicy.h"
 #include "../LocalRadio.h"
+#include "../NativePacketHost.h"
 #include <helpers/StatsFormatHelper.h>
 #include <helpers/StaticPoolPacketManager.h>
 
@@ -350,6 +351,197 @@ static void embedded_sources() {
                        "\"tx_air_secs\":4294967295,\"rx_air_secs\":0}") == 0);
 }
 
+struct PacketHost final : packet_engine::Host {
+  std::vector<packet_engine::Fault> errors;
+  uint32_t microsNow() override { return clock_ms * 1000; }
+  void fault(const char *, const packet_engine::Metadata &, packet_engine::Fault fault) override {
+    errors.push_back(fault);
+  }
+  bool admit(const packet_engine::Metadata &, const packet_engine::Emission *, uint8_t) override {
+    assert(false);
+    return false;
+  }
+};
+struct PacketEngine final : packet_engine::Engine {
+  std::vector<packet_engine::Metadata> seen;
+  packet_engine::Stage change = packet_engine::Stage::Receive;
+  packet_engine::Stage drop = packet_engine::Stage::PlainReceive;
+  packet_engine::Stage fail = packet_engine::Stage::PlainReceive;
+  uint8_t target = UINT8_MAX;
+  packet_engine::Decision process(const packet_engine::Metadata &metadata,
+                                 packet_engine::Call &call) override {
+    using namespace packet_engine;
+    seen.push_back(metadata);
+    if (metadata.stage == change) {
+      const uint8_t byte = 0x61 + uint8_t(change);
+      assert(call.write(0, &byte, 1));
+    }
+    if (metadata.stage == fail) return Decision::Failed;
+    if (metadata.stage == drop && (target == UINT8_MAX || target == metadata.destination))
+      return Decision::Drop;
+    return Decision::Continue;
+  }
+};
+static void packet_pipeline_fanout_and_transmit() {
+  using namespace packet_engine;
+  Fixture f;
+  onchip::LocalRadio first, second;
+  assert(first.attach(f.mux) && second.attach(f.mux));
+  PacketHost host;
+  Pipeline pipeline(host);
+  PacketEngine engine;
+  assert(pipeline.attach(engine, {"test", 0x3f, 100, 1000}) == Registration::Attached);
+  f.mux.packetPipeline(&pipeline);
+  uint8_t raw[KISS_MAX_PACKET_SIZE] = {0x11, 0x22};
+  uint16_t length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f));
+  assert(length == 2 && raw[0] == 0x61 && engine.seen.size() == 3 &&
+         engine.seen[0].stage == Stage::Receive && engine.seen[0].rssi == -91 &&
+         engine.seen[0].snrQuarterDb == 17 && !engine.seen[0].local);
+  f.modem.onPacketReceived(17, -91, raw, length);
+  f.step();
+  for (int peer : f.peers) {
+    const auto frames = receive(peer);
+    assert(frames.size() == 2 && frames[0] == std::vector<uint8_t>({0, 0x61, 0x22}));
+  }
+  for (auto *local : {&first, &second})
+    assert(local->recvRaw(raw, sizeof(raw)) == 2 && raw[0] == 0x61 &&
+           !local->lastReceiveWasLocal());
+  engine.drop = Stage::LocalDelivery;
+  engine.target = second.sourceSlot();
+  raw[0] = 0x11;
+  length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f));
+  assert(first.recvRaw(raw, sizeof(raw)) == 2 && second.recvRaw(raw, sizeof(raw)) == 0);
+  engine.drop = Stage::Receive;
+  engine.target = UINT8_MAX;
+  raw[0] = 0x11;
+  length = 2;
+  assert(!f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f));
+  assert(raw[0] == 0x11 && first.recvRaw(raw, sizeof(raw)) == 0);
+
+  engine.drop = Stage::PlainReceive;
+  engine.change = Stage::Admission;
+  uint32_t job;
+  const uint8_t outgoing[] = {0x31, 0x32};
+  assert(first.queueTransmit(outgoing, sizeof(outgoing), 0, 0, 1000, job));
+  engine.change = Stage::Transmit;
+  f.step();
+  assert(f.radio.transmitted.size() == 1 && f.radio.transmitted[0][0] == 0x64);
+  engine.change = Stage::Reflection;
+  f.finish(10);
+  assert(first.recvRaw(raw, sizeof(raw)) == 0);
+  assert(second.recvRaw(raw, sizeof(raw)) == 2 && raw[0] == 0x65 &&
+         second.lastReceiveWasLocal());
+  assert(f.radio.transmitted[0][0] == 0x64);
+  for (int peer : f.peers) {
+    const auto frames = receive(peer);
+    assert(frames.size() == 2 && frames[0] == std::vector<uint8_t>({0, 0x65, 0x32}));
+  }
+  mesh::QueuedTransmitResult result;
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::ACCEPTED);
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::SUCCEEDED);
+  engine.drop = Stage::Admission;
+  assert(first.queueTransmit(outgoing, sizeof(outgoing), 0, 0, 1000, job));
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::ACCEPTED);
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::REJECTED &&
+         result.reason == queued_tx::ENGINE_DROP);
+  f.step();
+  assert(f.radio.transmitted.size() == 1);
+  engine.drop = Stage::Transmit;
+  assert(first.queueTransmit(outgoing, sizeof(outgoing), 0, 0, 1000, job));
+  f.step();
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::ACCEPTED);
+  assert(first.pollQueuedResult(result) && result.state == queued_tx::FAILED &&
+         result.reason == queued_tx::ENGINE_DROP);
+  assert(f.radio.transmitted.size() == 1 && !f.radio.sending);
+
+  engine.drop = Stage::PlainReceive;
+  engine.change = engine.fail = Stage::Receive;
+  raw[0] = 0x11;
+  length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f));
+  assert(raw[0] == 0x11 && !pipeline.enabled(0) &&
+         host.errors.back() == Fault::Execution);
+  assert(first.recvRaw(raw, sizeof(raw)) == 2 && raw[0] == 0x11);
+  assert(second.recvRaw(raw, sizeof(raw)) == 2 && raw[0] == 0x11);
+  f.mux.packetPipeline(nullptr);
+}
+
+static uint32_t packetClock() { return clock_ms * 1000; }
+static std::vector<packet_engine::Fault> packetErrors;
+static void packetReport(const char *, const packet_engine::Metadata &, packet_engine::Fault fault) {
+  packetErrors.push_back(fault);
+}
+struct EmittingEngine final : packet_engine::Engine {
+  unsigned origins = 0, reflections = 0;
+  packet_engine::Decision process(const packet_engine::Metadata &metadata,
+                                 packet_engine::Call &call) override {
+    using namespace packet_engine;
+    if (metadata.engineOrigin) ++origins;
+    if (metadata.local) ++reflections;
+    if (metadata.stage == Stage::Receive) {
+      const uint8_t bytes[] = {0x51, 0x52};
+      assert(call.emit(bytes, sizeof(bytes)));
+      assert(call.emit(bytes, sizeof(bytes)));
+      const uint8_t change = 0x41;
+      assert(call.write(0, &change, 1));
+    }
+    return Decision::Continue;
+  }
+};
+static void packet_pipeline_scheduler_emissions() {
+  using namespace packet_engine;
+  Fixture f;
+  packetErrors.clear();
+  onchip::NativePacketHost host(f.mux, packetClock, packetReport);
+  onchip::NativePacketHost missingClock(f.mux, nullptr, packetReport);
+  assert(!missingClock.begin());
+  assert(host.begin());
+  onchip::NativePacketHost conflict(f.mux, packetClock, packetReport);
+  assert(!conflict.begin());
+  EmittingEngine engine;
+  assert(host.pipeline().attach(engine, {"emit", 0x3f, 100, 1000}) == Registration::Attached);
+  onchip::LocalRadio local;
+  assert(local.attach(f.mux));
+  uint8_t raw[KISS_MAX_PACKET_SIZE] = {0x11, 0x22};
+  uint16_t length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f) && raw[0] == 0x41);
+  mesh::QueuedRadioStats stats;
+  assert(f.mux.getQueuedRadioStats(f.mux.engineSourceSlot(), stats) &&
+         stats.aggregate_queued == 2 && stats.source_rf_ms == 0);
+  assert(local.recvRaw(raw, sizeof(raw)) == 2 && raw[0] == 0x41 &&
+         !local.lastReceiveWasLocal());
+  f.step();
+  assert(f.radio.transmitted.size() == 1 &&
+         f.radio.transmitted[0] == std::vector<uint8_t>({0x51, 0x52}));
+  f.finish(10);
+  assert(f.radio.transmitted.size() == 2 && engine.origins == 4 &&
+         engine.reflections == 2);
+  f.finish(20);
+  assert(f.mux.getQueuedRadioStats(f.mux.engineSourceSlot(), stats) &&
+         stats.aggregate_queued == 0 && stats.source_rf_ms == 30 &&
+         stats.aggregate_rf_ms == 30 && stats.source_successes == 2 &&
+         stats.source_credit_ms == queued_tx::WINDOW_MS / 2 - 20);
+  assert(f.radio.transmitted.size() == 2 && packetErrors.empty());
+  while (local.recvRaw(raw, sizeof(raw))) assert(local.lastReceiveWasLocal());
+  // A two-packet effect cannot partially occupy the final queue entry.
+  for (unsigned i = 0; i < KISS_REQUEST_QUEUE_DEPTH - 1; ++i)
+    f.job(0, i + 1, 4, 60000, 0x61);
+  raw[0] = 0x11;
+  length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f) && raw[0] == 0x11);
+  assert(host.status().faults == 1 && host.status().lastFault == Fault::EmissionRejected &&
+         host.pipeline().enabled(0));
+  assert(f.mux.getQueuedRadioStats(f.mux.engineSourceSlot(), stats) &&
+         stats.aggregate_queued == KISS_REQUEST_QUEUE_DEPTH - 1);
+  host.stop();
+  assert(!f.mux.getQueuedRadioStats(f.mux.engineSourceSlot(), stats));
+  raw[0] = 0x11;
+  length = 2;
+  assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f) && raw[0] == 0x11);
+}
+
 int main() {
   operator_phy_boot();
   assert(onchip::clearsAdminPassword("password "));
@@ -358,6 +550,8 @@ int main() {
   uart_receive_without_tcp();
   stream_role_presence_does_not_fault();
   embedded_sources();
+  packet_pipeline_fanout_and_transmit();
+  packet_pipeline_scheduler_emissions();
   for (auto command : {"clkreboot",
                        "set radio 900,250,7,5", "set tx 22", "clear stats"})
     assert(onchip::unsafeCLI(command));

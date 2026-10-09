@@ -43,7 +43,8 @@ enum Reason : uint8_t {
   START_FAILED,
   RF_TIMEOUT,
   DISCONNECTED,
-  NOT_CONFIGURED
+  NOT_CONFIGURED,
+  ENGINE_DROP
 };
 inline uint16_t get16(const uint8_t *p) {
   return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);

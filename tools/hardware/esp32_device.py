@@ -95,7 +95,7 @@ def backup():
 
 def build(incremental=False):
     shared = ("WifiKissMultiplexer.cpp", "WifiKissMultiplexer.h",
-              "RadioDashboard.cpp", "RadioDashboard.h", "QueuedTxProtocol.h")
+              "PacketPipeline.h", "RadioDashboard.cpp", "RadioDashboard.h", "QueuedTxProtocol.h")
     baseline = DIRECTORY / "field-shared-baseline.json"
     shared_dir = BUILD / "examples/kiss_modem"
     if incremental:
