@@ -1,23 +1,142 @@
 # Packet engines
 
-Attach a C++, Lua or portable Wasm packet engine to Aspen's shared modem.
+Install a Lua or portable Wasm packet program on Aspen's shared modem, or
+embed a C++ engine in a native application.
 Engines can read, replace, modify or drop packets, and stage
 up to two transmissions per hook invocation. Register them on the radio
 dispatch task; they run on that task, not the command worker.
 Nothing is enabled by default.
 
-Build a C++ packet module against
-[`PacketPipeline.h`](../shared/PacketPipeline.h) and attach it with
-[`NativePacketHost`](../esp32/NativePacketHost.h).
-[`PacketLua`](PacketLua.h) and [`PacketWasm`](PacketWasm.h) implement that
-same interface for scripts. Load the program before attaching its engine.
-These are application-level registration APIs; the management CLI does not
-yet install packet programs.
+Current Aspen source builds expose two saved program slots through direct
+authenticated Management RF or web administration. Run `packet api` to read
+the image's available runtimes. Installation uses the existing command
+transport; source and execution settings survive an application-only update
+and restart. New slots start disabled until explicitly enabled.
 
 Programs can also read node/PHY state, stage a shared-PHY change, or construct
 an advert or encrypted datagram with an active on-device identity. Grant those
 services explicitly when registering the engine. Private keys and configured
 channel secrets stay in native code.
+
+## Install and configure a program
+
+Create `inspect.lua`:
+
+```lua
+return function()
+  local info = packet.info()
+  if info.stage == 0 and info.length > 0 then
+    local first = packet.read(0, 1)
+  end
+  return packet.CONTINUE
+end
+```
+
+This program reads received packet metadata and one byte, leaving the packet
+unchanged. From the repository root, use the
+[admin client prerequisites](../esp32/MAST_ADMIN.md#cli-prerequisites) and
+your existing private Management password file:
+
+```sh
+python3 tools/hardware/admin.py --web http://RADIO \
+  --password-file /private/node-password command 'packet api'
+python3 tools/hardware/admin.py --web http://RADIO \
+  --password-file /private/node-password packet install 0 inspect.lua
+python3 tools/hardware/admin.py --web http://RADIO \
+  --password-file /private/node-password packet budget 0 1 3000 800 0
+python3 tools/hardware/admin.py --web http://RADIO \
+  --password-file /private/node-password packet enable 0 on
+```
+
+Installation validates the source hash, initializes the runtime on a loader
+task, checks a durable file copy, then publishes the saved selection on the
+radio task. A new slot reports `saved program disabled`. Replacing an enabled
+program preserves its enabled state and execution settings. RF processing
+continues through the previous program during replacement; on initial boot it
+continues unchanged until saved programs finish loading. Lua global state and
+Wasm memory start fresh on each load; only source, settings and selections are
+saved.
+
+Use `packet SLOT status`, `hash`, `stats`, `memory` and `timing` to inspect a
+slot. `stats` includes the live call, fault and drop counts and its saved
+execution budget. `memory` reports runtime allocation categories in bytes;
+`timing` reports measured loading/last-invocation microseconds and instruction
+and native-call counts. VM measurements reset when the program loads.
+Pipeline call/fault/drop counts reset when the controller restarts.
+The loader allocates up to 16 KiB of temporary source in PSRAM and a 16 KiB
+internal task stack on first use; that stack remains allocated while the
+controller runs. Replacement temporarily keeps both the active and candidate
+runtime in memory. VM memory fields describe that runtime, not total free heap;
+use `stats memory` and `stats psram` for node-wide headroom. Wasm's pool is
+shared with command programs; do not add its size once per slot.
+
+The same Python connection options support encrypted RF. Bot scripts, room
+administrators and ordinary modem clients cannot install or configure these
+programs through the Management backend.
+
+| Management command | Parameters and result |
+| --- | --- |
+| `packet api` | Packet ABI, slot count, source/chunk limits, available runtimes, stage and service masks |
+| `packet phy` | Shared PHY controller state and accepted/applied request counts |
+| `packet phy cancel` | Cancels the currently pending program-requested PHY change before it applies |
+| `packet SLOT status\|hash\|stats\|memory\|timing` | Slot `0` or `1`; saved/live enable state, fault text, selected SHA256, budgets/counters or runtime measurements |
+| `packet SLOT budget [STAGES FUEL US CAPS]` | Omit all four values to read. Decimal stage mask `1..255`, fuel `1..100000`, per-call microseconds `1..20000`, capabilities `0..7`; saved and applied immediately |
+| `packet SLOT enable on\|off` | Saves and applies enable state; `on` requires a loaded program |
+| `packet SLOT begin ID16 lua\|wasm SIZE SHA256` | Starts an upload of `1..16384` bytes; ID is 16 lowercase hex characters, SHA256 is 64 |
+| `packet SLOT chunk ID16 INDEX HEX` | Zero-based 48-byte chunk index; lowercase hex encodes exactly 48 bytes except the final chunk; repeating identical bytes is safe |
+| `packet SLOT commit ID16` | Starts bounded hash/runtime/file validation; poll `status` and `hash` for the selected result |
+| `packet SLOT cancel ID16` | Cancels that staged upload before commit; active programs remain unchanged |
+| `packet SLOT read INDEX` | Reads a selected source chunk as `INDEX HEX`; Python `packet export SLOT FILE` creates a new private file and verifies its hash |
+| `packet SLOT rollback` | Loads the previous saved source and swaps selections; retains the current budget and enabled state |
+| `packet SLOT remove` | Saves an empty, disabled selection; retains the previous source for rollback |
+| `packet SLOT retry` | Reads the saved journal again and reloads its selected source; use after a reported storage/load failure |
+
+Stage bits are receive `1`, local delivery `2`, admission `4`, transmit `8`,
+reflection `16`, relay `32`, plaintext receive `64` and plaintext compose `128`.
+Capability bits are system read `1`, PHY write `2` and owned composition `4`.
+For example, `budget 65 3000 800 5` runs on raw receive and plaintext receive,
+allows 3000 fuel units/800 microseconds per hook, and grants system read and
+owned composition. **Granting PHY write lets a program retune the shared modem
+for every host and on-device role.** All packet editing/drop/emission operations
+remain available within the selected stages and scheduler limits.
+
+A script fault rolls back that invocation's edits and staged effects,
+disables the offender and saves its disabled state on the next controller
+service pass. Inspect its status before explicitly enabling it again.
+Disabling or replacing a program stops future calls. Previously committed
+transmissions stay in the normal scheduler; a previously accepted PHY change
+remains pending until it applies, expires or is cancelled with `packet phy cancel`.
+A rejected replacement keeps the prior source, live program and settings.
+A journal save/readback failure disables the slot and reports `sealed=1`;
+`retry` reconciles the actual saved selection before reactivation. A malformed
+journal can be explicitly cleared with `remove`. Uploaded staging bytes are
+temporary and do not resume after reboot; previously committed source remains.
+Do not repeat a timed-out commit blindly; inspect status and the selected hash.
+
+```mermaid
+sequenceDiagram
+    participant A as Authenticated administrator
+    participant C as Packet controller (radio task)
+    participant L as Loader task
+    participant F as Filesystem and saved journal
+    participant P as Packet pipeline
+    A->>C: begin, numbered chunks, commit
+    C->>L: Isolated candidate request
+    P->>P: Process RF using prior program
+    L->>F: Read upload and verify SHA256
+    L->>L: Initialize Lua or Wasm within limits
+    L->>F: Write spare source file and verify readback
+    L-->>C: Candidate or explicit failure
+    alt Valid candidate
+        C->>F: Save selected generation and settings
+        C->>P: Publish program and execution budget
+        C->>L: Release retired runtime
+        C-->>A: status and selected hash
+    else Validation failed
+        C-->>A: Error in slot status
+        P->>P: Keep prior program
+    end
+```
 
 The shared modem exposes these raw hooks:
 
@@ -73,6 +192,13 @@ microsecond clock and a fault reporter. Its `begin()` reserves an internal
 scheduler source and attaches its pipeline. It consumes no KISS client or
 native-role socket/slot. Do not register or invoke engines from the network
 task.
+
+Aspen's `EspPacketPrograms` starts that host and reserves both slots for
+installed programs. For a custom native application, build against
+[`PacketPipeline.h`](../shared/PacketPipeline.h), register C++ engines on its
+single host, and load [`PacketLua`](PacketLua.h) or
+[`PacketWasm`](PacketWasm.h) before attaching script engines.
+Do not start a second host on an already attached modem.
 
 Supply `onchip::packetSystemSnapshot` and `onchip::packetComposeOwned` as the
 constructor's optional snapshot/composition callbacks to use Aspen's native

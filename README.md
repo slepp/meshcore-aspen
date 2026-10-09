@@ -54,6 +54,10 @@ guide.
 ESP32 network calls need the HTTPS profile and approved service configuration.
 The ESP32 and native host bot can compile Wasm alongside Lua; see the
 [Wasm runtime and build flags](firmware/runtime/WASM_RUNTIME.md).
+Aspen source builds also support two saved Lua/Wasm programs on the shared
+modem's packet path. Use the
+[packet-program guide](firmware/runtime/PACKET_ENGINES.md) to install one,
+select its hooks and grant system, PHY or owned-identity composition access.
 For autonomous fleet status and battery voltage through Aspen's existing
 metrics receiver, [install a remote-repeater Lua monitor](firmware/runtime/REMOTE_REPEATERS.md).
 For MQTT packet collection, choose the host or on-device

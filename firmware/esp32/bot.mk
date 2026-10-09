@@ -245,13 +245,20 @@ bot-vm-test bot-source-capacity-test: bot-lua
 		-lm -o $(BOT_BUILD)/bot-vm
 	$(BOT_BUILD)/bot-vm $(if $(filter bot-source-capacity-test,$@),--source-capacity-test)
 .PHONY: bot-wasm-test bot-wasm-examples bot-wasm-platform-test
-.PHONY: packet-wasm-test packet-lua-test
+.PHONY: packet-wasm-test packet-lua-test packet-wasm-guests
+.PHONY: packet-programs-test
+packet-programs-test: bot-lua packet-wasm-guests
+	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I$(BOT_LUA_NATIVE) \
+		tests/packet_programs.cpp ../runtime/PacketPrograms.cpp ../runtime/PacketProgramWorker.cpp \
+		../runtime/PacketLua.cpp ../runtime/PacketWasm.cpp ../runtime/WamrRuntime.cpp \
+		$(BOT_LUA_OBJECTS) -lm -lcrypto -o $(BOT_BUILD)/packet-programs
+	timeout 20s $(BOT_BUILD)/packet-programs "$(ROOT)/.tmp/wasm-examples/packet-0.wasm"
 packet-lua-test: packet-wasm-test
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I$(BOT_LUA_NATIVE) \
 		tests/packet_lua.cpp ../runtime/PacketLua.cpp ../runtime/PacketWasm.cpp ../runtime/WamrRuntime.cpp \
 		$(BOT_LUA_OBJECTS) -lm -o $(BOT_BUILD)/packet-lua
 	timeout 20s $(BOT_BUILD)/packet-lua "$(ROOT)/.tmp/wasm-examples/packet-0.wasm"
-packet-wasm-test: bot-lua bot-wasm-examples
+packet-wasm-guests: bot-wasm-examples
 	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "packet-wasm-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
 	@for init in 0 1 2 3 4; do \
 		clang --target=wasm32 -Oz -nostdlib -fno-builtin \
@@ -260,6 +267,7 @@ packet-wasm-test: bot-lua bot-wasm-examples
 			-Wl,--max-memory=65536 -Wl,-z,stack-size=4096 -DINIT_CASE=$$init \
 			tests/packet_wasm_guest.c -o "$(ROOT)/.tmp/wasm-examples/packet-$$init.wasm" || exit; \
 	done
+packet-wasm-test: bot-lua packet-wasm-guests
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I. -I$(UPSTREAM)/src -I$(BOT_LUA_NATIVE) \
 		tests/packet_wasm.cpp ../runtime/PacketWasm.cpp ../runtime/BotVm.cpp $(BOT_WASM_SOURCE) \
 		../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp $(BOT_LUA_OBJECTS) \

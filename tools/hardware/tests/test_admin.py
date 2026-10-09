@@ -23,6 +23,106 @@ from tools.hardware.inventory import value as inventory_value
 from test_support.operator_inventory import configure_inventory
 
 
+class PacketProgramClientTests(unittest.TestCase):
+    api = "Packet ABI=1 slots=2 source=16384 chunk=48 runtimes=lua,wasm stages=255 caps=7"
+
+    def test_resume_and_commit_timeout_are_bounded(self):
+        source = b"return function() return packet.CONTINUE end\n" * 3
+        digest = hashlib.sha256(source).hexdigest()
+        calls = []
+
+        def command(text):
+            calls.append(text)
+            if text == "packet api":
+                return self.api
+            if " begin " in text:
+                return f"Packet upload ready received=48 size={len(source)}"
+            if " chunk " in text:
+                words = text.split()
+                index = int(words[4])
+                self.assertEqual(bytes.fromhex(words[5]), source[index * 48:(index + 1) * 48])
+                return f"Packet chunk saved received={min((index + 1) * 48, len(source))}"
+            if " commit " in text:
+                raise TimeoutError("unknown reply")
+            if text == "packet 1 status":
+                return f"slot=1 runtime=lua saved=0 live=0 sealed=0 bytes={len(source)}; saved program disabled"
+            if text == "packet 1 hash":
+                return digest
+            self.fail(text)
+
+        with patch.object(mast_cli.time, "sleep"):
+            result = mast_cli.install_packet(MagicMock(command=command), 1, source, progress=lambda text: None)
+        self.assertIn("saved program disabled", result)
+        self.assertEqual(sum(" commit " in text for text in calls), 1)
+        self.assertTrue(calls[2].startswith(f"packet 1 chunk {digest[:16]} 1 "))
+        self.assertTrue(all(len(text) <= 145 for text in calls))
+
+    def test_runtime_and_resume_mismatches_stop_before_commit(self):
+        wasm = b"\0asm\1\0\0\0"
+        client = MagicMock(command=MagicMock(return_value=self.api.replace("lua,wasm", "lua")))
+        with self.assertRaisesRegex(ValueError, "Wasm|wasm"):
+            mast_cli.install_packet(client, 0, wasm)
+        client.command.assert_called_once_with("packet api")
+        client.command = MagicMock(side_effect=[self.api, "Packet upload ready received=1 size=8"])
+        with self.assertRaisesRegex(ValueError, "resume offset"):
+            mast_cli.install_packet(client, 0, wasm)
+        self.assertEqual(client.command.call_count, 2)
+        for source in (b"", b"\x1bLua", b"a\0b", b"x" * 16385):
+            with self.assertRaises(ValueError):
+                mast_cli.install_packet(client, 0, source)
+
+    def test_failed_publication_is_not_success(self):
+        source = b"return function() return 0 end"
+        client = MagicMock(command=MagicMock(side_effect=[
+            self.api, f"Packet upload ready received=0 size={len(source)}",
+            f"Packet chunk saved received={len(source)}", "Packet validation accepted; inspect status then hash",
+            f"slot=0 runtime=lua saved=0 live=0 sealed=0 bytes={len(source)}; Error: packet source SHA256 differs",
+        ]))
+        with patch.object(mast_cli.time, "sleep"), self.assertRaisesRegex(ValueError, "SHA256 differs"):
+            mast_cli.install_packet(client, 0, source, progress=lambda text: None)
+        self.assertFalse(any(text.args[0].endswith(" hash") for text in client.command.call_args_list))
+
+    def test_export_is_exact_and_rechecks_hash(self):
+        source = b"return function() return packet.CONTINUE end\n" * 2
+        digest = hashlib.sha256(source).hexdigest()
+
+        def command(text):
+            if text == "packet 0 hash":
+                return digest
+            if text == "packet 0 status":
+                return f"slot=0 runtime=lua saved=0 live=0 sealed=0 bytes={len(source)}; saved program disabled"
+            index = int(text.split()[-1])
+            return f"{index} {source[index * 48:(index + 1) * 48].hex()}"
+
+        self.assertEqual(mast_cli.download_packet(MagicMock(command=command), 0), source)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            destination = Path(directory) / "packet.lua"
+            client = MagicMock(command=command)
+            with patch.object(sys, "argv", ["admin.py", "--web", "http://fixture.invalid",
+                                          "packet", "export", "0", str(destination)]), \
+                    patch.object(mast_cli, "WebClient", return_value=client), \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                mast_cli.main()
+            self.assertEqual(destination.read_bytes(), source)
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            client.close.assert_called_once()
+        client = MagicMock(command=MagicMock(side_effect=[
+            digest, f"slot=0 runtime=lua saved=0 live=0 sealed=0 bytes={len(source)}; saved program disabled",
+            f"0 {source[:48].hex()}", f"1 {source[48:].hex()}", "f" * 64,
+        ]))
+        with self.assertRaisesRegex(ValueError, "changed or failed"):
+            mast_cli.download_packet(client, 0)
+
+    def test_budget_arguments_use_packet_namespace(self):
+        client = MagicMock(command=MagicMock(return_value="Packet execution budget saved and applied"))
+        with patch.object(sys, "argv", ["admin.py", "--web", "http://fixture.invalid",
+                                      "packet", "budget", "1", "65", "3000", "800", "5"]), \
+                patch.object(mast_cli, "WebClient", return_value=client), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            mast_cli.main()
+        client.command.assert_called_once_with("packet 1 budget 65 3000 800 5")
+
+
 class MastClientTests(unittest.TestCase):
     def setUp(self):
         configure_inventory(self)

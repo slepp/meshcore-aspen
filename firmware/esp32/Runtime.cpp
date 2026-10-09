@@ -11,6 +11,9 @@
 #include "Management.h"
 #include "ServiceName.h"
 #include "Syslog.h"
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#include "EspPacketPrograms.h"
+#endif
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
 #include "CloudRoomService.h"
 #endif
@@ -528,6 +531,10 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
     Serial.println("On-chip observer unavailable; native roles remain active");
   }
   roleMux = &mux;
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+  if (!beginPacketPrograms(mux))
+    Serial.println("Packet program controller unavailable; inspect boot diagnostics");
+#endif
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
   static_assert(KISS_LOCAL_SOURCES >= 6, "Cloud room needs one source beside the five native services");
   if (!beginCloudRoom(mux,commandBot)) Serial.println("Cloud-room driver or HTTPS worker unavailable; service disabled");
@@ -619,6 +626,9 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
 }
 void loop() {
   loopClocks();
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+  servicePacketPrograms();
+#endif
 #ifdef ARDUINO_ARCH_ESP32
   static uint32_t lastClockCheck = 0;
   static bool clockKnown = false, clockTrusted = false;
@@ -665,6 +675,9 @@ bool setNativeRolePathWidth(uint8_t width) {
 }
 #ifdef COMPANION_SESSIONS_HOST
 void stopManagementForTest() {
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+  stopPacketPrograms();
+#endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   commandBot.stop();
 #endif

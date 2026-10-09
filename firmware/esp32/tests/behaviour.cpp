@@ -651,8 +651,15 @@ static void packet_pipeline_phy_controller() {
   onchip::NativePacketHost host(f.mux, packetClock, packetReport, packetSnapshot);
   assert(host.begin());
   PhyChange change{{915625000, 125000, 8, 6, 2}, f.mux.configurationGeneration(), 0};
+  assert(!host.cancelPhy());
   assert(host.commit({}, nullptr, 0, &change) == Fault::None);
   assert(host.commit({}, nullptr, 0, &change) == Fault::ControlRejected);
+  const auto changes = applied.changes;
+  assert(host.cancelPhy() && !host.cancelPhy());
+  host.service();
+  assert(host.status().phy == PhyState::Cancelled && applied.changes == changes &&
+         !host.status().phyApplied);
+  assert(host.commit({}, nullptr, 0, &change) == Fault::None);
   host.stop(); assert(host.status().phy == PhyState::Cancelled);
   puts("PASS packet PHY controller stages atomically, applies outside hooks, rejects stale/busy/failed/expired work and preserves NVS for transient changes");
 }

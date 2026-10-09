@@ -71,6 +71,11 @@ public:
   }
   packet_engine::Pipeline &pipeline() { return pipeline_; }
   const Status &status() const { return status_; }
+  bool cancelPhy() {
+    if (status_.phy != PhyState::Pending) return false;
+    status_.phy = PhyState::Cancelled;
+    return true;
+  }
   // Dispatch task, outside packet callbacks. Applying a PHY is attempted once.
   void service() {
     if (!running_ || status_.phy != PhyState::Pending) return;

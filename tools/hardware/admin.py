@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from tools.hardware.rf import _shared_secret, kiss, target_key
 
 SOURCE_LIMIT = 4096
+PACKET_SOURCE_LIMIT = 16384
 CHUNK = 48
 DATA_LIMIT = 2422
 DATA_MAGIC = {"kv": b"BKD\x01", "timers": b"BTD\x01", "reminders": b"BRD\x01"}
@@ -542,6 +543,83 @@ def install(client, source, progress=print, expected_base_hash=None):
     raise TimeoutError("Activation still pending; inspect source status")
 
 
+def install_packet(client, slot, source, progress=print):
+    if slot not in (0, 1) or not source or len(source) > PACKET_SOURCE_LIMIT:
+        raise ValueError("Packet installation requires slot 0 or 1 and 1..16384 source bytes")
+    runtime = "wasm" if source.startswith(b"\0asm\1\0\0\0") else "lua"
+    if runtime == "lua" and (b"\0" in source or source.startswith(b"\x1b")):
+        raise ValueError("Packet Lua requires source text, not binary bytecode")
+    api = checked(client, "packet api")
+    if not re.fullmatch(r"Packet ABI=1 slots=2 source=16384 chunk=48 runtimes=lua(?:,wasm)? stages=255 caps=7", api):
+        raise ValueError("Endpoint does not support packet program ABI v1")
+    if runtime not in api.split("runtimes=", 1)[1].split(" ", 1)[0].split(","):
+        raise ValueError(f"Packet {runtime} runtime unavailable on this endpoint")
+    prefix = f"packet {slot}"
+    digest = hashlib.sha256(source).hexdigest()
+    identifier = digest[:16]
+    response = checked(client, f"{prefix} begin {identifier} {runtime} {len(source)} {digest}")
+    match = re.fullmatch(r"Packet upload ready received=(\d+) size=" + str(len(source)), response)
+    if not match:
+        raise ValueError("Unexpected packet upload admission response")
+    received = int(match[1])
+    if received > len(source) or (received != len(source) and received % CHUNK):
+        raise ValueError("Invalid packet upload resume offset")
+    for offset in range(received, len(source), CHUNK):
+        data = source[offset:offset + CHUNK]
+        text = f"{prefix} chunk {identifier} {offset // CHUNK} {data.hex()}"
+        for attempt in range(3):
+            try:
+                response = checked(client, text)
+                break
+            except (TimeoutError, socket.timeout):
+                if attempt == 2:
+                    raise
+        if response != f"Packet chunk saved received={offset + len(data)}":
+            raise ValueError("Packet chunk was not acknowledged at the expected offset")
+    try:
+        progress(checked(client, f"{prefix} commit {identifier}"))
+    except (TimeoutError, socket.timeout):
+        progress("Packet commit reply timed out; reading status without repeating commit")
+    for _ in range(20):
+        time.sleep(.5)
+        status = checked(client, f"{prefix} status")
+        if "Error:" in status:
+            raise ValueError(status)
+        if "; saved program " in status:
+            if checked(client, f"{prefix} hash") != digest:
+                raise ValueError("A different packet source is selected; installation was superseded")
+            progress(status)
+            return status
+    raise TimeoutError("Packet installation still pending; inspect packet status")
+
+
+def download_packet(client, slot):
+    if slot not in (0, 1):
+        raise ValueError("Packet slot must be 0 or 1")
+    prefix = f"packet {slot}"
+    digest = checked(client, f"{prefix} hash")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Packet slot has no readable installed source")
+    status = checked(client, f"{prefix} status")
+    match = re.search(r"\bbytes=(\d+);", status)
+    size = int(match[1]) if match else 0
+    if not 1 <= size <= PACKET_SOURCE_LIMIT or "sealed=1" in status:
+        raise ValueError("Invalid packet source size or sealed slot")
+    source = bytearray()
+    for index in range((size + CHUNK - 1) // CHUNK):
+        response = checked(client, f"{prefix} read {index}")
+        match = re.fullmatch(str(index) + r" ([0-9a-f]{2,96})", response)
+        if not match:
+            raise ValueError("Invalid packet source read response")
+        data = bytes.fromhex(match[1])
+        if len(data) != min(CHUNK, size - len(source)):
+            raise ValueError("Packet source read length differs from saved size")
+        source.extend(data)
+    if hashlib.sha256(source).hexdigest() != digest or checked(client, f"{prefix} hash") != digest:
+        raise ValueError("Packet source changed or failed its hash while downloading")
+    return bytes(source)
+
+
 def check_device_compatibility(client, package):
     client = runtime_client(client, package.runtime)
     api = checked(client, "source api")
@@ -838,6 +916,20 @@ def main():
     whole_read = source_sub.add_parser("download", help="read the whole source set")
     whole_read.add_argument("destination", type=Path)
     whole_read.set_defaults(action="download")
+    packet_group = sub.add_parser("packet", help="install, inspect or configure either shared-modem packet program slot")
+    packet_sub = packet_group.add_subparsers(dest="packet_action", required=True)
+    for operation in ("install", "export", "status", "hash", "stats", "memory", "timing", "rollback", "remove", "retry", "enable", "budget"):
+        leaf = packet_sub.add_parser(operation)
+        leaf.add_argument("slot", type=int, choices=(0, 1))
+        if operation == "install":
+            leaf.add_argument("source", type=Path)
+        elif operation == "export":
+            leaf.add_argument("destination", type=Path)
+        elif operation == "enable":
+            leaf.add_argument("state", choices=("on", "off"))
+        elif operation == "budget":
+            leaf.add_argument("values", type=int, nargs="*", metavar="STAGES_FUEL_US_CAPS",
+                              help="omit to read; supply four decimal values to save and apply")
     data_group = sub.add_parser("data", help="export or restore scoped KV, timers or personal reminders")
     data_sub = data_group.add_subparsers(dest="data_action", required=True)
     for name, action, help_text in (("export", "data-export", "read scoped records to a new private file"),
@@ -955,6 +1047,27 @@ def main():
         elif args.action == "install":
             source = read_file(args.source, SOURCE_LIMIT)
             install(client, source)
+        elif args.action == "packet":
+            if args.packet_action == "install":
+                install_packet(client, args.slot, read_file(args.source, PACKET_SOURCE_LIMIT))
+            elif args.packet_action == "export":
+                source = download_packet(client, args.slot)
+                write_new_file(args.destination, source, 0o600)
+                print(f"Saved {len(source)} packet source bytes (0600)")
+            else:
+                text = f"packet {args.slot} {args.packet_action}"
+                if args.packet_action == "enable":
+                    text += " " + args.state
+                elif args.packet_action == "budget":
+                    if len(args.values) not in (0, 4):
+                        raise ValueError("Packet budget takes zero or four values: STAGES FUEL US CAPS")
+                    if args.values:
+                        stages, fuel, microseconds, caps = args.values
+                        if not (1 <= stages <= 255 and 1 <= fuel <= 100000 and
+                                1 <= microseconds <= 20000 and 0 <= caps <= 7):
+                            raise ValueError("Packet budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..7")
+                        text += " " + " ".join(map(str, args.values))
+                print(checked(client, text))
         elif args.action in ("source-install", "source-remove", "source-list", "source-export"):
             from tools.hardware import lua_sources
             if args.runtime != "lua":

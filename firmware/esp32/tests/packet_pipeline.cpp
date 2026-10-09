@@ -23,12 +23,13 @@ struct TestHost final : Host {
 struct TestEngine final : Engine {
   TestHost &host;
   Pipeline *recursive = nullptr;
+  Pipeline *configureDuringRun = nullptr;
   Decision decision = Decision::Continue;
   bool emit = false, badBounds = false, exhaust = false, timeout = false;
   uint8_t value = 0x71, emissions = 1;
   explicit TestEngine(TestHost &h) : host(h) {}
   Decision process(const Metadata &metadata, Call &call) override {
-    assert(metadata.stage == Stage::Receive);
+    assert(metadata.stage == Stage::Receive || metadata.stage == Stage::Transmit);
     const uint8_t bytes[] = {value, 0x42, 0x43};
     assert(call.replace(bytes, sizeof(bytes)));
     if (emit)
@@ -36,6 +37,8 @@ struct TestEngine final : Engine {
     if (badBounds) call.write(UINT16_MAX, bytes, 1);
     if (exhaust) while (call.consume()) {}
     if (timeout) host.now += 100;
+    if (configureDuringRun)
+      assert(!configureDuringRun->configure(0, {"first", 1, 100, 100}));
     if (recursive) {
       uint8_t raw[Capacity] = {1, 2};
       uint16_t length = 2;
@@ -71,12 +74,20 @@ static void registration_and_stages() {
   assert(run(pipeline, bytes, length, Stage::Transmit) == Decision::Continue);
   assert(bytes[0] == 1 && length == 2 && !pipeline.calls(0));
   second.value = 0x72;
+  first.configureDuringRun = &pipeline;
   assert(run(pipeline, bytes, length) == Decision::Continue);
   assert(bytes[0] == 0x72 && length == 3 && pipeline.calls(0) == 1 &&
          pipeline.calls(1) == 1);
   assert(pipeline.enable(1, false));
   assert(run(pipeline, bytes, length) == Decision::Continue && bytes[0] == 0x71);
   assert(!pipeline.enable(2, true) && !pipeline.enabled(2));
+  assert(!pipeline.configure(2, budget("missing")));
+  assert(!pipeline.configure(0, budget("renamed")));
+  assert(!pipeline.configure(0, {"first", 256, 100, 100}));
+  assert(pipeline.configure(0, {"first", stageMask(Stage::Transmit), 100, 100}));
+  bytes[0] = 1;
+  assert(run(pipeline, bytes, length) == Decision::Continue && bytes[0] == 1);
+  assert(run(pipeline, bytes, length, Stage::Transmit) == Decision::Continue && bytes[0] == 0x71);
 }
 static void transaction_and_faults() {
   for (Fault expected : {Fault::Execution, Fault::Fuel, Fault::Deadline, Fault::Bounds,

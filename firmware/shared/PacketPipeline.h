@@ -234,6 +234,17 @@ class Pipeline {
   uint8_t candidate_[Capacity]{};
   Emission emissions_[EmissionLimit];
   PhyChange phy_;
+  static bool validBudget(const Budget &budget) {
+    const auto validStages = (stageMask(Stage::PlainCompose) << 1) - 1;
+    if (!budget.name || !budget.name[0] || strnlen(budget.name, 32) == 32 ||
+        !budget.stages || (budget.stages & ~validStages) ||
+        !budget.fuel || budget.fuel > 100000 ||
+        !budget.microseconds || budget.microseconds > 20000 ||
+        (budget.capabilities & ~AllCapabilities)) return false;
+    for (const char *c = budget.name; *c; ++c)
+      if (*c < 33 || *c > 126) return false;
+    return true;
+  }
 public:
   explicit Pipeline(Host &host) : host_(host) {}
   Pipeline(const Pipeline &) = delete;
@@ -242,15 +253,7 @@ public:
   // and names must outlive the pipeline.
   Registration attach(Engine &engine, const Budget &budget) {
     if (running_) return Registration::Busy;
-    const auto validStages = (stageMask(Stage::PlainCompose) << 1) - 1;
-    if (!budget.name || !budget.name[0] || strnlen(budget.name, 32) == 32 ||
-        !budget.stages || (budget.stages & ~validStages) ||
-        !budget.fuel || budget.fuel > 100000 ||
-        !budget.microseconds || budget.microseconds > 20000 ||
-        (budget.capabilities & ~AllCapabilities))
-      return Registration::Invalid;
-    for (const char *c = budget.name; *c; ++c)
-      if (*c < 33 || *c > 126) return Registration::Invalid;
+    if (!validBudget(budget)) return Registration::Invalid;
     for (uint8_t i = 0; i < count_; ++i)
       if (entries_[i].engine == &engine || !strcmp(entries_[i].budget.name, budget.name))
         return Registration::Duplicate;
@@ -268,6 +271,14 @@ public:
   bool enable(uint8_t slot, bool enabled) {
     if (running_ || slot >= count_) return false;
     entries_[slot].enabled = enabled;
+    return true;
+  }
+  bool configure(uint8_t slot, const Budget &budget) {
+    if (running_ || slot >= count_ || !validBudget(budget) ||
+        strcmp(entries_[slot].budget.name, budget.name)) return false;
+    const auto *name = entries_[slot].budget.name;
+    entries_[slot].budget = budget;
+    entries_[slot].budget.name = name;
     return true;
   }
   Decision process(const Metadata &metadata, uint8_t *bytes, uint16_t &length,

@@ -10,6 +10,13 @@ For the public Aspen bundle, complete [offline USB setup](PUBLIC_SETUP.md)
 before trying RF, browser administration or signed updates. Its private
 setup record supplies the initial credentials and operator verification key.
 
+For Lua/Wasm programs that read, edit, drop or emit packets on the shared
+modem, use the [packet-program installation and command guide](../runtime/PACKET_ENGINES.md).
+`packet api` reports the image's available runtimes; `admin.py packet install
+SLOT FILE` installs into slot `0` or `1`. A new slot stays disabled until
+`packet SLOT enable on`; its source, enable state and execution budget are
+saved independently of bot command sources and role identities.
+
 The opt-in `Xiao_S3_WIO_onchip_beta` image adds native MeshCore login/CLI and
 an authenticated `/admin` web editor to the existing **management** identity.
 It runs on the XIAO ESP32-S3R8/Wio SX1262 shared-radio mast. Repeater, room,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "MastAdmin.h"
+#include "EspPacketPrograms.h"
 #include "ObserverConfig.h"
 #if MESHCORE_NODE_BACKUP
 #include "NodeBackup.h"
@@ -230,6 +231,9 @@ constexpr Help topics[] = {
     {"source", "source 2/4: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
     {"source", "source 3/4: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it; help source 4", 3},
     {"source", "source 4/4: admin.py source list|install NAME FILE|export NAME FILE|remove NAME; files share one Lua VM; rollback restores source, not data", 4},
+    {"packet", "packet api|phy; packet SLOT status|hash|stats|memory|timing|enable on|off|rollback|remove|retry; SLOT=0..1; Management RF/web"},
+    {"packet", "packet SLOT budget STAGES FUEL US CAPS; stages=1..255 fuel=1..100000 us=1..20000; caps system=1 PHY=2 compose=4; help packet 3", 2},
+    {"packet", "packet 3/3: packet SLOT begin ID16 lua|wasm SIZE SHA256; chunk ID16 INDEX HEX; commit|cancel ID16; read INDEX; admin.py packet install SLOT FILE", 3},
     {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|aliases|discovery|adaptive|shared|reminders|events|forward|https ..."},
     {"bot", "bot 2/4: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; help bot 3", 2},
     {"bot", "bot 3/4: bot membership [SLOT ...]; bot access [CONTEXT ...]; Public commands default denied; use help channels; help bot 4", 3},
@@ -1567,6 +1571,20 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
         !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
       strcpy(reply.text, "Error: cloud room controls require direct authenticated Management RF or Web administration");
+      return;
+    }
+    if (!strcmp(input, "packet") || !strncmp(input, "packet ", 7) || !strcmp(input, "help packet")) {
+      if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+          !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+        strcpy(reply.text, "Error: packet programs require direct authenticated Management RF or Web administration");
+        return;
+      }
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+      packetProgramCommand(!strcmp(input, "help packet") ? "help" : input[6] ? input + 7 : "",
+                           reply.text, std::min(replyCapacity, sizeof(reply.text)));
+#else
+      strcpy(reply.text, "Error: packet program controller unavailable on this target");
+#endif
       return;
     }
     cloudRoomCommand(input[9] ? input + 10 : "", reply.text, std::min(replyCapacity, sizeof(reply.text)));
