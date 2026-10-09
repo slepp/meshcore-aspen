@@ -2,9 +2,27 @@
 
 Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
 Aspen application. The application needs your **private setup record in SPIFFS
-before it starts RF or administration**. On a blank board, provision your
-credentials offline over USB.
-This ESP32-S3 profile uses `.bin` files with esptool.
+before it starts RF or administration**.
+
+For a new board, use the
+[browser setup wizard](https://ve6slp.ca/projects/meshcore/install/):
+download the published release ZIP, choose your network's radio profile and
+services, and save the private setup ZIP and combined BIN. Image preparation
+and key generation stay in your browser. Open
+[the MeshCore flasher](https://flasher.meshcore.io), select the private
+`-merged.bin` through **Custom Firmware**, and flash over USB.
+**This combined-image route erases the entire board, including any existing
+identities and data. Use it only for a new board.** Keep the private setup ZIP
+securely: it contains credentials and the operator signing seed, not a backup
+of the radio identities created after first boot.
+
+For an existing node, use the
+[application-only update procedure](https://ve6slp.ca/projects/meshcore/setup/#updates).
+Do not use the MeshCore flasher for an Aspen application update: its fixed
+application address can overwrite the wrong OTA slot.
+
+The offline USB procedure below provisions a blank board's credentials
+without the website. This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
@@ -29,7 +47,8 @@ node destroys its role preferences, ACLs, contacts, channels, source programs,
 Lua/Wasm data and caller banks. An application update must never run
 `install-config`, `uploadfs`, an erase command or a full/factory flash.** NVS,
 including existing node identities and saved shared radio settings, is never
-written by the setup installer.
+written by the offline setup installer. The browser combined-image route
+instead erases the whole flash and is only for a new board.
 
 Before maintaining an initialized node, download its
 [encrypted logical backup](../../NODE_BACKUP.md) over authenticated WiFi or RF.

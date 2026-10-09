@@ -6,9 +6,11 @@ state; all share one LoRa profile, transmit queue and airtime budget.
 Repeater, room, management and bot RF work can continue without a Go host or
 WiFi. WiFi provides KISS, companion TCP, the dashboard and optional networking.
 
-For a generic application without compiled credentials, use
-[offline USB first-boot setup](PUBLIC_SETUP.md). It supplies a private per-node
-SPIFFS image and retains that configuration through app-only updates.
+For a new board, [prepare Aspen in your browser](https://ve6slp.ca/projects/meshcore/install/)
+and flash its private combined image with the MeshCore flasher. This first
+install erases the board. For setup without the website, use
+[offline USB first-boot setup](PUBLIC_SETUP.md). Both routes supply a private
+per-node SPIFFS record; application-only updates retain that configuration.
 The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
 requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled

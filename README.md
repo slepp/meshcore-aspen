@@ -32,7 +32,7 @@ settings. Follow the selected bundle's installation or update procedure.
 
 | Setup | Supported hardware | Use it when | Next step |
 | --- | --- | --- | --- |
-| Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Set up a public Aspen image over USB](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
+| Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
 | Birch: WiFi modem + Go host | Configured queued-v1 WiFi/TCP shared modem; Linux x86_64 Debian 12 host | You want host services, filesystem state, external automation or native Lua | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
 | Willow: WiFi modem + Hew host | The same shared modem; Linux x86-64 host and pinned Hew compiler | You want to develop or trial the experimental Hew host, Base companion, MQTT broker and dashboard | [Willow source and setup guide](experiments/hew-roles/README.md) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
@@ -41,7 +41,10 @@ settings. Follow the selected bundle's installation or update procedure.
 The nRF `nrfmast_fleet_lua` image runs the compact production Lua bot and
 repeater; native-note images remain available. The default `nrfmast_rx` build
 is receive-only; select the guide's RF-capable image to transmit.
-**Aspen uses offline USB setup before its roles start.** **Birch's host
+**Aspen needs a private setup record before its roles start.** The browser
+wizard prepares a new board's image locally for the MeshCore flasher; it erases
+the board. For an existing node, use an application-only update instead.
+**Birch's host
 download includes the host and native worker, not modem firmware.** Use an
 already configured WiFi/TCP shared modem or privately build the WiFi modem
 below. Existing UART modems serve wired queued-protocol clients; see
