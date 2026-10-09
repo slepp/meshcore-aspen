@@ -27,6 +27,21 @@ node-backup-test:
 		-o "$(TEST_BUILD)/node-backup"
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$(ROOT)" NODE_BACKUP_RUNNER="$(TEST_BUILD)/node-backup" \
 		python3 -m unittest -v test_support.test_node_backup
+.PHONY: esp-node-backup-test
+esp-node-backup-test: prepare
+	$(PHY_MAKE) prepare $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o \
+		$(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,AES128 AESCommon BlockCipher Crypto Hash SHA256 SHA512 Ed25519 Curve25519 BigNumberUtil)) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,add_scalar fe ge key_exchange keypair sc sha512 sign verify))
+	@mkdir -p "$(TEST_BUILD)"
+	TMPDIR="$(ROOT)/.tmp" $(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_NODE_BACKUP=1 -DARDUINO_ARCH_ESP32 \
+		-Itests/backup -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I. -I../runtime -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/esp_node_backup.cpp EspNodeBackup.cpp ../runtime/FirmwareNodeBackup.cpp ../runtime/NodeBackup.cpp \
+		$(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(PHY_BUILD)/ed/*.o $(PHY_BUILD)/crypto/*.o \
+		-o "$(TEST_BUILD)/esp-node-backup"
+	ulimit -c 0; "$(TEST_BUILD)/esp-node-backup"
 PUBLIC_UPDATE_SOURCE ?= EspFieldUpdate.cpp
 .PHONY: public-update-test
 public-update-test:

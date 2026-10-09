@@ -8,7 +8,26 @@
 
 namespace onchip {
 namespace {
-struct Blob { uint8_t bytes[4096]{}; };
+struct Inventory {
+  struct Digest { uint8_t bytes[32]; } entries[backup::EntryLimit]{};
+  size_t count = 0;
+  bool add(SHA256 &hash) {
+    if (count == backup::EntryLimit) return false;
+    hash.finalize(entries[count++].bytes, 32);
+    return true;
+  }
+  void finish(uint8_t digest[32]) {
+    // Storage iterators can change order while the encrypted output grows.
+    std::sort(entries, entries + count, [](const Digest &a, const Digest &b) {
+      return memcmp(a.bytes, b.bytes, 32) < 0;
+    });
+    SHA256 hash;
+    hash.reset();
+    hash.update(entries, count * sizeof(Digest));
+    hash.finalize(digest, 32);
+  }
+};
+struct Blob { uint8_t bytes[4096]{}; Inventory inventory; };
 class BlobReader final : public backup::Reader {
   const uint8_t *bytes_;
   size_t remaining_;
@@ -33,7 +52,6 @@ class EspBackup final : public FirmwareNodeBackup {
     if (!blob) { snprintf(error, capacity, "Backup NVS buffer allocation failed"); return false; }
     struct Release { Blob *&blob; ~Release() { releaseRoleStorage(blob); } } release{blob};
     SHA256 hash;
-    hash.reset();
     unsigned count = 0;
     bool ok = true;
     auto iterator = nvs_entry_find("nvs", nullptr, NVS_TYPE_ANY);
@@ -56,9 +74,14 @@ class EspBackup final : public FirmwareNodeBackup {
           snprintf(name, sizeof(name), "nvs/%s/%s.blob", entry.namespace_name, entry.key);
           if (stable(entry)) {
             const uint32_t length = size;
+            hash.reset();
             hash.update(name, strlen(name) + 1); hash.update(&length, sizeof(length)); hash.update(blob->bytes, size);
+            if (!blob->inventory.add(hash)) {
+              snprintf(error, capacity, "Backup NVS inventory exceeds 512 records");
+              ok = false;
+            }
           }
-          if (archive) {
+          if (ok && archive) {
             BlobReader reader(blob->bytes, size);
             if (!archive->add(name, size, reader)) {
               snprintf(error, capacity, "Backup setting write failed: %s/%s", entry.namespace_name, entry.key);
@@ -73,14 +96,16 @@ class EspBackup final : public FirmwareNodeBackup {
     }
     if (iterator) nvs_release_iterator(iterator);
     if (!count && ok) { snprintf(error, capacity, "Backup NVS inventory is empty"); ok = false; }
-    if (ok) hash.finalize(digest, 32);
+    if (ok) blob->inventory.finish(digest);
     return ok;
   }
   bool files(backup::TarWriter *archive, uint8_t digest[32], char *error, size_t capacity) {
+    Inventory *inventory = allocateRoleStorage<Inventory>("node backup file inventory");
+    if (!inventory) { snprintf(error, capacity, "Backup file inventory allocation failed"); return false; }
+    struct Release { Inventory *&inventory; ~Release() { releaseRoleStorage(inventory); } } release{inventory};
     auto root = SPIFFS.open("/", "r");
     if (!root || !root.isDirectory()) { snprintf(error, capacity, "Backup filesystem inventory unavailable"); return false; }
     SHA256 hash;
-    hash.reset();
     for (auto input = root.openNextFile(); input; input = root.openNextFile()) {
       if (input.isDirectory()) continue;
       const char *raw = input.path();
@@ -90,6 +115,7 @@ class EspBackup final : public FirmwareNodeBackup {
       strcpy(path, raw);
       const int nameSize = snprintf(name, sizeof(name), "files%s", path);
       if (nameSize < 0 || size_t(nameSize) >= sizeof(name)) { snprintf(error, capacity, "Backup archive filename exceeds 99 bytes"); return false; }
+      hash.reset();
       if (archive) {
         input.close();
         if (!file(*archive, path, name, &hash, error, capacity)) return false;
@@ -106,8 +132,11 @@ class EspBackup final : public FirmwareNodeBackup {
         }
         backup::wipe(bytes, sizeof(bytes));
       }
+      if (!inventory->add(hash)) {
+        snprintf(error, capacity, "Backup file inventory exceeds 512 records"); return false;
+      }
     }
-    hash.finalize(digest, 32); return true;
+    inventory->finish(digest); return true;
   }
 public:
   bool available() const override { return backupWorkerReady(); }
@@ -119,8 +148,11 @@ public:
         !files(&archive, beforeFiles, error, capacity) ||
         !files(nullptr, afterFiles, error, capacity) ||
         !records(nullptr, afterNvs, error, capacity)) return false;
-    if (memcmp(beforeNvs, afterNvs, 32) || memcmp(beforeFiles, afterFiles, 32)) {
-      snprintf(error, capacity, "Settings or files changed during backup; request a new snapshot"); return false;
+    if (memcmp(beforeNvs, afterNvs, 32)) {
+      snprintf(error, capacity, "NVS settings changed during backup; pause settings/data edits and request a new snapshot"); return false;
+    }
+    if (memcmp(beforeFiles, afterFiles, 32)) {
+      snprintf(error, capacity, "Saved files changed during backup; pause settings/data edits and request a new snapshot"); return false;
     }
     return true;
   }

@@ -162,6 +162,13 @@ inventory, readback or consistency checks fail; pause configuration/data changes
 and request a new snapshot when the node reports concurrent changes.
 Logs, sockets, transfer staging and saved backup files are not archive records.
 
+Aspen checks the name, length and content of every saved file and stable NVS
+record before publishing the snapshot. Filesystem and NVS enumeration order
+does not affect that comparison. `NVS settings changed` and `Saved files changed`
+identify which inventory changed; leave settings, programs and saved data
+unchanged while preparing another snapshot. A rejected snapshot does not replace
+the previous saved backup.
+
 The file header is `MCB 01 01 00 00 00`, followed by the ephemeral Ed25519 public
 key (32 bytes), recipient public key (32 bytes) and AES-CTR nonce (16 bytes).
 The remaining payload is RLE-compressed USTAR encrypted with AES-128-CTR,
