@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Management.h"
+#include "OwnedPacket.h"
 #include "Config.h"
 #include "RoleStorage.h"
 #include "ReplyRouting.h"
@@ -745,6 +746,12 @@ void Management::stop() {
 }
 const uint8_t *Management::publicKey() const {
   return core_ ? core_->self_id.pub_key : nullptr;
+}
+packet_engine::Fault Management::composePacket(const packet_engine::ComposeRequest &request,
+    const uint8_t *data, uint16_t length, uint8_t *output, uint16_t &capacity) {
+  if (!core_ || !provisioned_ || sealed_ || !radio_.queuedReady())
+    return packet_engine::Fault::Unavailable;
+  return composeOwnedPacket(core_->self_id, rtc_.getCurrentTime(), request, data, length, output, capacity);
 }
 uint8_t Management::pathWidth() const {
   return core_ ? core_->originWidth : 0;

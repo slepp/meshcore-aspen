@@ -4,6 +4,10 @@
 #define INIT_CASE 0
 #endif
 static mp_info info;
+static mp_system system_info;
+static mp_phy_change phy;
+static mp_compose compose;
+static unsigned char composed[255];
 static unsigned char bytes[255];
 static unsigned counter;
 static volatile unsigned spinning;
@@ -64,6 +68,31 @@ MP_EXPORT("mp_process") int mp_process(void) {
   if (mode == 16) {
     bytes[1] = ++counter;
     mp_write(1, bytes + 1, 1);
+  }
+  if (mode >= 17) {
+    if (mp_get_system(&system_info, mode == 20 ? 1 : sizeof(system_info)) != sizeof(system_info)) return 95;
+    if (system_info.version != 1 || system_info.uptime_ms != 123 ||
+        system_info.unix_time != 1791500000 || system_info.free_internal_bytes != 456 ||
+        system_info.free_psram_bytes != 789 || system_info.enabled_roles != 15 ||
+        system_info.ready_roles != 7 || system_info.generation != 21 || system_info.flags != 13 ||
+        system_info.phy.frequency_hz != 910525000 || system_info.phy.bandwidth_hz != 62500 ||
+        system_info.phy.spreading_factor != 7 || system_info.phy.coding_rate != 5 ||
+        system_info.phy.tx_power != 22) return 94;
+    phy.phy = system_info.phy; phy.phy.tx_power = 2;
+    phy.generation = system_info.generation; phy.persist = 0;
+    if (mp_set_phy(&phy, mode == 21 ? 1 : sizeof(phy)) != sizeof(phy)) return 93;
+    compose.kind = MP_ADVERT; compose.payload_type = 4; compose.route = MP_DIRECT;
+    compose.path_width = 2; compose.path_count = 1; compose.path[0] = 'a'; compose.path[1] = 'b';
+    compose.timestamp = system_info.unix_time;
+    for (unsigned i = 0; i < 32; ++i) compose.identity[i] = info.identity[i];
+    bytes[0] = 'x'; bytes[1] = 'y';
+    if (mp_compose_owned(&compose, sizeof(compose), bytes, 2,
+                         mode == 22 ? (void *)65535 : composed, sizeof(composed)) != 6) return 92;
+    if (composed[0] != 0x12 || composed[1] != 0x41 ||
+        composed[2] != 'a' || composed[3] != 'b' || composed[4] != 'x' || composed[5] != 'y') return 91;
+    mp_emit(composed, 6, 4, 0, 0);
+    if (mode == 18) __builtin_trap();
+    if (mode == 19) mp_set_phy(&phy, sizeof(phy));
   }
   return MP_CONTINUE;
 }

@@ -16,6 +16,12 @@ using namespace packet_engine;
 static_assert(unsigned(Stage::PlainCompose) == MP_PLAIN_COMPOSE &&
               unsigned(Decision::Continue) == MP_CONTINUE &&
               unsigned(Decision::Drop) == MP_DROP, "Packet ABI preserves pipeline values");
+static_assert(sizeof(SystemInfo) == sizeof(mp_system) &&
+              sizeof(PhyChange) == sizeof(mp_phy_change) &&
+              sizeof(ComposeRequest) == sizeof(mp_compose) &&
+              offsetof(SystemInfo, phy) == offsetof(mp_system, phy) &&
+              offsetof(ComposeRequest, identity) == offsetof(mp_compose, identity),
+              "Packet service native and guest records agree");
 struct PacketWasm::Impl {
   wamr::Meter meter;
   wamr::Context context{wamr::Kind::Packet, &meter, this, tick};
@@ -94,6 +100,34 @@ struct PacketWasm::Impl {
     auto *bytes = static_cast<const uint8_t *>(s->range(input, length)); if (!bytes) return -1;
     return s->call->emit(bytes, uint16_t(length), uint8_t(priority), delay, expiry) ? int32_t(length) : -1;
   }
+  static int32_t system(wasm_exec_env_t env, uint32_t output, uint32_t capacity) {
+    auto *s = self(env); if (!s || !s->native()) return -1;
+    if (capacity < sizeof(SystemInfo)) return s->fail("Packet system output is too small", Fault::Bounds);
+    void *out = s->range(output, sizeof(SystemInfo)); if (!out) return -1;
+    SystemInfo info;
+    if (!s->call->system(info)) return -1;
+    memcpy(out, &info, sizeof(info)); return sizeof(info);
+  }
+  static int32_t setPhy(wasm_exec_env_t env, uint32_t input, uint32_t length) {
+    auto *s = self(env); if (!s || !s->native()) return -1;
+    if (length != sizeof(PhyChange)) return s->fail("Packet PHY request size is invalid", Fault::Bounds);
+    const void *in = s->range(input, length); if (!in) return -1;
+    PhyChange request; memcpy(&request, in, sizeof(request));
+    return s->call->setPhy(request) ? int32_t(length) : -1;
+  }
+  static int32_t compose(wasm_exec_env_t env, uint32_t input, uint32_t requestLength,
+                         uint32_t data, uint32_t length, uint32_t output, uint32_t capacity) {
+    auto *s = self(env); if (!s || !s->native() || !s->bounds(0, length) || !s->bounds(0, capacity)) return -1;
+    if (requestLength != sizeof(ComposeRequest)) return s->fail("Packet compose request size is invalid", Fault::Bounds);
+    const void *in = s->range(input, requestLength); if (!in) return -1;
+    ComposeRequest request; memcpy(&request, in, sizeof(request));
+    const auto *bytes = static_cast<const uint8_t *>(s->range(data, length)); if (!bytes) return -1;
+    void *out = s->range(output, capacity); if (!out) return -1;
+    uint8_t result[Capacity]{};
+    uint16_t size = uint16_t(capacity);
+    if (!s->call->compose(request, bytes, uint16_t(length), result, size)) return -1;
+    memcpy(out, result, size); return size;
+  }
 };
 PacketWasm::~PacketWasm() { clear(); }
 void PacketWasm::clear() {
@@ -122,8 +156,8 @@ bool PacketWasm::load(const uint8_t *bytes, size_t length, char *error, size_t c
   };
   if (!bytes || length > PacketWasmSourceLimit || !fuel || fuel > 100000 ||
       !initUs || initUs > 20000) return failed("Invalid packet Wasm source or initialization budget");
-  static const char *const imports[] = {"info", "read", "write", "replace", "emit"};
-  if (!wamr::profile(bytes, length, "meshcore_packet_v1", imports, 5, error, capacity)) {
+  static const char *const imports[] = {"info", "read", "write", "replace", "emit", "system", "set_phy", "compose"};
+  if (!wamr::profile(bytes, length, "meshcore_packet_v1", imports, 8, error, capacity)) {
     snprintf(stats_.error, sizeof(stats_.error), "%s", error); return false;
   }
   static NativeSymbol symbols[] = {
@@ -131,9 +165,12 @@ bool PacketWasm::load(const uint8_t *bytes, size_t length, char *error, size_t c
     {"read", reinterpret_cast<void *>(Impl::read), "(iii)i", nullptr},
     {"write", reinterpret_cast<void *>(Impl::write), "(iii)i", nullptr},
     {"replace", reinterpret_cast<void *>(Impl::replace), "(ii)i", nullptr},
-    {"emit", reinterpret_cast<void *>(Impl::emit), "(iiiii)i", nullptr}
+    {"emit", reinterpret_cast<void *>(Impl::emit), "(iiiii)i", nullptr},
+    {"system", reinterpret_cast<void *>(Impl::system), "(ii)i", nullptr},
+    {"set_phy", reinterpret_cast<void *>(Impl::setPhy), "(ii)i", nullptr},
+    {"compose", reinterpret_cast<void *>(Impl::compose), "(iiiiii)i", nullptr}
   };
-  if (!wamr::ensure("meshcore_packet_v1", symbols, 5, error, capacity)) {
+  if (!wamr::ensure("meshcore_packet_v1", symbols, 8, error, capacity)) {
     snprintf(stats_.error, sizeof(stats_.error), "%s", error); return false;
   }
 #ifdef ARDUINO_ARCH_ESP32

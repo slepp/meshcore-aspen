@@ -149,6 +149,76 @@ struct PacketLua::Impl : VmHeap {
       return s.fail(state, "Packet emission failed");
     lua_pushinteger(state, length); return 1;
   }
+  uint32_t member(lua_State *state, int table, const char *name, uint32_t maximum,
+                  uint32_t fallback = 0, bool optional = false) {
+    lua_getfield(state, table, name);
+    const auto value = integer(state, -1, maximum, fallback, optional);
+    lua_pop(state, 1); return value;
+  }
+  void binaryMember(lua_State *state, const char *name, uint8_t *out, size_t size, bool optional = false) {
+    lua_getfield(state, 1, name);
+    if (optional && lua_isnil(state, -1)) { lua_pop(state, 1); return; }
+    size_t length; const auto *value = bytes(state, -1, length);
+    if (length != size) fail(state, "Packet compose identity, destination or path has an invalid size", Fault::Bounds);
+    if (size) memcpy(out, value, size);
+    lua_pop(state, 1);
+  }
+  static void phyTable(lua_State *state, const Phy &phy) {
+    lua_createtable(state, 0, 5);
+    field(state, "frequency_hz", phy.frequencyHz); field(state, "bandwidth_hz", phy.bandwidthHz);
+    field(state, "spreading_factor", phy.spreadingFactor); field(state, "coding_rate", phy.codingRate);
+    field(state, "tx_power", phy.txPower);
+  }
+  static int system(lua_State *state) {
+    auto &s = self(state); s.native(state);
+    SystemInfo info;
+    if (!s.call->system(info)) return s.fail(state, "Packet system snapshot unavailable or capability denied");
+    lua_createtable(state, 0, 10);
+    field(state, "version", info.version); field(state, "uptime_ms", info.uptimeMs);
+    field(state, "unix_time", info.unixTime); field(state, "free_internal_bytes", info.freeInternalBytes);
+    field(state, "free_psram_bytes", info.freePsramBytes); field(state, "enabled_roles", info.enabledRoles);
+    field(state, "ready_roles", info.readyRoles); field(state, "generation", info.generation);
+    field(state, "flags", info.flags); phyTable(state, info.phy); lua_setfield(state, -2, "phy");
+    return 1;
+  }
+  static int setPhy(lua_State *state) {
+    auto &s = self(state); s.native(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    PhyChange request;
+    request.phy.frequencyHz = s.member(state, 1, "frequency_hz", UINT32_MAX);
+    request.phy.bandwidthHz = s.member(state, 1, "bandwidth_hz", UINT32_MAX);
+    request.phy.spreadingFactor = s.member(state, 1, "spreading_factor", UINT32_MAX);
+    request.phy.codingRate = s.member(state, 1, "coding_rate", UINT32_MAX);
+    request.phy.txPower = s.member(state, 1, "tx_power", UINT32_MAX);
+    request.generation = s.integer(state, 2, UINT32_MAX);
+    if (!lua_isnoneornil(state, 3) && !lua_isboolean(state, 3))
+      return s.fail(state, "Packet PHY persistence argument must be boolean", Fault::Bounds);
+    request.persist = lua_toboolean(state, 3) ? 1 : 0;
+    if (!s.call->setPhy(request)) return s.fail(state, "Packet PHY request invalid or capability denied");
+    lua_pushinteger(state, sizeof(PhyChange)); return 1;
+  }
+  static int compose(lua_State *state) {
+    auto &s = self(state); s.native(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    ComposeRequest request;
+    request.kind = s.member(state, 1, "kind", uint32_t(ComposeKind::Group));
+    request.payloadType = s.member(state, 1, "payload_type", 15);
+    request.route = s.member(state, 1, "route", 2, 1, true);
+    request.pathWidth = s.member(state, 1, "path_width", 3, 1, true);
+    request.pathCount = s.member(state, 1, "path_count", 63, 0, true);
+    request.channel = s.member(state, 1, "channel", UINT32_MAX, 0, true);
+    request.timestamp = s.member(state, 1, "timestamp", UINT32_MAX, 0, true);
+    if (request.pathCount * request.pathWidth > sizeof(request.path))
+      return s.fail(state, "Packet compose path exceeds 64 bytes", Fault::Bounds);
+    s.binaryMember(state, "identity", request.identity, sizeof(request.identity));
+    s.binaryMember(state, "destination", request.destination, sizeof(request.destination), true);
+    s.binaryMember(state, "path", request.path, request.pathCount * request.pathWidth, !request.pathCount);
+    size_t length; const auto *data = s.bytes(state, 2, length);
+    uint8_t result[Capacity]{}; uint16_t size = sizeof(result);
+    if (!s.call->compose(request, data, uint16_t(length), result, size))
+      return s.fail(state, "Packet composition failed; inspect identity, channel, envelope and capability");
+    lua_pushlstring(state, reinterpret_cast<const char *>(result), size); return 1;
+  }
   static int assertValue(lua_State *state) {
     if (!lua_toboolean(state, 1)) return luaL_error(state, "Packet assertion failed");
     return lua_gettop(state);
@@ -158,10 +228,13 @@ struct PacketLua::Impl : VmHeap {
     luaL_checkversion(state);
     lua_newtable(state);
     for (const auto &function : {luaL_Reg{"info", info}, {"read", read}, {"write", write},
-                                {"replace", replace}, {"emit", emit}}) {
+                                {"replace", replace}, {"emit", emit}, {"system", system},
+                                {"set_phy", setPhy}, {"compose", compose}}) {
       lua_pushcfunction(state, function.func); lua_setfield(state, -2, function.name);
     }
     field(state, "CONTINUE", 0); field(state, "DROP", 1); field(state, "ABI_VERSION", 1);
+    field(state, "ADVERT", 0); field(state, "DATAGRAM", 1); field(state, "ANONYMOUS", 2); field(state, "GROUP", 3);
+    field(state, "FLOOD", 1); field(state, "DIRECT", 2);
     lua_setglobal(state, "packet");
     lua_pushcfunction(state, assertValue); lua_setglobal(state, "assert");
     if (luaL_loadbufferx(state, s.source, s.size, "packet", "t") != LUA_OK) return lua_error(state);

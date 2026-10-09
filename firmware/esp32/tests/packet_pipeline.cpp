@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "PacketPipeline.h"
+#include "support/PacketServiceHost.h"
 #include <cassert>
 #include <vector>
 using namespace packet_engine;
@@ -170,9 +171,34 @@ static void protocol_validation_is_transactional() {
     assert(!pipeline.enabled(emission ? 0 : 1));
   }
 }
+static void service_transactions() {
+  struct Module final : Engine {
+    bool control = false, fail = false;
+    Decision decision = Decision::Continue;
+    Decision process(const Metadata &, Call &call) override {
+      const uint8_t byte = 0x5a;
+      assert(call.write(0, &byte, 1));
+      if (control) assert(call.setPhy({{910525000, 62500, 7, 5, 2}, 21, 0}));
+      return fail ? Decision::Failed : decision;
+    }
+  };
+  PacketServiceHost host;
+  Pipeline pipeline(host);
+  Module first, second; first.control = true; second.fail = true;
+  assert(pipeline.attach(first, {"first", 1, 100, 100, WritePhy}) == Registration::Attached);
+  assert(pipeline.attach(second, budget("second")) == Registration::Attached);
+  uint8_t bytes[Capacity] = {1, 2}; uint16_t length = 2;
+  assert(run(pipeline, bytes, length) == Decision::Continue && bytes[0] == 1 &&
+         !host.controls && pipeline.enabled(0) && !pipeline.enabled(1));
+  first.decision = Decision::Drop;
+  assert(run(pipeline, bytes, length) == Decision::Drop && bytes[0] == 1 &&
+         host.controls == 1 && host.changed.generation == 21);
+  assert(pipeline.attach(second, {"bad-capabilities", 1, 100, 100, 8}) == Registration::Invalid);
+}
 int main() {
   registration_and_stages();
   transaction_and_faults();
   emissions_and_drop();
   protocol_validation_is_transactional();
+  service_transactions();
 }

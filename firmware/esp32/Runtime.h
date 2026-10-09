@@ -3,6 +3,7 @@
 #include "Lifecycle.h"
 #include "Clock.h"
 #include "LocalRadio.h"
+#include "PacketServices.h"
 #include <FS.h>
 #include <helpers/ArduinoHelpers.h>
 
@@ -36,6 +37,11 @@ bool companionContactAdvert(const uint8_t *hash, unsigned &cursor,
 bool localTransmitSource(uint8_t slot, uint32_t generation,
                          RadioDashboard::RoleStatus &status);
 void loop();
+bool packetSystemSnapshot(packet_engine::SystemInfo &);
+packet_engine::Fault packetComposeOwned(const packet_engine::ComposeRequest &,
+    const uint8_t *, uint16_t, uint8_t *, uint16_t &);
+packet_engine::Fault nativeRoleComposePacket(Role, const packet_engine::ComposeRequest &,
+    const uint8_t *, uint16_t, uint8_t *, uint16_t &);
 // Only fixed status text and numeric measurements, never caller data or secrets.
 bool diagnosticEvent(const char *message);
 bool beginDiagnostics();

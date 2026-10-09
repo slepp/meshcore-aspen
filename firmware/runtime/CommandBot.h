@@ -5,6 +5,7 @@
 #include "Clock.h"
 #include "LocalRadio.h"
 #include "RoleIdentity.h"
+#include "PacketServices.h"
 #include <helpers/ArduinoHelpers.h>
 
 namespace onchip {
@@ -102,6 +103,8 @@ public:
   void nodeSnapshot(BotNodeSnapshot &snapshot) const;
   void setNodeRoles(uint8_t selected, uint8_t ready);
   const uint8_t *publicKey() const;
+  packet_engine::Fault composePacket(const packet_engine::ComposeRequest &,
+      const uint8_t *, uint16_t, uint8_t *, uint16_t &);
   const Counters &counters() const;
   unsigned jobsInUse() const { return worker_.jobsInUse(); }
 #ifdef MESH_QUEUED_RADIO_API

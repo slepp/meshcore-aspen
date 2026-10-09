@@ -68,6 +68,74 @@ static RadioDashboard::RoleStatus botStatus;
 static RoleProfile bootProfile;
 static WifiKissMultiplexer *roleMux;
 static bool observerActive;
+bool packetSystemSnapshot(packet_engine::SystemInfo &info) {
+  info = {};
+  info.uptimeMs = millis();
+  uint32_t lower = 0, upper = 0;
+  if (trustedNetworkTime(lower, upper)) {
+    info.unixTime = lower; info.flags |= packet_engine::TrustedTime;
+  }
+#ifdef ARDUINO_ARCH_ESP32
+  info.freeInternalBytes = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  info.freePsramBytes = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  info.flags |= packet_engine::HeapMeasured;
+#endif
+  info.enabledRoles = bootProfile.enabled;
+  for (unsigned i = 0; i < 3; ++i) {
+    RadioDashboard::RoleStatus status;
+    roleStatus(static_cast<Role>(i), status);
+    if (status.ready && rolePhase(static_cast<Role>(i)) == RolePhase::Running)
+      info.readyRoles |= 1u << i;
+  }
+  if (observerActive) {
+    RadioDashboard::RoleStatus status;
+    observer.dashboardStatus(status);
+    if (status.ready) info.readyRoles |= RoleProfile::Observer;
+  }
+  return roleMux != nullptr;
+}
+packet_engine::Fault repeaterComposePacket(const packet_engine::ComposeRequest &,
+    const uint8_t *, uint16_t, uint8_t *, uint16_t &);
+packet_engine::Fault roomComposePacket(const packet_engine::ComposeRequest &,
+    const uint8_t *, uint16_t, uint8_t *, uint16_t &);
+packet_engine::Fault companionComposePacket(const packet_engine::ComposeRequest &,
+    const uint8_t *, uint16_t, uint8_t *, uint16_t &);
+packet_engine::Fault nativeRoleComposePacket(Role role, const packet_engine::ComposeRequest &request,
+    const uint8_t *data, uint16_t length, uint8_t *output, uint16_t &capacity) {
+  using packet_engine::Fault;
+  using Composer = Fault (*)(const packet_engine::ComposeRequest &, const uint8_t *,
+                            uint16_t, uint8_t *, uint16_t &);
+  const Composer compose[] = {repeaterComposePacket, roomComposePacket, companionComposePacket};
+  if (unsigned(role) >= 3 || lifecycleBusy(role) || rolePhase(role) != RolePhase::Running)
+    return Fault::Unavailable;
+  RadioDashboard::RoleStatus status;
+  roleStatus(role, status);
+  if (!status.ready || !status.has_identity || memcmp(status.public_key, request.identity, 32))
+    return Fault::Unavailable;
+  return compose[unsigned(role)](request, data, length, output, capacity);
+}
+packet_engine::Fault packetComposeOwned(const packet_engine::ComposeRequest &request,
+    const uint8_t *data, uint16_t length, uint8_t *output, uint16_t &capacity) {
+  using packet_engine::Fault;
+  if (!roleMux) return Fault::Unavailable;
+  const auto *key = management.publicKey();
+  if (key && !memcmp(key, request.identity, 32))
+    return management.composePacket(request, data, length, output, capacity);
+#if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
+  key = commandBot.publicKey();
+  if (key && !memcmp(key, request.identity, 32))
+    return commandBot.composePacket(request, data, length, output, capacity);
+#endif
+  for (unsigned i = 0; i < 3; ++i) {
+    const auto role = static_cast<Role>(i);
+    RadioDashboard::RoleStatus status;
+    roleStatus(role, status);
+    if (rolePhase(role) == RolePhase::Running && status.ready && status.has_identity &&
+        !memcmp(status.public_key, request.identity, 32))
+      return nativeRoleComposePacket(role, request, data, length, output, capacity);
+  }
+  return Fault::Unavailable;
+}
 bool sharedRadioReadCommand(const LocalRadio &radio, const char *command, char *reply, size_t capacity) {
   const bool cad = !strcmp(command, "get cad");
   const bool threshold = !strcmp(command, "get int.thresh");

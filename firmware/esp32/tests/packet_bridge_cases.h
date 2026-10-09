@@ -631,6 +631,45 @@ static void deferred_room_origin() {
       assert(metadata.reflectionOrigin && metadata.engineOrigin == generated);
   }
 }
+static void live_role_composers() {
+  Fixture fixture;
+  const uint8_t body[] = {1, 0, 0, 0, 0, 'o', 'k', 0};
+  const uint8_t key[16] = {0x51};
+  assert(onchip::companionSetChannel(0, "#packet", key));
+  for (Role role : {Role::Repeater, Role::Room, Role::Companion}) {
+    RadioDashboard::RoleStatus status;
+    onchip::roleStatus(role, status);
+    assert(status.ready && status.has_identity);
+    const auto saved = stored(onchip::roleName(role));
+    ComposeRequest request;
+    request.kind = uint32_t(ComposeKind::Advert); request.payloadType = PAYLOAD_TYPE_ADVERT;
+    request.route = ROUTE_TYPE_DIRECT; memcpy(request.identity, status.public_key, 32);
+    uint8_t wire[Capacity]; uint16_t length = sizeof(wire);
+    assert(onchip::nativeRoleComposePacket(role, request, nullptr, 0, wire, length) == Fault::None);
+    mesh::Packet advert;
+    assert(advert.readFrom(wire, length) && advert.payload_len == 100 &&
+           !memcmp(advert.payload, status.public_key, 32));
+    mesh::Identity owner(status.public_key);
+    assert(owner.verify(advert.payload + 36, advert.payload, 36));
+    request.kind = uint32_t(ComposeKind::Group); request.payloadType = PAYLOAD_TYPE_GRP_TXT;
+    length = sizeof(wire);
+    const auto result = onchip::nativeRoleComposePacket(role, request, body, sizeof(body), wire, length);
+    assert(result == (role == Role::Companion ? Fault::None : Fault::Unavailable));
+    if (result == Fault::None) {
+      mesh::Packet packet; assert(packet.readFrom(wire, length));
+      uint8_t secret[32]{}, plaintext[MAX_PACKET_PAYLOAD];
+      memcpy(secret, key, sizeof(key));
+      assert(mesh::Utils::MACThenDecrypt(secret, plaintext, packet.payload + 1, packet.payload_len - 1) >= int(sizeof(body)));
+      assert(!memcmp(plaintext, body, sizeof(body)));
+      length = sizeof(wire); request.channel = MAX_GROUP_CHANNELS;
+      assert(onchip::nativeRoleComposePacket(role, request, body, sizeof(body), wire, length) == Fault::Unavailable);
+    }
+    assert(stored(onchip::roleName(role)) == saved);
+    length = sizeof(wire); request.identity[0] ^= 1;
+    assert(onchip::nativeRoleComposePacket(role, request, body, sizeof(body), wire, length) == Fault::Unavailable);
+  }
+  puts("PASS active native-role composition, signed empty adverts, configured companion groups and unchanged identities");
+}
 static void run() {
   wire_bounds();
   incoming_ack_snapshot();
@@ -642,6 +681,7 @@ static void run() {
   delayed_packet_signal();
   generated_native_reply_origin();
   deferred_room_origin();
+  live_role_composers();
   puts("Native relay/plaintext packet bridges and original/final ACK contracts passed");
 }
 } // namespace packet_bridge_test

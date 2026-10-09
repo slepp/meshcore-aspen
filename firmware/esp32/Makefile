@@ -93,7 +93,7 @@ prepare:
 	git -C $(BUILD) apply $(ROOT)/firmware/shared/radio-reconfigure.patch
 	git -C $(BUILD) apply $(ROOT)/firmware/shared/queued-dispatch.patch
 	cp $(ROOT)/firmware/esp32/wifi_kiss_main.cpp $(BUILD)/examples/kiss_modem/main.cpp
-	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/PacketPipeline.h $(ROOT)/firmware/shared/QueuedTxProtocol.h \
+	cp $(ROOT)/firmware/shared/WifiKissMultiplexer.* $(ROOT)/firmware/shared/PacketPipeline.h $(ROOT)/firmware/shared/PacketServices.h $(ROOT)/firmware/shared/QueuedTxProtocol.h \
 		$(ROOT)/firmware/shared/RadioDashboard.* $(ROOT)/firmware/shared/RadioDashboardPage.h \
 		$(ROOT)/firmware/shared/RadioFirmwareIdentity.h \
 		$(ROOT)/firmware/shared/RadioNetwork.h $(BUILD)/examples/kiss_modem/
@@ -112,7 +112,7 @@ field-rebuild:
 		{ echo "A previously prepared field project is required." >&2; exit 1; }
 	@if test -n "$(CONFIG)"; then install -m 600 "$(CONFIG)" "$(BUILD)/platformio.local.ini"; fi
 	cp $(filter-out wifi_kiss_main.cpp,$(wildcard *.cpp *.h)) ../runtime/*.cpp ../runtime/*.h "$(BUILD)/examples/kiss_modem/onchip/"
-	cp ../shared/WifiKissMultiplexer.* ../shared/PacketPipeline.h ../shared/QueuedTxProtocol.h "$(BUILD)/examples/kiss_modem/"
+	cp ../shared/WifiKissMultiplexer.* ../shared/PacketPipeline.h ../shared/PacketServices.h ../shared/QueuedTxProtocol.h "$(BUILD)/examples/kiss_modem/"
 	cp ../shared/RadioDashboard.cpp ../shared/RadioDashboard.h ../shared/RadioDashboardPage.h "$(BUILD)/examples/kiss_modem/"
 	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --field-network
 	TMPDIR="$(ROOT)/.tmp" python3 -B prepare_wasm.py --target "$(BUILD)" --enabled $(ONCHIP_BOT_WASM)

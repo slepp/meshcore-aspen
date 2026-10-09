@@ -10,6 +10,7 @@
 #include "../CommandPolicy.h"
 #include "../LocalRadio.h"
 #include "../NativePacketHost.h"
+#include "OwnedPacket.h"
 #include <helpers/StatsFormatHelper.h>
 #include <helpers/StaticPoolPacketManager.h>
 
@@ -575,6 +576,135 @@ static void engine_stop_preserves_native_origin_jobs() {
          stats.source_rf_ms == 10 && stats.aggregate_queued == 0);
 }
 
+static bool packetSnapshot(packet_engine::SystemInfo &info) {
+  info = {}; info.uptimeMs = millis(); return true;
+}
+struct PhyEngine final : packet_engine::Engine {
+  bool fail = false, duplicate = false, stale = false, emit = false, persist = false;
+  packet_engine::Decision process(const packet_engine::Metadata &, packet_engine::Call &call) override {
+    using namespace packet_engine;
+    SystemInfo info;
+    assert(call.system(info) && (info.flags & RadioReady));
+    assert(info.phy.frequencyHz == 910525000 && info.phy.bandwidthHz == 62500);
+    const uint8_t change = 0x5a; assert(call.write(2, &change, 1));
+    PhyChange request{{915625000, 125000, 8, 6, 2}, info.generation + (stale ? 1u : 0u), persist ? 1u : 0u};
+    assert(call.setPhy(request));
+    if (duplicate) assert(!call.setPhy(request));
+    if (emit) {
+      const uint8_t wire[] = {0x11, 0, 0x51};
+      assert(call.emit(wire, sizeof(wire)) && call.emit(wire, sizeof(wire)));
+    }
+    return fail ? Decision::Failed : Decision::Continue;
+  }
+};
+static void packet_pipeline_phy_controller() {
+  using namespace packet_engine;
+  using PhyState = onchip::NativePacketHost::PhyState;
+  for (unsigned mode = 0; mode < 9; ++mode) {
+    Fixture f;
+    packetErrors.clear();
+    onchip::NativePacketHost host(f.mux, packetClock, packetReport, packetSnapshot);
+    assert(host.begin());
+    PhyEngine engine;
+    engine.stale = mode == 2; engine.fail = mode == 3; engine.duplicate = mode == 4;
+    engine.emit = mode == 5; engine.persist = mode == 7;
+    assert(host.pipeline().attach(engine, {"phy", stageMask(Stage::Receive), 100, 1000,
+                                          ReadSystem | WritePhy}) == Registration::Attached);
+    if (mode == 5)
+      for (unsigned i = 0; i < KISS_REQUEST_QUEUE_DEPTH - 1; ++i) f.job(0, i + 1, 4, 60000, 0x61);
+    uint8_t bytes[Capacity] = {0x11, 0, 0x43}; uint16_t length = 3;
+    const uint32_t generation = f.mux.configurationGeneration();
+    const auto saved = nvs_test::store.durable;
+    const unsigned changes = applied.changes;
+    assert(host.pipeline().process({}, bytes, length, Capacity) == Decision::Continue);
+    assert(applied.changes == changes);
+    if (mode >= 2 && mode <= 5) {
+      assert(bytes[2] == 0x43 && !host.status().phyAccepted && host.status().phy == PhyState::Idle);
+      assert(host.pipeline().enabled(0) == (mode == 2 || mode == 5));
+      assert(packetErrors.back() == (mode == 3 ? Fault::Execution : mode == 4 ? Fault::ControlLimit :
+                                    mode == 5 ? Fault::EmissionRejected : Fault::ControlRejected));
+      continue;
+    }
+    assert(bytes[2] == 0x5a && host.status().phy == PhyState::Pending && host.status().phyAccepted == 1);
+    if (mode == 1) {
+      f.radio.busy = true; host.service();
+      assert(applied.changes == changes && host.status().phy == PhyState::Pending);
+      f.radio.busy = false;
+    }
+    if (mode == 6) { f.radio.busy = true; clock_ms += 5000; }
+    if (mode == 7) nvs_test::store.fail_commit = true;
+    if (mode == 8) assert(f.mux.applyMastConfiguration({910525000, 62500, 7, 5, 3}, false));
+    host.service();
+    if (mode == 6 || mode == 7 || mode == 8) {
+      assert(host.status().phy == (mode == 6 ? PhyState::Expired : mode == 7 ? PhyState::Failed : PhyState::Stale));
+      assert(!host.status().phyApplied && packetErrors.back() == Fault::ControlRejected &&
+             host.pipeline().enabled(0));
+      const unsigned attempts = applied.changes; host.service(); assert(applied.changes == attempts);
+    } else {
+      assert(host.status().phy == PhyState::Applied && host.status().phyApplied == 1 &&
+             f.mux.configurationGeneration() != generation && applied.frequency == 915.625f &&
+             applied.bandwidth == 125 && applied.sf == 8 && applied.cr == 6 && applied.power == 2);
+      assert(nvs_test::store.durable == saved && packetErrors.empty());
+    }
+  }
+  Fixture f;
+  onchip::NativePacketHost host(f.mux, packetClock, packetReport, packetSnapshot);
+  assert(host.begin());
+  PhyChange change{{915625000, 125000, 8, 6, 2}, f.mux.configurationGeneration(), 0};
+  assert(host.commit({}, nullptr, 0, &change) == Fault::None);
+  assert(host.commit({}, nullptr, 0, &change) == Fault::ControlRejected);
+  host.stop(); assert(host.status().phy == PhyState::Cancelled);
+  puts("PASS packet PHY controller stages atomically, applies outside hooks, rejects stale/busy/failed/expired work and preserves NVS for transient changes");
+}
+static void native_owned_packet_composition() {
+  using namespace packet_engine;
+  RNG rng;
+  rng.value = 0x31; mesh::LocalIdentity sender(&rng);
+  rng.value = 0x42; mesh::LocalIdentity receiver(&rng);
+  mesh::GroupChannel channel{};
+  memset(channel.secret, 0x34, sizeof(channel.secret));
+  mesh::Utils::sha256(channel.hash, PATH_HASH_SIZE, channel.secret, sizeof(channel.secret));
+  const uint8_t data[] = {1, 0, 0, 0, 0, 'o', 'k', 0};
+  for (const auto kind : {ComposeKind::Advert, ComposeKind::Datagram, ComposeKind::Anonymous, ComposeKind::Group}) {
+    ComposeRequest request;
+    request.kind = uint32_t(kind); request.route = ROUTE_TYPE_DIRECT;
+    request.pathWidth = 2; request.pathCount = 1; request.path[0] = 0x61; request.path[1] = 0x62;
+    request.payloadType = kind == ComposeKind::Advert ? PAYLOAD_TYPE_ADVERT :
+                          kind == ComposeKind::Anonymous ? PAYLOAD_TYPE_ANON_REQ :
+                          kind == ComposeKind::Group ? PAYLOAD_TYPE_GRP_TXT : PAYLOAD_TYPE_TXT_MSG;
+    memcpy(request.identity, sender.pub_key, 32); memcpy(request.destination, receiver.pub_key, 32);
+    uint8_t wire[Capacity]; uint16_t length = sizeof(wire);
+    assert(onchip::composeOwnedPacket(sender, 1791500000, request, data, sizeof(data), wire, length, &channel) == Fault::None);
+    assert(onchip::validNativeWire(wire, length));
+    mesh::Packet packet;
+    assert(packet.readFrom(wire, length) && packet.getPayloadType() == request.payloadType &&
+           packet.getRouteType() == ROUTE_TYPE_DIRECT && packet.getPathHashSize() == 2 &&
+           packet.getPathHashCount() == 1 && !memcmp(packet.path, request.path, 2));
+    if (kind == ComposeKind::Advert) {
+      uint8_t message[36 + sizeof(data)];
+      memcpy(message, packet.payload, 36);
+      memcpy(message + 36, packet.payload + 36 + SIGNATURE_SIZE, sizeof(data));
+      assert(sender.verify(packet.payload + 36, message, sizeof(message)));
+      assert(!memcmp(message + 36, data, sizeof(data)) && queued_tx::get32(message + 32) == 1791500000);
+    } else {
+      const unsigned prefix = kind == ComposeKind::Group ? PATH_HASH_SIZE :
+                              kind == ComposeKind::Anonymous ? PATH_HASH_SIZE + PUB_KEY_SIZE : 2 * PATH_HASH_SIZE;
+      uint8_t secret[32], plaintext[MAX_PACKET_PAYLOAD];
+      if (kind == ComposeKind::Group) memcpy(secret, channel.secret, sizeof(secret));
+      else receiver.calcSharedSecret(secret, sender);
+      const int decrypted = mesh::Utils::MACThenDecrypt(secret, plaintext, packet.payload + prefix, packet.payload_len - prefix);
+      assert(decrypted >= int(sizeof(data)) && !memcmp(plaintext, data, sizeof(data)));
+      if (kind == ComposeKind::Anonymous) assert(!memcmp(packet.payload + PATH_HASH_SIZE, sender.pub_key, 32));
+    }
+    length = 3;
+    assert(onchip::composeOwnedPacket(sender, 1791500000, request, data, sizeof(data), wire, length, &channel) == Fault::Bounds);
+    length = Capacity; request.identity[0] ^= 1;
+    assert(onchip::composeOwnedPacket(sender, 1791500000, request, data, sizeof(data), wire, length, &channel) == Fault::Unavailable);
+    request.identity[0] ^= 1; request.pathCount = 63;
+    assert(onchip::composeOwnedPacket(sender, 1791500000, request, data, sizeof(data), wire, length, &channel) == Fault::Bounds);
+  }
+  puts("PASS owned packet helper signs adverts and encrypts direct/anonymous/group datagrams with native keys and bounded routes");
+}
 int main() {
   operator_phy_boot();
   assert(onchip::clearsAdminPassword("password "));
@@ -586,6 +716,8 @@ int main() {
   packet_pipeline_fanout_and_transmit();
   packet_pipeline_scheduler_emissions();
   engine_stop_preserves_native_origin_jobs();
+  packet_pipeline_phy_controller();
+  native_owned_packet_composition();
   for (auto command : {"clkreboot",
                        "set radio 900,250,7,5", "set tx 22", "clear stats"})
     assert(onchip::unsafeCLI(command));

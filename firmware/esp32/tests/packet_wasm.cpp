@@ -2,6 +2,7 @@
 #include "PacketWasm.h"
 #include "BotWasm.h"
 #include "WamrRuntime.h"
+#include "support/PacketServiceHost.h"
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -19,18 +20,7 @@ uint64_t onchipBotVmTestClock() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-struct TestHost final : Host {
-  uint32_t now = 0, step = 0;
-  bool accept = true;
-  std::vector<Fault> errors;
-  std::vector<Emission> sent;
-  uint32_t microsNow() override { return now += step; }
-  void fault(const char *, const Metadata &, Fault error) override { errors.push_back(error); }
-  bool admit(const Metadata &, const Emission *packets, uint8_t count) override {
-    if (!accept) return false;
-    sent.insert(sent.end(), packets, packets + count); return true;
-  }
-};
+struct TestHost final : PacketServiceHost {};
 static std::string directory;
 static void poolStats(const char *phase) {
   mem_alloc_info_t info{};
@@ -132,6 +122,46 @@ static void faults() {
   assert(run(fullPipeline, 0, bytes, length) == Decision::Continue);
   assert(fullHost.errors.back() == Fault::Fuel && !fullPipeline.enabled(0) && length == 2);
   puts("PASS packet Wasm trap/bounds/invalid disposition/fuel/deadline/native calls/emission guards rollback and disable");
+}
+static void services() {
+  for (unsigned mode = 0; mode < 9; ++mode) {
+    PacketWasm engine;
+    load(engine);
+    TestHost host;
+    host.accept = mode != 2;
+    host.available = mode != 5;
+    Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"services", 255, 10000, 20000, mode == 1 ? 0u : AllCapabilities}) ==
+           Registration::Attached);
+    uint8_t bytes[Capacity];
+    uint16_t length;
+    const uint8_t guestMode = mode == 3 ? 18 : mode == 4 ? 19 : mode >= 6 ? mode + 14 : 17;
+    assert(run(pipeline, guestMode, bytes, length) == Decision::Continue);
+    if (mode == 0) {
+      assert(length == 3 && bytes[0] == 0x70 && host.controls == 1 && host.changed.phy.txPower == 2 &&
+             host.changed.generation == 21 && !host.changed.persist && host.sent.size() == 1 &&
+             host.sent[0].length == 6 && host.composed == 1);
+    } else {
+      assert(length == 2 && bytes[0] == guestMode && bytes[1] == 2 && !host.controls && host.sent.empty());
+      const Fault expected[] = {Fault::None,      Fault::Permission,   Fault::EmissionRejected,
+                                Fault::Execution, Fault::ControlLimit, Fault::Unavailable,
+                                Fault::Bounds,    Fault::Bounds,       Fault::Bounds};
+      assert(host.errors.back() == expected[mode] && pipeline.enabled(0) == (mode == 2));
+    }
+  }
+  puts("PASS packet Wasm system/PHY/owned-compose ABI copies, grants, bounds and transactional controls/emissions");
+  for (const uint32_t capabilities : {uint32_t(ReadSystem), uint32_t(ReadSystem | WritePhy)}) {
+    PacketWasm engine;
+    load(engine);
+    TestHost host;
+    Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"grants", 255, 10000, 20000, capabilities}) == Registration::Attached);
+    uint8_t bytes[Capacity];
+    uint16_t length;
+    run(pipeline, 17, bytes, length);
+    assert(host.errors.back() == Fault::Permission && !pipeline.enabled(0) && host.sent.empty() && !host.controls &&
+           !host.composed);
+  }
 }
 static void initialization_and_profile() {
   char error[128]{};
@@ -251,5 +281,5 @@ int main(int argc, char **argv) {
   assert(argc == 3); directory = argv[1];
   if (!strcmp(argv[2], "concurrent")) { concurrent_loaders(); return 0; }
   coexistence(!strcmp(argv[2], "packet-first"));
-  realloc_accounting(); stages_and_operations(); faults(); initialization_and_profile();
+  realloc_accounting(); stages_and_operations(); faults(); initialization_and_profile(); services();
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "CommandBot.h"
+#include "OwnedPacket.h"
 #include "BotSignal.h"
 #include "BotHttpsProbe.h"
 #include "BotRegistry.h"
@@ -3162,6 +3163,18 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
            candidate.intervalSeconds, candidate.discoverySeconds);
 }
 const uint8_t *CommandBot::publicKey() const { return core_ ? core_->self_id.pub_key : nullptr; }
+packet_engine::Fault CommandBot::composePacket(const packet_engine::ComposeRequest &request,
+    const uint8_t *data, uint16_t length, uint8_t *output, uint16_t &capacity) {
+  using namespace packet_engine;
+  if (!core_ || !enabled_ || !radio_.queuedReady()) return Fault::Unavailable;
+  const mesh::GroupChannel *channel = nullptr;
+  if (request.kind == uint32_t(ComposeKind::Group)) {
+    if (request.channel >= BotRadioPolicy::ChannelLimit ||
+        !core_->policy.membership(request.channel).name[0]) return Fault::Unavailable;
+    channel = &core_->channels[request.channel];
+  }
+  return composeOwnedPacket(core_->self_id, rtc_.getCurrentTime(), request, data, length, output, capacity, channel);
+}
 const CommandBot::Counters &CommandBot::counters() const {
   static const Counters empty;
   return core_ ? core_->stats : empty;

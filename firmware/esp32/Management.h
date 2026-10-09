@@ -42,6 +42,8 @@ public:
   const char *name() const { return status_.name; }
   bool setName(const char *name);
   bool advertise(bool zeroHop);
+  packet_engine::Fault composePacket(const packet_engine::ComposeRequest &,
+      const uint8_t *, uint16_t, uint8_t *, uint16_t &);
   uint8_t pathWidth() const;
   bool setPathWidth(uint8_t width);
   uint64_t generation() const { return journal_.generation; }

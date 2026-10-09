@@ -457,6 +457,7 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
 #include "CompanionSessions.h"
 #include "RoleBoard.h"
 #include "RoleStorage.h"
+#include "OwnedPacket.h"
 #include "Config.h"
 #include <SPIFFS.h>
 #include <target.h>
@@ -583,6 +584,21 @@ bool {role}Advertise(bool zeroHop) {{
   return meshInstance && {role}Radio().queuedReady() &&
       !{role}Radio().hasPendingWork() && !storage->packets.getOutboundTotal() &&
       meshInstance->onchipAdvertise(zeroHop);
+}}
+packet_engine::Fault {role}ComposePacket(const packet_engine::ComposeRequest& request,
+    const uint8_t* data, uint16_t length, uint8_t* output, uint16_t& capacity) {{
+  if (!meshInstance || lifecycleBusy(Role::{role.title()}) || !{role}Radio().queuedReady())
+    return packet_engine::Fault::Unavailable;
+  {'''ChannelDetails channel{};
+  const mesh::GroupChannel* group = nullptr;
+  if (request.kind == uint32_t(packet_engine::ComposeKind::Group)) {
+    if (request.channel >= MAX_GROUP_CHANNELS ||
+        !meshInstance->getChannel(request.channel, channel) || !channel.name[0])
+      return packet_engine::Fault::Unavailable;
+    group = &channel.channel;
+  }''' if role == "companion" else ""}
+  return composeOwnedPacket(meshInstance->self_id, {role}Clock().getCurrentTime(),
+                            request, data, length, output, capacity{", group" if role == "companion" else ""});
 }}
 bool {role}SetName(const char* name) {{
   if (!meshInstance || !name || !name[0] || strlen(name) > 31) return false;

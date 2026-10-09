@@ -100,7 +100,8 @@ def prepare(source, output, lua_archive=None):
     sys.path.insert(0, str(HERE.parent / "esp32"))
     from prepare import stage_packet_pool, bound_owner_info_replies
     stage_packet_pool(output, shared)
-    for name in ("RadioDashboard.h", "QueuedTxProtocol.h", "RadioTimeProtocol.h"):
+    for name in ("RadioDashboard.h", "QueuedTxProtocol.h", "RadioTimeProtocol.h",
+                 "PacketPipeline.h", "PacketServices.h"):
         shutil.copyfile(HERE.parent / "shared" / name, dest / name)
     (shared / "BuildClock.h").write_text(
         f"#pragma once\n#define ONCHIP_CLOCK_BUILD_EPOCH {int(time.time())}u\n"

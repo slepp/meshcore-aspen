@@ -74,7 +74,7 @@ LPP ?= $(UPSTREAM)/.pio/libdeps/nrfmast_fleet_lua/CayenneLPP/src
 NATIVE := $(BUILD)/native
 NATIVE_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Wno-reorder \
 	-ffunction-sections -fdata-sections -DMAX_CONTACTS=8 -DMAX_CONNECTIONS=1 \
-	-Itests/seams -I. -I../esp32 -I../runtime -I$(UPSTREAM)/examples/nrfmast -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO)
+	-Itests/seams -I. -I../esp32 -I../runtime -I../shared -I$(UPSTREAM)/examples/nrfmast -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO)
 NATIVE_FLAGS += -I$(FRAMEWORK)/libraries/Adafruit_LittleFS/src
 SANITIZE ?= -fsanitize=address,undefined -fno-omit-frame-pointer
 CRYPTO_UNITS := AES128 AESCommon BlockCipher Crypto Hash SHA256 SHA512 Ed25519 Curve25519 BigNumberUtil
@@ -122,7 +122,7 @@ LUA_UNITS := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject lopc
 LUA_TEST_FLAGS := -m32 -malign-double -idirafter /usr/include/x86_64-linux-gnu -O1 -g \
 	-ffunction-sections -fdata-sections -DMESHCORE_ONCHIP_BOT=1 \
 	-DONCHIP_BOT_COMPACT_PROFILE=1 -DONCHIP_BOT_JOB_LIMIT=2 -DONCHIP_BOT_WASM=0 -DONCHIP_BOT_HTTPS=0 \
-	-I../esp32 -I../runtime -I$(UPSTREAM)/src -I$(LUA_NATIVE)
+	-I../esp32 -I../runtime -I../shared -I$(UPSTREAM)/src -I$(LUA_NATIVE)
 LUA_TEST_OBJECTS := $(addprefix $(NATIVE)/lua/,$(addsuffix .o,$(LUA_UNITS)))
 $(NATIVE)/lua/%.o: $(LUA_NATIVE)/%.c $(LUA_NATIVE)/luaconf.h $(LUA_NATIVE)/lua.h
 	@mkdir -p "$(@D)"

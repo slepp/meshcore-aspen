@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "PacketLua.h"
 #include "PacketWasm.h"
+#include "support/PacketServiceHost.h"
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -17,18 +18,7 @@ uint64_t onchipBotVmTestClock() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-struct TestHost final : Host {
-  uint32_t now = 0, step = 0;
-  bool accept = true;
-  std::vector<Fault> errors;
-  std::vector<Emission> sent;
-  uint32_t microsNow() override { return now += step; }
-  void fault(const char *, const Metadata &, Fault error) override { errors.push_back(error); }
-  bool admit(const Metadata &, const Emission *packets, uint8_t count) override {
-    if (!accept) return false;
-    sent.insert(sent.end(), packets, packets + count); return true;
-  }
-};
+struct TestHost final : PacketServiceHost {};
 static const char *basic = R"lua(
 local count = 0
 return function()
@@ -140,6 +130,81 @@ static void faults() {
   assert(host.errors.back() == Fault::Deadline && !pipeline.enabled(0) && engine.stats().instructions < 1000);
   puts("PASS packet Lua runtime/heap/bounds/fuel/deadline/native call/emission faults rollback and disable");
 }
+static void services() {
+  const char *body = R"lua(
+      local sys = packet.system()
+      assert(sys.version == 1 and sys.uptime_ms == 123 and sys.unix_time == 1791500000)
+      assert(sys.free_internal_bytes == 456 and sys.free_psram_bytes == 789 and sys.flags == 13)
+      assert(sys.enabled_roles == 15 and sys.ready_roles == 7 and sys.generation == 21)
+      assert(sys.phy.frequency_hz == 910525000 and sys.phy.bandwidth_hz == 62500)
+      assert(sys.phy.spreading_factor == 7 and sys.phy.coding_rate == 5 and sys.phy.tx_power == 22)
+      sys.phy.tx_power = 2
+      assert(packet.set_phy(sys.phy, sys.generation, false) == 28)
+      local wire = packet.compose({kind=packet.ADVERT, payload_type=4,
+        route=packet.DIRECT, path_width=2, path_count=1, path="ab",
+        identity=packet.info().identity, timestamp=sys.unix_time}, "xy")
+      assert(wire == "\x12\x41abxy")
+      packet.emit(wire)
+    )lua";
+  for (unsigned mode = 0; mode < 6; ++mode) {
+    const std::string program = std::string("return function() packet.replace('new'); ") + body +
+                                (mode == 3   ? " error_missing() "
+                                 : mode == 4 ? " packet.set_phy(sys.phy, sys.generation) "
+                                             : "") +
+                                " return 0 end";
+    PacketLua engine;
+    load(engine, program.c_str());
+    TestHost host;
+    host.accept = mode != 2;
+    host.available = mode != 5;
+    Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"services", 255, 10000, 20000, mode == 1 ? 0u : AllCapabilities}) ==
+           Registration::Attached);
+    uint8_t bytes[Capacity];
+    uint16_t length;
+    assert(run(pipeline, bytes, length) == Decision::Continue);
+    if (mode == 0) {
+      assert(length == 3 && !memcmp(bytes, "new", 3) && host.controls == 1 && host.changed.phy.txPower == 2 &&
+             host.changed.generation == 21 && !host.changed.persist && host.sent.size() == 1 &&
+             host.sent[0].length == 6 && host.composed == 1);
+    } else {
+      assert(length == 2 && !bytes[0] && bytes[1] == 2 && !host.controls && host.sent.empty());
+      const Fault expected[] = {Fault::None,      Fault::Permission,   Fault::EmissionRejected,
+                                Fault::Execution, Fault::ControlLimit, Fault::Unavailable};
+      assert(host.errors.back() == expected[mode] && pipeline.enabled(0) == (mode == 2));
+    }
+  }
+  for (const char *body :
+       {"packet.set_phy({frequency_hz=1,bandwidth_hz=62500,spreading_factor=7,coding_rate=5,tx_power=2},21)",
+        "packet.set_phy({frequency_hz=910525000,bandwidth_hz=62500,spreading_factor=7,coding_rate=5,tx_power=2},21,1)",
+        "packet.compose({kind=0,payload_type=4,identity='short'}, 'x')",
+        "packet.compose({kind=0,payload_type=4,identity=packet.info().identity,path_width=3,path_count=63},'x')"}) {
+    PacketLua engine;
+    const std::string program = std::string("return function() ") + body + "; return 0 end";
+    load(engine, program.c_str());
+    TestHost host;
+    Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"services", 255, 10000, 20000, AllCapabilities}) == Registration::Attached);
+    uint8_t bytes[Capacity];
+    uint16_t length;
+    run(pipeline, bytes, length);
+    assert(!pipeline.enabled(0) && host.errors.back() == Fault::Bounds && !host.controls && host.sent.empty());
+  }
+  puts("PASS packet Lua system/PHY/owned-compose records, grants, bounds and transactional controls/emissions");
+  for (const uint32_t capabilities : {uint32_t(ReadSystem), uint32_t(ReadSystem | WritePhy)}) {
+    const std::string program = std::string("return function() ") + body + " return 0 end";
+    PacketLua engine;
+    load(engine, program.c_str());
+    TestHost host;
+    Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"grants", 255, 10000, 20000, capabilities}) == Registration::Attached);
+    uint8_t bytes[Capacity];
+    uint16_t length;
+    run(pipeline, bytes, length);
+    assert(host.errors.back() == Fault::Permission && !pipeline.enabled(0) && host.sent.empty() && !host.controls &&
+           !host.composed);
+  }
+}
 static void initialization() {
   char error[128]{}; PacketLua engine;
   for (const char *text : {"while true do end", "packet.info(); return function() return 0 end",
@@ -195,5 +260,5 @@ static void comparison(const char *wasmPath) {
 }
 int main(int argc, char **argv) {
   assert(argc == 2); setvbuf(stdout, nullptr, _IONBF, 0);
-  stages_and_operations(); faults(); initialization(); comparison(argv[1]);
+  stages_and_operations(); faults(); initialization(); services(); comparison(argv[1]);
 }

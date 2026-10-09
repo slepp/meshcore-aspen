@@ -14,6 +14,11 @@ same interface for scripts. Load the program before attaching its engine.
 These are application-level registration APIs; the management CLI does not
 yet install packet programs.
 
+Programs can also read node/PHY state, stage a shared-PHY change, or construct
+an advert or encrypted datagram with an active on-device identity. Grant those
+services explicitly when registering the engine. Private keys and configured
+channel secrets stay in native code.
+
 The shared modem exposes these raw hooks:
 
 | Stage | Packet and consequence |
@@ -69,6 +74,12 @@ scheduler source and attaches its pipeline. It consumes no KISS client or
 native-role socket/slot. Do not register or invoke engines from the network
 task.
 
+Supply `onchip::packetSystemSnapshot` and `onchip::packetComposeOwned` as the
+constructor's optional snapshot/composition callbacks to use Aspen's native
+services. Call `host.service()` on the dispatch task **outside packet hooks**
+to apply accepted PHY requests. Initialize Aspen's roles before using these
+callbacks.
+
 Implement `packet_engine::Engine::process(metadata, call)` and register:
 
 ```cpp
@@ -85,6 +96,12 @@ mask, a fuel budget of 1..100000 and a time budget of 1..20000 microseconds.
 Register realistic small budgets for a radio fast path. The time budget is
 per engine, per invocation, not a claim that the radio can tolerate a 20 ms
 callback on every packet.
+
+The optional fifth budget field is a capability mask: `ReadSystem=1`,
+`WritePhy=2`, `ComposeOwned=4`. It defaults to zero. For example, append
+`ReadSystem | ComposeOwned` to let a program read state and construct packets
+without granting it permission to retune the radio. Calling an ungranted
+service faults and disables that engine.
 
 `Call::read`, `write`, `replace` and `emit` validate lengths and consume fuel.
 Native loops must also call `consume()` and return when it reports failure.
@@ -106,6 +123,9 @@ and metadata are copied; guests receive no native pointers or private keys.
 | Write within the current length | `packet.write(offset, bytes)` | `mp_write(offset, bytes, length)` |
 | Replace the current buffer and length | `packet.replace(bytes)` | `mp_replace(bytes, length)` |
 | Stage a complete raw transmission | `packet.emit(bytes, priority, delay_ms, expiry_ms)` | `mp_emit(bytes, length, priority, delay_ms, expiry_ms)` |
+| Read node and PHY state | `packet.system()` | `mp_get_system(out, capacity)` copies a 56-byte `mp_system` |
+| Stage one shared-PHY change | `packet.set_phy(phy, generation, persist)` | `mp_set_phy(request, length)` copies a 28-byte `mp_phy_change` |
+| Construct an owned packet | `packet.compose(request, plaintext)` returns wire bytes | `mp_compose_owned(request, request_length, data, length, out, capacity)` copies a 156-byte `mp_compose` request |
 | Continue or drop | Return `packet.CONTINUE` or `packet.DROP` | Return `MP_CONTINUE` or `MP_DROP` |
 
 Offsets are zero-based. A packet holds at most 255 bytes. Write, replace and
@@ -143,7 +163,7 @@ initialization instructions. Packet imports require an active process call,
 so top-level initialization cannot read a packet or stage emissions.
 
 Portable Wasm programs use [`wasm/sdk/packet.h`](wasm/sdk/packet.h), importing
-only `info`, `read`, `write`, `replace` and `emit` from
+only `info`, `read`, `write`, `replace`, `emit`, `system`, `set_phy` and `compose` from
 `meshcore_packet_v1`. Export `mp_init()->i32`, returning `MP_ABI_VERSION`,
 and `mp_process()->i32`, returning the disposition. A module is at most
 16384 bytes, with one fixed 64KiB linear memory and an 8KiB interpreter stack.
@@ -166,8 +186,85 @@ PSRAM pool. Loading, unloading and import registration are serialized;
 packet execution does not acquire that loader lock. Each module has an
 explicit execution context and its own meter. Lua packet and command programs
 share allocator and compiler-budget helpers, but use separate Lua states.
-Packet programs currently expose only packet operations; system configuration,
-PHY changes and owned-identity packet construction are not SDK calls.
+
+### System and shared PHY
+
+`packet.system()` returns `version`, `uptime_ms`, `unix_time`,
+`free_internal_bytes`, `free_psram_bytes`, `enabled_roles`, `ready_roles`,
+`generation`, `flags` and a `phy` table. The Wasm record has the same fields
+in SDK declaration order. Role masks use the saved profile's repeater/room/
+companion/observer bits 1/2/4/8. Flags are radio-ready 1, transmitting 2,
+trusted UTC 4 and measured heap 8. `unix_time` is zero without trusted network
+or GPS time; zero memory readings without flag 8 mean unmeasured, not a
+zero-byte heap. These are node-wide free-memory figures, separate from each
+runtime's resource statistics.
+
+The PHY fields are `frequency_hz`, `bandwidth_hz`, `spreading_factor`,
+`coding_rate`, `tx_power`. A request requires frequency 150000000..960000000 Hz,
+bandwidth 1..500000 Hz, SF5..12, CR5..8 and TX power 0..22 dBm. Hardware still
+determines which bandwidths/frequencies it can apply. Supply the current
+`generation` from the snapshot to prevent a stale program from replacing a
+newer configuration. Lua's optional `persist` argument is a boolean, default
+false; Wasm uses a 0/1 field. A successful request returns 28.
+
+Only one PHY request fits a packet transaction, shared across its engines.
+It commits together with packet edits and emissions. A later engine fault,
+duplicate request or failed scheduler admission discards it. An already
+pending request or a generation mismatch rejects the transaction with
+`ControlRejected`; the original packet continues and the engines stay enabled.
+
+After commit, the controller waits for the TX queue and physical radio to
+be idle, then attempts the change once. It expires pending work after five
+seconds and rejects it if the configuration generation changes. `status().phy`
+reports `Idle`, `Pending`, `Applied`, `Stale`, `Expired`, `Failed` or `Cancelled`,
+with accepted/applied counters. A later failure is reported by the controller;
+it cannot undo a packet transaction that already completed.
+
+**Changing the shared PHY changes every host and on-device role's radio
+connection.** A transient change preserves saved NVS; a persisted change becomes
+the startup PHY. A persistence/application failure follows the shared modem's
+normal fail-closed behavior. The SDK stages a request, not a synchronous
+confirmation that the radio has retuned.
+
+### Owned packet construction
+
+`compose` creates a complete wire packet without sending it, changing contacts,
+allocating from a role's packet pool or invoking packet hooks recursively.
+Pass its result to `emit()` to stage a transmission through the normal scheduler.
+The existing engine/reflection-origin emission guard also applies to that result.
+
+The request fields are:
+
+| Field | Value |
+| --- | --- |
+| `kind` | `ADVERT=0`, `DATAGRAM=1`, `ANONYMOUS=2`, `GROUP=3` |
+| `payload_type` | Advert 4; datagram request/response/text 0/1/2; anonymous request 7; group text/data 5/6 |
+| `identity` | 32-byte binary public key of an active owned role |
+| `destination` | 32-byte recipient public key for peer/anonymous datagrams; optional for advert/group |
+| `route` | `FLOOD=1` or `DIRECT=2`; Lua defaults to flood |
+| `path_width`, `path_count`, `path` | Width 1..3, count 0..63, exactly width × count path bytes; at most 64 bytes total |
+| `channel` | Configured bot membership or companion channel slot for group packets; Lua defaults to 0 |
+| `timestamp` | Advert timestamp; 0 selects that role's native RTC |
+
+Flood construction requires an empty path. Direct with count 0 is zero-hop.
+Lua defaults to width 1 and count 0; `path` can be omitted for an empty path.
+Wasm callers fill every field in the fixed SDK record. The resulting complete
+wire packet must fit 255 bytes; path bytes reduce the available payload space.
+
+Aspen's callback resolves running repeater, room and companion identities,
+the enabled command bot and provisioned/unsealed management service. It rejects
+unavailable identities instead of loading, rotating or creating one. Groups
+use a configured bot membership or named companion channel; repeater and room
+group requests are unavailable. Observer token keys and opaque CloudRoom alias
+keys are not packet-signing services.
+
+Supply the native plaintext envelope, including text/request timestamps and
+type-specific headers. Advert data is the application body only. The builder
+validates envelope/route/length, signs adverts or derives the owned peer secret
+and encrypts/MACs datagrams. It returns only wire bytes, never keys or secrets.
+It does not register an ACK wait or claim delivery. Native crypto is a bounded,
+synchronous import; its time counts toward the invocation and is checked on
+return, rather than interrupting a signature or cipher operation halfway through.
 
 ### Resource measurements
 
@@ -183,20 +280,21 @@ The local check prints a 10000-invocation host comparison for a metadata
 read and three-byte packet edit. One Linux x86-64 run used 16504 bytes of
 Wasm session storage, 65536 bytes of linear memory and an 8192-byte interpreter
 stack, alongside the shared 1MiB runtime pool. Lua used 104 bytes of session
-storage and peaked at 28242 bytes of its 65536-byte heap. Mean host times were
-1.00 us for Wasm and 1.16 us for Lua in that fixture. This measures host execution;
+storage and peaked at 29102 bytes of its 65536-byte heap. Mean host times were
+1.03 us for Wasm and 1.19 us for Lua in that fixture. This measures host execution;
 ESP32 PSRAM access and radio-task timing need device measurements.
 
 ## Mutation, faults and transmission
 
-All engines see a candidate buffer. Their writes and emissions remain staged
-until the invocation finishes and the entire emission batch fits the scheduler.
+All engines see a candidate buffer. Their writes, emissions and PHY requests remain staged
+until the invocation finishes, the entire emission batch fits the scheduler
+and the controller accepts any staged PHY request.
 `Decision::Drop` stops later engines and drops the current packet; valid
 staged emissions can replace it.
 
 An execution error, bad return value, invalid memory range, fuel exhaustion,
 deadline overrun, invalid native packet or recursive pipeline entry discards the invocation's edits
-and emissions, disables the failing engine and calls the host fault reporter.
+and emissions/PHY requests, disables the failing engine and calls the host fault reporter.
 The original bytes at that hook continue. Later hooks retain edits already
 committed by earlier hooks.
 

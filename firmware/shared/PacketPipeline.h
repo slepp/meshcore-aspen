@@ -2,6 +2,7 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
+#include "PacketServices.h"
 
 namespace packet_engine {
 constexpr uint16_t Capacity = 255;
@@ -16,7 +17,8 @@ constexpr uint32_t stageMask(Stage stage) { return 1u << unsigned(stage); }
 enum class Decision : uint8_t { Continue, Drop, Failed };
 enum class Fault : uint8_t {
   None, Execution, Fuel, Deadline, Bounds, EmissionLimit, EmissionRejected,
-  InvalidDecision, Reentrant, EmissionOrigin, InvalidPacket
+  InvalidDecision, Reentrant, EmissionOrigin, InvalidPacket,
+  Permission, Unavailable, ControlLimit, ControlRejected
 };
 inline const char *faultText(Fault fault) {
   switch (fault) {
@@ -31,6 +33,10 @@ inline const char *faultText(Fault fault) {
     case Fault::Reentrant: return "packet engine recursively entered the pipeline";
     case Fault::EmissionOrigin: return "packet engine cannot emit from generated packets, reflections or their native replies";
     case Fault::InvalidPacket: return "packet engine produced an invalid native packet";
+    case Fault::Permission: return "packet engine service capability is not granted";
+    case Fault::Unavailable: return "packet engine service or owned identity is unavailable";
+    case Fault::ControlLimit: return "packet engine transaction already contains a PHY request";
+    case Fault::ControlRejected: return "packet engine PHY request rejected; inspect controller status";
   }
   return "unknown packet engine fault";
 }
@@ -52,12 +58,13 @@ struct Emission {
 struct Budget {
   const char *name = nullptr;
   uint32_t stages = 0, fuel = 0, microseconds = 0;
+  uint32_t capabilities = 0;
 };
 enum class Registration : uint8_t { Attached, Invalid, Duplicate, Full, Busy };
 inline const char *registrationText(Registration result) {
   switch (result) {
     case Registration::Attached: return "registered";
-    case Registration::Invalid: return "invalid packet engine name, stage mask or execution budget";
+    case Registration::Invalid: return "invalid packet engine name, stage mask, execution budget or capability mask";
     case Registration::Duplicate: return "packet engine object or name is already registered";
     case Registration::Full: return "packet engine registry is full";
     case Registration::Busy: return "packet engine pipeline is running";
@@ -73,6 +80,15 @@ public:
   // Dispatch-thread only. Accept the entire batch or nothing. Generated packets
   // retain an engine-origin tag and use the normal scheduler/airtime budgets.
   virtual bool admit(const Metadata &, const Emission *, uint8_t count) = 0;
+  virtual bool system(SystemInfo &) { return false; }
+  // Pure construction: no transmit, packet-hook dispatch or persistent mutation.
+  virtual Fault compose(const ComposeRequest &, const uint8_t *, uint16_t,
+                        uint8_t *, uint16_t &) { return Fault::Unavailable; }
+  virtual Fault commit(const Metadata &metadata, const Emission *packets,
+                       uint8_t count, const PhyChange *phy) {
+    if (phy) return Fault::ControlRejected;
+    return !count || admit(metadata, packets, count) ? Fault::None : Fault::EmissionRejected;
+  }
 };
 
 class Call {
@@ -83,15 +99,60 @@ class Call {
   Emission *emissions_;
   uint8_t &emissionCount_;
   uint32_t fuel_, started_, limit_;
+  uint32_t capabilities_;
+  PhyChange &phy_;
+  bool &hasPhy_;
   bool allowEmit_, allowEmpty_;
   Fault fault_ = Fault::None;
   Call(Host &host, uint8_t *bytes, uint16_t length, uint16_t capacity,
-       Emission *emissions, uint8_t &count, const Budget &budget, bool allowEmit, bool allowEmpty)
+       Emission *emissions, uint8_t &count, const Budget &budget, bool allowEmit, bool allowEmpty,
+       PhyChange &phy, bool &hasPhy)
       : host_(host), bytes_(bytes), length_(length), capacity_(capacity),
         emissions_(emissions), emissionCount_(count), fuel_(budget.fuel),
-        started_(host.microsNow()), limit_(budget.microseconds), allowEmit_(allowEmit),
-        allowEmpty_(allowEmpty) {}
+        started_(host.microsNow()), limit_(budget.microseconds),
+        capabilities_(budget.capabilities), phy_(phy), hasPhy_(hasPhy),
+        allowEmit_(allowEmit), allowEmpty_(allowEmpty) {}
 public:
+  bool permission(uint32_t capability) {
+    if (!consume()) return false;
+    if (!(capabilities_ & capability)) { fail(Fault::Permission); return false; }
+    return true;
+  }
+  bool system(SystemInfo &info) {
+    if (!permission(ReadSystem)) return false;
+    info = {};
+    if (!host_.system(info)) { fail(Fault::Unavailable); return false; }
+    return consume(0);
+  }
+  bool setPhy(const PhyChange &change) {
+    if (!permission(WritePhy)) return false;
+    const auto &p = change.phy;
+    if (p.frequencyHz < 150000000 || p.frequencyHz > 960000000 ||
+        !p.bandwidthHz || p.bandwidthHz > 500000 || p.spreadingFactor < 5 ||
+        p.spreadingFactor > 12 || p.codingRate < 5 || p.codingRate > 8 ||
+        p.txPower > 22 || !change.generation || change.persist > 1) {
+      fail(Fault::Bounds); return false;
+    }
+    if (hasPhy_) { fail(Fault::ControlLimit); return false; }
+    phy_ = change; hasPhy_ = true; return true;
+  }
+  bool compose(const ComposeRequest &request, const uint8_t *data, uint16_t length,
+               uint8_t *output, uint16_t &outputLength) {
+    if (!permission(ComposeOwned)) return false;
+    if ((!data && length) || length > Capacity || !output || outputLength > Capacity ||
+        request.kind > uint32_t(ComposeKind::Group) || request.payloadType > 15 ||
+        (request.route != 1 && request.route != 2) || request.pathWidth < 1 ||
+        request.pathWidth > 3 || request.pathCount > 63 ||
+        request.pathCount * request.pathWidth > sizeof(request.path) ||
+        (request.route == 1 && request.pathCount)) {
+      fail(Fault::Bounds); return false;
+    }
+    const uint16_t capacity = outputLength;
+    const Fault result = host_.compose(request, data, length, output, outputLength);
+    if (result != Fault::None) { fail(result); return false; }
+    if (!outputLength || outputLength > capacity) { fail(Fault::Bounds); return false; }
+    return consume(0);
+  }
   void fail(Fault fault) {
     if (fault_ == Fault::None && fault != Fault::None) fault_ = fault;
   }
@@ -172,6 +233,7 @@ class Pipeline {
   bool running_ = false, recursion_ = false;
   uint8_t candidate_[Capacity]{};
   Emission emissions_[EmissionLimit];
+  PhyChange phy_;
 public:
   explicit Pipeline(Host &host) : host_(host) {}
   Pipeline(const Pipeline &) = delete;
@@ -184,7 +246,8 @@ public:
     if (!budget.name || !budget.name[0] || strnlen(budget.name, 32) == 32 ||
         !budget.stages || (budget.stages & ~validStages) ||
         !budget.fuel || budget.fuel > 100000 ||
-        !budget.microseconds || budget.microseconds > 20000)
+        !budget.microseconds || budget.microseconds > 20000 ||
+        (budget.capabilities & ~AllCapabilities))
       return Registration::Invalid;
     for (const char *c = budget.name; *c; ++c)
       if (*c < 33 || *c > 126) return Registration::Invalid;
@@ -226,6 +289,7 @@ public:
     memcpy(candidate_, bytes, length);
     uint16_t candidateLength = length;
     uint8_t emissionCount = 0;
+    bool hasPhy = false;
     Decision result = Decision::Continue;
     for (uint8_t i = 0; i < count_; ++i) {
       auto &entry = entries_[i];
@@ -233,7 +297,7 @@ public:
       ++entry.calls;
       Call call(host_, candidate_, candidateLength, capacity, emissions_, emissionCount,
                 entry.budget, !metadata.engineOrigin && !metadata.reflectionOrigin &&
-                !metadata.local, plaintext);
+                !metadata.local, plaintext, phy_, hasPhy);
       result = entry.engine->process(metadata, call);
       if (validate && result == Decision::Continue &&
           (call.length_ != length || memcmp(candidate_, bytes, length)))
@@ -256,10 +320,13 @@ public:
       candidateLength = call.length_;
       if (result == Decision::Drop) { ++entry.drops; break; }
     }
-    if (emissionCount && !host_.admit(metadata, emissions_, emissionCount)) {
-      host_.fault("pipeline", metadata, Fault::EmissionRejected);
-      running_ = false;
-      return Decision::Continue;
+    if (emissionCount || hasPhy) {
+      const auto fault = host_.commit(metadata, emissions_, emissionCount, hasPhy ? &phy_ : nullptr);
+      if (fault != Fault::None) {
+        host_.fault("pipeline", metadata, fault);
+        running_ = false;
+        return Decision::Continue;
+      }
     }
     // No effects are published until all engines and scheduler admission pass.
     if (result == Decision::Continue) {
