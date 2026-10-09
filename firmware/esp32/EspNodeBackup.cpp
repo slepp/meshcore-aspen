@@ -123,6 +123,18 @@ bool stable(const nvs_entry_info_t &entry) {
          (strcmp(entry.key, "replay-extra") && strcmp(entry.key, "owner-replay"));
 }
 class EspBackup final : public FirmwareNodeBackup {
+  struct MemoryBackup {
+    uint8_t *bytes = nullptr, digest[32]{};
+    uint32_t size = 0;
+    void clear() {
+      if (bytes) {
+        backup::wipe(bytes, size);
+        heap_caps_free(bytes);
+      }
+      bytes = nullptr; size = 0; backup::wipe(digest, sizeof(digest));
+    }
+  } pending_, saved_;
+  bool transient_ = false;
   bool records(Snapshot *archive, uint8_t digest[32], char *error, size_t capacity) {
     Blob *blob = allocateRoleStorage<Blob>("node backup NVS buffer");
     if (!blob) { snprintf(error, capacity, "Backup NVS buffer allocation failed"); return false; }
@@ -244,6 +256,59 @@ class EspBackup final : public FirmwareNodeBackup {
     inventory->finish(digest); return true;
   }
 public:
+  const char *lastError() const override {
+    return transient_ ? nullptr : FirmwareNodeBackup::lastError();
+  }
+  bool selectStorage(bool transient, bool load) override {
+    if (transient && load && !saved_.bytes) return false;
+    transient_ = transient;
+    return true;
+  }
+  bool beginOutput(char *error, size_t capacity) override {
+    if (!transient_) return FirmwareNodeBackup::beginOutput(error, capacity);
+    pending_.clear();
+    pending_.bytes = static_cast<uint8_t *>(heap_caps_calloc(
+        1, NodeBackup::FileLimit, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!pending_.bytes) {
+      snprintf(error, capacity, "Volatile backup PSRAM allocation failed"); return false;
+    }
+    return true;
+  }
+  bool write(const uint8_t *bytes, size_t size) override {
+    if (!transient_) return FirmwareNodeBackup::write(bytes, size);
+    if (!pending_.bytes || size > NodeBackup::FileLimit - pending_.size) return false;
+    memcpy(pending_.bytes + pending_.size, bytes, size);
+    pending_.size += size; return true;
+  }
+  bool publish(const uint8_t expected[32], char *error, size_t capacity) override {
+    if (!transient_) return FirmwareNodeBackup::publish(expected, error, capacity);
+    SHA256 hash;
+    hash.reset(); hash.update(pending_.bytes, pending_.size);
+    hash.finalize(pending_.digest, 32);
+    if (memcmp(pending_.digest, expected, 32)) {
+      snprintf(error, capacity, "Volatile backup checksum readback failed"); return false;
+    }
+    saved_.clear();
+    saved_ = pending_;
+    pending_ = {};
+    return true;
+  }
+  bool remove(bool published) override {
+    if (!transient_) return FirmwareNodeBackup::remove(published);
+    pending_.clear();
+    if (published) saved_.clear();
+    return true;
+  }
+  bool size(uint32_t &bytes, uint8_t digest[32]) override {
+    if (!transient_) return FirmwareNodeBackup::size(bytes, digest);
+    if (!saved_.bytes) return false;
+    bytes = saved_.size; memcpy(digest, saved_.digest, 32); return true;
+  }
+  size_t read(uint32_t offset, uint8_t *bytes, size_t size) override {
+    if (!transient_) return FirmwareNodeBackup::read(offset, bytes, size);
+    if (!saved_.bytes || offset > saved_.size || size > saved_.size - offset) return 0;
+    memcpy(bytes, saved_.bytes + offset, size); return size;
+  }
   bool available() const override { return backupWorkerReady(); }
   void wake() override { wakeBackupWorker(); }
   bool snapshot(backup::TarWriter &archive, char *error, size_t capacity) override {
@@ -265,7 +330,12 @@ public:
     if (!manifest(archive, "aspen", MESHCORE_SLP_ASPEN_VERSION)) {
       snprintf(error, capacity, "Backup manifest output failed"); return false;
     }
-    return snapshot->emit(archive, error, capacity);
+    if (!snapshot->emit(archive, error, capacity)) {
+      const auto *reason = lastError();
+      if (reason && *reason) snprintf(error, capacity, "%s", reason);
+      return false;
+    }
+    return true;
   }
 };
 EspBackup platform;

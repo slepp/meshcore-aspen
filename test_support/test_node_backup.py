@@ -24,7 +24,7 @@ class BackupClient:
 
     def command(self, text):
         self.commands.append(text)
-        if text.startswith("backup start ") or text == "backup load":
+        if text.startswith(("backup start ", "backup start-ram ")) or text in ("backup load", "backup load-ram"):
             return "PREPARING"
         if text == "backup status":
             return f"READY {self.identifier} bytes={len(self.raw)} sha={hashlib.sha256(self.raw).hexdigest()}"
@@ -174,6 +174,24 @@ class NodeBackupTests(unittest.TestCase):
             node_backup.download(client, output, self.seed, saved=True)
             self.assertEqual(client.commands[0], "backup load")
             self.assertFalse(any(text.startswith("backup start") for text in client.commands))
+            self.assertEqual(output.read_bytes(), self.raw)
+
+    def test_volatile_download_and_resume_use_only_ram_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "volatile.mcb"
+            first = BackupClient(self.raw, interrupt=144)
+            with self.assertRaises(OSError):
+                node_backup.download(first, output, self.seed, transient=True)
+            self.assertTrue(first.commands[0].startswith("backup start-ram "))
+            second = BackupClient(self.raw)
+            node_backup.download(second, output, self.seed, resume=True, transient=True)
+            self.assertEqual(second.commands[0], "backup load-ram")
+            self.assertEqual(output.read_bytes(), self.raw)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "saved-volatile.mcb"
+            client = BackupClient(self.raw)
+            node_backup.download(client, output, self.seed, saved=True, transient=True)
+            self.assertEqual(client.commands[0], "backup load-ram")
             self.assertEqual(output.read_bytes(), self.raw)
 
     def test_rf_legacy_fallback_and_variable_base64_chunks(self):

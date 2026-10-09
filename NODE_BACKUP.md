@@ -69,6 +69,34 @@ Expected: `Saved encrypted node backup: ...` with a byte and record count.
 The destination is created privately and never overwritten. Add `--saved`
 to download the existing snapshot to a new filename.
 
+### Aspen backup without writing a filesystem snapshot
+
+Add **`--volatile`** to the download command when Aspen cannot write another
+encrypted snapshot to its filesystem. Aspen captures and validates the same
+retained records, then encrypts the snapshot in PSRAM instead of writing flash.
+The tool authenticates and saves the complete encrypted file on your workstation
+using the same format and checks as a filesystem-backed backup.
+
+**Download before restarting the radio.** The radio's PSRAM snapshot does not
+survive a restart; the downloaded private file does. This mode leaves any saved
+filesystem backup unchanged and requires PSRAM for the encrypted buffer as well
+as the captured records. Allocation or consistency failures leave the previous
+snapshot intact. Use `--volatile --resume` or `--volatile --saved` only while that
+RAM snapshot remains available; the tool will not substitute an older filesystem
+backup after a restart.
+
+Authenticated Aspen commands are `backup start-ram KEY64` and `backup load-ram`.
+`backup clear` removes the currently selected RAM snapshot after `load-ram`;
+after `backup load`, it instead removes the saved filesystem backup.
+RAM snapshots remain allocated until cleared, replaced or the radio restarts.
+
+Filesystem-backed exports finish confirmed partial writes by writing only the
+remaining bytes. A zero-progress write or exhausted space budget fails explicitly
+with `req`, `got`, `out`, `budget`, `used`, `free` and `errno` fields. `out` counts
+confirmed output bytes; `budget` is the initial free space minus the 8192-byte
+reserve. `errno=0` means the filesystem did not provide an error number, not that
+the write succeeded.
+
 ## Download through a companion radio
 
 Connect the workstation to a companion radio on the node's LoRa profile. Use

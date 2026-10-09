@@ -41,7 +41,9 @@ esp-node-backup-test: prepare
 		tests/esp_node_backup.cpp EspNodeBackup.cpp ../runtime/FirmwareNodeBackup.cpp ../runtime/NodeBackup.cpp \
 		$(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(PHY_BUILD)/ed/*.o $(PHY_BUILD)/crypto/*.o \
 		-o "$(TEST_BUILD)/esp-node-backup"
-	ulimit -c 0; "$(TEST_BUILD)/esp-node-backup"
+	ulimit -c 0; "$(TEST_BUILD)/esp-node-backup" "$(TEST_BUILD)/esp-volatile.mcb"
+	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$(ROOT)" python3 -c \
+		'from pathlib import Path; from tools.node_backup import decrypt, entries; m, f = entries(decrypt(Path("$(TEST_BUILD)/esp-volatile.mcb").read_bytes(), bytes(range(32)))); assert m["product"] == "aspen"; assert f["nvs/mc-onchip/companion.blob"] == bytes((1, 2, 3)); assert f["files/command-bot/a.lua"] == bytes((7, 8, 9)); assert len(f) == 5; print("PASS volatile MCB: authenticated decryption and original NVS/file records")'
 PUBLIC_UPDATE_SOURCE ?= EspFieldUpdate.cpp
 .PHONY: public-update-test
 public-update-test:

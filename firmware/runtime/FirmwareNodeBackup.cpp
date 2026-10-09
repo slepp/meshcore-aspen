@@ -4,6 +4,7 @@
 #include "RoleIdentity.h"
 #include <Arduino.h>
 #include <nvs.h>
+#include <cerrno>
 
 namespace onchip {
 namespace {
@@ -50,6 +51,7 @@ bool FirmwareNodeBackup::pointer(Record &record, bool &present) {
   present = true; return true;
 }
 bool FirmwareNodeBackup::beginOutput(char *error, size_t capacity) {
+  outputError_[0] = 0;
   bool present;
   if (!pointer(record_, present)) {
     snprintf(error, capacity, "Backup pointer unreadable; existing backup retained"); return false;
@@ -69,8 +71,28 @@ bool FirmwareNodeBackup::beginOutput(char *error, size_t capacity) {
   return bool(output_);
 }
 bool FirmwareNodeBackup::write(const uint8_t *bytes, size_t size) {
-  if (!output_ || size > budget_ - written_ || output_.write(bytes, size) != size) return false;
-  written_ += size; return true;
+  const auto failure = [&](const char *condition, size_t received, int code) {
+    const uint32_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
+    snprintf(outputError_, sizeof(outputError_),
+             "Backup flash %s req=%u got=%u out=%lu budget=%lu used=%lu free=%lu errno=%d",
+             condition, unsigned(size), unsigned(received), static_cast<unsigned long>(written_),
+             static_cast<unsigned long>(budget_), static_cast<unsigned long>(used),
+             static_cast<unsigned long>(used <= total ? total - used : 0), code);
+    return false;
+  };
+  if (!output_) {
+    snprintf(outputError_, sizeof(outputError_), "Backup output file is closed"); return false;
+  }
+  if (size > budget_ - written_) return failure("headroom exceeded", 0, 0);
+  for (size_t offset = 0; offset < size;) {
+    errno = 0;
+    const size_t count = output_.write(bytes + offset, size - offset);
+    const int code = errno;
+    if (!count || count > size - offset) return failure("write failed", offset, code);
+    offset += count; written_ += count;
+    if (offset < size) delay(1);
+  }
+  return true;
 }
 bool FirmwareNodeBackup::publish(const uint8_t expected[32], char *error, size_t capacity) {
   output_.flush(); output_.close();

@@ -209,7 +209,7 @@ def rf_chunks(client, metadata, offset):
             time.sleep(5)
 
 
-def download(client, output, seed, resume=False, radio=False, saved=False):
+def download(client, output, seed, resume=False, radio=False, saved=False, transient=False):
     partial = Path(str(output) + ".part")
     metadata_path = Path(str(partial) + ".json")
     if output.exists() or output.is_symlink():
@@ -219,11 +219,13 @@ def download(client, output, seed, resume=False, radio=False, saved=False):
     if resume and not metadata_path.exists():
         raise ValueError("No partial backup metadata; use a new destination without --resume")
     if resume or saved:
-        checked(client, "backup load")
+        checked(client, "backup load-ram" if transient else "backup load")
     else:
-        checked(client, "backup start " + public_hex(seed))
+        checked(client, ("backup start-ram " if transient else "backup start ") + public_hex(seed))
     metadata = ready(client, radio)
     metadata["recipient"] = public_hex(seed)
+    if transient:
+        metadata["volatile"] = True
     if resume:
         saved = json.loads(private_file(metadata_path, 1024))
         if saved != metadata:
@@ -290,6 +292,8 @@ def main():
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--target", help="Management or repeater full public key for RF administration")
     parser.add_argument("--password-file", type=Path, help="Private admin password file; omit for trusted-key RF login")
+    parser.add_argument("--volatile", action="store_true",
+                        help="Aspen PSRAM snapshot, lost on restart; leaves the saved filesystem backup unchanged")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--resume", action="store_true", help="Resume this destination's partial download without creating a new snapshot")
     selection.add_argument("--saved", action="store_true", help="Download the saved snapshot to a new destination without creating another backup")
@@ -305,7 +309,8 @@ def main():
                       NativeClient(args.gateway, args.port, args.key_file, args.target,
                                    password.decode("ascii"), timeout=40, retry_commands=False))
             try:
-                _, count, size = download(client, args.backup, seed, args.resume, bool(args.gateway), args.saved)
+                _, count, size = download(client, args.backup, seed, args.resume, bool(args.gateway), args.saved,
+                                          args.volatile)
             finally:
                 client.close()
             print(f"Saved encrypted node backup: {args.backup} ({size} bytes, {count} records)")

@@ -16,6 +16,7 @@ public:
   bool seal(uint8_t ephemeral[32], uint8_t nonce[16], const uint8_t recipient[32],
             uint8_t shared[32]) override;
   uint32_t now() const override;
+  const char *lastError() const override { return outputError_; }
 protected:
   bool manifest(backup::TarWriter &archive, const char *product, const char *version);
   bool file(backup::TarWriter &archive, const char *path, const char *name,
@@ -31,6 +32,7 @@ private:
   File output_;
   uint8_t selected_ = 0;
   uint32_t written_ = 0, budget_ = 0;
+  char outputError_[120]{};
   static const char *path(uint8_t slot);
   bool pointer(Record &record, bool &present);
 };

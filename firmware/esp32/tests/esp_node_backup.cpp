@@ -7,6 +7,7 @@
 #include <esp_heap_caps.h>
 #include <cassert>
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 unsigned long millis() { return 0; }
@@ -50,8 +51,10 @@ std::string command(const char *text) {
   onchip::nodeBackup().command(text + 7, reply, sizeof(reply), false);
   return reply;
 }
-std::string snapshot() {
-  assert(command("backup start 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8")
+std::string snapshot(bool transient = false) {
+  const std::string start = std::string(transient ? "backup start-ram " : "backup start ") +
+                            "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8";
+  assert(command(start.c_str())
          .find("PREPARING") == 0);
   onchip::nodeBackup().work();
   return command("backup status");
@@ -69,7 +72,7 @@ void seed() {
   onchip::beginEspNodeBackup();
 }
 }
-int main() {
+int main(int argc, char **argv) {
   SPIFFS.setDriver(std::make_shared<Filesystem>());
   seed();
   const auto baseline = snapshot();
@@ -163,6 +166,51 @@ int main() {
     assert(psram_test::allocations.empty());
   }
   seed();
+  const auto disk = snapshot();
+  filesystem_test::writeLimit = 7;
+  assert(snapshot() == disk);
+  filesystem_test::writeLimit = 0;
+  const auto failedWrite = snapshot();
+  assert(failedWrite.find("flash write failed req=88 got=0") != std::string::npos);
+  assert(failedWrite.find(" used=") != std::string::npos && failedWrite.find(" free=") != std::string::npos);
+  assert(failedWrite.find(" errno=") != std::string::npos);
+  const auto retainedFiles = filesystem_test::files;
+  const auto retainedDurable = identity_test::durable;
+  const auto memory = snapshot(true);
+  filesystem_test::writeLimit = SIZE_MAX;
+  assert(memory == disk);
+  assert(identity_test::durable == retainedDurable && filesystem_test::files == retainedFiles);
+  if (argc == 2) {
+    const auto id = memory.substr(6, 16);
+    auto &service = onchip::nodeBackup();
+    assert(service.beginRead(id.c_str()));
+    std::vector<uint8_t> bytes(service.bytes());
+    assert(service.read(0, bytes.data(), bytes.size()) == bytes.size());
+    service.endRead();
+    std::ofstream output(argv[1], std::ios::binary);
+    output.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+    assert(output.good());
+  }
+  backup_test::inventories = directories = 0;
+  beforeVerifyFiles = [] { filesystem_test::files.at("/command-bot/a.lua")[0] ^= 1; };
+  assert(snapshot(true).find("Saved files changed") != std::string::npos);
+  beforeVerifyFiles = nullptr;
+  assert(command("backup load-ram").find("PREPARING") == 0);
+  onchip::nodeBackup().work();
+  assert(command("backup status") == memory);
+  psram_test::failAfter = 0;
+  assert(snapshot(true).find("PSRAM allocation failed") != std::string::npos);
+  psram_test::failAfter = -1;
+  assert(command("backup load-ram").find("PREPARING") == 0);
+  onchip::nodeBackup().work();
+  assert(command("backup status") == memory);
+  assert(command("backup clear") == "Saved backup removed; device settings unchanged");
+  assert(psram_test::allocations.empty());
+  assert(command("backup load-ram").find("volatile backup unavailable") != std::string::npos);
+  assert(command("backup load").find("PREPARING") == 0);
+  onchip::nodeBackup().work();
+  assert(command("backup status") == disk);
+  seed();
   filesystem_test::files["/empty"] = {};
   assert(snapshot().find("READY ") == 0);
   assert(psram_test::allocations.empty());
@@ -186,4 +234,5 @@ int main() {
   puts("PASS ESP backup: reordered inventories, settings/content/size/path/add/remove changes, staging exclusion, replay counters and retained saved snapshot");
   puts("PASS immutable capture: live changes during output retain captured bytes; allocation failures and empty files release scrubbed PSRAM");
   puts("PASS archive boundaries: 512 records accepted; extra records and oversized data rejected without replacing saved backup");
+  puts("PASS volatile backup: no filesystem writes, identical container, failed replacement retains RAM snapshot, cleared RAM does not replace saved flash");
 }

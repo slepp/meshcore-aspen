@@ -9,6 +9,8 @@ class NodeBackupPlatform : public backup::Sink {
 public:
   virtual bool available() const = 0;
   virtual void wake() = 0;
+  virtual bool selectStorage(bool transient, bool) { return !transient; }
+  virtual const char *lastError() const { return nullptr; }
   virtual bool beginOutput(char *error, size_t size) = 0;
   virtual bool publish(const uint8_t digest[32], char *error, size_t size) = 0;
   virtual bool remove(bool published) = 0;

@@ -98,6 +98,10 @@ void NodeBackup::work() {
       snprintf(error_, sizeof(error_), "Backup failed; temporary file cleanup failed");
     }
   }
+  if (!ok && !error_[0]) {
+    const auto *reason = platform_->lastError();
+    if (reason) snprintf(error_, sizeof(error_), "%s", reason);
+  }
   if (ok && !cancel_) ok = describe();
   if (cancel_) fail("Backup cancelled; previously published file may remain");
   else if (!ok) fail(error_[0] ? error_ : "Backup storage, compression or encryption failed");
@@ -120,14 +124,18 @@ void NodeBackup::endRead() {
 void NodeBackup::command(const char *text, char *reply, size_t capacity, bool radio) {
   const auto say = [&](const char *message) { snprintf(reply, capacity, "%s", message); };
   if (!text || !*text || !strcmp(text, "help")) {
-    say("backup start KEY64; status; load; read64 ID16 OFFSET; read ID16 OFFSET; cancel; clear. Encrypted to KEY64; RF reads paced 5s; retain operator seed.");
+    say("backup start KEY64; start-ram KEY64; status; load; load-ram; read64 ID16 OFFSET; read ID16 OFFSET; cancel; clear. RAM lost on restart; retain operator seed.");
     return;
   }
   if (!platform_ || !platform_->available()) { say("Error: node backup storage worker unavailable"); return; }
   auto current = state_.load();
-  if (!strcmp(text, "load")) {
+  if (!strcmp(text, "load") || !strcmp(text, "load-ram")) {
     if (active() || current == Reading || !state_.compare_exchange_strong(current, Reserving)) {
       say("Error: backup worker or download busy; inspect backup status"); return;
+    }
+    if (!platform_->selectStorage(!strcmp(text, "load-ram"), true)) {
+      state_ = current;
+      say("Error: volatile backup unavailable; it is lost on restart"); return;
     }
     cancel_ = false; state_ = PendingLoad; platform_->wake();
     say("PREPARING saved backup; check backup status"); return;
@@ -145,15 +153,21 @@ void NodeBackup::command(const char *text, char *reply, size_t capacity, bool ra
     else say("PREPARING; check backup status");
     return;
   }
-  if (!strncmp(text, "start ", 6)) {
+  if (!strncmp(text, "start ", 6) || !strncmp(text, "start-ram ", 10)) {
+    const bool transient = !strncmp(text, "start-ram ", 10);
     uint8_t recipient[32];
-    if (!key(text + 6, recipient)) { say("Error: backup start requires a lowercase operator KEY64"); return; }
+    if (!key(text + (transient ? 10 : 6), recipient)) { say("Error: backup start requires a lowercase operator KEY64"); return; }
     if (active() || current == Reading || !state_.compare_exchange_strong(current, Reserving)) {
       say("Error: backup worker or download busy; inspect backup status"); return;
     }
+    if (!platform_->selectStorage(transient, false)) {
+      state_ = current;
+      say("Error: volatile backup storage unavailable on this platform"); return;
+    }
     memcpy(recipient_, recipient, sizeof(recipient_));
     cancel_ = false; state_ = PendingExport; platform_->wake();
-    say("PREPARING encrypted node backup; check backup status"); return;
+    say(transient ? "PREPARING volatile encrypted backup; download before restart" :
+        "PREPARING encrypted node backup; check backup status"); return;
   }
   if (!strcmp(text, "cancel")) {
     if (!active()) { say("Error: no backup preparation active"); return; }
