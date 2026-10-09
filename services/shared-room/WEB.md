@@ -9,6 +9,13 @@ and shared room-password flow.
 Aliases pointing to the same backend show the same ordered messages; another
 backend has its own conversation.
 
+The configured deployment also serves `https://aspen.ve6slp.ca`; its
+`workers.dev` address remains available to the radio frontend. Change or remove
+the custom-domain route in `wrangler.jsonc` when deploying in another Cloudflare
+zone. Browser keys, cookies and unsent work belong to an origin: opening the
+other address creates a separate browser device. Keep the original origin's
+site data to retain its identity and drafts.
+
 For the same flow in a Linux terminal, [build and run the terminal
 client](../../clients/room-tui/README.md). It uses the same account grants and
 shared history, with a separate locally stored desktop keypair.
