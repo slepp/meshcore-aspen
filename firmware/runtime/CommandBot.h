@@ -147,7 +147,10 @@ public:
   unsigned repeaterSnapshots(BotRepeaterSnapshot *snapshots, unsigned capacity) const;
 #if ONCHIP_BOT_HTTPS
   bool ensureNativeHttps() override { return worker_.ensureNativeHttps(); }
-  bool attachNetworkService(NativeNetworkService &service) override { return worker_.attachNetworkService(service); }
+  NativeServiceRegistration attachNetworkService(
+      NativeNetworkService &service, const NativeServiceBudget &budget) override {
+    return worker_.attachNetworkService(service, budget);
+  }
   bool submitTelemetry(const char *body, size_t size) { return worker_.submitTelemetry(body, size); }
   bool pollTelemetry(TelemetryCompletion &result) { return worker_.pollTelemetry(result); }
   void cancelTelemetry() { worker_.cancelTelemetry(); }

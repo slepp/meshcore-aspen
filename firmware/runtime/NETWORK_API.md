@@ -109,7 +109,9 @@ restricted to authenticated private DM invocations, not local/channel input.
 
 There is one HTTPS connection, four Lua network mailboxes and one owner GET
 mailbox shared by JSON and package fetch. The native telemetry mailbox remains
-separate and uses the same connection. Request waits include queue time and
+separate and uses the same connection. Native modules share this worker task
+but reserve their own sockets through the [native service registry](NATIVE_SERVICES.md);
+they do not borrow Lua grants or the bot's identity. Request waits include queue time and
 expire after 15 seconds; unsent expired requests are removed without opening a
 socket. Admission is at most two requests per caller and four globally each
 minute, plus the invocation's existing eight-I/O budget.

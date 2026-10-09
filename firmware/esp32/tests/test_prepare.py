@@ -71,6 +71,7 @@ class BuildIsolation(unittest.TestCase):
                 result = subprocess.run(
                     [os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only",
                      "-x", "c++", "-", "-I", str(ONCHIP), "-I", str(ROOT / "firmware/shared"),
+                     "-I", str(ROOT / "firmware/runtime"),
                      f"-DKISS_MAX_TCP_CLIENTS={kiss}",
                      f"-DONCHIP_COMPANION_MAX_CLIENTS={companion}",
                      f"-DONCHIP_BOT_HTTPS={https}",
@@ -82,6 +83,36 @@ class BuildIsolation(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                 else:
                     self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("static assertion failed", result.stderr)
+
+    def test_native_service_socket_reservations_include_room_and_preserve_sdk_limit(self):
+        for kiss, reserved, room, room_sockets, https, valid in (
+                (3, 0, 0, 1, 1, True),
+                (2, 1, 0, 1, 1, True),
+                (1, 2, 0, 1, 1, True),
+                (2, 1, 1, 1, 1, True),
+                (1, 2, 1, 1, 1, True),
+                (1, 2, 1, 2, 1, True),
+                (3, 0, 1, 1, 1, False),
+                (2, 1, 1, 2, 1, False),
+                (0, 3, 0, 1, 1, False),
+                (3, 1, 0, 1, 1, False),
+                (3, 1, 0, 1, 0, False)):
+            with self.subTest(kiss=kiss, reserved=reserved, room=room,
+                              room_sockets=room_sockets, https=https):
+                result = subprocess.run(
+                    [os.environ.get("CXX", "c++"), "-std=c++17", "-fsyntax-only",
+                     "-x", "c++", "-", "-I", str(ONCHIP),
+                     "-I", str(ROOT / "firmware/shared"), "-I", str(ROOT / "firmware/runtime"),
+                     f"-DKISS_MAX_TCP_CLIENTS={kiss}", "-DONCHIP_COMPANION_MAX_CLIENTS=2",
+                     f"-DONCHIP_BOT_HTTPS={https}", "-DCONFIG_LWIP_MAX_SOCKETS=16",
+                     f"-DMESHCORE_CLOUD_ROOM={room}",
+                     f"-DONCHIP_CLOUD_ROOM_CONNECTIONS={room_sockets}",
+                     f"-DONCHIP_NATIVE_SERVICE_SOCKETS={reserved}"],
+                    input='#include "Capacity.h"\n', capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode == 0, valid, result.stderr)
+                if not valid:
                     self.assertIn("static assertion failed", result.stderr)
 
     def test_phy_requires_explicit_matching_native_defaults(self):

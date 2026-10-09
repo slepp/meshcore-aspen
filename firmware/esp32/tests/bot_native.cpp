@@ -51,6 +51,54 @@ using namespace onchip;
 using Bytes = std::vector<uint8_t>;
 using Radio = bot_native_test::Radio;
 using Fixture = bot_native_test::BotNativeHarness;
+static void network_service_lifecycle() {
+#if ONCHIP_BOT_HTTPS
+  struct Service final : NativeNetworkService {
+    const std::thread::id dispatch;
+    std::vector<unsigned> &order;
+    unsigned id;
+    std::atomic<unsigned> polls{0}, closed{0}, quota{0};
+    bool prepared = true;
+    Service(std::vector<unsigned> &log, unsigned number)
+        : dispatch(std::this_thread::get_id()), order(log), id(number) {}
+    void poll(unsigned work) override {
+      assert(prepared && !closed.load() && std::this_thread::get_id() != dispatch);
+      quota = work;
+      ++polls;
+    }
+    void close() override {
+      assert(std::this_thread::get_id() != dispatch && !closed.load());
+      ++closed;
+      order.push_back(id);
+    }
+  };
+  std::vector<unsigned> order;
+  Service first(order, 1), second(order, 2), rejected(order, 3);
+  BotWorker worker;
+  assert(worker.attachNetworkService(first, {"first", 0, 3}) == NativeServiceRegistration::Unavailable);
+  assert(worker.begin(nullptr, nullptr, nullptr, true));
+  assert(worker.attachNetworkService(first, {"first", 0, 3}) == NativeServiceRegistration::Attached);
+  assert(worker.attachNetworkService(first, {"different", 0, 1}) == NativeServiceRegistration::Duplicate);
+  assert(worker.attachNetworkService(second, {"first", 0, 1}) == NativeServiceRegistration::Duplicate);
+  assert(worker.attachNetworkService(second, {"second", ONCHIP_NATIVE_SERVICE_SOCKETS + 1, 1}) ==
+         NativeServiceRegistration::SocketBudget);
+  assert(worker.attachNetworkService(second, {"second", 0, 5}) == NativeServiceRegistration::Attached);
+  assert(worker.attachNetworkService(rejected, {"third", 0, 1}) == NativeServiceRegistration::Full);
+  rejected.prepared = false;
+  for (unsigned i = 0; i < 1000 && (!first.polls.load() || !second.polls.load()); ++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  assert(first.polls.load() && second.polls.load());
+  assert(first.quota.load() == 3 && second.quota.load() == 5);
+  assert(!first.closed.load() && !second.closed.load());
+  worker.stop(); worker.stop();
+  assert((order == std::vector<unsigned>{2, 1}));
+  assert(first.closed.load() == 1 && second.closed.load() == 1);
+  assert(!rejected.polls.load() && !rejected.closed.load());
+  assert(worker.attachNetworkService(rejected, {"third", 0, 1}) == NativeServiceRegistration::Unavailable);
+  puts("PASS bounded native services: explicit quotas, duplicate/full/socket refusal, caller rollback, "
+       "network-only polling and reverse once-only shutdown without dispatch radio work");
+#endif
+}
 std::atomic<unsigned long> timeMs{1000};
 unsigned long millis() { return timeMs; }
 void delay(unsigned long value) { timeMs += value; }
@@ -4323,6 +4371,10 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--native-services-test")) {
+    network_service_lifecycle();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
     native_contact_recovery();
     return 0;
@@ -4534,6 +4586,10 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--native-services-test")) {
+    network_service_lifecycle();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
     native_contact_recovery();
     return 0;

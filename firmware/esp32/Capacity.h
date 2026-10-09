@@ -14,14 +14,19 @@
 #ifndef ONCHIP_CLOUD_ROOM_CONNECTIONS
 #define ONCHIP_CLOUD_ROOM_CONNECTIONS 1
 #endif
+#include "NativeServices.h"
 
 namespace onchip {
 constexpr unsigned BOT_NET_SOCKETS = ONCHIP_BOT_HTTPS ? 1 : 0;
 constexpr unsigned CLOUD_ROOM_SOCKETS = MESHCORE_CLOUD_ROOM ? ONCHIP_CLOUD_ROOM_CONNECTIONS : 0;
+constexpr unsigned NATIVE_SERVICE_SOCKETS = ONCHIP_NATIVE_SERVICE_SOCKETS;
 static_assert(!MESHCORE_CLOUD_ROOM || (ONCHIP_BOT_HTTPS && CLOUD_ROOM_SOCKETS >= 1 && CLOUD_ROOM_SOCKETS <= 2),
               "Cloud room needs TLS and one or two reserved sockets");
-static_assert(KISS_MAX_TCP_CLIENTS == 4 - BOT_NET_SOCKETS - CLOUD_ROOM_SOCKETS,
-              "Reserve a physical KISS client slot per HTTPS/cloud socket");
+static_assert(NATIVE_SERVICE_SOCKETS <= 2 && NATIVE_SERVICE_SOCKETS >= CLOUD_ROOM_SOCKETS &&
+                  (!NATIVE_SERVICE_SOCKETS || ONCHIP_BOT_HTTPS),
+              "Native services need HTTPS and zero to two reserved sockets, including cloud room");
+static_assert(KISS_MAX_TCP_CLIENTS == 4 - BOT_NET_SOCKETS - NATIVE_SERVICE_SOCKETS,
+              "Reserve a physical KISS client slot per HTTPS/native service socket");
 static_assert(ONCHIP_COMPANION_MAX_CLIENTS == 2,
               "The stock-SDK combined profile has two companion clients");
 static_assert(RadioDashboard::LIVE_CLIENTS == 2 &&
@@ -29,7 +34,7 @@ static_assert(RadioDashboard::LIVE_CLIENTS == 2 &&
               "Combined HTTP capacity is two live and one ordinary client");
 constexpr unsigned NETWORK_SOCKET_BUDGET =
     KISS_MAX_TCP_CLIENTS + 1 + RadioDashboard::HTTP_INTERNAL_SOCKETS +
-    RadioDashboard::HTTP_CLIENTS + ONCHIP_COMPANION_MAX_CLIENTS + 1 + 1 + 1 + BOT_NET_SOCKETS + CLOUD_ROOM_SOCKETS;
+    RadioDashboard::HTTP_CLIENTS + ONCHIP_COMPANION_MAX_CLIENTS + 1 + 1 + 1 + BOT_NET_SOCKETS + NATIVE_SERVICE_SOCKETS;
 static_assert(NETWORK_SOCKET_BUDGET == 16, "Combined socket budget changed");
 static_assert(NETWORK_SOCKET_BUDGET <= CONFIG_LWIP_MAX_SOCKETS,
               "Combined profile exceeds the SDK socket table");

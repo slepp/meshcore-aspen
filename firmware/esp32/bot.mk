@@ -45,6 +45,9 @@ bot-radio-policy-test: bot-prepare-phy
 .PHONY: bot-channel-policy-test
 bot-channel-policy-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --channel-policy-test
+.PHONY: bot-native-services-test
+bot-native-services-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --native-services-test
 .PHONY: bot-thread-policy-test
 bot-thread-policy-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --thread-policy-test

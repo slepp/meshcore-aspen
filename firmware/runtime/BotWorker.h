@@ -97,9 +97,8 @@ public:
   void cancelJobs(uint32_t except = 0);
 #if ONCHIP_BOT_HTTPS
   bool ensureNativeHttps();
-  // Dispatch-thread registration, once before stop. Service outlives the worker;
-  // poll/close run only on its HTTPS task, after pending HTTP work.
-  bool attachNetworkService(BotNetworkService &service);
+  NativeServiceRegistration attachNetworkService(
+      NativeNetworkService &service, const NativeServiceBudget &budget);
   bool submitTelemetry(const char *body, size_t size);
   bool pollTelemetry(TelemetryCompletion &result);
   void cancelTelemetry();

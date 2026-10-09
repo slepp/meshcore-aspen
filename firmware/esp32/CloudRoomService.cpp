@@ -90,16 +90,16 @@ struct Service final : NativeNetworkService {
     c.retryAt = millis() + c.backoffMs;
     c.backoffMs = c.backoffMs < 16000 ? c.backoffMs * 2 : 30000;
   }
-  void poll() override {
+  void poll(unsigned work) override {
       if (!active.load(std::memory_order_acquire)) return;
       cloudroom::Reception packet;
       // Bounded work per iteration lets every alias drain its incoming socket.
-      for (unsigned n = 0; n < cloudroom::QueueDepth && bridge.rx.pop(packet); ++n)
+      for (unsigned n = 0; n < cloudroom::QueueDepth && work && bridge.rx.pop(packet); ++n, --work)
         driver->received(packet);
       cloudroom::Receipt result;
-      for (unsigned n = 0; n < cloudroom::QueueDepth && bridge.results.pop(result); ++n)
+      for (unsigned n = 0; n < cloudroom::QueueDepth && work && bridge.results.pop(result); ++n, --work)
         if (result.generation == bridge.generation(result.alias)) driver->receipt(result);
-      for (unsigned alias = 0; alias < aliases; ++alias) {
+      for (unsigned alias = 0; alias < aliases && work; ++alias, --work) {
         auto &c = connections[alias];
         if (!c.connected) {
           if (int32_t(millis() - c.retryAt) < 0) continue;
@@ -160,7 +160,10 @@ struct Service final : NativeNetworkService {
     admission = xSemaphoreCreateMutexStatic(&admissionControl);
     if (!admission) { discard(); return false; }
     active.store(true,std::memory_order_release);
-    if (!worker.attachNetworkService(*this)) {
+    const auto registration = worker.attachNetworkService(
+        *this, {"cloud-room", CLOUD_ROOM_SOCKETS, 2 * cloudroom::QueueDepth + aliases});
+    if (registration != NativeServiceRegistration::Attached) {
+      Serial.printf("Cloud room registration failed: %s\n", nativeServiceRegistrationText(registration));
       active.store(false,std::memory_order_release);
       discard(); return false;
     }
