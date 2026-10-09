@@ -98,7 +98,14 @@ def main():
         build_client = source / "clients/room-tui"
         modules = list(json_stream(run(["go", "list", "-mod=readonly", "-m", "-json", "all"],
                                       cwd=build_client, env=environment)))
-        downloaded = list(json_stream(run(["go", "mod", "download", "-json"],
+        used = set()
+        for architecture in ("amd64", "arm64"):
+            packages = json_stream(run(["go", "list", "-mod=readonly", "-deps", "-json", "."],
+                                       cwd=build_client, env=environment | {"GOARCH": architecture}))
+            used.update(package["Module"]["Path"] for package in packages if "Module" in package)
+        modules = [module for module in modules if not module.get("Main") and module["Path"] in used]
+        downloaded = list(json_stream(run(["go", "mod", "download", "-json",
+                                          *(module["Path"] for module in modules)],
                                          cwd=build_client, env=environment)))
         run(["go", "mod", "verify"], cwd=build_client, env=environment)
         directories = {module["Path"]: Path(module["Dir"]) for module in downloaded if "Dir" in module}
@@ -106,8 +113,6 @@ def main():
         notices.mkdir()
         inventory = []
         for module in modules:
-            if module.get("Main"):
-                continue
             directory = directories.get(module["Path"])
             if not directory:
                 raise ValueError(f"Dependency directory missing: {module['Path']}")
