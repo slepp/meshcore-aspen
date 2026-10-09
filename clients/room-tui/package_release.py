@@ -71,6 +71,9 @@ def main():
     if not re.fullmatch(
             r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
         raise ValueError("VERSION must be a stable Semantic Version")
+    sdk = re.search(r"^go ([0-9]+\.[0-9]+\.[0-9]+)$", (CLIENT / "go.mod").read_text(), re.MULTILINE)
+    if not sdk:
+        raise ValueError("go.mod must pin a full Go SDK version")
     if run(["git", "status", "--porcelain", "--untracked-files=all"]):
         raise ValueError("Package from a clean source tree")
     revision = run(["git", "rev-parse", "HEAD"])
@@ -83,7 +86,8 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     environment = {key: os.environ[key] for key in ("PATH", "HOME", "GOCACHE", "GOMODCACHE", "GOPROXY")
                    if key in os.environ}
-    environment.update({"CGO_ENABLED": "0", "GOTOOLCHAIN": "local", "GOOS": "linux", "GOFLAGS": ""})
+    environment.update({"CGO_ENABLED": "0", "GOTOOLCHAIN": "go" + sdk[1],
+                        "GOOS": "linux", "GOFLAGS": ""})
     with tempfile.TemporaryDirectory(prefix="room-tui-release-", dir=ROOT / ".tmp") as temporary:
         scratch = Path(temporary)
         raw_source = subprocess.check_output(["git", "archive", "--format=tar", revision], cwd=ROOT)
