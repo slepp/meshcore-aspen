@@ -33,16 +33,16 @@ const identities = call('knownIdentities', {roles: [
   {name: 'Single', public_key: 'bb5566' + '00'.repeat(29)},
   {name: 'Invalid', public_key: '<script>'},
 ]});
-assert.match(call('prefixLabel', 'aa', identities), /ambiguous: 2/);
-assert.equal(call('prefixLabel', 'aa1122', identities), 'aa1122 (matches <img src=x onerror=alert(1)>)');
-assert.equal(call('prefixLabel', 'bb', identities), 'bb (matches Single)');
+assert.equal(call('prefixLabel', 'aa', identities), 'aa [2 matches]');
+assert.equal(call('prefixLabel', 'aa1122', identities), 'aa1122 (<img src=x onerror=alert(1)>)');
+assert.equal(call('prefixLabel', 'bb', identities), 'bb (Single)');
 assert.equal(call('prefixLabel', 'cc', identities), 'cc');
 assert.equal(call('prefixLabel', '', identities), '');
 const duplicate = call('knownIdentities', {roles: [
   {name: 'Same', public_key: 'bb'.repeat(32)},
   {name: 'Same', public_key: 'bb'.repeat(32)},
 ]});
-assert.equal(call('prefixLabel', 'bb', duplicate), 'bb (matches Same)', 'deduplicate the same public identity');
+assert.equal(call('prefixLabel', 'bb', duplicate), 'bb (Same)', 'deduplicate the same public identity');
 const aliases = call('knownIdentities', {roles: [
   {name: 'One', public_key: 'bb'.repeat(32)},
   {name: 'Other', public_key: 'bb'.repeat(32)},
@@ -52,18 +52,19 @@ const decode = (hex, length = hex.length / 2, names = identities) =>
   call('decodePacket', {preview_hex: hex, length}, names);
 // Native v0: header, optional two little-endian transport codes, packed path,
 // then the payload (ObserverWire.cpp / meshcore-go v1.5.0 PacketFromBytes).
-assert.match(decode('0900bbaa0000'), /Private text \/ Flood \/ v0.*src aa \(ambiguous: 2.*dst bb \(matches Single\).*encrypted/);
+assert.equal(decode('0900bbaa0000'),
+  'Private text / Flood / v0 / encrypted\nPath 0 × 1 B\nsrc aa [2 matches] → dst bb (Single)');
 for (const [packed, path, width] of [[1, 'bb', 1], [65, 'bb55', 2], [129, 'bb5566', 3]]) {
   const wire = '0a' + packed.toString(16).padStart(2, '0') + path + 'bbaa0000';
-  assert.match(decode(wire), new RegExp('Direct.*remaining route 1 hop × ' + width + ' B'));
-  assert.match(decode(wire), /matches Single/);
+  assert.match(decode(wire), new RegExp('Direct[^\\n]*\\nRoute 1 × ' + width + ' B'));
+  assert.match(decode(wire), /\(Single\)/);
 }
 for (const route of [0, 3]) {
-  assert.match(decode((8 | route).toString(16).padStart(2, '0') + '3412cdab00bbaa0000'), /transport codes 0x1234, 0xabcd/);
+  assert.match(decode((8 | route).toString(16).padStart(2, '0') + '3412cdab00bbaa0000'), /transport 0x1234, 0xabcd/);
 }
 for (const version of [1, 2, 3]) {
   assert.match(decode((9 | version << 6).toString(16) + '00bbaa0000'), /Unsupported payload version/);
-  assert.doesNotMatch(decode((9 | version << 6).toString(16) + '00bbaa0000'), /src|matches/);
+  assert.doesNotMatch(decode((9 | version << 6).toString(16) + '00bbaa0000'), /src|Single/);
 }
 assert.match(decode('310001'), /Unknown type 12/);
 assert.match(decode('3e0001'), /Custom \/ Direct/);
@@ -74,21 +75,25 @@ for (const length of [-1, 256, 1.5, null, 0]) assert.match(decode('0900', length
 for (const hex of ['09', '0800', '08', '0900', '0a01', '0ac000', '0a6100', '0a9600'])
   assert.match(decode(hex), /Malformed/, hex);
 assert.match(decode('090000', 187), /invalid path\/payload length/);
-assert.match(decode('09000000', 186), /partial preview/);
+assert.equal(decode('09000000', 186),
+  'Private text / Flood / v0 / encrypted\nPath 0 × 1 B\nsrc 00 → dst 00',
+  'truncated ciphertext does not add a redundant preview warning');
 assert.match(decode('090000'), /short private envelope/);
-assert.match(decode('0a0f' + 'bb'.repeat(14), 21), /Preview ends before end of path/);
-assert.doesNotMatch(decode('0a4101', 10), /matches/, 'incomplete two-byte path hash must not resolve');
-assert.match(decode('0900bb', 20), /Preview ends before source\/destination/);
-assert.match(decode('1100' + 'bb5566'.repeat(4) + 'bb55', 102), /Advert.*advert key prefix.*partial preview/);
+assert.match(decode('0a0f' + 'bb'.repeat(14), 21), /Preview missing path bytes/);
+assert.doesNotMatch(decode('0a4101', 10), /Single/, 'incomplete two-byte path hash must not resolve');
+assert.match(decode('0900bb', 20), /Preview missing source\/destination/);
+assert.equal(decode('1100' + 'bb5566'.repeat(4) + 'bb55', 102),
+  'Advert / Flood / v0\nPath 0 × 1 B\nkey ' + 'bb5566'.repeat(4) + 'bb55');
 assert.match(decode('110001'), /short advert/);
-assert.match(decode('1d00bb', 37), /dst bb.*anonymous source \/ encrypted/);
-assert.match(decode('1500bb0000'), /channel hash bb \/ encrypted/);
-assert.doesNotMatch(decode('1500bb0000'), /matches/, 'channel hashes are not contact prefixes');
-assert.match(decode('0d0012345678'), /ACK reference 12345678/);
+assert.equal(decode('1d00bb', 37),
+  'Anonymous request / Flood / v0 / encrypted\nPath 0 × 1 B\nsrc anonymous → dst bb (Single)');
+assert.equal(decode('1500bb0000'), 'Group text / Flood / v0 / encrypted\nPath 0 × 1 B\nchannel bb');
+assert.doesNotMatch(decode('1500bb0000'), /Single/, 'channel hashes are not contact prefixes');
+assert.match(decode('0d0012345678'), /ref 12345678/);
 assert.match(decode('0d0012'), /ACK needs 4 bytes/);
-assert.match(decode('2601bb' + '00'.repeat(9)), /trace signal bytes 1/);
-assert.doesNotMatch(decode('2601bb' + '00'.repeat(9)), /matches|remaining route/);
-assert.match(decode('0900BBaa0000'), /dst bb \(matches Single\)/);
+assert.match(decode('2601bb' + '00'.repeat(9)), /Signal 1 B: bb/);
+assert.doesNotMatch(decode('2601bb' + '00'.repeat(9)), /Single|Route/);
+assert.match(decode('0900BBaa0000'), /dst bb \(Single\)/);
 for (let header = 0; header < 256; header++) {
   for (let packed = 0; packed < 256; packed++) {
     assert.equal(typeof decode(header.toString(16).padStart(2, '0') +
@@ -113,7 +118,7 @@ const row = element('events').children[0], age = row.children[0];
 assert.equal(age.textContent, '59s');
 assert.equal(row.children[1].textContent, 'Received over RF');
 assert.equal(row.children[5].textContent, '-70 dBm / 4.25 dB');
-assert.match(row.children[6].textContent, /matches <img src=x onerror=alert\(1\)>/);
+assert.match(row.children[6].textContent, /<img src=x onerror=alert\(1\)>/);
 const replacements = element('events').replacements;
 snapshot.uptime_ms = 60000;
 call('renderEvents', snapshot);
@@ -163,25 +168,40 @@ const meshContacts = {
   ],
 };
 const radios = call('knownIdentities', {contacts: meshContacts});
-assert.equal(call('prefixLabel', 'd1', radios), 'd1 (ambiguous: 2 known identities)');
-assert.equal(call('prefixLabel', 'd111', radios), 'd111 (matches D1 [Repeater])');
-assert.equal(call('prefixLabel', 'd13344', radios), 'd13344 (matches D4 <script> [Repeater])');
-assert.match(decode('0a82d11122d13344bbd10000', undefined, radios), /D1 \[Repeater\].*D4 <script> \[Repeater\].*Wye \[Chat\]/);
+assert.equal(call('prefixLabel', 'd1', radios), 'd1 [2 matches]');
+assert.equal(call('prefixLabel', 'd111', radios), 'd111 (D1)');
+assert.equal(call('prefixLabel', 'd13344', radios), 'd13344 (D4 <script>)');
+assert.equal(decode('0a82d11122d13344bbd10000', undefined, radios),
+  'Private text / Direct / v0 / encrypted\nRoute 2 × 3 B: d11122 (D1) → d13344 (D4 <script>)\nsrc d1 [2 matches] → dst bb (Wye)');
 const withRole = call('knownIdentities', {contacts: meshContacts,
   roles: [{public_key: meshContacts.items[0].public_key, name: 'Old role name'}]});
-assert.equal(call('prefixLabel', 'd11122', withRole), 'd11122 (matches D1 [Repeater])');
+assert.equal(call('prefixLabel', 'd11122', withRole), 'd11122 (D1)');
 for (const contactData of [
   {...meshContacts, total: 35, truncated: true},
   {...meshContacts, total: 4},
   {...meshContacts, items: [meshContacts.items[0], null, meshContacts.items[2]]},
 ]) {
   const partial = call('knownIdentities', {contacts: contactData});
-  assert.doesNotMatch(call('prefixLabel', 'd111', partial), /matches/);
-  assert.match(call('prefixLabel', 'd111', partial), /candidate D1 \[Repeater\]; prefix match; contact list incomplete/);
+  assert.equal(call('prefixLabel', 'd111', partial), 'd111 (D1?)');
+  assert.equal(call('prefixLabel', meshContacts.items[0].public_key, partial),
+    meshContacts.items[0].public_key + ' (D1)', 'full key does not need a candidate marker');
 }
 const tooMany = call('knownIdentities', {contacts: {...meshContacts, total: 100, truncated: true}});
-assert.match(call('prefixLabel', 'd1', tooMany), /ambiguous: 2 known identities; contact list incomplete/);
-assert.match(call('prefixLabel', 'cc', tooMany), /^cc \(contact list incomplete\)$/);
+assert.equal(call('prefixLabel', 'd1', tooMany), 'd1 [2 matches]');
+assert.equal(call('prefixLabel', 'cc', tooMany), 'cc');
+const screenshotContacts = call('knownIdentities', {contacts: {
+  total: 40, truncated: true, items: [{public_key: 'b726' + '00'.repeat(30), name: 'SLP AR1', type: 2}],
+}});
+const compact = decode('014456000700d726b726559aed2005', 30, screenshotContacts);
+assert.equal(compact,
+  'Request / Flood / v0 / encrypted\nPath 4 × 2 B: 5600 → 0700 → d726 → b726 (SLP AR1?)\nsrc 9a → dst 55');
+assert.equal(compact.split('\n').length, 3);
+assert.ok(compact.length < 130, 'four-hop screenshot packet stays compact');
+assert.doesNotMatch(compact, /incomplete|candidate|prefix match|preview|Repeater/);
+const page = fs.readFileSync(process.argv[2], 'utf8');
+assert.match(page, /\.packet-detail \{ white-space: pre-line;/);
+assert.match(page, /#events td \{ vertical-align: top; padding-top: 8px; padding-bottom: 8px;/);
+assert.equal((page.match(/Names match public-key prefixes/g) || []).length, 1);
 snapshot.contacts = meshContacts;
 snapshot.history.events = [{...snapshot.history.events[0], preview_hex: '0a82d11122d13344bbd10000', length: 12}];
 call('renderEvents', snapshot);
@@ -196,9 +216,8 @@ call('renderEvents', snapshot);
 assert.match(element('events').children[0].children[6].textContent, /Renamed D1/);
 snapshot.contacts = {...meshContacts, total: 35, truncated: true};
 call('renderEvents', snapshot);
-assert.doesNotMatch(element('events').children[0].children[6].textContent, /matches/);
-assert.match(element('events').children[0].children[6].textContent, /candidate Renamed D1/);
-assert.match(element('contact-detail').textContent, /uncertain.*may collide/);
+assert.match(element('events').children[0].children[6].textContent, /Renamed D1\?/);
+assert.equal(element('contact-detail').textContent, 'Companion contacts: 3 of 35 (incomplete).');
 delete snapshot.contacts;
 call('renderEvents', snapshot);
 assert.match(element('contact-detail').textContent, /unavailable/);

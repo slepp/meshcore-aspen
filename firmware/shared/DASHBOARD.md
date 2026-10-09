@@ -16,9 +16,11 @@ SSID, WiFi credentials, private identities, stored keys and client IP addresses
 are not exported. Packet history contains only length, timing, outcome,
 signal metadata and the first 16 raw RF bytes as hex.
 
-Recent activity decodes that preview in the browser: packet type, routing mode,
-payload version, transport codes and visible path prefixes. Flood paths show
-the traversed hops; direct paths show the remaining route. Direct trace packets
+Recent activity decodes that preview into compact lines: packet type, routing
+mode, payload version and encryption; path prefixes; and visible envelope
+fields. Transport codes appear in the header when present. `Path` shows
+traversed flood hops; `Route` shows remaining direct hops, each with the hop
+count and prefix width. Direct trace packets
 carry signal bytes in the path field instead of contact prefixes.
 Private request, response, text and returned-path envelopes show visible
 source/destination prefixes; group envelopes show a channel hash. Encrypted
@@ -32,9 +34,11 @@ names take precedence over on-device role names for the same key. Multiple
 matching keys stay ambiguous; a match within this list does not authenticate
 the packet or exclude collisions with other mesh nodes. When contacts are
 omitted because the list exceeds 32, a single visible name is explicitly
-labeled `candidate …; prefix match; contact list incomplete`. Omitted contacts
-may share that prefix: this is a candidate label, not a unique identification.
-The page shows the exported count and total.
+marked with `?` after the name. Unknown prefixes remain hex; collisions show
+`[N matches]`. Contact types and repeated lookup caveats are omitted from the
+packet rows. The expandable **Decode key** contains the notation and exported
+contact count. Packet hex uses `...` for a truncated preview; the decode names
+any field whose bytes are missing instead of repeating a generic preview warning.
 
 Contacts are omitted when the companion is unavailable or restarting. Older
 firmware falls back to on-device role names; standalone shared modems show hex

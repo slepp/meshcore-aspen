@@ -17,8 +17,18 @@ import threading
 build = pathlib.Path(sys.argv[1]).resolve()
 source = pathlib.Path(sys.argv[2]).read_text()
 page = source.split('R"HTML(', 1)[1].rsplit(')HTML"', 1)[0].encode()
-status = (build / "dashboard.json").read_bytes()
-expected = json.loads(status)
+expected = json.loads((build / "dashboard.json").read_bytes())
+expected["contacts"] = {
+    "capacity": 32, "total": 40, "truncated": True,
+    "items": [{"public_key": "b726" + "00" * 30, "name": "SLP AR1", "type": 2}],
+}
+expected["history"]["events"].insert(0, {
+    **expected["history"]["events"][0],
+    "sequence": 1000, "direction": "rx", "length": 30,
+    "preview_hex": "014456000700d726b726559aed2005",
+    "preview_truncated": True, "rssi_dbm": -57, "snr_db": 12.25,
+})
+status = json.dumps(expected).encode()
 chrome = shutil.which("google-chrome") or shutil.which("chromium")
 if not chrome:
     raise SystemExit("Chrome/Chromium is required for the optional dashboard-browser target")
@@ -107,6 +117,14 @@ try:
                 assert 'id="connection" class="pill good">Live</span>' in dom
             assert "912.525 MHz" in dom and "250 kHz / SF7 / CR 4/5 / 2 dBm" in dom
             assert "Unconfirmed / RF timeout" in dom and '>Sent over RF</td>' in dom
+            decode = re.search(r'<td class="packet-detail">(.*?)</td>', dom, re.S)
+            assert decode and html.unescape(decode[1]) == (
+                "Request / Flood / v0 / encrypted\n"
+                "Path 4 × 2 B: 5600 → 0700 → d726 → b726 (SLP AR1?)\n"
+                "src 9a → dst 55"
+            )
+            assert "Companion contacts: 1 of 40 (incomplete)." in dom
+            assert "contact list incomplete" not in decode[1]
             assert dom.count("<script>") == 1
             assert len(re.findall(r'<tbody id="events">.*?</tbody>', dom, re.S)) == 1
             assert server.stream_calls >= 1

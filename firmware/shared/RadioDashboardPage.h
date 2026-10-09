@@ -62,7 +62,8 @@ th, td { padding: 11px 10px; border-bottom: 1px solid var(--border); }
 th:first-child, td:first-child { padding-left: 0; }
 tr:last-child td { border-bottom: 0; }
 code { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
-.packet-detail { white-space: normal; min-width: 22em; max-width: 42em; }
+#events td { vertical-align: top; padding-top: 8px; padding-bottom: 8px; }
+.packet-detail { white-space: pre-line; min-width: 22em; max-width: 42em; line-height: 1.35; }
 .role-key { white-space: normal; overflow-wrap: anywhere; max-width: 38em; display: block; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
 .wide { margin-bottom: 16px; }
@@ -158,8 +159,10 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <table><thead><tr><th>Age</th><th>Result</th><th>Size / source</th><th>Queue wait</th><th>Airtime</th><th>RSSI / SNR</th><th>Packet / route</th><th>Packet bytes (hex)</th></tr></thead><tbody id="events"></tbody></table>
     </div>
     <p id="events-empty" class="empty">No matching events yet.</p>
-    <p id="contact-detail" class="muted chart-note">Contact names unavailable; prefix matches use on-device identities only.</p>
-    <p class="muted chart-note">RX is received over RF. Local reflections are not recorded here. Prefix matches do not authenticate a sender or exclude collisions elsewhere on the mesh. Only the first 16 packet bytes are available. Encrypted content stays encrypted.</p>
+    <details class="chart-note"><summary>Decode key</summary>
+      <p id="contact-detail" class="muted">Companion contacts unavailable.</p>
+      <p class="muted">Names match public-key prefixes, not authenticated senders. ? marks a candidate from an incomplete contact list; [N matches] marks a collision. Path = traversed hops; Route = remaining hops. Hex shows up to 16 bytes; ... marks a truncated preview.</p>
+    </details>
   </section>
   <footer><span id="updated">Connecting...</span><span id="firmware-version"></span></footer>
 </main>
@@ -191,7 +194,6 @@ const packetTypes = ['Request', 'Response', 'Private text', 'ACK', 'Advert',
   'Group text', 'Group data', 'Anonymous request', 'Returned path', 'Trace',
   'Multipart', 'Control'];
 const packetRoutes = ['Transport flood', 'Flood', 'Direct', 'Transport direct'];
-const contactTypes = {1: 'Chat', 2: 'Repeater', 3: 'Room', 4: 'Sensor'};
 function knownIdentities(data) {
   const identities = new Map();
   const contacts = data.contacts;
@@ -205,7 +207,7 @@ function knownIdentities(data) {
     const key = contact.public_key.toLowerCase();
     if (!identities.has(key)) identities.set(key, new Set());
     if (typeof contact.name === 'string' && contact.name)
-      identities.get(key).add(contact.name + (contactTypes[contact.type] ? ' [' + contactTypes[contact.type] + ']' : ''));
+      identities.get(key).add(contact.name);
   }
   for (const role of data.roles || []) {
     if (typeof role.public_key !== 'string' || !/^[0-9a-f]{64}$/i.test(role.public_key)) continue;
@@ -221,14 +223,10 @@ function prefixLabel(prefix, identities) {
   if (!/^(?:[0-9a-f]{2})+$/i.test(prefix)) return prefix;
   prefix = prefix.toLowerCase();
   const matches = [...identities].filter(([key]) => key.startsWith(prefix));
-  if (matches.length > 1) return prefix + ' (ambiguous: ' + matches.length + ' known identities' +
-    (identities.incomplete ? '; contact list incomplete' : '') + ')';
-  if (identities.incomplete && prefix.length < 64) {
-    const candidate = matches.length === 1 && matches[0][1].size === 1 ? [...matches[0][1]][0] : '';
-    return prefix + ' (' + (candidate ? 'candidate ' + candidate + '; prefix match; ' : '') + 'contact list incomplete)';
-  }
+  if (matches.length > 1) return prefix + ' [' + matches.length + ' matches]';
   if (matches.length === 1 && matches[0][1].size === 1)
-    return prefix + ' (matches ' + [...matches[0][1]][0] + ')';
+    return prefix + ' (' + [...matches[0][1]][0] +
+      (identities.incomplete && prefix.length < 64 ? '?' : '') + ')';
   return prefix;
 }
 function decodePacket(event, identities) {
@@ -241,58 +239,60 @@ function decodePacket(event, identities) {
   const raw = (hex.match(/../g) || []).map(byte => parseInt(byte, 16));
   const asHex = (start, count) => hex.slice(start * 2, (start + count) * 2).toLowerCase();
   const route = raw[0] & 3, type = raw[0] >> 2 & 15, version = raw[0] >> 6;
-  const parts = [packetTypes[type] || (type === 15 ? 'Custom' : 'Unknown type ' + type), packetRoutes[route], 'v' + version];
-  const finish = message => [...parts, message].filter(Boolean).join(' / ');
+  const parts = [[packetTypes[type] || (type === 15 ? 'Custom' : 'Unknown type ' + type), packetRoutes[route], 'v' + version].join(' / ')];
+  const finish = message => [...parts, message].filter(Boolean).join('\n');
   if (version !== 0) return finish('Unsupported payload version');
   const available = end => end <= raw.length;
-  const missing = field => finish((raw.length < length ? 'Preview ends before ' : 'Malformed packet: missing ') + field);
+  const missing = field => finish((raw.length < length ? 'Preview missing ' : 'Malformed packet: missing ') + field);
   let offset = route === 0 || route === 3 ? 5 : 1;
   if (length < offset + 1) return finish('Malformed packet: missing route header');
   if (!available(offset + 1)) return missing('route header');
   if (offset === 5) {
     const code = at => (raw[at] | raw[at + 1] << 8).toString(16).padStart(4, '0');
-    parts.push('transport codes 0x' + code(1) + ', 0x' + code(3));
+    parts[0] += ' / transport 0x' + code(1) + ', 0x' + code(3);
   }
   const packed = raw[offset++], width = (packed >> 6) + 1, count = packed & 63;
   const pathBytes = width * count, payloadAt = offset + pathBytes;
   if (width === 4 || pathBytes > 64) return finish('Malformed packet: invalid path width/count');
   if (payloadAt >= length || length - payloadAt > 184) return finish('Malformed packet: invalid path/payload length');
   const trace = type === 9 && (route === 2 || route === 3);
-  parts.push(trace ? 'trace signal bytes ' + pathBytes :
-    (route === 0 || route === 1 ? 'traversed path' : 'remaining route') +
-    ' ' + count + ' hop' + (count === 1 ? '' : 's') + ' × ' + width + ' B');
   const hops = [];
   for (let i = 0; i < count && available(offset + (i + 1) * width); i++)
     hops.push(trace ? asHex(offset + i * width, width) : prefixLabel(asHex(offset + i * width, width), identities));
-  if (hops.length) parts.push(hops.join(' → '));
-  if (!available(payloadAt)) return missing('end of path');
+  parts.push((trace ? 'Signal ' + pathBytes + ' B' :
+    (route === 0 || route === 1 ? 'Path ' : 'Route ') + count + ' × ' + width + ' B') +
+    (hops.length ? ': ' + hops.join(' → ') : ''));
+  if (!available(payloadAt)) return missing('path bytes');
   const payloadLength = length - payloadAt;
   const prefix = at => prefixLabel(asHex(at, 1), identities);
   if ([0, 1, 2, 8].includes(type)) {
     if (payloadLength < 4) return finish('Malformed packet: short private envelope');
     if (!available(payloadAt + 2)) return missing('source/destination prefixes');
-    parts.push('src ' + prefix(payloadAt + 1) + ' → dst ' + prefix(payloadAt), 'encrypted');
+    parts[0] += ' / encrypted';
+    parts.push('src ' + prefix(payloadAt + 1) + ' → dst ' + prefix(payloadAt));
   } else if (type === 7) {
     if (payloadLength < 35) return finish('Malformed packet: short anonymous envelope');
     if (!available(payloadAt + 1)) return missing('destination prefix');
-    parts.push('dst ' + prefix(payloadAt), 'anonymous source / encrypted');
+    parts[0] += ' / encrypted';
+    parts.push('src anonymous → dst ' + prefix(payloadAt));
   } else if (type === 4) {
     if (payloadLength < 100) return finish('Malformed packet: short advert');
     if (!available(payloadAt + 1)) return missing('advert source prefix');
     const visible = Math.min(32, raw.length - payloadAt);
-    parts.push('advert key prefix ' + prefixLabel(asHex(payloadAt, visible), identities));
+    parts.push('key ' + prefixLabel(asHex(payloadAt, visible), identities));
   } else if (type === 5 || type === 6) {
     if (payloadLength < 3) return finish('Malformed packet: short group envelope');
     if (!available(payloadAt + 1)) return missing('channel hash');
-    parts.push('channel hash ' + asHex(payloadAt, 1), 'encrypted');
+    parts[0] += ' / encrypted';
+    parts.push('channel ' + asHex(payloadAt, 1));
   } else if (type === 3) {
     if (payloadLength !== 4) return finish('Malformed packet: ACK needs 4 bytes');
     if (!available(payloadAt + 4)) return missing('ACK reference');
-    parts.push('ACK reference ' + asHex(payloadAt, 4));
+    parts.push('ref ' + asHex(payloadAt, 4));
   } else if (type === 9 && payloadLength < 9) {
     return finish('Malformed packet: short trace');
   }
-  return finish(raw.length < length ? 'partial preview' : '');
+  return finish();
 }
 function cell(row, value, className = '') {
   const td = document.createElement('td');
@@ -376,8 +376,8 @@ function renderEvents(data) {
   const identities = knownIdentities(data);
   const contacts = data.contacts;
   text('contact-detail', contacts ? 'Companion contacts: ' + (Array.isArray(contacts.items) ? contacts.items.length : 0) + ' of ' + contacts.total +
-    (identities.incomplete ? '. Candidate prefix names are uncertain; omitted contacts may collide.' : '. Prefix names use companion contacts and on-device identities.') :
-    'Contact names unavailable; prefix matches use on-device identities only.');
+    (identities.incomplete ? ' (incomplete).' : '.') :
+    'Companion contacts unavailable; using on-device names.');
   const rows = [];
   eventAges = [];
   for (const e of data.history.events) {
