@@ -224,3 +224,39 @@ it("backfills only active dispatch evidence when upgrading an existing room", as
   await rf("one", history(first).ack);
   expect((await deliveryStatus(web.cookie)).acknowledged).toBe(1);
 });
+
+it("counts dormant sessions and waiting history rather than frontend queue positions or online readers", async () => {
+  const radio = await connect("one");
+  await rf("one", fixture.readerLogin);
+  // This alias has a persistent reader session but no connected frontend.
+  await rf("one", fixture.sharedReaderLogin, "SharedB");
+  await rf("one", fixture.authorLogin);
+  await rf("one", fixture.post);
+  const first = await radio.next("first history for connected alias");
+  const web = await joinWeb();
+  expect(await deliveryStatus(web.cookie)).toMatchObject({
+    recipients: 2, queued: 2, paused: 1, acknowledged: 0, attempts: 1,
+  });
+  await rf("one", fixture.secondPost);
+  expect(await deliveryStatus(web.cookie, 2)).toMatchObject({
+    recipients: 2, queued: 2, paused: 1, acknowledged: 0, attempts: 0,
+  });
+  await rf("one", history(first).ack);
+  const second = await radio.next("second history after first ACK");
+  expect(await deliveryStatus(web.cookie)).toMatchObject({
+    recipients: 2, queued: 1, paused: 1, acknowledged: 1,
+  });
+  expect(await deliveryStatus(web.cookie, 2)).toMatchObject({
+    recipients: 2, queued: 2, paused: 1, acknowledged: 0, attempts: 1,
+  });
+  await rf("one", history(second).ack);
+  expect(await deliveryStatus(web.cookie, 2)).toMatchObject({
+    recipients: 2, queued: 1, paused: 1, acknowledged: 1,
+  });
+  const resumed = await connect("one", "SharedB");
+  expect(await deliveryStatus(web.cookie, 2)).toMatchObject({queued: 1, paused: 0, acknowledged: 1});
+  const replay = history(await resumed.next("dormant session resumes retained history"), fixture.otherRoom);
+  expect(replay.text).toBe("hello");
+  await rf("one", replay.ack, "SharedB");
+  expect(await deliveryStatus(web.cookie)).toMatchObject({queued: 0, paused: 0, acknowledged: 2});
+});

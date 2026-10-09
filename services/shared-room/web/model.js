@@ -25,22 +25,29 @@ export function authorName(message, profiles) {
   return message.webName || profiles.get(message.author)?.name || `${message.author.slice(0, 8)}…`;
 }
 export function radioDeliveryLabel(rf) {
-  if (rf === undefined) return "Saved · RF status unavailable";
+  if (rf === undefined) return "Radio delivery status unavailable";
   const counts = ["recipients", "queued", "sent", "acknowledged", "uncertain", "failed", "paused", "retrying", "exhausted", "attempts"];
   if (!rf || counts.some(key => !Number.isSafeInteger(rf[key]) || rf[key] < 0) ||
       rf.queued + rf.sent + rf.acknowledged + rf.uncertain + rf.failed !== rf.recipients ||
       rf.paused > rf.recipients || rf.retrying > rf.recipients || rf.exhausted > rf.recipients ||
       rf.nextRetryAt !== null && (!Number.isSafeInteger(rf.nextRetryAt) || rf.nextRetryAt < 0))
     throw new Error("The room returned invalid RF delivery status");
-  if (!rf.recipients) return "Saved · no current RF delivery";
-  const parts = [`Saved · RF ACK ${rf.acknowledged}/${rf.recipients}`];
-  for (const [key, label] of [["queued", "queued"], ["sent", "transmitted, awaiting ACK"],
+  if (!rf.recipients) return "No recorded radio delivery or waiting radio session";
+  const parts = [`Radio ACK ${rf.acknowledged}/${rf.recipients} sessions`];
+  for (const [key, label] of [["queued", "waiting for transmission"], ["sent", "transmitted, awaiting ACK"],
     ["uncertain", "transmission uncertain"], ["failed", "transmission failed"],
-    ["paused", "paused"], ["retrying", "retrying"], ["exhausted", "retry budget exhausted"]])
+    ["paused", "paused"], ["retrying", "retried"], ["exhausted", "retry budget exhausted"]])
     if (rf[key]) parts.push(`${rf[key]} ${label}`);
   if (rf.attempts > 1) parts.push(`up to ${rf.attempts} dispatch attempts`);
   if (rf.nextRetryAt !== null) parts.push(`retry ${new Date(rf.nextRetryAt).toLocaleTimeString()}`);
   return parts.join(" · ");
+}
+export function radioDeliveryIndicator(rf) {
+  radioDeliveryLabel(rf);
+  const attention = !!(rf && (rf.uncertain || rf.failed || rf.exhausted));
+  return {attention, count: rf?.acknowledged ?? 0,
+    label: rf === undefined ? "Radio delivery status unavailable" :
+      `${rf.acknowledged} radio acknowledgement${rf.acknowledged === 1 ? "" : "s"}${attention ? "; radio delivery needs attention" : ""}`};
 }
 export function mergeMessages(existing, incoming) {
   for (const message of incoming) {

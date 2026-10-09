@@ -42,9 +42,11 @@ configured public-region scope before saving a name, and sends changes to joined
 clients. Names survive a Worker restart; newer signed timestamps replace older
 names. The directory retains up to 4096 recently advertised identities per
 backend. A sender without a received name still shows its key fingerprint.
-Every message also shows a fingerprint: names can repeat, and an advert means
-that key chose a label, not that the label is a verified person. Only full keys
-are used for lookup; matching short prefixes never merge people.
+The conversation puts the author, time and message first. Choose the small
+message-details button beside a message to see its full device key, source and
+radio delivery status. Names can repeat, and an advert means that key chose a
+label, not that the label is a verified person. Only full keys are used for
+lookup; matching short prefixes never merge people.
 
 ## Writing and reconnecting
 
@@ -68,22 +70,44 @@ radio delivery retries that same stored message up to three times, after
 companion app to resume its pending history; reset its path first if necessary.
 Reloading the browser or sending an advert does not reset that radio state.
 
-Each message shows **Saved** separately from its RF delivery status. **Queued**
-includes history waiting behind an earlier unacknowledged message. **Transmitted,
-awaiting ACK** means the frontend confirmed transmission, not that a companion
-received it. **Transmission uncertain** and **transmission failed** show the
-frontend's actual result. **RF ACK** counts native recipient acknowledgements;
-those remain after a Worker restart. Counts refer to room-alias/client sessions,
-so one companion joined to two aliases can account for two deliveries.
+The radio icon and small count beside a message show retained **radio
+acknowledgements**, not human read receipts. There is no **Seen** count. A
+warning icon marks uncertain or failed transmissions or an exhausted retry
+budget. Ordinary waiting and paused counts stay in **Message details** rather
+than repeating under every message. Messages in the timeline are saved in the
+room; an uncertain browser post stays beside the composer until checked.
+
+In message details, **Waiting for transmission** includes prepared deliveries
+and history blocked behind an earlier unacknowledged message. It counts
+room-alias/client sessions, not positions in a frontend's transmit queue.
+**Transmitted, awaiting ACK** means the frontend confirmed transmission, not
+that a companion received it. **Transmission uncertain** and **transmission
+failed** show the frontend's actual result. **Radio ACK** counts retained native
+recipient acknowledgements. The denominator combines sessions still behind
+this message and sessions with recorded dispatch evidence; it is not a fixed
+audience or a count of people online. One companion joined to two aliases can
+account for two deliveries.
 
 **Paused** means the selected frontend is offline or its authorization/scope no
-longer matches the pending delivery. **Retrying** shows another dispatch attempt;
+longer matches the pending delivery. **Retried** means another dispatch was
+attempted;
 **retry budget exhausted** means no more automatic attempts remain, but a late
 native ACK can still complete delivery. The next retry time is shown while its
-frontend is eligible. The active channel refreshes the latest 100 messages'
-status every five seconds while the page is visible. Older pages show their
-status when loaded. An unavailable status is displayed explicitly. Existing
-history without retained ACK evidence is not relabeled as acknowledged.
+frontend is eligible. Paused overlaps waiting/transmitted/uncertain/failed
+counts; do not add it to them. The active channel refreshes the latest 100
+messages' status every five seconds while connected and visible, with one
+request at a time. Older pages show status when loaded and refresh when their
+message details are opened. An unavailable status is named in message details.
+Existing history without retained ACK evidence is not relabeled as acknowledged.
+
+Radio sessions, pending history and ACK-confirmed cursors live in the Worker's
+SQLite storage and survive restarts or a radio disappearing. A disconnected
+frontend pauses its sessions; a silent radio on a connected frontend can still
+be waiting for an ACK. New messages do not advance that radio's cursor.
+An ACK advances its history, allowing the next message to transmit. Persistent
+sessions can therefore leave the same waiting/paused counts on many messages.
+Browser catch-up instead uses sequence numbers in the current page and reloads
+stored room history after reconnecting; it does not report what a person read.
 
 Joined channels remain connected while you switch between them. Badges count
 new messages arriving in another channel during this page session. Reopening

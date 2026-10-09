@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryLabel, validName} from "../web/model.js";
+import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryIndicator, radioDeliveryLabel, validName} from "../web/model.js";
 
 test("counts the actual RF text budget including UTF-8 display name", () => {
   assert.equal(bytes("Zoë"), 4);
@@ -41,15 +41,34 @@ test("maps names by full key, keeps fingerprints separate and rejects invalid pr
 test("shows RF transmission separately from recipient ACKs and refreshes status without changing history", () => {
   const rf = {recipients: 1, queued: 0, sent: 1, acknowledged: 0, uncertain: 0, failed: 0,
     paused: 0, retrying: 1, exhausted: 1, attempts: 4, nextRetryAt: null};
-  assert.match(radioDeliveryLabel(rf), /RF ACK 0\/1.*transmitted, awaiting ACK.*retry budget exhausted/);
+  assert.match(radioDeliveryLabel(rf), /Radio ACK 0\/1 sessions.*transmitted, awaiting ACK.*retry budget exhausted/);
   const message = {seq: 1, timestamp: 100, author: "aa".repeat(32), text: "hello", rf};
   const map = new Map();
   mergeMessages(map, [message]);
   const acknowledged = {...message, rf: {...rf, sent: 0, acknowledged: 1, retrying: 0, exhausted: 0}};
   mergeMessages(map, [acknowledged]);
   assert.equal(map.size, 1);
-  assert.match(radioDeliveryLabel(map.get(1).rf), /RF ACK 1\/1/);
+  assert.match(radioDeliveryLabel(map.get(1).rf), /Radio ACK 1\/1/);
   assert.match(radioDeliveryLabel(undefined), /unavailable/);
   for (const bad of [{sent: -1}, {recipients: 0}, {acknowledged: 1}, {paused: 2}, {nextRetryAt: -1}])
     assert.throws(() => mergeMessages(map, [{...message, rf: {...rf, ...bad}}]), /invalid RF/);
+});
+
+test("keeps waiting and paused counts in details, shows only ACK evidence or exceptional delivery", () => {
+  const rf = {recipients: 10, queued: 10, sent: 0, acknowledged: 0, uncertain: 0, failed: 0,
+    paused: 6, retrying: 0, exhausted: 0, attempts: 0, nextRetryAt: null};
+  assert.deepEqual(radioDeliveryIndicator(rf), {count: 0, attention: false, label: "0 radio acknowledgements"});
+  assert.match(radioDeliveryLabel(rf), /10 waiting for transmission.*6 paused/);
+  const sent = {...rf, queued: 9, sent: 1, paused: 5, attempts: 1};
+  assert.equal(radioDeliveryIndicator(sent).count, 0);
+  const ack = {...sent, sent: 0, acknowledged: 1};
+  assert.deepEqual(radioDeliveryIndicator(ack), {count: 1, attention: false, label: "1 radio acknowledgement"});
+  assert.match(radioDeliveryLabel(ack), /Radio ACK 1\/10 sessions.*9 waiting for transmission.*5 paused/);
+  for (const field of ["uncertain", "failed"]) {
+    const status = {...rf, queued: 9, [field]: 1};
+    assert.equal(radioDeliveryIndicator(status).attention, true);
+    assert.doesNotMatch(radioDeliveryIndicator(status).label, /seen|read|queued|paused/i);
+  }
+  assert.equal(radioDeliveryIndicator({...sent, exhausted: 1}).attention, true);
+  assert.equal(radioDeliveryIndicator(undefined).label, "Radio delivery status unavailable");
 });

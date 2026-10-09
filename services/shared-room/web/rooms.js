@@ -1,4 +1,4 @@
-import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryLabel, validName} from "./model.js";
+import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryIndicator, radioDeliveryLabel, validName} from "./model.js";
 import {loadDevice, signChallenge} from "./device.js";
 import {accountAuth} from "./auth.js";
 
@@ -10,6 +10,7 @@ const mobileLayout = matchMedia("(max-width: 640px)");
 let active, identity, name, booted = false;
 let device, accountMode = false;
 let passkeyMode = false, auth;
+let rfTimer, rfTask, messageDetails;
 class ApiError extends Error {
   constructor(status, message) {super(message); this.status = status;}
 }
@@ -95,10 +96,22 @@ function menu(open, restoreFocus = true) {
 }
 function nearBottom() {return $("timeline").scrollHeight - $("timeline").scrollTop - $("timeline").clientHeight < 100;}
 function bottom() {$("timeline").scrollTop = $("timeline").scrollHeight; $("new-messages").hidden = true;}
+function drawMessageDetails() {
+  if (!messageDetails) return;
+  const {room, seq} = messageDetails, message = room.messages.get(seq);
+  if (!message) return;
+  $("message-detail-text").textContent = messageBody(message);
+  $("message-detail-author").textContent = authorName(message, room.profiles);
+  $("message-detail-key").textContent = message.author;
+  $("message-detail-time").textContent = new Date(message.timestamp * 1000).toLocaleString();
+  $("message-detail-source").textContent = message.webName ? "Web" : "Radio";
+  $("message-detail-rf").textContent = radioDeliveryLabel(message.rf);
+}
 function drawMessages(scroll = false) {
   if (!active) return;
   const room = active;
   const wasBottom = nearBottom();
+  const focusedSeq = document.activeElement.closest?.(".message-details")?.dataset.seq;
   const fragment = document.createDocumentFragment();
   let previousDay;
   const messages = [...room.messages.values()].sort((a, b) => a.seq - b.seq);
@@ -122,21 +135,39 @@ function drawMessages(scroll = false) {
     const meta = document.createElement("div"); meta.className = "message-meta";
     const title = document.createElement("span"); title.className = "message-name";
     title.textContent = author; title.title = `${author} · ${message.author}`;
-    const fingerprint = document.createElement("span"); fingerprint.className = "message-source";
-    fingerprint.textContent = message.author.slice(0, 8); fingerprint.title = message.author;
-    fingerprint.setAttribute("aria-label", `Key fingerprint ${message.author.slice(0, 8)}`);
     const time = document.createElement("time"); time.dateTime = date.toISOString(); time.title = date.toLocaleString();
     time.textContent = date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"});
-    const source = document.createElement("span"); source.className = "message-source";
-    source.textContent = message.webName ? "WEB" : "RADIO";
-    meta.append(title, fingerprint, time, source);
+    meta.append(title, time);
     const text = document.createElement("p"); text.className = "message-text"; text.textContent = messageBody(message);
-    const delivery = document.createElement("p"); delivery.className = "message-source";
-    delivery.textContent = radioDeliveryLabel(message.rf);
-    delivery.title = "A confirmed radio transmission is not a recipient ACK. An exhausted retry budget still accepts a late ACK; the recipient can rejoin to request history again.";
-    content.append(meta, text, delivery); row.append(avatar, content); fragment.append(row);
+    const indicator = radioDeliveryIndicator(message.rf);
+    const details = document.createElement("button"); details.type = "button";
+    details.className = `message-details${indicator.attention ? " attention" : ""}`;
+    details.dataset.seq = String(message.seq);
+    details.setAttribute("aria-label", `Message details for ${author}, ${time.textContent}; ${indicator.label}`);
+    details.setAttribute("aria-haspopup", "dialog");
+    details.title = indicator.label + " · Message details";
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", indicator.attention ? "M12 4 2 21h20zM12 10v5M12 18h.01" :
+      indicator.count ? "M7 12a5 5 0 0 1 10 0M4 9a9 9 0 0 1 16 0M12 12v9M9 21h6" :
+        "M5 12h.01M12 12h.01M19 12h.01");
+    if (!indicator.attention && !indicator.count) path.setAttribute("stroke-width", "3");
+    icon.append(path); details.append(icon);
+    if (indicator.count) {
+      const count = document.createElement("span"); count.textContent = String(indicator.count);
+      count.setAttribute("aria-hidden", "true"); details.append(count);
+    }
+    details.addEventListener("click", () => {
+      messageDetails = {room, seq: message.seq}; drawMessageDetails();
+      $("message-dialog").showModal();
+      refreshRadioDelivery(message.seq);
+    });
+    content.append(meta, text); row.append(avatar, content, details); fragment.append(row);
   }
   $("messages").replaceChildren(fragment);
+  if (focusedSeq) $("messages").querySelector(`.message-details[data-seq="${focusedSeq}"]`)?.focus({preventScroll: true});
+  if (messageDetails?.room === room) drawMessageDetails();
   $("intro-title").textContent = `Welcome to ${room.name}.`;
   $("intro-text").textContent = messages.length ? "The shared conversation, from web and radio participants." : "You're connected. Send the first message or wait for someone on the mesh.";
   $("load-older").hidden = !room.hasEarlier;
@@ -177,24 +208,6 @@ async function history(room, initial = false) {
         room.loaded = true;
         break;
       }
-      async function refreshRadioDelivery() {
-        const room = active;
-        if (!room?.session || room.status !== "live" || room.rfTask || document.hidden) return;
-        room.rfTask = true;
-        const generation = room.generation;
-        try {
-          const page = await api(endpoint(room, "history") + `?before=${room.cursor + 1}`);
-          if (room.generation !== generation || !room.session) return;
-          mergeProfiles(room.profiles, page.profiles ?? []);
-          mergeMessages(room.messages, page.messages.filter(message => room.messages.has(message.seq)));
-          if (room === active) drawMessages();
-        } catch (error) {
-          if (room.generation !== generation) return;
-          if (error.status === 401) requireLogin(room, error.message);
-          else report(new Error(`RF delivery status could not be refreshed: ${error.message}`));
-        } finally {room.rfTask = false;}
-      }
-      setInterval(() => refreshRadioDelivery(), 5000);
       room.cursor = Math.max(room.cursor, page.floor, page.messages.at(-1)?.seq ?? 0);
       if (!page.more) break;
       query = `?after=${room.cursor}`;
@@ -203,6 +216,40 @@ async function history(room, initial = false) {
   })();
   try {await room.historyTask;}
   finally {room.historyTask = undefined;}
+}
+async function refreshRadioDelivery(seq) {
+  const room = active;
+  if (rfTask) {
+    if (seq === undefined) return;
+    await rfTask;
+    if (active !== room) return;
+  }
+  if (!room?.session || room.status !== "live" || rfTask || document.hidden) return;
+  const generation = room.generation;
+  rfTask = (async () => {
+    try {
+      const page = await api(endpoint(room, "history") + `?before=${(seq ?? room.cursor) + 1}`);
+      if (room.generation !== generation || !room.session) return;
+      const changed = page.messages.some(message => room.messages.has(message.seq) &&
+        JSON.stringify(room.messages.get(message.seq).rf) !== JSON.stringify(message.rf)) ||
+        (page.profiles ?? []).some(profile => !room.profiles.has(profile.publicKey) ||
+          profile.timestamp > room.profiles.get(profile.publicKey).timestamp &&
+          profile.name !== room.profiles.get(profile.publicKey).name);
+      mergeProfiles(room.profiles, page.profiles ?? []);
+      mergeMessages(room.messages, page.messages.filter(message => room.messages.has(message.seq)));
+      if (room === active && changed) drawMessages();
+    } catch (error) {
+      if (room.generation !== generation) return;
+      if (error.status === 401) requireLogin(room, error.message);
+      else report(new Error(`Radio delivery status in ${room.name} could not be refreshed: ${error.message}`));
+    }
+  })();
+  try {await rfTask;}
+  finally {rfTask = undefined;}
+}
+function startRadioRefresh() {
+  if (rfTimer !== undefined) return;
+  rfTimer = setInterval(() => refreshRadioDelivery(), 5000);
 }
 function disconnect(room) {
   room.generation++;
@@ -427,6 +474,7 @@ async function boot() {
     await history(room, true); connect(room);
   }));
   booted = true;
+  startRadioRefresh();
   if (auth) await auth.afterLogin();
 }
 async function joinRoom(room, body) {
@@ -540,6 +588,12 @@ $("room-info").addEventListener("click", () => {
   $("leave-room").hidden = !active.session; $("details-dialog").showModal();
 });
 $("close-details").addEventListener("click", () => $("details-dialog").close());
+$("close-message-details").addEventListener("click", () => $("message-dialog").close());
+$("message-dialog").addEventListener("close", () => {
+  const details = messageDetails; messageDetails = undefined;
+  if (details?.room === active)
+    $("messages").querySelector(`.message-details[data-seq="${details.seq}"]`)?.focus({preventScroll: true});
+});
 $("leave-room").addEventListener("click", async () => {
   const room = active;
   $("leave-room").disabled = true;
@@ -568,8 +622,17 @@ $("profile-form").addEventListener("submit", event => {
 });
 window.addEventListener("online", () => {for (const room of rooms.values()) if (room.session) connect(room);});
 window.addEventListener("offline", () => {for (const room of rooms.values()) if (room.session) status(room, "offline", "Offline");});
-window.addEventListener("pagehide", () => {for (const room of rooms.values()) disconnect(room);});
-window.addEventListener("pageshow", event => {if (event.persisted && booted) for (const room of rooms.values()) if (room.session) connect(room);});
+document.addEventListener("visibilitychange", () => {if (!document.hidden) refreshRadioDelivery();});
+window.addEventListener("pagehide", () => {
+  clearInterval(rfTimer); rfTimer = undefined;
+  for (const room of rooms.values()) disconnect(room);
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted && booted) {
+    startRadioRefresh();
+    for (const room of rooms.values()) if (room.session) connect(room);
+  }
+});
 boot().catch(error => {
   $("connection").className = "connection offline"; $("connection-text").textContent = "Unavailable";
   report(new Error(`Could not open Aspen Rooms: ${error.message}`));

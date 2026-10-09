@@ -140,13 +140,17 @@ svg {fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round;
 .conversation-intro p {font-size: 1rem; color: var(--muted); line-height: 1.6; max-width: 490px; margin: 0}
 .date-divider {display: flex; align-items: center; gap: 14px; margin: 24px 0 20px; color: var(--muted); font-size: .875rem; font-weight: 500}
 .date-divider::before, .date-divider::after {content: ""; height: 1px; background: var(--line); flex: 1}
-.message {display: flex; gap: 12px; padding: 10px 0}
+.message {display: flex; gap: 10px; padding: 6px 0}
+.message > .avatar {width: 28px; height: 28px; border-radius: 8px; font-size: .75rem; margin-top: 2px}
 .message-content {min-width: 0; flex: 1}
-.message-meta {display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; margin-bottom: 6px}
+.message-meta {display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 9px; margin-bottom: 1px}
 .message-name {font-size: .875rem; font-weight: 650; overflow-wrap: anywhere}
 .message time {font-size: .875rem; color: var(--muted); white-space: nowrap}
-.message-source {font-size: .75rem; font-weight: 550; letter-spacing: .7px; border: 1px solid var(--line); color: var(--muted); border-radius: 3px; padding: 1px 4px}
-.message-text {margin: 0; font-size: 1rem; line-height: 1.65; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere}
+.message-details {min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 3px; align-self: flex-start; padding: 4px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: .75rem; font-variant-numeric: tabular-nums}
+.message-details svg {width: 16px; height: 16px; flex-shrink: 0}
+.message-details:hover {background: var(--hover)}
+.message-details.attention {color: var(--warning)}
+.message-text, dialog .message-text {margin: 0; font-size: 1rem; line-height: 1.5; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere}
 .message.own .message-name {color: var(--green)}
 .message.highlight {animation: arrive .5s ease-out}
 @keyframes arrive {from {background: var(--green-soft)} to {background: transparent}}

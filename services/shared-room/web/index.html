@@ -101,6 +101,14 @@
     </main>
   </div>
   <div class="sr-only" id="message-announcement" role="status" aria-atomic="true"></div>
+  <dialog id="message-dialog" aria-labelledby="message-detail-title">
+    <div class="dialog-heading"><h2 id="message-detail-title">Message details</h2><button id="close-message-details" class="icon-button" aria-label="Close message details">×</button></div>
+    <p id="message-detail-text" class="message-text"></p>
+    <dl><dt>Author</dt><dd id="message-detail-author"></dd><dt>Device key</dt><dd class="key" id="message-detail-key"></dd><dt>Sent</dt><dd id="message-detail-time"></dd><dt>From</dt><dd id="message-detail-source"></dd><dt>Radio delivery</dt><dd id="message-detail-rf"></dd></dl>
+    <p>This message is saved in the room. Radio ACKs confirm receipt by radio clients, not that a person read it. Counts include waiting room-alias/client sessions and retained delivery attempts; a radio joined to two aliases can count twice.</p>
+    <p>Waiting includes sessions blocked behind earlier history, not positions in a transmit queue. Paused overlaps the delivery counts: its frontend is disconnected or no longer authorized for that delivery. Radio sessions persist when a radio goes away; these counts are not online participants.</p>
+    <p>Transmitted means the frontend confirmed transmission, not reception. Exhausted deliveries still accept a late ACK. Rejoin from the companion app to resume its history; do not resend the post.</p>
+  </dialog>
   <dialog id="details-dialog" aria-labelledby="details-title">
     <div class="dialog-heading"><h2 id="details-title">Room details</h2><button id="close-details" class="icon-button" aria-label="Close room details">×</button></div>
     <dl><dt>Room</dt><dd id="detail-name"></dd><dt>Alias</dt><dd id="detail-alias"></dd><dt>Radio identity</dt><dd class="key" id="detail-key"></dd><dt>Your device identity</dt><dd class="key" id="detail-author"></dd></dl>

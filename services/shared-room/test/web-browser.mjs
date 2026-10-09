@@ -73,6 +73,16 @@ async function page(context, width = 1280, height = 900) {
   const {sessionId} = await cdp.call("Target.attachToTarget", {targetId, flatten: true});
   const call = (method, params) => cdp.call(method, params, sessionId);
   await call("Page.enable"); await call("Runtime.enable"); await call("Network.enable");
+  await call("Page.addScriptToEvaluateOnNewDocument", {source: `
+    globalThis.__rfIntervals = new Set();
+    const interval = globalThis.setInterval, clear = globalThis.clearInterval;
+    globalThis.setInterval = (fn, delay, ...args) => {
+      const id = interval(fn, delay, ...args);
+      if (delay === 5000) __rfIntervals.add(id);
+      return id;
+    };
+    globalThis.clearInterval = id => {__rfIntervals.delete(id); clear(id);};
+  `});
   await call("Emulation.setDeviceMetricsOverride", {width, height, deviceScaleFactor: 1, mobile: width < 640});
   cdp.listen(event => {
     if (event.sessionId === sessionId && event.method === "Runtime.exceptionThrown")
@@ -347,6 +357,61 @@ async function key(page, key, code, modifiers = 0) {
     ...(key === "Enter" ? {text: "\r", unmodifiedText: "\r"} : {})});
   await page.call("Input.dispatchKeyEvent", {type: "keyUp", key, code, modifiers, windowsVirtualKeyCode});
 }
+async function messageDetailsFlow(desktop) {
+  let rf = {recipients: 10, queued: 10, sent: 0, acknowledged: 0, uncertain: 0, failed: 0,
+    paused: 6, retrying: 0, exhausted: 0, attempts: 0, nextRetryAt: null};
+  let polls = 0;
+  const remove = cdp.listen(event => {
+    if (event.sessionId !== desktop.sessionId || event.method !== "Fetch.requestPaused") return;
+    const {requestId} = event.params;
+    (async () => {
+      const response = await desktop.call("Fetch.getResponseBody", {requestId});
+      const data = JSON.parse(response.base64Encoded ? Buffer.from(response.body, "base64").toString() : response.body);
+      data.messages = data.messages.map(message => ({...message, rf}));
+      await desktop.call("Fetch.fulfillRequest", {requestId, responseCode: 200,
+        responseHeaders: [{name: "Content-Type", value: "application/json"}],
+        body: Buffer.from(JSON.stringify(data)).toString("base64")});
+      polls++;
+    })().catch(error => errors.push(error));
+  });
+  await desktop.call("Fetch.enable", {patterns: [{urlPattern: "*/v1/web/rooms/A/history?before=*", requestStage: "Response"}]});
+  try {
+    await until(() => polls > 0, "automatic radio status refresh after initial history");
+    assert.equal(await desktop.evaluate(`__rfIntervals.size`), 1);
+    assert.equal(await desktop.evaluate(`document.querySelectorAll('.message-source').length`), 0);
+    assert.equal(await desktop.evaluate(`Array.from(document.querySelectorAll('.message')).every(m =>
+      !/Saved|queued|paused|WEB|RADIO/.test(m.textContent))`), true);
+    await desktop.evaluate(`document.querySelector('.message-details').focus()`);
+    await key(desktop, "Enter", "Enter");
+    await desktop.wait(`document.getElementById('message-dialog').open`, "keyboard message details");
+    assert.match(await desktop.evaluate(`document.getElementById('message-detail-key').textContent`), /^[a-f0-9]{64}$/);
+    assert.equal(await desktop.evaluate(`document.getElementById('message-detail-source').textContent`), "Web");
+    await desktop.wait(`document.getElementById('message-detail-rf').textContent.includes('10 waiting for transmission')`, "waiting detail counts");
+    for (const scheme of ["light", "dark"]) {
+      await palette(desktop, scheme);
+      await accessibility(desktop, `${scheme} message details`);
+    }
+    rf = {...rf, queued: 9, sent: 1, paused: 5, attempts: 1};
+    await desktop.wait(`document.getElementById('message-detail-rf').textContent.includes('1 transmitted, awaiting ACK')`, "live transmit transition");
+    assert.match(await desktop.evaluate(`document.getElementById('message-detail-rf').textContent`), /9 waiting for transmission.*5 paused/);
+    assert.equal(await desktop.evaluate(`document.querySelector('.message-details').getAttribute('aria-label').includes('0 radio acknowledgements')`), true);
+    rf = {...rf, sent: 0, acknowledged: 1};
+    await desktop.wait(`document.getElementById('message-detail-rf').textContent.startsWith('Radio ACK 1/10')`, "live ACK transition");
+    assert.equal(await desktop.evaluate(`document.querySelector('.message-details span').textContent`), "1");
+    assert.equal(await desktop.evaluate(`document.querySelector('.message-details').getAttribute('aria-label').includes('1 radio acknowledgement')`), true);
+    assert.equal(await desktop.evaluate(`document.activeElement.id`), "close-message-details");
+    await key(desktop, "Escape", "Escape");
+    assert.equal(await desktop.evaluate(`document.activeElement.classList.contains('message-details')`), true);
+    rf = {...rf, queued: 8, failed: 1};
+    await desktop.wait(`document.querySelector('.message-details').classList.contains('attention')`, "exception icon");
+    assert.equal(await desktop.evaluate(`document.activeElement.classList.contains('message-details')`), true);
+    await desktop.evaluate(`window.dispatchEvent(new Event('online'))`);
+    await desktop.wait(`document.getElementById('connection-text').textContent === 'Connected'`, "reconnected status refresh");
+    assert.equal(await desktop.evaluate(`__rfIntervals.size`), 1);
+  } finally {
+    await desktop.call("Fetch.disable"); remove();
+  }
+}
 try {
   const config = JSON.parse(await readFile(resolve(root, "wrangler.jsonc"), "utf8"));
   config.name = "aspen-room-browser-test";
@@ -417,12 +482,17 @@ try {
   await desktop.sees("Checking in from my phone. Same conversation, different connection.");
   assert.equal(await desktop.evaluate(`document.getElementById('message-announcement').textContent`),
     "Sam in Harbor: Checking in from my phone. Same conversation, different connection.");
+  await messageDetailsFlow(desktop);
   const contrastResults = {};
   for (const scheme of ["light", "dark"]) {
     contrastResults[scheme] = await palette(desktop, scheme);
     await palette(mobile, scheme);
     await accessibility(desktop, `${scheme} desktop conversation`);
     await accessibility(mobile, `${scheme} mobile conversation`);
+    await mobile.evaluate(`document.querySelector('.message-details').focus(); document.querySelector('.message-details').click()`);
+    await accessibility(mobile, `${scheme} mobile message details`);
+    await key(mobile, "Escape", "Escape");
+    await mobile.wait(`document.activeElement.classList.contains('message-details')`, "mobile message details focus return");
     await desktop.evaluate(`document.getElementById('room-info').focus(); document.getElementById('room-info').click()`);
     await accessibility(desktop, `${scheme} room details`);
     await key(desktop, "Escape", "Escape");
