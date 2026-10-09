@@ -272,7 +272,7 @@ static void native_channel_policy() {
     assert(!strncmp(reply, "Saved and applied", 17));
   }
   for (const char *invalid : {"aspen,aspen", "ASPen", ",aspen", "aspen,", "a,b,c,d,e",
-                              "1234", "bad alias", "abcdefab", "abcdefghijklmnopq"}) {
+                              "1234", "bad alias", "abcdefab", "abcdefghijklmnopq", "[aspen]"}) {
     f.bot.targetAliasesCommand(invalid, reply, sizeof(reply));
     assert(!strncmp(reply, "Error:", 6));
   }
@@ -311,14 +311,22 @@ static void native_channel_policy() {
   for (const char *command : {"operator: !ping", "operator: !trace", "operator: !mt 5",
                               "operator: !not-a-command", "operator: !trace invalid-route",
                               "operator: !help", "operator: !@", "operator: !@aspen",
-                              "operator: !@another-bot trace", "operator: ordinary text"}) {
+                              "operator: !@another-bot trace", "operator: !@[another-bot] help",
+                              "operator: !@[Aspen-Bot help", "operator: !@Aspen-Bot] help",
+                              "operator: !@[[Aspen-Bot]] help", "operator: !@[] help",
+                              "operator: !@[Aspen-Bot]suffix help", "operator: !@[Aspen-Bot]",
+                              "operator: ordinary text"}) {
     assert(group(command, "#test", nullptr, false).empty());
     assert(f.radio.sent.empty());
   }
   for (const char *command : {"operator: !@aspen ping", "operator: !@aspen-bot ping",
-                              "operator: !@a ping", "operator: !@ASPEN ping"}) {
+                              "operator: !@a ping", "operator: !@ASPEN ping",
+                              "operator: !@[Aspen-Bot] ping", "operator: !@[ASPEN] ping",
+                              "operator: !@[a] ping"}) {
     assert(group(command, "#test", nullptr, false) == std::vector<std::string>{"Pong"});
   }
+  const auto bracketedHelp = group("operator: !@[Aspen-Bot] help", "#test", nullptr, false);
+  assert(!bracketedHelp.empty() && bracketedHelp[0].find("!ping") != std::string::npos);
   assert(group("operator: !ping", "#test") == std::vector<std::string>{"Pong"});
   assert(group("operator: !@aspen trace", "#test", nullptr, false).size() == 1);
   f.bot.stop(); f.start(); f.learn(peer);
@@ -327,9 +335,12 @@ static void native_channel_policy() {
   assert(group("operator: !trace", "#test", nullptr, false).empty());
   assert(f.radio.sent.empty());
   assert(group("operator: !@a ping", "#test", nullptr, false) == std::vector<std::string>{"Pong"});
+  assert(group("operator: !@[Aspen-Bot] ping", "#test", nullptr, false) == std::vector<std::string>{"Pong"});
   f.bot.targetAliasesCommand("aspen", reply, sizeof(reply));
   assert(!strncmp(reply, "Saved and applied", 17));
   assert(group("operator: !@a ping", "#test", nullptr, false).empty());
+  assert(f.radio.sent.empty());
+  assert(group("operator: !@[a] ping", "#test", nullptr, false).empty());
   assert(f.radio.sent.empty());
   assert(group("operator: !@aspen ping", "#test", nullptr, false) == std::vector<std::string>{"Pong"});
   policy("access 1 recall 63");

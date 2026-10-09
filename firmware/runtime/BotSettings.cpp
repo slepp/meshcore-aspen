@@ -789,6 +789,10 @@ bool BotTargetAliases::valid() const {
   return true;
 }
 bool BotTargetAliases::matches(const char *text, size_t size) const {
+  if (size >= 2 && text[0] == '[' && text[size - 1] == ']') {
+    ++text;
+    size -= 2;
+  }
   for (const auto &name : names) {
     if (!size || strlen(name) != size) continue;
     size_t i = 0;

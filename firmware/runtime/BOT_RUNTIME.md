@@ -723,7 +723,10 @@ is the equivalent command.
 Use `!@aspen COMMAND arguments`, `!@aspen-bot COMMAND arguments` or
 `!@a COMMAND arguments` after that configuration. `!@BOTKEY8 COMMAND` also
 works: `BOTKEY8` is the first eight hex digits of the bot's public key; a full
-64-hex key is accepted. Targeting selects a bot, not an authenticated person.
+64-hex key is accepted. Companion mention syntax such as `!@[Aspen-Bot] help`
+also matches the configured `aspen-bot` alias, case-insensitively; the brackets
+do not require another saved alias. Removing an alias disables both forms.
+Targeting selects a bot, not an authenticated person.
 Custom commands, board operations, TRACE and state-changing channel work
 require a target; DMs already select a bot. Other bots silently ignore a target
 that does not match. Incoming ordinary path widths 1/2/3 remain interoperable;
