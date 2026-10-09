@@ -4,6 +4,7 @@
 #include "RoleIdentity.h"
 #include <SPIFFS.h>
 #include <nvs.h>
+#include <esp_heap_caps.h>
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -38,6 +39,7 @@ public:
 };
 class Filesystem final : public filesystem_test::Impl {
 public:
+  size_t totalBytes() const override { return 4 * 1024 * 1024; }
   fs::FileImplPtr open(const char *path, const char *mode, bool create) override {
     if (!strcmp(path, "/")) return std::make_shared<Directory>();
     return Impl::open(path, mode, create);
@@ -138,5 +140,50 @@ int main() {
   };
   seed();
   assert(snapshot().find("READY ") == 0);
+  backup_test::beforeVerifyNvs = nullptr;
+  seed();
+  const auto captured = snapshot();
+  backup_test::inventories = directories = 0;
+  backup_test::beforeVerifyNvs = [] {
+    filesystem_test::afterWrite = [] {
+      filesystem_test::afterWrite = nullptr;
+      filesystem_test::files.at("/command-bot/a.lua")[0] ^= 1;
+      identity_test::durable.at({"mc-onchip", "companion"})[0] ^= 1;
+    };
+  };
+  assert(snapshot() == captured);
+  assert(filesystem_test::files.at("/command-bot/a.lua")[0] == (7 ^ 1));
+  backup_test::beforeVerifyNvs = nullptr;
+  for (int allocation = 0; allocation < 9; ++allocation) {
+    seed();
+    psram_test::failAfter = allocation;
+    const auto failed = snapshot();
+    psram_test::failAfter = -1;
+    assert(failed.find("Error:") == 0);
+    assert(psram_test::allocations.empty());
+  }
+  seed();
+  filesystem_test::files["/empty"] = {};
+  assert(snapshot().find("READY ") == 0);
+  assert(psram_test::allocations.empty());
+  seed();
+  for (unsigned i = 0; i < 507; ++i) {
+    char path[32];
+    snprintf(path, sizeof(path), "/boundary/%04u", i);
+    filesystem_test::files[path] = {};
+  }
+  const auto maximum = snapshot();
+  assert(maximum.find("READY ") == 0);
+  filesystem_test::files["/boundary/extra"] = {};
+  assert(snapshot().find("record limit exceeded") != std::string::npos);
+  assert(command("backup load").find("PREPARING") == 0);
+  onchip::nodeBackup().work();
+  assert(command("backup status") == maximum);
+  seed();
+  filesystem_test::files["/oversize"] = std::vector<uint8_t>(onchip::backup::RawLimit);
+  assert(snapshot().find("size or record limit exceeded") != std::string::npos);
+  assert(psram_test::allocations.empty());
   puts("PASS ESP backup: reordered inventories, settings/content/size/path/add/remove changes, staging exclusion, replay counters and retained saved snapshot");
+  puts("PASS immutable capture: live changes during output retain captured bytes; allocation failures and empty files release scrubbed PSRAM");
+  puts("PASS archive boundaries: 512 records accepted; extra records and oversized data rejected without replacing saved backup");
 }

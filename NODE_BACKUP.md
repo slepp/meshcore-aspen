@@ -169,6 +169,14 @@ identify which inventory changed; leave settings, programs and saved data
 unchanged while preparing another snapshot. A rejected snapshot does not replace
 the previous saved backup.
 
+Aspen first captures retained records in PSRAM and compares them with fresh
+reads, then encrypts and writes those validated copies. Radio reception and
+connected clients continue while the saved backup is written. Later contact or
+data updates belong to the next snapshot; they cannot change the captured
+records. Capture still fails if a retained record changes during its readback
+window, or if the snapshot cannot fit in available PSRAM. Captured private bytes
+are cleared when preparation ends.
+
 The file header is `MCB 01 01 00 00 00`, followed by the ephemeral Ed25519 public
 key (32 bytes), recipient public key (32 bytes) and AES-CTR nonce (16 bytes).
 The remaining payload is RLE-compressed USTAR encrypted with AES-128-CTR,

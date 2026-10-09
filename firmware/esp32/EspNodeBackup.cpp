@@ -38,6 +38,82 @@ public:
     memcpy(bytes, bytes_, size); bytes_ += size; remaining_ -= size; return size;
   }
 };
+struct Snapshot {
+  struct Entry { char name[100]{}; uint32_t size = 0; uint8_t *bytes = nullptr; bool verified = false; };
+  Entry entries[backup::EntryLimit - 1]{};
+  size_t count = 0;
+  uint32_t rawBytes = 2048; // Manifest header/payload and tar terminator.
+  const char *error = nullptr;
+  Entry *find(const char *name) {
+    for (size_t i = 0; i < count; ++i)
+      if (!strcmp(entries[i].name, name)) return &entries[i];
+    return nullptr;
+  }
+  ~Snapshot() {
+    for (size_t i = 0; i < count; ++i) {
+      if (entries[i].bytes) {
+        backup::wipe(entries[i].bytes, entries[i].size);
+        heap_caps_free(entries[i].bytes);
+      }
+    }
+  }
+  bool add(const char *name, uint32_t size, backup::Reader &reader) {
+    if (!backup::TarWriter::validName(name) || count == backup::EntryLimit - 1 ||
+        size > backup::RawLimit - 1536) {
+      error = "Backup snapshot filename, size or record limit exceeded"; return false;
+    }
+    const uint32_t padded = (size + 511) / 512 * 512;
+    if (512 + padded > backup::RawLimit - rawBytes) {
+      error = "Backup snapshot exceeds the 2 MiB archive limit"; return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+      if (!strcmp(entries[i].name, name)) {
+        error = "Backup source inventory repeated a filename; request a new snapshot"; return false;
+      }
+    }
+    auto &entry = entries[count++];
+    strcpy(entry.name, name); entry.size = size;
+    if (size) {
+      entry.bytes = static_cast<uint8_t *>(heap_caps_calloc(1, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      if (!entry.bytes) {
+        entry.size = 0;
+        error = "Backup snapshot PSRAM allocation failed"; return false;
+      }
+      for (uint32_t offset = 0; offset < size;) {
+        const size_t chunk = std::min(size_t(size - offset), size_t(512));
+        if (reader.read(entry.bytes + offset, chunk) != chunk) {
+          error = "Backup source read failed during snapshot capture"; return false;
+        }
+        offset += chunk;
+      }
+    }
+    rawBytes += 512 + padded;
+    return true;
+  }
+  bool emit(backup::TarWriter &archive, char *message, size_t capacity) {
+    for (size_t i = 0; i < count; ++i) {
+      const auto &entry = entries[i];
+      BlobReader reader(entry.bytes, entry.size);
+      if (!archive.add(entry.name, entry.size, reader)) {
+        snprintf(message, capacity, "Backup snapshot output failed: %.75s", entry.name); return false;
+      }
+    }
+    return true;
+  }
+};
+class FileReader final : public backup::Reader {
+  File &file_;
+  SHA256 &hash_;
+public:
+  FileReader(File &file, SHA256 &hash) : file_(file), hash_(hash) {}
+  size_t read(uint8_t *bytes, size_t size) override {
+    if (nodeBackup().cancelled()) return 0;
+    const size_t count = file_.read(bytes, size);
+    hash_.update(bytes, count);
+    delay(1);
+    return count;
+  }
+};
 bool useful(const nvs_entry_info_t &entry) {
   return strcmp(entry.namespace_name, "mc-backup") &&
          (!strncmp(entry.namespace_name, "mc-", 3) || !strcmp(entry.namespace_name, "mesh-phy"));
@@ -47,7 +123,7 @@ bool stable(const nvs_entry_info_t &entry) {
          (strcmp(entry.key, "replay-extra") && strcmp(entry.key, "owner-replay"));
 }
 class EspBackup final : public FirmwareNodeBackup {
-  bool records(backup::TarWriter *archive, uint8_t digest[32], char *error, size_t capacity) {
+  bool records(Snapshot *archive, uint8_t digest[32], char *error, size_t capacity) {
     Blob *blob = allocateRoleStorage<Blob>("node backup NVS buffer");
     if (!blob) { snprintf(error, capacity, "Backup NVS buffer allocation failed"); return false; }
     struct Release { Blob *&blob; ~Release() { releaseRoleStorage(blob); } } release{blob};
@@ -84,7 +160,7 @@ class EspBackup final : public FirmwareNodeBackup {
           if (ok && archive) {
             BlobReader reader(blob->bytes, size);
             if (!archive->add(name, size, reader)) {
-              snprintf(error, capacity, "Backup setting write failed: %s/%s", entry.namespace_name, entry.key);
+              snprintf(error, capacity, "%s", archive->error);
               ok = false;
             }
           }
@@ -99,7 +175,8 @@ class EspBackup final : public FirmwareNodeBackup {
     if (ok) blob->inventory.finish(digest);
     return ok;
   }
-  bool files(backup::TarWriter *archive, uint8_t digest[32], char *error, size_t capacity) {
+  bool files(Snapshot *archive, uint8_t digest[32], char *error, size_t capacity,
+             Snapshot *captured = nullptr) {
     Inventory *inventory = allocateRoleStorage<Inventory>("node backup file inventory");
     if (!inventory) { snprintf(error, capacity, "Backup file inventory allocation failed"); return false; }
     struct Release { Inventory *&inventory; ~Release() { releaseRoleStorage(inventory); } } release{inventory};
@@ -117,23 +194,51 @@ class EspBackup final : public FirmwareNodeBackup {
       if (nameSize < 0 || size_t(nameSize) >= sizeof(name)) { snprintf(error, capacity, "Backup archive filename exceeds 99 bytes"); return false; }
       hash.reset();
       if (archive) {
-        input.close();
-        if (!file(*archive, path, name, &hash, error, capacity)) return false;
+        const uint32_t size = input.size();
+        hash.update(name, strlen(name) + 1); hash.update(&size, sizeof(size));
+        FileReader reader(input, hash);
+        if (!archive->add(name, size, reader)) {
+          snprintf(error, capacity, "%s", archive->error); return false;
+        }
+        if (input.size() != size) {
+          snprintf(error, capacity, "Backup source size changed during capture: %.65s", path); return false;
+        }
       } else {
         const uint32_t size = input.size();
+        auto *entry = captured ? captured->find(name) : nullptr;
+        if (captured && (!entry || entry->verified || entry->size != size)) {
+          snprintf(error, capacity, "Saved files changed during capture: %.65s", path); return false;
+        }
         hash.update(name, strlen(name) + 1); hash.update(&size, sizeof(size));
         uint8_t bytes[512];
         for (uint32_t offset = 0; offset < size;) {
           const size_t count = std::min(size_t(size - offset), sizeof(bytes));
           if (nodeBackup().cancelled() || input.read(bytes, count) != count) {
+            backup::wipe(bytes, sizeof(bytes));
             snprintf(error, capacity, "Backup source verification failed: %.65s", path); return false;
+          }
+          if (entry && memcmp(bytes, entry->bytes + offset, count)) {
+            backup::wipe(bytes, sizeof(bytes));
+            snprintf(error, capacity, "Saved files changed during capture: %.65s", path); return false;
           }
           hash.update(bytes, count); offset += count; delay(1);
         }
         backup::wipe(bytes, sizeof(bytes));
+        if (input.size() != size) {
+          snprintf(error, capacity, "Saved files changed during capture: %.65s", path); return false;
+        }
+        if (entry) entry->verified = true;
       }
       if (!inventory->add(hash)) {
         snprintf(error, capacity, "Backup file inventory exceeds 512 records"); return false;
+      }
+    }
+    if (captured) {
+      for (size_t i = 0; i < captured->count; ++i) {
+        const auto &entry = captured->entries[i];
+        if (!strncmp(entry.name, "files/", 6) && !entry.verified) {
+          snprintf(error, capacity, "Saved files changed during capture: %.65s", entry.name + 5); return false;
+        }
       }
     }
     inventory->finish(digest); return true;
@@ -142,11 +247,14 @@ public:
   bool available() const override { return backupWorkerReady(); }
   void wake() override { wakeBackupWorker(); }
   bool snapshot(backup::TarWriter &archive, char *error, size_t capacity) override {
+    Snapshot *snapshot = allocateRoleStorage<Snapshot>("node backup snapshot");
+    if (!snapshot) { snprintf(error, capacity, "Backup snapshot inventory allocation failed"); return false; }
+    struct Release { Snapshot *&snapshot; ~Release() { releaseRoleStorage(snapshot); } } release{snapshot};
     uint8_t beforeNvs[32], afterNvs[32], beforeFiles[32], afterFiles[32];
-    if (!manifest(archive, "aspen", MESHCORE_SLP_ASPEN_VERSION) ||
-        !records(&archive, beforeNvs, error, capacity) ||
-        !files(&archive, beforeFiles, error, capacity) ||
-        !files(nullptr, afterFiles, error, capacity) ||
+    // Validate immutable PSRAM copies before slow encrypted filesystem writes.
+    if (!records(snapshot, beforeNvs, error, capacity) ||
+        !files(snapshot, beforeFiles, error, capacity) ||
+        !files(nullptr, afterFiles, error, capacity, snapshot) ||
         !records(nullptr, afterNvs, error, capacity)) return false;
     if (memcmp(beforeNvs, afterNvs, 32)) {
       snprintf(error, capacity, "NVS settings changed during backup; pause settings/data edits and request a new snapshot"); return false;
@@ -154,7 +262,10 @@ public:
     if (memcmp(beforeFiles, afterFiles, 32)) {
       snprintf(error, capacity, "Saved files changed during backup; pause settings/data edits and request a new snapshot"); return false;
     }
-    return true;
+    if (!manifest(archive, "aspen", MESHCORE_SLP_ASPEN_VERSION)) {
+      snprintf(error, capacity, "Backup manifest output failed"); return false;
+    }
+    return snapshot->emit(archive, error, capacity);
   }
 };
 EspBackup platform;
