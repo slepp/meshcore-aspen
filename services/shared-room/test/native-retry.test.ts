@@ -2,6 +2,15 @@ import {expect, it} from "vitest";
 import {evictDurableObject, runDurableObjectAlarm, runInDurableObject} from "cloudflare:test";
 import {bindings, fixture, rf, http, connect, state, history} from "./native-helpers";
 import {HISTORY_RETRY_DELAYS} from "../src/room";
+import type {RadioDelivery} from "../src/room";
+import {joinWeb, webRequest} from "./web-helpers";
+
+async function deliveryStatus(cookie: string, seq = 1) {
+  const response = await webRequest("A", "history", cookie);
+  expect(response.status).toBe(200);
+  const page = await response.json<{messages: Array<{seq: number; rf: RadioDelivery}>}>();
+  return page.messages.find(message => message.seq === seq)!.rf;
+}
 
 async function alarmTime() {
   return runInDurableObject(bindings.ROOMS.getByName("native"), (_room, state) => state.storage.getAlarm());
@@ -155,4 +164,63 @@ it("reserves earlier proofs across aliases and pauses instead of reusing all fou
   expect((await state()).pending.every(p => p.retry_at === 0)).toBe(true);
   expect((await rf("one", firstA.ack)).accepted).toBe(true);
   expect((await state()).pending.map(p => p.alias)).toEqual(["SharedB"]);
+});
+
+it("distinguishes saved, queued, transmitted and native-ACK-confirmed delivery after hibernation", async () => {
+  const {radio, first} = await readerAndPost();
+  const web = await joinWeb();
+  expect(await deliveryStatus(web.cookie)).toMatchObject({
+    recipients: 1, queued: 1, sent: 0, acknowledged: 0, paused: 0, attempts: 1,
+  });
+  await (await http("one", {op: "txReceipt", dispatchId: first.dispatchId, outcome: "sent"})).text();
+  expect(await deliveryStatus(web.cookie)).toMatchObject({queued: 0, sent: 1, acknowledged: 0});
+  await rf("one", fixture.secondPost);
+  expect(await deliveryStatus(web.cookie, 2)).toMatchObject({queued: 1, acknowledged: 0, attempts: 0});
+  expect((await state()).sessions.find(s => s.client === fixture.reader.publicKey)?.cursor).toBe(0);
+  await rf("one", history(first).ack);
+  await radio.next("next history after native ACK");
+  await evictDurableObject(bindings.ROOMS.getByName("native"));
+  expect(await deliveryStatus(web.cookie)).toMatchObject({
+    recipients: 1, queued: 0, sent: 0, acknowledged: 1, attempts: 1, nextRetryAt: null,
+  });
+  await (await http("one", {op: "txReceipt", dispatchId: first.dispatchId, outcome: "failed"})).text();
+  expect((await deliveryStatus(web.cookie)).acknowledged).toBe(1);
+});
+
+it.each([["unknown", "uncertain"], ["failed", "failed"]] as const)(
+  "reports %s transmission without inventing an ACK", async (outcome, field) => {
+    const {first} = await readerAndPost();
+    const web = await joinWeb();
+    await (await http("one", {op: "txReceipt", dispatchId: first.dispatchId, outcome})).text();
+    expect(await deliveryStatus(web.cookie)).toMatchObject({[field]: 1, acknowledged: 0, sent: 0});
+  });
+
+it("reports paused retries and exhausted budgets while accepting a late native ACK", async () => {
+  const {radio, first} = await readerAndPost();
+  const web = await joinWeb();
+  const closed = new Promise(resolve => radio.ws.addEventListener("close", resolve, {once: true}));
+  radio.ws.close(); await closed;
+  expect(await deliveryStatus(web.cookie)).toMatchObject({paused: 1, nextRetryAt: null, acknowledged: 0});
+  const reconnected = await connect("one");
+  for (let n = 1; n <= HISTORY_RETRY_DELAYS.length; n++) {
+    await retryNow();
+    await reconnected.next(`visible retry ${n}`);
+    expect(await deliveryStatus(web.cookie)).toMatchObject({retrying: 1, attempts: n + 1, acknowledged: 0});
+  }
+  expect(await deliveryStatus(web.cookie)).toMatchObject({exhausted: 1, nextRetryAt: null, attempts: 4});
+  await rf("one", history(first).ack);
+  expect(await deliveryStatus(web.cookie)).toMatchObject({acknowledged: 1, exhausted: 0, retrying: 0, attempts: 4});
+});
+
+it("backfills only active dispatch evidence when upgrading an existing room", async () => {
+  const {first} = await readerAndPost();
+  const web = await joinWeb();
+  await runInDurableObject(bindings.ROOMS.getByName("native"), (_room, state) => {
+    state.storage.sql.exec("DROP INDEX dispatches_message");
+    state.storage.sql.exec("ALTER TABLE dispatches DROP COLUMN seq");
+  });
+  await evictDurableObject(bindings.ROOMS.getByName("native"));
+  expect(await deliveryStatus(web.cookie)).toMatchObject({queued: 1, acknowledged: 0, attempts: 1});
+  await rf("one", history(first).ack);
+  expect((await deliveryStatus(web.cookie)).acknowledged).toBe(1);
 });

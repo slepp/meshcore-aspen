@@ -22,6 +22,11 @@ interface Pending {
   frontend: string; proof: string | null; state: string; requirePathAck: number;
   proofs: string; retryAt: number; retryCount: number; retryBinding: string | null; dispatchId: string | null;
 }
+export interface RadioDelivery {
+  recipients: number; queued: number; sent: number; acknowledged: number;
+  uncertain: number; failed: number; paused: number; retrying: number; exhausted: number;
+  attempts: number; nextRetryAt: number | null;
+}
 const MESSAGE_COLUMNS = "seq, timestamp, origin_alias AS originAlias, author, client_timestamp AS clientTimestamp, text, web_name AS webName";
 const SESSION_COLUMNS = "alias, client, cursor, last_timestamp AS lastTimestamp, frontend, route";
 const PENDING_COLUMNS = "alias, client, delivery_id AS deliveryId, seq, frontend, proof, state, require_path_ack AS requirePathAck, proofs, retry_at AS retryAt, retry_count AS retryCount, retry_binding AS retryBinding, dispatch_id AS dispatchId";
@@ -96,7 +101,7 @@ export class Room extends DurableObject<Env> {
       );
       CREATE TABLE IF NOT EXISTS dispatches (
         id TEXT PRIMARY KEY, alias TEXT NOT NULL, frontend TEXT NOT NULL,
-        client TEXT, delivery_id TEXT, state TEXT NOT NULL
+        client TEXT, delivery_id TEXT, state TEXT NOT NULL, seq INTEGER
       );
       CREATE TABLE IF NOT EXISTS web_sessions (
         token TEXT PRIMARY KEY, alias TEXT NOT NULL, author TEXT NOT NULL,
@@ -136,6 +141,13 @@ export class Room extends DurableObject<Env> {
       this.sql.exec("ALTER TABLE messages ADD COLUMN web_name TEXT");
     if (!this.rows<{name: string}>("PRAGMA table_info(web_sessions)").some(c => c.name === "username"))
       this.sql.exec("ALTER TABLE web_sessions ADD COLUMN username TEXT");
+    if (!this.rows<{name: string}>("PRAGMA table_info(dispatches)").some(c => c.name === "seq")) {
+      this.sql.exec("ALTER TABLE dispatches ADD COLUMN seq INTEGER");
+      this.sql.exec(`UPDATE dispatches SET seq=(SELECT seq FROM pending
+        WHERE pending.alias=dispatches.alias AND pending.client=dispatches.client
+          AND pending.delivery_id=dispatches.delivery_id) WHERE client IS NOT NULL`);
+    }
+    this.sql.exec("CREATE INDEX IF NOT EXISTS dispatches_message ON dispatches(seq)");
   }
 
   private rows<T>(query: string, ...params: SqlStorageValue[]): T[] {
@@ -290,9 +302,10 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  private dispatch(c: Connection, wire: Uint8Array, delayMs: number, client?: string, deliveryId?: string): Transmit {
+  private dispatch(c: Connection, wire: Uint8Array, delayMs: number, client?: string, deliveryId?: string, seq?: number): Transmit {
     const dispatchId = crypto.randomUUID();
-    this.sql.exec("INSERT INTO dispatches VALUES (?, ?, ?, ?, ?, 'prepared')", dispatchId, c.alias, c.frontend, client ?? null, deliveryId ?? null);
+    this.sql.exec("INSERT INTO dispatches(id, alias, frontend, client, delivery_id, state, seq) VALUES (?, ?, ?, ?, ?, 'prepared', ?)",
+      dispatchId, c.alias, c.frontend, client ?? null, deliveryId ?? null, seq ?? null);
     return {type: "transmit", alias: c.alias, dispatchId, packet: base64(wire), delayMs, priority: 0};
   }
 
@@ -426,6 +439,7 @@ export class Room extends DurableObject<Env> {
           if (!p || p.frontend !== c.frontend || p.deliveryId !== operation.deliveryId ||
               !pendingProofs(p).includes(hex(operation.proof, "ACK proof", 4))) fail(403, "PATH ACK does not match this delivery");
           this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
+          this.confirmRadioDelivery(p);
           this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
         }
         return {};
@@ -481,6 +495,7 @@ export class Room extends DurableObject<Env> {
       if (!p.proof || !pendingProofs(p).includes(hex(operation.proof, "ACK proof", 4))) fail(403, "ACK proof does not match this delivery");
       if (p.requirePathAck || (opaque(this.env) && this.needsPathAck())) fail(403, "This delivery requires an authenticated PATH ACK");
       this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
+      this.confirmRadioDelivery(p);
       this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
       return {cursor: p.seq};
     });
@@ -572,7 +587,7 @@ export class Room extends DurableObject<Env> {
           occupied.add(encoded.proof);
           const retryCount = pending.retryCount + 1;
           const retryAt = retryCount < HISTORY_RETRY_DELAYS.length ? Date.now() + HISTORY_RETRY_DELAYS[retryCount] : 0;
-          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, pending.deliveryId);
+          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, pending.deliveryId, pending.seq);
           this.sql.exec(`UPDATE pending SET proof=?, proofs=?, state='prepared', require_path_ack=?,
             retry_at=?, retry_count=?, dispatch_id=? WHERE alias=? AND client=?`,
             encoded.proof, JSON.stringify([...pendingProofs(pending), encoded.proof]), pathAck ? 1 : 0,
@@ -598,7 +613,7 @@ export class Room extends DurableObject<Env> {
           const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
           if (!encoded) continue;
           proofs.add(encoded.proof);
-          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, deliveryId);
+          const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, deliveryId, message.seq);
           this.sql.exec(`INSERT INTO pending(alias, client, delivery_id, seq, frontend, proof, state, require_path_ack,
             proofs, retry_at, retry_binding, dispatch_id) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?, ?, ?, ?)`,
             s.alias, s.client, deliveryId, message.seq, s.frontend, encoded.proof, requirePathAck ? 1 : 0,
@@ -646,6 +661,77 @@ export class Room extends DurableObject<Env> {
   private profilesFor(messages: Message[]): ParticipantProfile[] {
     return [...new Set(messages.map(m => m.author))].flatMap(author =>
       this.rows<ParticipantProfile>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE public_key=?`, author));
+  }
+
+  private confirmRadioDelivery(pending: Pending): void {
+    this.sql.exec("UPDATE dispatches SET state='acknowledged' WHERE alias=? AND client=? AND seq=?",
+      pending.alias, pending.client, pending.seq);
+    // Decoded frontends and migrated pending deliveries may have no dispatch row.
+    if (!this.rows("SELECT 1 FROM dispatches WHERE alias=? AND client=? AND seq=?",
+      pending.alias, pending.client, pending.seq).length)
+      this.sql.exec(`INSERT INTO dispatches(id, alias, frontend, client, delivery_id, state, seq)
+        VALUES (?, ?, ?, ?, ?, 'acknowledged', ?)`,
+      crypto.randomUUID(), pending.alias, pending.frontend, pending.client, pending.deliveryId, pending.seq);
+  }
+
+  private async webMessages(messages: Message[]): Promise<Array<Message & {rf: RadioDelivery}>> {
+    const connected = new Map<string, Connection>();
+    const configuredAliases = aliases(this.env);
+    const frontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const connection = ws.deserializeAttachment() as Connection | WebConnection;
+      if (isWebConnection(connection)) continue;
+      const config = configuredAliases[connection.alias], frontend = frontends[connection.frontend];
+      const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", connection.alias)[0];
+      if (config && this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend)) &&
+          bound?.public_key === config.publicKey && frontend?.aliases.includes(connection.alias) &&
+          frontend.token && await credential(frontend.token) === connection.credential)
+        connected.set(`${connection.alias}:${connection.frontend}`, connection);
+    }
+    const sessions = this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions`);
+    const pendingByClient = new Map(this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending`)
+      .map(p => [`${p.alias}:${p.client}`, p]));
+    return messages.map(message => {
+      const status: RadioDelivery = {recipients: 0, queued: 0, sent: 0, acknowledged: 0, uncertain: 0,
+        failed: 0, paused: 0, retrying: 0, exhausted: 0, attempts: 0, nextRetryAt: null};
+      const attempts = this.rows<{alias: string; client: string; frontend: string; state: string}>(
+        "SELECT alias, client, frontend, state FROM dispatches WHERE seq=? ORDER BY rowid", message.seq);
+      const recipients = new Map<string, {session?: Session; attempts: typeof attempts}>();
+      for (const session of sessions)
+        if (session.cursor < message.seq && !(session.alias === message.originAlias && session.client === message.author))
+          recipients.set(`${session.alias}:${session.client}`, {session, attempts: []});
+      for (const attempt of attempts) {
+        const key = `${attempt.alias}:${attempt.client}`;
+        if (!recipients.has(key)) recipients.set(key, {attempts: []});
+        recipients.get(key)!.attempts.push(attempt);
+      }
+      for (const recipient of recipients.values()) {
+        ++status.recipients;
+        const latest = recipient.attempts.at(-1);
+        const session = recipient.session;
+        const pending = session && pendingByClient.get(`${session.alias}:${session.client}`);
+        const selected = pending?.seq === message.seq ? pending : undefined;
+        const count = Math.max(recipient.attempts.length, selected ? selected.retryCount + 1 : 0);
+        status.attempts = Math.max(status.attempts, count);
+        if (recipient.attempts.some(attempt => attempt.state === "acknowledged")) {++status.acknowledged; continue;}
+        const connection = connected.get(`${session?.alias ?? latest?.alias}:${selected?.frontend ?? session?.frontend ?? latest?.frontend}`);
+        if (!connection || selected && opaque(this.env) && selected.retryBinding !== this.historyBinding(connection))
+          ++status.paused;
+        if (count > 1) ++status.retrying;
+        if (selected && selected.retryCount >= HISTORY_RETRY_DELAYS.length && !selected.retryAt)
+          ++status.exhausted;
+        if (connection && selected?.retryAt && selected.retryBinding === this.historyBinding(connection) &&
+            (status.nextRetryAt === null || selected.retryAt < status.nextRetryAt))
+          status.nextRetryAt = selected.retryAt;
+        const state = latest?.state ?? selected?.state;
+        if (state === "sent") ++status.sent;
+        else if (state === "unknown") ++status.uncertain;
+        else if (state === "failed") ++status.failed;
+        else ++status.queued;
+      }
+      return {...message, rf: status};
+    });
   }
 
   private async publishProfile(profile: ParticipantProfile): Promise<void> {
@@ -804,7 +890,7 @@ export class Room extends DurableObject<Env> {
         more = rows.length > PAGE_SIZE;
         messages = rows.slice(0, PAGE_SIZE).reverse();
       }
-      return webResponse({messages, more, floor, profiles: this.profilesFor(messages)});
+      return webResponse({messages: await this.webMessages(messages), more, floor, profiles: this.profilesFor(messages)});
     }
     if (endpoint === "posts") {
       if (request.method !== "POST") fail(405, "POST required");
@@ -828,7 +914,7 @@ export class Room extends DurableObject<Env> {
       });
       await this.ctx.storage.sync();
       await this.pump();
-      return webResponse(result);
+      return webResponse({...result, message: (await this.webMessages([result.message]))[0]});
     }
     if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
     sameOrigin(request);
@@ -847,7 +933,7 @@ export class Room extends DurableObject<Env> {
   private async pumpWebSocket(ws: WebSocket, connection: WebConnection): Promise<void> {
     const cursor = Math.max(connection.cursor, this.historyFloor());
     const messages = this.rows<Message>(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE seq>? ORDER BY seq LIMIT ?`, cursor, PAGE_SIZE + 1);
-    for (const message of messages.slice(0, PAGE_SIZE)) {
+    for (const message of await this.webMessages(messages.slice(0, PAGE_SIZE))) {
       for (const profile of this.profilesFor([message])) this.send(ws, {type: "profile", profile});
       this.send(ws, {type: "message", message});
       connection.cursor = message.seq;

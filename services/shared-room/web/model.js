@@ -24,11 +24,30 @@ export function mergeProfiles(existing, incoming) {
 export function authorName(message, profiles) {
   return message.webName || profiles.get(message.author)?.name || `${message.author.slice(0, 8)}…`;
 }
+export function radioDeliveryLabel(rf) {
+  if (rf === undefined) return "Saved · RF status unavailable";
+  const counts = ["recipients", "queued", "sent", "acknowledged", "uncertain", "failed", "paused", "retrying", "exhausted", "attempts"];
+  if (!rf || counts.some(key => !Number.isSafeInteger(rf[key]) || rf[key] < 0) ||
+      rf.queued + rf.sent + rf.acknowledged + rf.uncertain + rf.failed !== rf.recipients ||
+      rf.paused > rf.recipients || rf.retrying > rf.recipients || rf.exhausted > rf.recipients ||
+      rf.nextRetryAt !== null && (!Number.isSafeInteger(rf.nextRetryAt) || rf.nextRetryAt < 0))
+    throw new Error("The room returned invalid RF delivery status");
+  if (!rf.recipients) return "Saved · no current RF delivery";
+  const parts = [`Saved · RF ACK ${rf.acknowledged}/${rf.recipients}`];
+  for (const [key, label] of [["queued", "queued"], ["sent", "transmitted, awaiting ACK"],
+    ["uncertain", "transmission uncertain"], ["failed", "transmission failed"],
+    ["paused", "paused"], ["retrying", "retrying"], ["exhausted", "retry budget exhausted"]])
+    if (rf[key]) parts.push(`${rf[key]} ${label}`);
+  if (rf.attempts > 1) parts.push(`up to ${rf.attempts} dispatch attempts`);
+  if (rf.nextRetryAt !== null) parts.push(`retry ${new Date(rf.nextRetryAt).toLocaleTimeString()}`);
+  return parts.join(" · ");
+}
 export function mergeMessages(existing, incoming) {
   for (const message of incoming) {
     if (!Number.isSafeInteger(message.seq) || message.seq < 1 || typeof message.text !== "string" ||
         typeof message.author !== "string" || !/^[a-f0-9]{64}$/.test(message.author) ||
         !Number.isInteger(message.timestamp)) throw new Error("The room returned an invalid message");
+    if (message.rf !== undefined) radioDeliveryLabel(message.rf);
     const previous = existing.get(message.seq);
     if (previous && (previous.text !== message.text || previous.author !== message.author ||
         previous.timestamp !== message.timestamp)) throw new Error("The room returned conflicting message history");

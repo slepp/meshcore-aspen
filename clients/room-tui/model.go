@@ -46,6 +46,13 @@ type roomState struct {
 	stop       context.CancelFunc
 	status     string
 	busy       bool
+	rfBusy     bool
+}
+
+type radioTick struct{}
+
+func radioRefreshTick() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return radioTick{} })
 }
 
 type model struct {
@@ -93,7 +100,7 @@ func newModel(ctx context.Context, cancel context.CancelFunc, client *roomClient
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.loadListing(), m.waitEvent(), tea.RequestBackgroundColor)
+	return tea.Batch(m.loadListing(), m.waitEvent(), tea.RequestBackgroundColor, radioRefreshTick())
 }
 
 func (m *model) loadListing() tea.Cmd {
@@ -162,6 +169,7 @@ func (m *model) startStream(room *roomState) {
 		room.stop()
 	}
 	room.generation++
+	room.rfBusy = false
 	ctx, stop := context.WithCancel(m.ctx)
 	room.stop, room.status = stop, "Connecting"
 	go m.client.stream(ctx, room.info, room.generation, room.cursor, m.events)
@@ -173,6 +181,7 @@ func (m *model) requireLogin(room *roomState) tea.Cmd {
 		room.stop = nil
 	}
 	room.generation++
+	room.rfBusy = false
 	room.session, room.status, room.busy = nil, "Not joined", false
 	if room == m.active() {
 		m.focus = 2
@@ -267,6 +276,35 @@ func messageBody(message message) string {
 	return message.Text
 }
 
+func radioDeliveryLabel(rf *radioDelivery) string {
+	if rf == nil {
+		return "Saved | RF status unavailable"
+	}
+	if rf.Recipients == 0 {
+		return "Saved | no current RF delivery"
+	}
+	parts := []string{fmt.Sprintf("Saved | RF ACK %d/%d", rf.Acknowledged, rf.Recipients)}
+	for _, item := range []struct {
+		count int64
+		label string
+	}{
+		{rf.Queued, "queued"}, {rf.Sent, "transmitted, awaiting ACK"},
+		{rf.Uncertain, "transmission uncertain"}, {rf.Failed, "transmission failed"},
+		{rf.Paused, "paused"}, {rf.Retrying, "retrying"}, {rf.Exhausted, "retry budget exhausted"},
+	} {
+		if item.count != 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", item.count, item.label))
+		}
+	}
+	if rf.Attempts > 1 {
+		parts = append(parts, fmt.Sprintf("up to %d dispatch attempts", rf.Attempts))
+	}
+	if rf.NextRetryAt != nil {
+		parts = append(parts, "retry "+time.UnixMilli(*rf.NextRetryAt).Local().Format("15:04:05"))
+	}
+	return strings.Join(parts, " | ")
+}
+
 func (m *model) refreshHistory(bottom bool) {
 	room := m.active()
 	if room == nil {
@@ -291,6 +329,8 @@ func (m *model) refreshHistory(bottom bool) {
 		text.WriteString(m.accent().Render(ansi.Hardwrap(meta, m.history.Width(), true)))
 		text.WriteByte('\n')
 		text.WriteString(ansi.Hardwrap(clean(messageBody(message)), m.history.Width(), true))
+		text.WriteByte('\n')
+		text.WriteString(ansi.Hardwrap(radioDeliveryLabel(message.RF), m.history.Width(), true))
 		text.WriteString("\n\n")
 	}
 	if len(keys) == 0 {
@@ -362,7 +402,11 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 	if room == nil || room.generation != result.Generation {
 		return nil
 	}
-	room.busy = false
+	if result.Kind == "rf" {
+		room.rfBusy = false
+	} else {
+		room.busy = false
+	}
 	if result.Err != nil {
 		if result.Kind == "session" && statusIs(result.Err, 401) {
 			room.status = "Not joined"
@@ -381,7 +425,7 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 				}
 				room.status = "Post rejected; edit the draft"
 			}
-		} else {
+		} else if result.Kind != "rf" {
 			room.status = "Request failed; Ctrl+R retries"
 		}
 		if statusIs(result.Err, 401) {
@@ -390,6 +434,16 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 		return nil
 	}
 	switch result.Kind {
+	case "rf":
+		known := make([]message, 0, len(result.Page.Messages))
+		for _, incoming := range result.Page.Messages {
+			if _, exists := room.messages[incoming.Seq]; exists {
+				known = append(known, incoming)
+			}
+		}
+		if err := m.merge(room, known, result.Page.Profiles, false); err != nil {
+			m.notice = "RF delivery status: " + err.Error()
+		}
 	case "session", "login":
 		if m.loginMode == "account" && result.Session.Author != m.saved.PublicKey {
 			m.notice = "Saved session belongs to a different device. Ctrl+L leaves it; keep the original device state."
@@ -456,6 +510,17 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := msg.(type) {
+	case radioTick:
+		var refresh tea.Cmd
+		if room := m.active(); room != nil && room.session != nil && room.stop != nil && !room.busy && !room.rfBusy {
+			room.rfBusy = true
+			alias, generation, cursor := room.info.ID, room.generation, room.cursor
+			refresh = func() tea.Msg {
+				page, err := m.client.history(m.ctx, alias, fmt.Sprintf("?before=%d", cursor+1))
+				return roomResult{Alias: alias, Generation: generation, Kind: "rf", Page: page, Err: err}
+			}
+		}
+		return m, tea.Batch(radioRefreshTick(), refresh)
 	case tea.WindowSizeMsg:
 		m.width, m.height = value.Width, value.Height
 		m.resize()

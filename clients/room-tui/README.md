@@ -26,6 +26,15 @@ full-key identities. A saved post confirms shared-history storage, not RF
 reception. [Account setup and the shared API](../../services/shared-room/WEB.md)
 also apply to this client.
 
+Message status separates **Saved**, RF queueing, confirmed or uncertain
+transmission, native recipient ACKs, paused retries and an exhausted retry
+budget. A confirmed transmission alone is not a recipient ACK. The active
+channel refreshes its latest 100 messages' status every five seconds; older
+pages show status when loaded. If the retry budget is exhausted, a late ACK
+still completes delivery, or the companion can rejoin to request history
+again. [RF status and count meanings](../../services/shared-room/WEB.md#writing-and-reconnecting)
+also cover multiple room aliases and history saved before ACK tracking.
+
 | Key | Action |
 | --- | --- |
 | Tab / Shift+Tab | Focus channels, history or input |

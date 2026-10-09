@@ -167,7 +167,12 @@ async function accountsFlow(desktop, mobile) {
     assert.equal(response.status, 200);
     assert.equal((await response.json()).accepted, true);
   };
-  await rf(fixture.authorLogin); await rf(fixture.post);
+  await rf(fixture.authorLogin);
+  await desktop.call("Page.bringToFront");
+  await desktop.wait(`Array.from(document.querySelectorAll('.message')).some(row =>
+    row.querySelector('.message-text').textContent === 'Desktop keys stay on each desktop.' &&
+    row.textContent.includes('RF ACK 0/1') && row.textContent.includes('paused'))`, "five-second RF status refresh");
+  await rf(fixture.post);
   await desktop.sees("hello");
   assert.equal(await desktop.evaluate(`Array.from(document.querySelectorAll('.message')).find(p=>p.querySelector('.message-text').textContent==='hello').querySelector('.message-name').textContent`),
     fixture.author.publicKey.slice(0, 8) + "…");

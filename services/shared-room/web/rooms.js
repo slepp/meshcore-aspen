@@ -1,4 +1,4 @@
-import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, validName} from "./model.js";
+import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryLabel, validName} from "./model.js";
 import {loadDevice, signChallenge} from "./device.js";
 
 const $ = id => document.getElementById(id);
@@ -129,7 +129,10 @@ function drawMessages(scroll = false) {
     source.textContent = message.webName ? "WEB" : "RADIO";
     meta.append(title, fingerprint, time, source);
     const text = document.createElement("p"); text.className = "message-text"; text.textContent = messageBody(message);
-    content.append(meta, text); row.append(avatar, content); fragment.append(row);
+    const delivery = document.createElement("p"); delivery.className = "message-source";
+    delivery.textContent = radioDeliveryLabel(message.rf);
+    delivery.title = "A confirmed radio transmission is not a recipient ACK. An exhausted retry budget still accepts a late ACK; the recipient can rejoin to request history again.";
+    content.append(meta, text, delivery); row.append(avatar, content); fragment.append(row);
   }
   $("messages").replaceChildren(fragment);
   $("intro-title").textContent = `Welcome to ${room.name}.`;
@@ -172,6 +175,24 @@ async function history(room, initial = false) {
         room.loaded = true;
         break;
       }
+      async function refreshRadioDelivery() {
+        const room = active;
+        if (!room?.session || room.status !== "live" || room.rfTask || document.hidden) return;
+        room.rfTask = true;
+        const generation = room.generation;
+        try {
+          const page = await api(endpoint(room, "history") + `?before=${room.cursor + 1}`);
+          if (room.generation !== generation || !room.session) return;
+          mergeProfiles(room.profiles, page.profiles ?? []);
+          mergeMessages(room.messages, page.messages.filter(message => room.messages.has(message.seq)));
+          if (room === active) drawMessages();
+        } catch (error) {
+          if (room.generation !== generation) return;
+          if (error.status === 401) requireLogin(room, error.message);
+          else report(new Error(`RF delivery status could not be refreshed: ${error.message}`));
+        } finally {room.rfTask = false;}
+      }
+      setInterval(() => refreshRadioDelivery(), 5000);
       room.cursor = Math.max(room.cursor, page.floor, page.messages.at(-1)?.seq ?? 0);
       if (!page.more) break;
       query = `?after=${room.cursor}`;

@@ -49,13 +49,28 @@ type session struct {
 }
 
 type message struct {
-	Seq             int64   `json:"seq"`
-	Timestamp       uint32  `json:"timestamp"`
-	OriginAlias     string  `json:"originAlias"`
-	Author          string  `json:"author"`
-	ClientTimestamp uint32  `json:"clientTimestamp"`
-	Text            string  `json:"text"`
-	WebName         *string `json:"webName"`
+	Seq             int64          `json:"seq"`
+	Timestamp       uint32         `json:"timestamp"`
+	OriginAlias     string         `json:"originAlias"`
+	Author          string         `json:"author"`
+	ClientTimestamp uint32         `json:"clientTimestamp"`
+	Text            string         `json:"text"`
+	WebName         *string        `json:"webName"`
+	RF              *radioDelivery `json:"rf"`
+}
+
+type radioDelivery struct {
+	Recipients   int64  `json:"recipients"`
+	Queued       int64  `json:"queued"`
+	Sent         int64  `json:"sent"`
+	Acknowledged int64  `json:"acknowledged"`
+	Uncertain    int64  `json:"uncertain"`
+	Failed       int64  `json:"failed"`
+	Paused       int64  `json:"paused"`
+	Retrying     int64  `json:"retrying"`
+	Exhausted    int64  `json:"exhausted"`
+	Attempts     int64  `json:"attempts"`
+	NextRetryAt  *int64 `json:"nextRetryAt"`
 }
 
 type profile struct {
@@ -408,6 +423,20 @@ func validateMessage(m message) error {
 		!aliasPattern.MatchString(m.OriginAlias) || m.Text == "" || len(m.Text) > 151 || !utf8.ValidString(m.Text) ||
 		(m.WebName != nil && !validName(*m.WebName)) {
 		return errors.New("room returned an invalid message")
+	}
+	if m.RF != nil {
+		rf := m.RF
+		for _, count := range []int64{rf.Recipients, rf.Queued, rf.Sent, rf.Acknowledged, rf.Uncertain,
+			rf.Failed, rf.Paused, rf.Retrying, rf.Exhausted, rf.Attempts} {
+			if count < 0 || count > maxSequence {
+				return errors.New("room returned invalid RF delivery status")
+			}
+		}
+		if rf.Queued+rf.Sent+rf.Acknowledged+rf.Uncertain+rf.Failed != rf.Recipients ||
+			rf.Paused > rf.Recipients || rf.Retrying > rf.Recipients || rf.Exhausted > rf.Recipients ||
+			rf.NextRetryAt != nil && (*rf.NextRetryAt < 0 || *rf.NextRetryAt > maxSequence) {
+			return errors.New("room returned invalid RF delivery status")
+		}
 	}
 	return nil
 }

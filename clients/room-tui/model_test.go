@@ -24,6 +24,35 @@ func fixtureModel(t *testing.T) (*fixtureServer, *model) {
 	return f, m
 }
 
+func TestRadioDeliveryUpdatesDoNotConfirmPostsOrChangeContent(t *testing.T) {
+	_, m := fixtureModel(t)
+	room := m.active()
+	msg := message{Seq: 1, Timestamp: 100, OriginAlias: "A", Author: strings.Repeat("aa", 32),
+		Text: "hello", RF: &radioDelivery{Recipients: 1, Sent: 1, Attempts: 4, Retrying: 1, Exhausted: 1}}
+	if err := m.merge(room, []message{msg}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if label := radioDeliveryLabel(msg.RF); !strings.Contains(label, "RF ACK 0/1") ||
+		!strings.Contains(label, "awaiting ACK") || !strings.Contains(label, "retry budget exhausted") {
+		t.Fatal(label)
+	}
+	room.busy, room.rfBusy = true, true
+	msg.RF = &radioDelivery{Recipients: 1, Acknowledged: 1, Attempts: 4}
+	m.Update(roomResult{Alias: "A", Generation: room.generation, Kind: "rf",
+		Page: historyPage{Messages: []message{msg}}})
+	if !room.busy || room.rfBusy || len(room.messages) != 1 ||
+		!strings.Contains(radioDeliveryLabel(room.messages[1].RF), "RF ACK 1/1") {
+		t.Fatal("RF refresh changed post admission or lost status")
+	}
+	msg.RF = &radioDelivery{Recipients: 1, Sent: 1, Acknowledged: 1}
+	if validateMessage(msg) == nil {
+		t.Fatal("inconsistent RF counts accepted")
+	}
+	if !strings.Contains(radioDeliveryLabel(nil), "unavailable") {
+		t.Fatal("missing RF evidence shown as success")
+	}
+}
+
 func TestModelSavesBeforePostAndRecoversUncertainty(t *testing.T) {
 	f, m := fixtureModel(t)
 	m.composer.SetValue("saved before send")

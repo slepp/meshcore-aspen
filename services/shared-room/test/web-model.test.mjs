@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, validName} from "../web/model.js";
+import {authorName, bytes, initials, mergeMessages, mergeProfiles, messageBody, postBytes, radioDeliveryLabel, validName} from "../web/model.js";
 
 test("counts the actual RF text budget including UTF-8 display name", () => {
   assert.equal(bytes("Zoë"), 4);
@@ -36,4 +36,20 @@ test("maps names by full key, keeps fingerprints separate and rejects invalid pr
   assert.equal(authorName({author}, profiles), "New");
   for (const bad of [{name: "\u001b[31m"}, {source: "unverified"}, {publicKey: "aaaaaaaa"}, {timestamp: -1}, {advertType: 15}])
     assert.throws(() => mergeProfiles(profiles, [{...profile, ...bad}]), /invalid participant/);
+});
+
+test("shows RF transmission separately from recipient ACKs and refreshes status without changing history", () => {
+  const rf = {recipients: 1, queued: 0, sent: 1, acknowledged: 0, uncertain: 0, failed: 0,
+    paused: 0, retrying: 1, exhausted: 1, attempts: 4, nextRetryAt: null};
+  assert.match(radioDeliveryLabel(rf), /RF ACK 0\/1.*transmitted, awaiting ACK.*retry budget exhausted/);
+  const message = {seq: 1, timestamp: 100, author: "aa".repeat(32), text: "hello", rf};
+  const map = new Map();
+  mergeMessages(map, [message]);
+  const acknowledged = {...message, rf: {...rf, sent: 0, acknowledged: 1, retrying: 0, exhausted: 0}};
+  mergeMessages(map, [acknowledged]);
+  assert.equal(map.size, 1);
+  assert.match(radioDeliveryLabel(map.get(1).rf), /RF ACK 1\/1/);
+  assert.match(radioDeliveryLabel(undefined), /unavailable/);
+  for (const bad of [{sent: -1}, {recipients: 0}, {acknowledged: 1}, {paused: 2}, {nextRetryAt: -1}])
+    assert.throws(() => mergeMessages(map, [{...message, rf: {...rf, ...bad}}]), /invalid RF/);
 });

@@ -58,6 +58,23 @@ radio delivery retries that same stored message up to three times, after
 companion app to resume its pending history; reset its path first if necessary.
 Reloading the browser or sending an advert does not reset that radio state.
 
+Each message shows **Saved** separately from its RF delivery status. **Queued**
+includes history waiting behind an earlier unacknowledged message. **Transmitted,
+awaiting ACK** means the frontend confirmed transmission, not that a companion
+received it. **Transmission uncertain** and **transmission failed** show the
+frontend's actual result. **RF ACK** counts native recipient acknowledgements;
+those remain after a Worker restart. Counts refer to room-alias/client sessions,
+so one companion joined to two aliases can account for two deliveries.
+
+**Paused** means the selected frontend is offline or its authorization/scope no
+longer matches the pending delivery. **Retrying** shows another dispatch attempt;
+**retry budget exhausted** means no more automatic attempts remain, but a late
+native ACK can still complete delivery. The next retry time is shown while its
+frontend is eligible. The active channel refreshes the latest 100 messages'
+status every five seconds while the page is visible. Older pages show their
+status when loaded. An unavailable status is displayed explicitly. Existing
+history without retained ACK evidence is not relabeled as acknowledged.
+
 Joined channels remain connected while you switch between them. Badges count
 new messages arriving in another channel during this page session. Reopening
 the site restores its selected channel and login cookies, then catches up from
@@ -141,6 +158,16 @@ The browser API does not accept radio operations or expose room private keys.
 | `GET .../history?after={seq}` | Catch-up page; `more` means another forward page |
 | `POST /v1/web/rooms/{alias}/posts` | `{id:"<UUID v4>",text}`; returns `{message,duplicate}` only after storage has synced |
 | `GET /v1/web/rooms/{alias}/socket?since={seq}` | Same-origin WebSocket with `aspen-room.web.v1`; cookie authentication |
+
+Browser history, post results and socket messages include an `rf` summary on
+each message: nonnegative integer `recipients`, `queued`, `sent`,
+`acknowledged`, `uncertain`, `failed`, `paused`, `retrying`, `exhausted` and
+`attempts`, plus `nextRetryAt` (Unix milliseconds or `null`). The five phase
+counts (`queued`, `sent`, `acknowledged`, `uncertain`, `failed`) sum to
+`recipients`; pause/retry/exhaustion counts can overlap those phases. `attempts`
+is the largest cumulative dispatch count for a recipient, not a claim that
+every dispatch reached RF. Native radio frames and their retry limits are
+unchanged. The web status fields do not contain ACK proofs or private keys.
 
 Posts deduplicate by backend, stable web author and UUID. Reusing a UUID for
 different content returns 409. A duplicate's original alias, display name,
