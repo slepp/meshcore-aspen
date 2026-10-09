@@ -6,6 +6,12 @@ identity, command permissions, full-key KV scopes, I/O queues and radio
 source as Lua. Installing or removing a Wasm package does not erase Lua
 source or either runtime's durable data.
 
+Packet programs use a separate
+[packet SDK and registration API](PACKET_ENGINES.md#lua-and-wasm-programs).
+They share the command interpreter's WAMR pool, with separate guest memories,
+meters and execution contexts. Packet calls run on the radio dispatch task;
+command calls remain on the command worker.
+
 Replacing the enabled Lua scripts rebuilds one shared Lua environment and
 cancels its pending commands, event handlers and sleep timers. Wasm work keeps
 running. Replacing or removing Wasm cancels only Wasm VM work; Lua and native
@@ -35,6 +41,10 @@ supports FreeRTOS callers. Thread creation, condition waits and shared guest
 memory are not enabled. The SDK task handle and WAMR execution identity are
 32-bit values on ESP32-S3; WAMR compares this opaque identity and formats it
 through `uintptr_t` when logging.
+
+Preparation also patches WAMR's pool allocator to account for in-place
+`realloc` growth. Free-byte and high-water counters remain bounded after
+program unload and reload. The patch is shared by host and device builds.
 
 The command worker's minimum-free-stack diagnostic measures its native task
 stack. It is separate from the 8KiB Wasm operand-stack limit. When the SDK

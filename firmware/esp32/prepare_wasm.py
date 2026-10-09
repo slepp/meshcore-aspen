@@ -31,6 +31,33 @@ os_self_thread(void)
     return (korp_tid)(uintptr_t)xTaskGetCurrentTaskHandle();
 }"""
 
+POOL_REALLOC_ORIGINAL = """                hmu_set_size(hmu_old, tot_size);
+                memset((char *)hmu_old + tot_size_old, 0,
+                       tot_size - tot_size_old);"""
+POOL_REALLOC_PATCHED = """                heap->total_free_size -= tot_size - tot_size_old;
+                if (heap->current_size - heap->total_free_size
+                    > heap->highmark_size)
+                    heap->highmark_size =
+                        heap->current_size - heap->total_free_size;
+#if GC_STAT_DATA != 0
+                heap->total_size_allocated += tot_size - tot_size_old;
+#endif
+                hmu_set_size(hmu_old, tot_size);
+                memset((char *)hmu_old + tot_size_old, 0,
+                       tot_size - tot_size_old);"""
+
+
+def patch_pool_realloc_accounting(source):
+    path = source / "core/shared/mem-alloc/ems/ems_alloc.c"
+    code = path.read_text()
+    if POOL_REALLOC_PATCHED in code:
+        if code.count(POOL_REALLOC_PATCHED) != 1 or code.count(POOL_REALLOC_ORIGINAL) != 1:
+            raise ValueError("Pinned WAMR pool realloc accounting patch is ambiguous")
+        return
+    if code.count(POOL_REALLOC_ORIGINAL) != 1:
+        raise ValueError("Pinned WAMR pool realloc accounting patch no longer matches")
+    path.write_text(code.replace(POOL_REALLOC_ORIGINAL, POOL_REALLOC_PATCHED, 1))
+
 
 def patch_esp_thread_identity(source):
     path = source / "core/shared/platform/esp-idf/espidf_thread.c"
@@ -118,6 +145,7 @@ def prepare(target=None, enabled=True, config_only=False):
         mapping.write_text(code.replace(old,
             "uint32_t mem_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;", 1))
     patch_esp_thread_identity(source)
+    patch_pool_realloc_accounting(source)
     build = CACHE / ("esp-config" if target else "host")
     cmake_source = ROOT / "firmware/runtime/wasm"
     reset_cmake_source_cache(build, cmake_source)

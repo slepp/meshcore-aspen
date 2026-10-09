@@ -1,12 +1,18 @@
-# Native packet engines
+# Packet engines
 
-Build a native packet module against
+Attach a C++, Lua or portable Wasm packet engine to Aspen's shared modem.
+Engines can read, replace, modify or drop packets, and stage
+up to two transmissions per hook invocation. Register them on the radio
+dispatch task; they run on that task, not the command worker.
+Nothing is enabled by default.
+
+Build a C++ packet module against
 [`PacketPipeline.h`](../shared/PacketPipeline.h) and attach it with
-[`NativePacketHost`](../esp32/NativePacketHost.h) on Aspen's radio dispatch
-task. The module can read, replace, modify or drop packets, and stage
-up to two transmissions per hook invocation. Nothing is enabled by default.
-This interface currently takes compiled C++ modules; it does not install
-WASM or Lua packet programs.
+[`NativePacketHost`](../esp32/NativePacketHost.h).
+[`PacketLua`](PacketLua.h) and [`PacketWasm`](PacketWasm.h) implement that
+same interface for scripts. Load the program before attaching its engine.
+These are application-level registration APIs; the management CLI does not
+yet install packet programs.
 
 The shared modem exposes these raw hooks:
 
@@ -86,6 +92,101 @@ These are **cooperative native limits**: arbitrary C++ cannot be preempted
 by this interface. Do not block, access flash, sleep, perform network I/O or
 call the physical radio from an engine.
 
+## Lua and Wasm programs
+
+Lua and Wasm use the same packet operations. Each invocation meters every
+guest instruction against the registered engine's fuel and time budgets.
+Imports also consume fuel and have a separate limit of 64 calls. Packet data
+and metadata are copied; guests receive no native pointers or private keys.
+
+| Operation | Lua 5.5.1 | Wasm packet ABI v1 |
+| --- | --- | --- |
+| Inspect metadata and current length | `packet.info()` returns a table | `mp_get_info(out, capacity)` copies an 80-byte `mp_info` |
+| Read bytes | `packet.read(offset, length)` returns a binary string | `mp_read(offset, out, length)` |
+| Write within the current length | `packet.write(offset, bytes)` | `mp_write(offset, bytes, length)` |
+| Replace the current buffer and length | `packet.replace(bytes)` | `mp_replace(bytes, length)` |
+| Stage a complete raw transmission | `packet.emit(bytes, priority, delay_ms, expiry_ms)` | `mp_emit(bytes, length, priority, delay_ms, expiry_ms)` |
+| Continue or drop | Return `packet.CONTINUE` or `packet.DROP` | Return `MP_CONTINUE` or `MP_DROP` |
+
+Offsets are zero-based. A packet holds at most 255 bytes. Write, replace and
+emit return the copied byte count. Lua emission defaults to priority 4,
+delay 0 and expiry 0; Wasm callers supply those values explicitly.
+Priority is 0..255, and delay/expiry are 0..1073741823 milliseconds.
+The pipeline applies the same origin checks and native packet validation
+to both runtimes.
+
+Metadata contains the stage, current `length`/`capacity`, source and
+destination slots, payload type, role public identity, generation, job,
+RSSI in dBm and SNR in quarter-dB. Wasm `flags` uses bit 1 for local,
+2 for authenticated, 4 for engine origin and 8 for reflection origin.
+Lua exposes those flags and the booleans `local`, `authenticated`,
+`engine_origin` and `reflection_origin`. Its `identity` is a 32-byte binary
+string, matching Wasm's byte array.
+
+A Lua program is 1..16384 bytes of source text and returns one process function:
+
+```lua
+return function()
+  local info = packet.info()
+  if info.stage == 0 and info.rssi < -120 then
+    return packet.DROP
+  end
+  return packet.CONTINUE
+end
+```
+
+`PacketLua::load()` accepts a heap limit of 8192..262144 bytes, default 65536.
+The Lua heap includes parsed functions, globals, strings and temporary metadata
+tables. The sandbox supplies `packet` and `assert`; it does not open Lua's
+standard libraries. The loader meters consumed source characters as well as
+initialization instructions. Packet imports require an active process call,
+so top-level initialization cannot read a packet or stage emissions.
+
+Portable Wasm programs use [`wasm/sdk/packet.h`](wasm/sdk/packet.h), importing
+only `info`, `read`, `write`, `replace` and `emit` from
+`meshcore_packet_v1`. Export `mp_init()->i32`, returning `MP_ABI_VERSION`,
+and `mp_process()->i32`, returning the disposition. A module is at most
+16384 bytes, with one fixed 64KiB linear memory and an 8KiB interpreter stack.
+Start sections, implicit constructors, WASI, tables and guest threads are
+unavailable. Use the portable compiler flags in the
+[Wasm guide](WASM_RUNTIME.md#build-and-install-a-package) and export the packet
+entry points instead of the command entry points. Command packages and packet
+programs use separate import namespaces.
+
+Both loaders default to 100000 initialization instructions and a 20000 us
+loading/initialization time budget. Load and clear programs while their engine
+is idle; keep the engine object alive for as long as it is registered.
+Globals persist across successful calls until reload, clear or restart.
+Packet edits and emissions are transactional; guest globals are not.
+Reload a faulting program before re-enabling its slot when its globals may
+have changed.
+
+Wasm command and packet programs share one WAMR 2.4.1 runtime and its 1MiB
+PSRAM pool. Loading, unloading and import registration are serialized;
+packet execution does not acquire that loader lock. Each module has an
+explicit execution context and its own meter. Lua packet and command programs
+share allocator and compiler-budget helpers, but use separate Lua states.
+Packet programs currently expose only packet operations; system configuration,
+PHY changes and owned-identity packet construction are not SDK calls.
+
+### Resource measurements
+
+Read `PacketLua::stats()` for source/session sizes, live and peak Lua heap,
+parser steps, instructions, native calls and load/invocation microseconds.
+`PacketWasm::stats()` reports source/session/linear/stack sizes, the shared
+pool reservation and pool high-water at load, instructions, native calls and
+load/init/invocation microseconds. Pool high-water belongs to all WAMR users,
+not one engine. These categories can overlap; do not sum them into a per-module
+heap figure.
+
+The local check prints a 10000-invocation host comparison for a metadata
+read and three-byte packet edit. One Linux x86-64 run used 16504 bytes of
+Wasm session storage, 65536 bytes of linear memory and an 8192-byte interpreter
+stack, alongside the shared 1MiB runtime pool. Lua used 104 bytes of session
+storage and peaked at 28242 bytes of its 65536-byte heap. Mean host times were
+1.00 us for Wasm and 1.16 us for Lua in that fixture. This measures host execution;
+ESP32 PSRAM access and radio-task timing need device measurements.
+
 ## Mutation, faults and transmission
 
 All engines see a candidate buffer. Their writes and emissions remain staged
@@ -139,6 +240,7 @@ python3 -m unittest discover -s firmware/esp32/tests -p test_packet_pipeline.py 
 make -C firmware/esp32 arbiter-test BUILD="$PWD/.tmp/onchip-packet-native"
 make -C firmware/esp32 packet-bridge-test BUILD="$PWD/.tmp/onchip-packet-native"
 make -C firmware/esp32 bot-packet-origin-test BUILD="$PWD/.tmp/onchip-packet-native"
+make -C firmware/esp32 packet-lua-test
 ```
 
 The portable check covers registration, mutation/rollback, drop, budgets,
@@ -150,3 +252,7 @@ final plaintext ACKs, extended retries, relay drops, delayed signal metadata,
 deferred room synchronization and invalid-edit rollback. The bot check covers
 local command filtering and asynchronous reply composition/completion.
 These commands do not change a connected radio.
+`packet-lua-test` also runs the Wasm guests, checks command/packet runtime
+coexistence, and exercises script mutation, drops, staged emissions, faults,
+memory bounds, fuel, deadlines and mixed-engine rollback. It prints the host
+resource comparison above.

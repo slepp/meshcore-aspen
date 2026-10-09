@@ -90,7 +90,7 @@ def prepare(source, output, lua_archive=None):
     shutil.copytree(HERE / "platform", dest / "platform", dirs_exist_ok=True)
     shared = dest / "onchip"
     shared.mkdir(exist_ok=True)
-    units = ("BotVm BotWorker BotTypes BotRegistry BotStore BotTimers BotReminders BotUtilities "
+    units = ("BotVm LuaRuntime BotWorker BotTypes BotRegistry BotStore BotTimers BotReminders BotUtilities "
              "BotSettings BotHttps BotNetworkConfig BotHttpsProbe MastSource CommandBot NodeBackup FirmwareNodeBackup").split()
     for directory in ("esp32", "runtime"):
         for path in (HERE.parent / directory).glob("*.h"):

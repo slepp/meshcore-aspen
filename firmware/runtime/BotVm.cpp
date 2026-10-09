@@ -25,9 +25,6 @@ extern "C" {
 #ifdef ONCHIP_BOT_VM_TEST
 extern uint64_t onchipBotVmTestClock();
 #endif
-#ifdef ONCHIP_BOT_HEAP_MODEL
-extern void onchipBotVmHeapModel(size_t oldSize, size_t newSize);
-#endif
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -37,6 +34,7 @@ extern void onchipBotVmHeapModel(size_t oldSize, size_t newSize);
 #else
 #include <chrono>
 #endif
+#include "VmHeap.h"
 
 namespace {
 static_assert(LUA_VERSION_RELEASE_NUM == 50501, "Command VM requires the checked Lua 5.5.1 sources");
@@ -63,26 +61,25 @@ onchip::BotVmLimits luaSourceLimits(const char *source, size_t size, onchip::Bot
     limits.loadWallUs = onchip::BotBundledLoadWallUs;
   return limits;
 }
-struct Budget {
+struct Budget : onchip::VmHeap {
   enum Phase { Load, Init, Invoke, Cleanup };
-  enum AllocationFailure { NoAllocationFailure, HeapLimit, AllocatorFailure };
   onchip::BotVmLimits limits;
   onchip::BotVmStats stats{};
-  size_t live = 0;
   uint64_t started;
   uint64_t phaseStarted;
   Phase phase = Load;
   bool timedOut = false;
-  AllocationFailure allocationFailure = NoAllocationFailure;
-#ifdef NRF52_PLATFORM
-  size_t failedOldSize = 0, failedSize = 0;
-  unsigned failedFree = 0;
-#endif
   Phase failedPhase = Load;
   Budget *active = nullptr;
   bool running = true;
   explicit Budget(onchip::BotVmLimits selected = {})
-      : limits(selected), started(clockUs()), phaseStarted(started) {}
+      : limits(selected), started(clockUs()), phaseStarted(started) { parserStep = compileStep; }
+  static void compileStep(lua_State *state, onchip::VmHeap &heap) {
+    auto &owner = static_cast<Budget &>(heap);
+    auto &b = owner.active ? *owner.active : owner;
+    if (++b.stats.parserSteps > b.limits.parserSteps || b.expired())
+      luaL_error(state, "command compile/time budget exceeded");
+  }
   uint64_t phaseLimit() const {
     const uint64_t maximum = phase == Load ? limits.loadWallUs :
                              phase == Init ? limits.initWallUs : limits.wallUs;
@@ -119,53 +116,10 @@ struct Budget {
 };
 Budget &budget(lua_State *state);
 void *allocate(void *context, void *pointer, size_t oldSize, size_t size) {
-  auto &b = *static_cast<Budget *>(context);
-  if (!pointer) oldSize = 0;
-  if (!size) {
-#ifdef ONCHIP_BOT_HEAP_MODEL
-    if (pointer) onchipBotVmHeapModel(oldSize, 0);
-#endif
-#ifdef ARDUINO_ARCH_ESP32
-    heap_caps_free(pointer);
-#else
-    free(pointer);
-#endif
-    b.live -= oldSize;
+  auto &b = *static_cast<Budget *>(static_cast<onchip::VmHeap *>(context));
+  if (size && b.running && (b.active ? b.active->expired() : b.expired()))
     return nullptr;
-  }
-  if (b.running && (b.active ? b.active->expired() : b.expired()))
-    return nullptr;
-  if (size > b.limits.heapBytes || b.live - oldSize > b.limits.heapBytes - size) {
-    b.allocationFailure = Budget::HeapLimit;
-    return nullptr;
-  }
-#ifdef NRF52_PLATFORM
-  if (size > oldSize && size - oldSize + 8192u > unsigned(std::max(dbgHeapFree(), 0))) {
-    b.allocationFailure = Budget::AllocatorFailure;
-    b.failedOldSize = oldSize; b.failedSize = size;
-    b.failedFree = unsigned(std::max(dbgHeapFree(), 0));
-    return nullptr;
-  }
-#endif
-#ifdef ARDUINO_ARCH_ESP32
-  void *replacement = heap_caps_realloc(pointer, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-  void *replacement = realloc(pointer, size);
-#endif
-  if (replacement) {
-#ifdef ONCHIP_BOT_HEAP_MODEL
-    onchipBotVmHeapModel(oldSize, size);
-#endif
-    b.live = b.live - oldSize + size;
-    if (b.live > b.stats.peakBytes) b.stats.peakBytes = b.live;
-  } else {
-    b.allocationFailure = Budget::AllocatorFailure;
-#ifdef NRF52_PLATFORM
-    b.failedOldSize = oldSize; b.failedSize = size;
-    b.failedFree = unsigned(std::max(dbgHeapFree(), 0));
-#endif
-  }
-  return replacement;
+  return b.resize(pointer, oldSize, size, b.limits.heapBytes, b.stats.peakBytes);
 }
 void hook(lua_State *state, lua_Debug *) {
   auto &b = budget(state);
@@ -2408,7 +2362,7 @@ bool run(const char *source, size_t size, const onchip::BotEvent *event,
     return false;
   }
   Budget b{luaSourceLimits(source, size, limits)};
-  lua_State *s = lua_newstate(allocate, &b, luaL_makeseed(nullptr));
+  lua_State *s = lua_newstate(allocate, static_cast<onchip::VmHeap *>(&b), luaL_makeseed(nullptr));
   if (!s) {
     snprintf(error, errorSize, "Command VM allocation/time budget exceeded");
     b.transition(Budget::Cleanup);
@@ -2457,13 +2411,6 @@ bool run(const char *source, size_t size, const onchip::BotEvent *event,
 }
 } // namespace
 
-// Called by the pinned lexer for every consumed source character. Lua's normal
-// instruction hook does not cover compilation.
-extern "C" void onchip_lua_parser_step(lua_State *s) {
-  auto &b = budget(s);
-  if (++b.stats.parserSteps > b.limits.parserSteps || b.expired())
-    luaL_error(s, "command compile/time budget exceeded");
-}
 namespace onchip {
 bool BotVm::validate(const char *source, size_t size, BotVmStats &stats,
                      char *error, size_t errorSize, BotVmLimits limits, BotManifest *manifest) {
@@ -2894,7 +2841,7 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   s.loader = {source, size, nullptr, nullptr};
   s.loader.manifest = &s.program;
   s.loader.budget = &s.heap; s.loader.retained = true;
-  s.state = lua_newstate(allocate, &s.heap, luaL_makeseed(nullptr));
+  s.state = lua_newstate(allocate, static_cast<onchip::VmHeap *>(&s.heap), luaL_makeseed(nullptr));
   if (!s.state) { snprintf(error, errorSize, "Retained Lua heap unavailable"); clear(); return false; }
   *static_cast<Call **>(lua_getextraspace(s.state)) = &s.loader;
   lua_sethook(s.state, hook, LUA_MASKCOUNT, 1);

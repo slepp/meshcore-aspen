@@ -17,7 +17,7 @@ BOT_LUA_NATIVE := $(BOT_BUILD)/lib/OnchipLua
 BOT_WAMR := $(ROOT)/.cache/meshcore-wamr
 BOT_WAMR_LIB := $(BOT_WAMR)/host/libmeshcore_wamr.a
 BOT_WAMR_INCLUDES := -I$(BOT_WAMR)/source/core/iwasm/include
-BOT_WASM_SOURCE := ../runtime/BotWasm.cpp
+BOT_WASM_SOURCE := ../runtime/BotWasm.cpp ../runtime/WamrRuntime.cpp
 ifeq ($(ONCHIP_BOT_WASM),0)
 BOT_WAMR_LIB :=
 BOT_WAMR_INCLUDES :=
@@ -227,6 +227,9 @@ $(BOT_BUILD)/lua/%.o: $(BOT_LUA_NATIVE)/llex.c
 	$(CC) -std=c11 -O2 -g -ffunction-sections -fdata-sections $(TEST_FLAGS) \
 		-I$(BOT_LUA_NATIVE) -c $(BOT_LUA_NATIVE)/$*.c -o $@
 BOT_LUA_OBJECTS := $(addprefix $(BOT_BUILD)/lua/,$(addsuffix .o,$(BOT_LUA_C)))
+$(BOT_BUILD)/lua-runtime.o: ../runtime/LuaRuntime.cpp ../runtime/VmHeap.h $(BOT_LUA_NATIVE)/llex.c
+	$(CXX) $(BOT_FLAGS) -I$(BOT_LUA_NATIVE) -c $< -o $@
+BOT_LUA_OBJECTS += $(BOT_BUILD)/lua-runtime.o
 BOT_LUA_OBJECTS += $(BOT_WAMR_LIB)
 ifeq ($(ONCHIP_BOT_WASM),1)
 $(BOT_WAMR_LIB): prepare_wasm.py ../runtime/wasm/CMakeLists.txt
@@ -242,6 +245,28 @@ bot-vm-test bot-source-capacity-test: bot-lua
 		-lm -o $(BOT_BUILD)/bot-vm
 	$(BOT_BUILD)/bot-vm $(if $(filter bot-source-capacity-test,$@),--source-capacity-test)
 .PHONY: bot-wasm-test bot-wasm-examples bot-wasm-platform-test
+.PHONY: packet-wasm-test packet-lua-test
+packet-lua-test: packet-wasm-test
+	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I$(BOT_LUA_NATIVE) \
+		tests/packet_lua.cpp ../runtime/PacketLua.cpp ../runtime/PacketWasm.cpp ../runtime/WamrRuntime.cpp \
+		$(BOT_LUA_OBJECTS) -lm -o $(BOT_BUILD)/packet-lua
+	timeout 20s $(BOT_BUILD)/packet-lua "$(ROOT)/.tmp/wasm-examples/packet-0.wasm"
+packet-wasm-test: bot-lua bot-wasm-examples
+	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "packet-wasm-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
+	@for init in 0 1 2 3 4; do \
+		clang --target=wasm32 -Oz -nostdlib -fno-builtin \
+			-mno-bulk-memory -mno-reference-types -mno-multivalue \
+			-Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
+			-Wl,--max-memory=65536 -Wl,-z,stack-size=4096 -DINIT_CASE=$$init \
+			tests/packet_wasm_guest.c -o "$(ROOT)/.tmp/wasm-examples/packet-$$init.wasm" || exit; \
+	done
+	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I. -I$(UPSTREAM)/src -I$(BOT_LUA_NATIVE) \
+		tests/packet_wasm.cpp ../runtime/PacketWasm.cpp ../runtime/BotVm.cpp $(BOT_WASM_SOURCE) \
+		../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp $(BOT_LUA_OBJECTS) \
+		-lm -o $(BOT_BUILD)/packet-wasm
+	timeout 20s $(BOT_BUILD)/packet-wasm "$(ROOT)/.tmp/wasm-examples" packet-first
+	timeout 20s $(BOT_BUILD)/packet-wasm "$(ROOT)/.tmp/wasm-examples" bot-first
+	timeout 20s $(BOT_BUILD)/packet-wasm "$(ROOT)/.tmp/wasm-examples" concurrent
 bot-wasm-platform-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_wasm_platform.py' -v
 bot-wasm-examples:
@@ -249,7 +274,7 @@ bot-wasm-examples:
 bot-wasm-test: prepare bot-lua bot-wasm-examples
 	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "bot-wasm-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_VM_TEST=1 -I. -I$(UPSTREAM)/src -I$(BOT_LUA_NATIVE) \
-		tests/bot_wasm.cpp ../runtime/BotVm.cpp ../runtime/BotWasm.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp $(BOT_LUA_OBJECTS) \
+		tests/bot_wasm.cpp ../runtime/BotVm.cpp $(BOT_WASM_SOURCE) ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp $(BOT_LUA_OBJECTS) \
 		-lm -o $(BOT_BUILD)/bot-wasm
 	timeout 20s $(BOT_BUILD)/bot-wasm "$(ROOT)/.tmp/wasm-examples"
 .PHONY: bot-wasm-disabled-test

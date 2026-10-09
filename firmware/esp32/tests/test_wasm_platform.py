@@ -33,6 +33,25 @@ class CMakeSourceCacheTests(unittest.TestCase):
             self.assertFalse(metadata.exists())
             self.assertEqual(library.read_bytes(), b"retained build output")
 
+class PoolReallocAccountingTests(unittest.TestCase):
+    def test_exact_idempotent_patch_and_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            allocator = source / "core/shared/mem-alloc/ems/ems_alloc.c"
+            allocator.parent.mkdir(parents=True)
+            original = "prefix\n" + prepare_wasm.POOL_REALLOC_ORIGINAL + "\nsuffix\n"
+            allocator.write_text(original)
+            prepare_wasm.patch_pool_realloc_accounting(source)
+            patched = "prefix\n" + prepare_wasm.POOL_REALLOC_PATCHED + "\nsuffix\n"
+            self.assertEqual(allocator.read_text(), patched)
+            prepare_wasm.patch_pool_realloc_accounting(source)
+            self.assertEqual(allocator.read_text(), patched)
+            for code in ("unexpected realloc", original * 2, patched * 2, original + patched):
+                allocator.write_text(code)
+                with self.assertRaisesRegex(ValueError, "pool realloc accounting patch"):
+                    prepare_wasm.patch_pool_realloc_accounting(source)
+                self.assertEqual(allocator.read_text(), code)
+
 
 class EspThreadIdentityTests(unittest.TestCase):
     def setUp(self):

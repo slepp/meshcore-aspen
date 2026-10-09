@@ -129,7 +129,7 @@ $(NATIVE)/lua/%.o: $(LUA_NATIVE)/%.c $(LUA_NATIVE)/luaconf.h $(LUA_NATIVE)/lua.h
 	TMPDIR="$(NATIVE)" $(CC) -std=c11 $(LUA_TEST_FLAGS) -c "$<" -o "$@"
 production-lua-test: $(LUA_TEST_OBJECTS)
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DONCHIP_BOT_VM_TEST=1 -DONCHIP_BOT_HEAP_MODEL=1 \
-		tests/lua_vm.cpp ../runtime/BotVm.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
+		tests/lua_vm.cpp ../runtime/BotVm.cpp ../runtime/LuaRuntime.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
 		$(LUA_TEST_OBJECTS) -Wl,--gc-sections -lm -pthread -o "$(NATIVE)/lua-vm"
 	"$(NATIVE)/lua-vm"
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DNRFMAST_PRODUCTION_LUA=1 \
@@ -137,7 +137,7 @@ production-lua-test: $(LUA_TEST_OBJECTS)
 		-I$(CRYPTO) -I$(UPSTREAM)/lib/ed25519 -I$(FRAMEWORK)/libraries/Adafruit_LittleFS/src \
 		tests/lua_storage.cpp PineFilesystem.cpp PineMetadata.cpp \
 		../runtime/BotWorker.cpp ../runtime/BotStore.cpp ../runtime/BotTimers.cpp ../runtime/BotReminders.cpp \
-		../runtime/BotVm.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
+		../runtime/BotVm.cpp ../runtime/LuaRuntime.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
 		../runtime/BotSettings.cpp ../runtime/BotNetworkConfig.cpp ../runtime/BotHttps.cpp \
 		$(UPSTREAM)/src/Utils.cpp $(CRYPTO)/SHA256.cpp $(CRYPTO)/Hash.cpp $(CRYPTO)/Crypto.cpp \
 		$(LUA_TEST_OBJECTS) $(NATIVE)/lua-lfs.o $(NATIVE)/lua-lfs-util.o -Wl,--gc-sections,--wrap=calloc -lm -pthread -o "$(NATIVE)/lua-storage"

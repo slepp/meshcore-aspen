@@ -3,27 +3,25 @@
 #include "BotWasm.h"
 #include "BotTimers.h"
 #include "BotReminders.h"
+#include "WamrRuntime.h"
 #include "wasm_export.h"
 #include "wasm/sdk/meshcore.h"
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <climits>
 #include <cmath>
-#include <mutex>
 #include <new>
 #include <string.h>
-#ifdef ONCHIP_BOT_VM_TEST
-extern uint64_t onchipBotVmTestClock();
-#endif
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_heap_caps.h>
-#include <esp_timer.h>
 #endif
 
 namespace {
-constexpr uint32_t StackBytes = 8192, PoolBytes = 1024 * 1024;
+using onchip::wamr::Meter;
+using onchip::wamr::nowUs;
+using onchip::wamr::StackBytes;
+using onchip::wamr::PoolBytes;
 static_assert(uint32_t(onchip::BotIoRequest::Sleep) == MC_SLEEP &&
     uint32_t(onchip::BotIoRequest::Get) == MC_GET && uint32_t(onchip::BotIoRequest::Put) == MC_PUT &&
     uint32_t(onchip::BotIoRequest::Delete) == MC_DELETE && uint32_t(onchip::BotIoRequest::Rpc) == MC_RPC &&
@@ -55,22 +53,6 @@ static_assert(uint32_t(onchip::BotCommand::Public) == MC_PUBLIC &&
     uint32_t(onchip::BotCommand::Shared) == MC_SHARED &&
     uint32_t(onchip::BotCommand::Reminder) == MC_REMINDER &&
     uint32_t(onchip::BotCommand::Home) == MC_HOME, "Native permissions must preserve Wasm ABI v1");
-uint64_t nowUs() {
-#ifdef ONCHIP_BOT_VM_TEST
-  return onchipBotVmTestClock();
-#elif defined(ARDUINO_ARCH_ESP32)
-  return esp_timer_get_time();
-#else
-  return std::chrono::duration_cast<std::chrono::microseconds>(
-      std::chrono::steady_clock::now().time_since_epoch()).count();
-#endif
-}
-struct Meter {
-  uint32_t fuel = 0, used = 0, native = 0;
-  uint64_t deadline = 0;
-  std::atomic<uint32_t> *epoch = nullptr;
-  uint32_t eventEpoch = 0;
-};
 void memoryStats(onchip::BotVmStats &stats, size_t sessionBytes, bool linearAllocated = true) {
   mem_alloc_info_t info{};
   wasm_runtime_get_mem_alloc_info(&info);
@@ -80,9 +62,6 @@ void memoryStats(onchip::BotVmStats &stats, size_t sessionBytes, bool linearAllo
   stats.wasmPoolHighWaterBytes = info.highmark_size;
   stats.wasmSessionBytes = uint32_t(sessionBytes);
 }
-std::mutex runtimeLock;
-bool runtimeReady = false;
-void *runtimePool = nullptr;
 
 // The configured home codec takes one native text argument, not raw JSON.
 // Decode only its flat schema here; never allocate or recurse on guest JSON.
@@ -185,94 +164,11 @@ bool normalizeHomeRpc(onchip::BotIoRequest &request) {
   return args.object(field, request.value, !strcmp(request.key, "weather") ? 81 : sizeof(request.value));
 }
 
-// This reader is only the admission profile. WAMR subsequently validates types
-// and every instruction. Section lengths are bounded before any loader allocation.
-struct Reader {
-  const uint8_t *p, *end;
-  bool ok = true;
-  uint32_t leb() {
-    uint32_t result = 0;
-    for (unsigned i = 0; i < 5; ++i) {
-      if (p == end) { ok = false; return 0; }
-      const uint8_t b = *p++;
-      if (i == 4 && (b & 0xf0)) { ok = false; return 0; }
-      result |= uint32_t(b & 127) << (7 * i);
-      if (!(b & 128)) return result;
-    }
-    ok = false; return 0;
-  }
-  bool name(char *out, size_t capacity) {
-    const uint32_t n = leb();
-    if (!ok || n >= capacity || n > size_t(end - p) || memchr(p, 0, n)) {
-      ok = false; return false;
-    }
-    memcpy(out, p, n); out[n] = 0; p += n; return true;
-  }
-};
 bool profile(const uint8_t *bytes, size_t size, char *error, size_t capacity) {
-  const auto fail = [&](const char *message) { snprintf(error, capacity, "%s", message); return false; };
-  if (size < 8 || memcmp(bytes, "\0asm\1\0\0\0", 8)) return fail("Expected portable Wasm version 1");
-  Reader r{bytes + 8, bytes + size};
-  bool memory = false;
-  uint16_t seen = 0;
-  while (r.p < r.end && r.ok) {
-    const uint8_t id = *r.p++;
-    const uint32_t length = r.leb();
-    if (!r.ok || length > size_t(r.end - r.p) || id > 11 ||
-        (id && (seen & (1u << id)))) return fail("Invalid Wasm section envelope");
-    if (id) seen |= 1u << id;
-    Reader s{r.p, r.p + length}; r.p += length;
-    if (id == 2) {
-      const uint32_t count = s.leb();
-      if (count > 5) return fail("Wasm import limit is five ABI functions");
-      for (uint32_t i = 0; i < count; ++i) {
-        char module[32]{}, name[32]{};
-        if (!s.name(module, sizeof(module)) || !s.name(name, sizeof(name)) || s.p == s.end ||
-            strcmp(module, "meshcore_v1") || *s.p++ != 0) return fail("Wasm import requires meshcore_v1 function");
-        bool known = false;
-        for (const char *supported : {"command", "subscribe", "read", "reply", "io"})
-          known = known || !strcmp(name, supported);
-        if (!known) return fail("Unsupported Wasm ABI import");
-        s.leb();
-      }
-    } else if (id == 4) {
-      if (s.leb() != 0) return fail("Wasm tables are unavailable in ABI v1");
-    } else if (id == 5) {
-      if (s.leb() != 1 || s.leb() != 1 || s.leb() != 1 || s.leb() != 1)
-        return fail("Wasm requires one unshared memory with initial/maximum one 64KiB page");
-      memory = true;
-    } else if (id == 8) return fail("Wasm start section is unavailable; use metered mc_init");
-    else if (id == 7) {
-      const uint32_t count = s.leb();
-      if (count > 16) return fail("Wasm export limit is 16");
-      for (uint32_t i = 0; i < count; ++i) {
-        char name[64]{};
-        if (!s.name(name, sizeof(name)) || s.p == s.end) return fail("Invalid Wasm export");
-        ++s.p; s.leb();
-        for (const char *implicit : {"_start", "_initialize", "__post_instantiate", "__wasm_call_ctors"})
-          if (!strcmp(name, implicit)) return fail("Wasm implicit initialization export is unavailable");
-      }
-    }
-    if (!s.ok) return fail("Invalid bounded Wasm section");
-  }
-  return r.ok && memory ? true : fail("Wasm module requires bounded linear memory");
+  static const char *const imports[] = {"command", "subscribe", "read", "reply", "io"};
+  return onchip::wamr::profile(bytes, size, "meshcore_v1", imports, 5, error, capacity);
 }
 } // namespace
-
-extern "C" bool meshcore_wamr_tick(wasm_exec_env_t env) {
-  auto instance = wasm_runtime_get_module_inst(env);
-  auto *meter = static_cast<Meter *>(wasm_runtime_get_custom_data(instance));
-  if (!meter) { wasm_runtime_set_exception(instance, "Wasm execution has no owned meter"); return false; }
-  if (++meter->used > meter->fuel) {
-    wasm_runtime_set_exception(instance, "Wasm instruction budget exceeded"); return false;
-  }
-  if ((meter->used & 63) == 1 &&
-      (nowUs() >= meter->deadline ||
-       (meter->eventEpoch && meter->epoch && meter->eventEpoch != meter->epoch->load()))) {
-    wasm_runtime_set_exception(instance, "Wasm deadline/event epoch revoked"); return false;
-  }
-  return true;
-}
 
 namespace onchip {
 bool botWasmBytes(const char *source, size_t size, const uint8_t *&bytes, size_t &length) {
@@ -293,6 +189,7 @@ bool botWasmBytes(const char *source, size_t size, const uint8_t *&bytes, size_t
 }
 struct BotWasmSession::Impl {
   Meter meter;
+  wamr::Context context{wamr::Kind::Bot, &meter, this};
   wasm_module_t module = nullptr;
   wasm_module_inst_t instance = nullptr;
   wasm_exec_env_t env = nullptr;
@@ -317,9 +214,9 @@ struct BotWasmSession::Impl {
     BotSession::Result result{};
   } jobs[BotJobLimit];
   Job *current = nullptr;
-  static Impl &self(wasm_exec_env_t e) {
-    // Meter is the first member, so this never exposes a host address to Wasm.
-    return *reinterpret_cast<Impl *>(wasm_runtime_get_custom_data(wasm_runtime_get_module_inst(e)));
+  static Impl *self(wasm_exec_env_t e) {
+    auto *context = wamr::context(e, wamr::Kind::Bot);
+    return context ? static_cast<Impl *>(context->owner) : nullptr;
   }
   int32_t fail(const char *message) {
     wasm_runtime_set_exception(instance, message); return -1;
@@ -367,7 +264,8 @@ struct BotWasmSession::Impl {
   }
   static int32_t command(wasm_exec_env_t e, uint32_t id, uint32_t name, uint32_t nameSize,
       uint32_t schema, uint32_t schemaSize, uint32_t help, uint32_t helpSize, uint32_t permission) {
-    auto &s = self(e);
+    auto *owner = self(e); if (!owner) return -1;
+    auto &s = *owner;
     if (!s.native()) return -1;
     if (!s.initializing || !id || id > 65535 || s.manifest.count == BotCommandLimit ||
         permission > BotCommand::Home) return s.fail("Wasm command registration unavailable/invalid");
@@ -385,14 +283,16 @@ struct BotWasmSession::Impl {
     return 0;
   }
   static int32_t subscribe(wasm_exec_env_t e, uint32_t kind, uint32_t id) {
-    auto &s = self(e);
+    auto *owner = self(e); if (!owner) return -1;
+    auto &s = *owner;
     if (!s.native()) return -1;
     if (!s.initializing || kind < 1 || kind > 4 || !id || id > 65535 || s.events[kind - 1])
       return s.fail("Wasm event registration invalid");
     s.events[kind - 1] = id; s.manifest.eventMask |= 1u << (kind - 1); return 0;
   }
   static int32_t read(wasm_exec_env_t e, uint32_t handle, uint32_t field, uint32_t out, uint32_t capacity) {
-    auto &s = self(e);
+    auto *owner = self(e); if (!owner) return -1;
+    auto &s = *owner;
     if (!s.native()) return -1;
     if (capacity > BotNetworkResponseLimit) return s.fail("Wasm read capacity exceeds 2048 bytes");
     const void *data = nullptr; size_t size = 0;
@@ -508,7 +408,8 @@ struct BotWasmSession::Impl {
     return int32_t(size);
   }
   static int32_t reply(wasm_exec_env_t e, uint32_t handle, uint32_t text, uint32_t size) {
-    auto &s = self(e); if (!s.native()) return -1;
+    auto *owner = self(e); if (!owner) return -1;
+    auto &s = *owner; if (!s.native()) return -1;
     auto *j = s.job(handle); if (!j) return -1;
     if (j->event.kind != BotEvent::Command || j->result.action.kind != BotAction::None ||
         size > j->event.replyLimit) return s.fail("Wasm reply unavailable/already produced/exceeds RF bound");
@@ -527,7 +428,8 @@ struct BotWasmSession::Impl {
   }
   static int32_t io(wasm_exec_env_t e, uint32_t handle, uint32_t kind, uint32_t scope,
       uint32_t key, uint32_t keySize, uint32_t value, uint32_t valueSize, uint32_t delay) {
-    auto &s = self(e); if (!s.native()) return -1;
+    auto *owner = self(e); if (!owner) return -1;
+    auto &s = *owner; if (!s.native()) return -1;
     auto *j = s.job(handle); if (!j) return -1;
     if (j->request.token.operation || ++j->operations > BotIoLimit || s.nextHandle == INT32_MAX)
       return s.fail("Wasm pending I/O/operation handle/native-operation limit exceeded");
@@ -766,17 +668,13 @@ struct BotWasmSession::Impl {
     current = nullptr; return ok;
   }
   bool signature(wasm_function_inst_t function, uint32_t argc) {
-    if (!function || wasm_func_get_param_count(function, instance) != argc ||
-        wasm_func_get_result_count(function, instance) != 1) return false;
-    wasm_valkind_t types[3]{};
-    wasm_func_get_param_types(function, instance, types);
-    for (unsigned i = 0; i < argc; ++i) if (types[i] != WASM_I32) return false;
-    wasm_func_get_result_types(function, instance, types); return types[0] == WASM_I32;
+    return wamr::signature(instance, function, argc);
   }
 };
 
 BotWasmSession::~BotWasmSession() { clear(); }
 void BotWasmSession::clear() {
+  wamr::RuntimeLock lock;
   if (!impl_) return;
   if (impl_->env) wasm_runtime_destroy_exec_env(impl_->env);
   if (impl_->instance) wasm_runtime_deinstantiate(impl_->instance);
@@ -791,6 +689,7 @@ void BotWasmSession::clear() {
 }
 bool BotWasmSession::load(const char *source, size_t size, uint32_t generation, BotVmStats &stats,
     char *error, size_t capacity, BotVmLimits limits) {
+  wamr::RuntimeLock lock;
   clear(); stats = {};
   if (capacity) error[0] = 0;
   const uint8_t *bytes; size_t length;
@@ -805,39 +704,15 @@ bool BotWasmSession::load(const char *source, size_t size, uint32_t generation, 
   if (!limits.instructions || !limits.initWallUs || !limits.wallUs) {
     snprintf(error, capacity, "Wasm requires nonzero instruction, initialization and invocation budgets"); return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(runtimeLock);
-    if (!runtimeReady) {
-#ifdef ARDUINO_ARCH_ESP32
-      runtimePool = heap_caps_malloc(PoolBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-      runtimePool = malloc(PoolBytes);
-#endif
-      RuntimeInitArgs args{};
-      args.mem_alloc_type = Alloc_With_Pool;
-      args.mem_alloc_option.pool.heap_buf = runtimePool;
-      args.mem_alloc_option.pool.heap_size = PoolBytes;
-      static NativeSymbol symbols[] = {
-        {"command", reinterpret_cast<void *>(Impl::command), "(iiiiiiii)i", nullptr},
-        {"subscribe", reinterpret_cast<void *>(Impl::subscribe), "(ii)i", nullptr},
-        {"read", reinterpret_cast<void *>(Impl::read), "(iiii)i", nullptr},
-        {"reply", reinterpret_cast<void *>(Impl::reply), "(iii)i", nullptr},
-        {"io", reinterpret_cast<void *>(Impl::io), "(iiiiiiii)i", nullptr}
-      };
-      args.native_module_name = "meshcore_v1";
-      args.native_symbols = symbols; args.n_native_symbols = sizeof(symbols) / sizeof(symbols[0]);
-      runtimeReady = runtimePool && wasm_runtime_full_init(&args);
-      if (!runtimeReady) {
-#ifdef ARDUINO_ARCH_ESP32
-        heap_caps_free(runtimePool);
-#else
-        free(runtimePool);
-#endif
-        runtimePool = nullptr;
-        snprintf(error, capacity, "WAMR 1MiB PSRAM runtime pool unavailable"); return false;
-      }
-    }
-  }
+  static NativeSymbol symbols[] = {
+    {"command", reinterpret_cast<void *>(Impl::command), "(iiiiiiii)i", nullptr},
+    {"subscribe", reinterpret_cast<void *>(Impl::subscribe), "(ii)i", nullptr},
+    {"read", reinterpret_cast<void *>(Impl::read), "(iiii)i", nullptr},
+    {"reply", reinterpret_cast<void *>(Impl::reply), "(iii)i", nullptr},
+    {"io", reinterpret_cast<void *>(Impl::io), "(iiiiiiii)i", nullptr}
+  };
+  if (!wamr::ensure("meshcore_v1", symbols, sizeof(symbols) / sizeof(symbols[0]),
+                    error, capacity)) return false;
 #ifdef ARDUINO_ARCH_ESP32
   void *memory = heap_caps_calloc(1, sizeof(Impl), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 #else
@@ -851,7 +726,7 @@ bool BotWasmSession::load(const char *source, size_t size, uint32_t generation, 
   s.module = wasm_runtime_load(s.bytes, uint32_t(length), error, uint32_t(capacity));
   if (s.module) s.instance = wasm_runtime_instantiate(s.module, StackBytes, 0, error, uint32_t(capacity));
   if (s.instance) {
-    wasm_runtime_set_custom_data(s.instance, &s.meter);
+    wasm_runtime_set_custom_data(s.instance, &s.context);
     s.env = wasm_runtime_create_exec_env(s.instance, StackBytes);
     s.init = wasm_runtime_lookup_function(s.instance, "mc_init");
     s.start = wasm_runtime_lookup_function(s.instance, "mc_start");
