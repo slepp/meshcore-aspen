@@ -599,7 +599,7 @@ bool Management::setName(const char *name) {
   return true;
 }
 
-bool Management::advertiseZeroHop() {
+bool Management::advertise(bool zeroHop) {
   if (!core_ || !radio_.queuedReady() || radio_.hasPendingWork() ||
       core_->packets.getOutboundTotal()) {
     Serial.println("Management advert unavailable: radio or queue busy");
@@ -612,7 +612,8 @@ bool Management::advertiseZeroHop() {
     Serial.println("Management advert packet capacity exhausted");
     return false;
   }
-  core_->sendZeroHop(packet);
+  if (zeroHop) core_->sendZeroHop(packet);
+  else core_->routing.flood(*core_, packet, core_->routing.defaultScope(), core_->originWidth);
   return true;
 }
 

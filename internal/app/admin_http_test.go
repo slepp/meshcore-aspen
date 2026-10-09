@@ -226,6 +226,7 @@ func TestHostAdminOwnerPersistenceAndErrors(t *testing.T) {
 
 func TestHostAdminNativeChannelPolicyCommands(t *testing.T) {
 	for _, command := range []string{
+		"advert", "advert.zerohop", "bot aliases", "bot aliases aspen,aspen-bot,a", "bot aliases off",
 		"bot contacts", "bot membership", "bot membership 7", "bot membership 0 #lab",
 		"bot membership 1 public", "bot membership 3 off",
 		"bot membership 2 private 4f7073 0102030405060708090a0b0c0d0e0f10",

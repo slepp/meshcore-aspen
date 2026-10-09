@@ -266,6 +266,15 @@ startup or rename. Successful owner notifications have a separate one-minute
 cooldown per worker process; rejected queue/airtime requests do not consume it.
 The public bot/Lua API retains its ordinary 15-minute interval; both paths
 keep queued-radio admission and bot airtime budget.
+`advert` queues a flood advert for the same host bot identity through its
+configured default region and path width. It shares the owner one-minute
+cooldown and retains the bot's 15-minute advert interval, including after a
+zero-hop notification. Queueing does not confirm RF reception.
+`aliases [off|aspen,aspen-bot,a]` (also `bot aliases`) reads or saves/applies
+four bounded target aliases. The checked `bot-aliases` NVS record is separate
+from the bot name and identity. Incoming aliases are case-insensitive and do
+not change native channel permissions; addressed-only membership mask `12`
+silences all bare commands, including TRACE's target-required notice.
 On-chip RF-role authorization is unchanged; no MastAdmin credential or
 shared-PHY authority is delegated. The private reply confirms local queueing,
 **not** terminal RF success; verify the actual mast RF receipt.

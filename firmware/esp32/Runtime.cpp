@@ -109,9 +109,9 @@ bool roomSetName(const char *name);
 bool companionSetName(const char *name);
 RolePasswordUpdate repeaterSetPassword(const char *password);
 RolePasswordUpdate roomSetPassword(const char *password);
-bool repeaterAdvertiseZeroHop();
-bool roomAdvertiseZeroHop();
-bool companionAdvertiseZeroHop();
+bool repeaterAdvertise(bool zeroHop);
+bool roomAdvertise(bool zeroHop);
+bool companionAdvertise(bool zeroHop);
 
 bool kissName(char name[32]) {
   if (!botStatus.has_identity) return loadServiceName(NamedService::Kiss, name);
@@ -123,12 +123,12 @@ bool setKissName(const char *name) {
   strcpy(botStatus.name, name);
   return true;
 }
-bool nativeRoleAdvertiseZeroHop(Role role) {
+bool nativeRoleAdvertise(Role role, bool zeroHop) {
   if (lifecycleBusy(role)) return false;
   switch (role) {
-  case Role::Repeater: return repeaterAdvertiseZeroHop();
-  case Role::Room: return roomAdvertiseZeroHop();
-  case Role::Companion: return companionAdvertiseZeroHop();
+  case Role::Repeater: return repeaterAdvertise(zeroHop);
+  case Role::Room: return roomAdvertise(zeroHop);
+  case Role::Companion: return companionAdvertise(zeroHop);
   }
   return false;
 }

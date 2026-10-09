@@ -30,12 +30,13 @@ class HostBotOwner {
   static inline std::chrono::steady_clock::time_point lastAdvert_{};
 public:
   enum class AdvertResult { Queued, RateLimited, Unavailable };
-  static AdvertResult advertise(CommandBot &bot) {
+  static AdvertResult advertise(CommandBot &bot, bool zeroHop = true) {
     const auto now = std::chrono::steady_clock::now();
     if (lastAdvert_ != std::chrono::steady_clock::time_point{} &&
         now - lastAdvert_ < std::chrono::minutes(1))
       return AdvertResult::RateLimited;
-    if (!bot.advertiseOwnerZeroHop()) return AdvertResult::Unavailable;
+    if (!(zeroHop ? bot.advertiseOwnerZeroHop() : bot.advertise(false)))
+      return AdvertResult::Unavailable;
     lastAdvert_ = now;
     return AdvertResult::Queued;
   }
@@ -243,7 +244,7 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
       !std::strcmp(policy_command, "thread") || !std::strncmp(policy_command, "thread ", 7)) {
     bot.radioPolicyCommand(policy_command, reply, sizeof(reply));
   } else if (!std::strcmp(command, "help")) {
-    std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; channel; path; airtime; adaptive; advert.zerohop; key bot (Go owner). Grants: help grants");
+    std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; aliases; channel; path; airtime; adaptive; advert|advert.zerohop; key bot (Go owner)");
   } else if (!std::strcmp(command, "help grants")) {
     constexpr char helpGrants[] = "shared/reminders [status|on|off]; events [status|MASK 0..31] (1 startup,2 connectivity,4 message,8 node_status,16 scheduled); repeaters help; policy saved/applied; cancel stops commands/events, not reminders. Defaults off; packages never authorize scripts.";
     static_assert(sizeof(helpGrants) <= sizeof(reply) && sizeof(helpGrants) - 1 <= 256,
@@ -346,18 +347,22 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
     bot.discoveryCommand(command[9] ? command + 10 : "", reply, sizeof(reply));
   } else if (!std::strcmp(command, "contacts")) {
     bot.contactStatus(reply, sizeof(reply));
+  } else if (!std::strcmp(policy_command, "aliases") || !std::strncmp(policy_command, "aliases ", 8)) {
+    bot.targetAliasesCommand(policy_command[7] ? policy_command + 8 : "", reply, sizeof(reply));
   } else if (!std::strcmp(command, "name")) {
     onchip::BotMeshPolicy policy;
     if (!onchip::loadBotMeshPolicy(policy)) std::strcpy(reply, "Error: saved bot name unavailable");
     else std::snprintf(reply, sizeof(reply), "Name: %s", policy.name);
-  } else if (!std::strcmp(command, "advert.zerohop")) {
-    const auto result = source.ready() ? onchip::HostBotOwner::advertise(bot) :
+  } else if (!std::strcmp(command, "advert.zerohop") || !std::strcmp(command, "advert")) {
+    const bool zeroHop = !std::strcmp(command, "advert.zerohop");
+    const auto result = source.ready() ? onchip::HostBotOwner::advertise(bot, zeroHop) :
         onchip::HostBotOwner::AdvertResult::Unavailable;
     std::strcpy(reply, result == onchip::HostBotOwner::AdvertResult::Queued ?
-        "Bot zero-hop advert queued; verify RF" :
+        (zeroHop ? "Bot zero-hop advert queued; verify RF" :
+                   "Bot flood advert queued; RF reception unconfirmed") :
         result == onchip::HostBotOwner::AdvertResult::RateLimited ?
         "Error: owner advert rate limited (1 minute)" :
-        "Error: bot source unavailable, radio or queue busy, or airtime exhausted");
+        "Error: bot source unavailable, radio/queue busy, or advert rate/airtime limit");
   } else if (!std::strncmp(command, "name ", 5)) {
     const char *name = command + 5;
     onchip::BotMeshPolicy policy;

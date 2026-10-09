@@ -222,13 +222,13 @@ def generate(upstream, target):
                 text = re.sub(r"\bNodePrefs\b", "OnchipCompanionPrefs", text)
             if role != "companion" and path.name == "MyMesh.h":
                 anchor = "  void handleCommand(uint32_t sender_timestamp, char* command, char* reply);"
-                text = replace_once(text, anchor, anchor + "\n  bool onchipFlush();\n  bool onchipSavePrefs();\n  bool onchipAdvertiseZeroHop();")
+                text = replace_once(text, anchor, anchor + "\n  bool onchipFlush();\n  bool onchipSavePrefs();\n  bool onchipAdvertise(bool zeroHop);")
             if role == "companion" and path.name == "MyMesh.h":
                 text = replace_once(text, "  void begin(bool has_display);",
                                     """  void begin(bool has_display);
   bool onchipFlush();
   bool onchipSavePrefs();
-  bool onchipAdvertiseZeroHop();
+  bool onchipAdvertise(bool zeroHop);
   int searchChannelsByHash(const uint8_t*, mesh::GroupChannel[], int) override;
   void onchipRequestFailed();""")
                 text = replace_once(text, "void saveChannels() { _store->saveChannels(this); }",
@@ -337,10 +337,11 @@ bool {cls}::onchipFlush() {{
   return true;
 }}
 bool {cls}::onchipSavePrefs() {{ return _cli.savePrefs(_fs); }}
-bool {cls}::onchipAdvertiseZeroHop() {{
+bool {cls}::onchipAdvertise(bool zeroHop) {{
   auto* packet = createSelfAdvert();
   if (!packet) return false;
-  sendZeroHop(packet);
+  if (zeroHop) sendZeroHop(packet);
+  else sendFloodScoped(default_scope, packet, 0, _prefs.path_hash_mode + 1);
   return true;
 }}
 """
@@ -389,12 +390,17 @@ void OnchipCompanion::onchipRequestFailed() {
   writeErrFrame(ERR_CODE_FILE_IO_ERROR);
 }
 bool OnchipCompanion::onchipSavePrefs() { return _store->savePrefs(_prefs); }
-bool OnchipCompanion::onchipAdvertiseZeroHop() {
+bool OnchipCompanion::onchipAdvertise(bool zeroHop) {
   auto* packet = _prefs.advert_loc_policy == ADVERT_LOC_NONE ?
       createSelfAdvert(_prefs.node_name) :
       createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
   if (!packet) return false;
-  sendZeroHop(packet);
+  if (zeroHop) sendZeroHop(packet);
+  else {
+    TransportKey default_scope;
+    memcpy(default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+    sendFloodScoped(default_scope, packet, 0);
+  }
   return true;
 }
 int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int maximum) {
@@ -570,10 +576,10 @@ bool {role}Name(char name[32]) {{
   snprintf(name, 32, "%s", meshInstance->getNodePrefs()->node_name);
   return true;
 }}
-bool {role}AdvertiseZeroHop() {{
+bool {role}Advertise(bool zeroHop) {{
   return meshInstance && {role}Radio().queuedReady() &&
       !{role}Radio().hasPendingWork() && !storage->packets.getOutboundTotal() &&
-      meshInstance->onchipAdvertiseZeroHop();
+      meshInstance->onchipAdvertise(zeroHop);
 }}
 bool {role}SetName(const char* name) {{
   if (!meshInstance || !name || !name[0] || strlen(name) > 31) return false;

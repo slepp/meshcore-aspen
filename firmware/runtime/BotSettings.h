@@ -90,6 +90,13 @@ struct BotMeshPolicy {
   bool valid() const;
   bool allows(const uint8_t key[32]) const;
 };
+struct BotTargetAliases {
+  char names[4][17]{};
+  bool valid() const;
+  bool matches(const char *text, size_t size) const;
+};
+bool loadBotTargetAliases(BotTargetAliases &aliases);
+bool saveBotTargetAliases(const BotTargetAliases &aliases);
 bool loadBotMeshPolicy(BotMeshPolicy &policy);
 bool saveBotMeshPolicy(const BotMeshPolicy &policy);
 }

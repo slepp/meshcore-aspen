@@ -565,6 +565,20 @@ static void testRuntimeConfig() {
   assert(command("set bot.name Pine-Bot", 1800000000).find("OK saved") == 0);
   assert(!strcmp(bot.getName(), "Pine-Bot") && bot.self_id.matches(originalBot));
   assert(command("get bot.name") == "> Pine-Bot");
+  for (const auto &mode : {"bot advert", "bot advert.zerohop"}) {
+    assert(command(mode, 1800000000).find("Queued ") == 0);
+    auto *packet = pool.getNextOutbound(clock.now);
+    assert(packet && packet->getPayloadType() == PAYLOAD_TYPE_ADVERT);
+    if (!strcmp(mode, "bot advert")) {
+      assert(packet->isRouteFlood() && packet->getPathHashSize() == 3);
+    } else {
+      assert(packet->isRouteDirect() && packet->getPathHashCount() == 0);
+    }
+    assert(!memcmp(packet->payload, originalBot.pub_key, PUB_KEY_SIZE));
+    AdvertDataParser advert(packet->payload + 100, packet->payload_len - 100);
+    assert(advert.isValid() && !strcmp(advert.getName(), "Pine-Bot"));
+    pool.free(packet);
+  }
   for (auto bad : {"", " space", "space ", "line\nbreak", "12345678901234567890123456789012"})
     assert(command(std::string("set bot.name ") + bad).find("Error:") == 0);
   for (auto unsupported : {"set bot.channel secret", "get bot.radio",

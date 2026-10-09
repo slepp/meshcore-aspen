@@ -41,7 +41,7 @@ public:
   const uint8_t *publicKey() const;
   const char *name() const { return status_.name; }
   bool setName(const char *name);
-  bool advertiseZeroHop();
+  bool advertise(bool zeroHop);
   uint8_t pathWidth() const;
   bool setPathWidth(uint8_t width);
   uint64_t generation() const { return journal_.generation; }

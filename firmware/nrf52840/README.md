@@ -285,6 +285,9 @@ The operator can request another native flood advert with the serial
 `bot advert` command, for example when commissioning a late-joining companion.
 For a name notification without relay forwarding, use native
 `advert.zerohop` for the repeater and `bot advert.zerohop` for the bot.
+Use `advert` or `bot advert` to flood the corresponding identity instead.
+The bot command is available through the authenticated native repeater CLI
+as well as USB. A queued advert does not confirm RF reception.
 The latter is available through USB or the existing authenticated, encrypted
 repeater admin CLI. Both use upstream `sendZeroHop`, with an empty direct
 route (no routing hashes); the saved three-byte flood policy is unchanged.

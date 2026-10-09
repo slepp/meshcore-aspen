@@ -29,6 +29,9 @@ func TestHostRoleAdminHTTPAuthScopeAndPersistence(t *testing.T) {
 			value, err := os.ReadFile(path)
 			return "> " + string(value), err
 		}
+		if command == "advert" || command == "advert.zerohop" {
+			return "OK - Advert sent", nil
+		}
 		return "Error, bad value", nil
 	}, "companion": func(context.Context, string) (string, error) {
 		t.Fatal("companion owner must not be exposed by the role adapter")
@@ -60,6 +63,18 @@ func TestHostRoleAdminHTTPAuthScopeAndPersistence(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("invalid/scoped requests reached owner")
+	}
+	for _, command := range []string{"advert", "advert.zerohop"} {
+		before := calls
+		if w := adminRequest(handler, "/admin/role/room", command, token, "", ""); w.Code != 403 || calls != before {
+			t.Fatal("advert needs write confirmation")
+		}
+		if w := adminRequest(handler, "/admin/role/room", command, token, "admin-v1", "https://evil.example"); w.Code != 403 || calls != before {
+			t.Fatal("cross-origin advert admitted")
+		}
+		if w := adminRequest(handler, "/admin/role/room", command, token, "admin-v1", ""); w.Code != 200 || calls != before+1 {
+			t.Fatalf("explicit advert not routed to role: %d %q", w.Code, w.Body.String())
+		}
 	}
 	if w := adminRequest(handler, "/admin/role/room", "set name Birch Room", token, "admin-v1", ""); w.Code != 200 {
 		t.Fatalf("role owner write failed: %d", w.Code)

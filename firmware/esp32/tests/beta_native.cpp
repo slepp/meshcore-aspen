@@ -1624,16 +1624,21 @@ static void interrupted_upload() {
   authenticated_web(true);
 }
 #include "beta_review_cases.h"
-static void assert_zero_hop_advert(const Radio &radio, const uint8_t key[32],
-                                   const char *name, uint8_t type) {
+static void assert_role_advert(const Radio &radio, const uint8_t key[32],
+                              const char *name, uint8_t type, bool zeroHop = true) {
   unsigned count = 0;
   for (const auto &wire : radio.sent) {
     mesh::Packet packet;
     assert(packet.readFrom(wire.data(), wire.size()));
     if (packet.getPayloadType() != PAYLOAD_TYPE_ADVERT) continue;
-    assert(wire[0] == 0x12 && wire[1] == 0);
-    assert(packet.isRouteDirect() && !packet.hasTransportCodes() &&
-           packet.getPathHashCount() == 0 && !memcmp(packet.payload, key, 32));
+    if (zeroHop) {
+      assert(wire[0] == 0x12 && wire[1] == 0);
+      assert(packet.isRouteDirect() && !packet.hasTransportCodes());
+    } else {
+      assert(packet.isRouteFlood());
+      assert(packet.getPathHashSize() >= 1 && packet.getPathHashSize() <= 3);
+    }
+    assert(packet.getPathHashCount() == 0 && !memcmp(packet.payload, key, 32));
     assert(packet.payload_len > 100 && queued_tx::get32(packet.payload + 32) > 0);
     AdvertDataParser advert(packet.payload + 100, packet.payload_len - 100);
     assert(advert.isValid() && advert.getType() == type && advert.hasName() &&
@@ -1644,6 +1649,10 @@ static void assert_zero_hop_advert(const Radio &radio, const uint8_t key[32],
     ++count;
   }
   assert(count == 1);
+}
+static void assert_zero_hop_advert(const Radio &radio, const uint8_t key[32],
+                                 const char *name, uint8_t type) {
+  assert_role_advert(radio, key, name, type);
 }
 static void service_names_without_app_roles() {
   const auto records = identity_test::durable;
@@ -1722,7 +1731,7 @@ static void service_names_without_app_roles() {
     assert(action("role name management") == "Name: Aspen-Admin");
     assert(action("role name kiss") == "Name: Aspen-KISS");
     dashboardName("Aspen-KISS");
-    assert(action("role config management").find("advert=zerohop RF=shared") != std::string::npos);
+    assert(action("role config management").find("advert=zerohop,flood RF=shared") != std::string::npos);
     assert(action("role config kiss").find("advert=none RF=service-only") != std::string::npos);
     for (const char *role : {"repeater", "room", "companion", "bot", "kiss", "observer"})
       assert(action(("role advert " + std::string(role) + " zerohop").c_str()).find("Error:") == 0);
@@ -1732,11 +1741,16 @@ static void service_names_without_app_roles() {
     assert(!strcmp(status.roles[5].name, "Aspen-Admin") && !strcmp(status.roles[4].name, "Aspen-KISS"));
     assert(!memcmp(status.roles[4].public_key, modem.pub_key, 32));
     radio.sent.clear();
-    assert(action("role advert management flood").find("Error:") == 0);
+    assert(action("role advert management unknown").find("Error:") == 0);
     assert(action("role advert management zerohop").find("Queued zero-hop") == 0);
     assert(action("role advert management zerohop").find("Error:") == 0);
     step();
     assert_zero_hop_advert(radio, managementKey, "Aspen-Admin", ADV_TYPE_REPEATER);
+    radio.sent.clear();
+    assert(action("role advert management flood").find("Queued flood") == 0);
+    assert(action("role advert management flood").find("Error:") == 0);
+    step();
+    assert_role_advert(radio, managementKey, "Aspen-Admin", ADV_TYPE_REPEATER, false);
     const auto phy = mux.currentConfiguration();
     assert(phy.freq_hz == 912525000 && phy.bw_hz == 250000 && phy.sf == 7 && phy.cr == 5 && phy.tx_power == 2);
     stopManagementForTest();
@@ -1951,6 +1965,8 @@ static void renamed_role_adverts() {
     assert(f.send(outsider, "role name kiss Unauthorized", false).empty());
     assert(f.send(outsider, "role advert management zerohop", false).empty());
     assert(f.send(outsider, "role advert bot zerohop", false).empty());
+    assert(f.send(outsider, "role advert management flood", false).empty());
+    assert(f.send(outsider, "role advert bot flood", false).empty());
     for (const auto &wire : f.radio.sent) {
       mesh::Packet packet;
       assert(packet.readFrom(wire.data(), wire.size()));
@@ -1989,6 +2005,7 @@ static void renamed_role_adverts() {
     assert(f.bot.stageSource(source, strlen(source))); f.step();
     assert(f.bot.pollSourceResult(result) && result.ok && f.bot.activateStaged()); f.step();
     assert(f.bot.pollSourceResult(result) && result.ok);
+    assert(f.action("role advert bot flood").find("Error:") == 0);
     const auto contact = outsider.advert();
     f.mux.received(contact.data(), contact.size(), -90, 5); f.step();
     f.radio.sent.clear();
@@ -2001,10 +2018,41 @@ static void renamed_role_adverts() {
       assert(packet.readFrom(wire.data(), wire.size()));
       assert(packet.getPayloadType() != PAYLOAD_TYPE_ADVERT);
     }
+    timeMs += 900001; f.step(300);
+    const auto beforeFloodKeys = identity_test::durable;
+    const auto beforeFloodPhy = f.mux.currentConfiguration();
+    for (const auto &role : roles) {
+      f.radio.sent.clear();
+      assert(f.action(("role advert " + std::string(role.role) + " flood").c_str()).find("Queued flood") == 0);
+      assert(f.action(("role advert " + std::string(role.role) + " flood").c_str()).find("Error:") == 0);
+      f.step(300);
+      uint8_t key[32];
+      assert(identityPublicKey(role.key, key));
+      assert_role_advert(f.radio, key, role.name, role.type, false);
+      if (!strcmp(role.role, "bot")) {
+        mesh::Packet packet;
+        assert(packet.readFrom(f.radio.sent[0].data(), f.radio.sent[0].size()));
+        assert(packet.hasTransportCodes());
+        TransportKey scope;
+        TransportKeyStore keys;
+        keys.getAutoKeyFor(1, "#beta-lab", scope);
+        assert(packet.transport_codes[0] == scope.calcTransportCode(&packet));
+        assert(packet.getPathHashSize() == policy.pathWidth);
+        assert(f.action("role advert bot flood").find("Error:") == 0);
+      }
+    }
+    assert(identity_test::durable == beforeFloodKeys);
+    const auto afterFloodPhy = f.mux.currentConfiguration();
+    assert(afterFloodPhy.freq_hz == beforeFloodPhy.freq_hz &&
+           afterFloodPhy.bw_hz == beforeFloodPhy.bw_hz &&
+           afterFloodPhy.sf == beforeFloodPhy.sf && afterFloodPhy.cr == beforeFloodPhy.cr &&
+           afterFloodPhy.tx_power == beforeFloodPhy.tx_power);
+    assert(f.action("role advert kiss flood").find("Error:") == 0);
+    assert(f.action("role advert observer flood").find("Error:") == 0);
   }
   identity_test::durable = records;
   filesystem_test::files = files;
-  puts("PASS authenticated native role rename/adverts: five identities, exact 0x12 wire/name/signatures; immediate owner bot rename advert after startup, public/Lua rate limit retained, queue/airtime failures");
+  puts("PASS authenticated native role adverts: five signed flood/zero-hop identities and names, scoped bot flood/path width, unchanged keys/PHY, immediate owner rename notification, flood/Lua rate limits and queue/airtime failures");
 }
 static void runtime_role_configuration() {
   const auto records = identity_test::durable;
@@ -3475,6 +3523,7 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && !strcmp(argv[1], "--automatic-adverts-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    service_names_without_app_roles();
     automatic_adverts();
     renamed_role_adverts();
     return 0;

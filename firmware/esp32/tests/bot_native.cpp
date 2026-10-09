@@ -238,6 +238,46 @@ static void native_channel_policy() {
   policy("membership 1 #second");
   policy("membership 2 public");
   policy("membership 3 private 50726976617465 0102030405060708090a0b0c0d0e0f10");
+  f.bot.targetAliasesCommand("aspen,aspen-bot,a", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved and applied", 17));
+  f.bot.targetAliasesCommand("", reply, sizeof(reply));
+  assert(!strcmp(reply, "Aliases: aspen,aspen-bot,a; live=applied"));
+  for (unsigned failure = 0; failure < 3; ++failure) {
+    const auto stored = identity_test::durable;
+    identity_test::failWrite = failure == 0;
+    identity_test::failCommit = failure == 1;
+    identity_test::afterCommit = failure == 2 ? +[] { identity_test::failRead = true; } : nullptr;
+    f.bot.targetAliasesCommand("new-alias", reply, sizeof(reply));
+    assert(!strncmp(reply, "Error:", 6));
+    identity_test::failWrite = identity_test::failCommit = identity_test::failRead = false;
+    identity_test::afterCommit = nullptr;
+    if (failure == 2) {
+      f.bot.targetAliasesCommand("", reply, sizeof(reply));
+      assert(!strcmp(reply, "Aliases: new-alias; live=differs; reapply saved aliases"));
+    }
+    identity_test::durable = stored;
+    f.bot.targetAliasesCommand("", reply, sizeof(reply));
+    assert(!strcmp(reply, "Aliases: aspen,aspen-bot,a; live=applied"));
+  }
+  const auto aliasRecord = identity_test::durable.at({"mc-onchip", "bot-aliases"});
+  for (unsigned malformed = 0; malformed < 3; ++malformed) {
+    auto &record = identity_test::durable[{"mc-onchip", "bot-aliases"}];
+    record = aliasRecord;
+    if (malformed == 0) record.pop_back();
+    else if (malformed == 1) record[3] = 2;
+    else record[4] = '!';
+    BotTargetAliases invalid;
+    assert(!loadBotTargetAliases(invalid));
+    f.bot.targetAliasesCommand("aspen,aspen-bot,a", reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved and applied", 17));
+  }
+  for (const char *invalid : {"aspen,aspen", "ASPen", ",aspen", "aspen,", "a,b,c,d,e",
+                              "1234", "bad alias", "abcdefab", "abcdefghijklmnopq"}) {
+    f.bot.targetAliasesCommand(invalid, reply, sizeof(reply));
+    assert(!strncmp(reply, "Error:", 6));
+  }
+  f.bot.targetAliasesCommand("", reply, sizeof(reply));
+  assert(!strcmp(reply, "Aliases: aspen,aspen-bot,a; live=applied"));
   BotRadioPolicy saved;
   assert(loadBotRadioPolicy(saved));
   saved.airtimeMs = 3600; saved.pathWidth = 3; assert(saveBotRadioPolicy(saved));
@@ -266,6 +306,32 @@ static void native_channel_policy() {
   assert(group("operator: !ping", "#second", nullptr, false).empty());
   assert(group("operator: !ping", "#second") == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "#first", nullptr, false).size() == 1);
+  policy("membership 4 #test");
+  policy("access 4 default 12");
+  for (const char *command : {"operator: !ping", "operator: !trace", "operator: !mt 5",
+                              "operator: !not-a-command", "operator: !trace invalid-route",
+                              "operator: !help", "operator: !@", "operator: !@aspen",
+                              "operator: !@another-bot trace", "operator: ordinary text"}) {
+    assert(group(command, "#test", nullptr, false).empty());
+    assert(f.radio.sent.empty());
+  }
+  for (const char *command : {"operator: !@aspen ping", "operator: !@aspen-bot ping",
+                              "operator: !@a ping", "operator: !@ASPEN ping"}) {
+    assert(group(command, "#test", nullptr, false) == std::vector<std::string>{"Pong"});
+  }
+  assert(group("operator: !ping", "#test") == std::vector<std::string>{"Pong"});
+  assert(group("operator: !@aspen trace", "#test", nullptr, false).size() == 1);
+  f.bot.stop(); f.start(); f.learn(peer);
+  f.bot.targetAliasesCommand("", reply, sizeof(reply));
+  assert(!strcmp(reply, "Aliases: aspen,aspen-bot,a; live=applied"));
+  assert(group("operator: !trace", "#test", nullptr, false).empty());
+  assert(f.radio.sent.empty());
+  assert(group("operator: !@a ping", "#test", nullptr, false) == std::vector<std::string>{"Pong"});
+  f.bot.targetAliasesCommand("aspen", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved and applied", 17));
+  assert(group("operator: !@a ping", "#test", nullptr, false).empty());
+  assert(f.radio.sent.empty());
+  assert(group("operator: !@aspen ping", "#test", nullptr, false) == std::vector<std::string>{"Pong"});
   policy("access 1 recall 63");
   const auto privateDenied = group("operator: !recall item", "#second");
   assert(privateDenied.size() == 1 && privateDenied[0].find("permission") != std::string::npos);
@@ -309,7 +375,8 @@ static void native_channel_policy() {
   assert(peer.replies(identity, f.radio).empty());
   assert(!memcmp(identity, f.bot.publicKey(), sizeof(identity)));
   f.bot.stop(); assert(saveBotRadioPolicy({}));
-  puts("PASS native channel policy: simultaneous hashtag/private/Public, full-origin channel routing, independent bare/addressed flags, native permission upper bounds, silent durable effect, read/write and radio-action denial, immediate edit and unchanged identity");
+  f.bot.targetAliasesCommand("off", reply, sizeof(reply));
+  puts("PASS native channel policy: simultaneous hashtag/private/Public, configured aliases and key targets, addressed-only #test emits no RF for bare/malformed/unknown/wrong-target requests across restart, alias revocation, full-origin routing, independent grants and unchanged identity");
 }
 static void native_thread_policy() {
   assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotEventAccess(0) && saveBotSharedState(false));

@@ -46,9 +46,10 @@ nav{position:sticky;top:0;background:var(--bg);padding:12px 0;z-index:1}section{
 <p class="muted">Role enable/disable changes take effect after a restart. These switches do not change Management or KISS.</p>
 <h3>Role name and advert</h3><div class="fields">
 <label>Role <select id="role"><option value="repeater">Repeater</option><option value="room">Room</option><option value="companion">Companion</option><option value="bot">Bot</option><option value="management">Management</option><option value="kiss">KISS service</option></select></label>
-<label>Name <input id="role-name" maxlength="31" placeholder="Up to 31 ASCII characters; no colon"></label></div>
-<div class="actions"><button id="role-read">Read role settings</button><button id="role-save">Save name</button><button id="role-advert">Send zero-hop advert</button></div>
-<p class="muted">Renaming keeps the role's identity. An advert announces it to radios in range.</p>
+<label>Name <input id="role-name" maxlength="31" placeholder="Up to 31 ASCII characters; no colon"></label>
+<label>Advert route <select id="role-advert-mode"><option value="zerohop">Zero-hop: radios in range</option><option value="flood">Flood: relay through the mesh</option></select></label></div>
+<div class="actions"><button id="role-read">Read role settings</button><button id="role-save">Save name</button><button id="role-advert">Send advert</button></div>
+<p class="muted">Renaming keeps the role's identity. Flood adverts use the role's default region and path width; bot floods are limited to one advert per 15 minutes. Queuing does not confirm RF reception.</p>
 <details><summary>Role settings and pending changes</summary><button data-read="job" data-target="role-detail">Check pending changes</button><pre id="role-detail"></pre></details></section>
 <section id="radio"><h2>Radio settings</h2><pre id="radio-status">Radio settings not loaded</pre>
 <p class="warning">All roles share this channel. Retuning can disconnect RF administration and cancel queued packets.
@@ -725,7 +726,7 @@ bind('role-save','Saving role name',async()=>{
   if(!/^[\x20-\x39\x3b-\x7e]{1,31}$/.test(name)) throw Error('Name requires 1..31 printable ASCII bytes without colon.');
   return await nativeWrite('role name '+$('role').value+' '+name,'Save this name? The role keeps its identity.');
 });
-bind('role-advert','Sending role advert',()=>nativeWrite('role advert '+$('role').value+' zerohop','Send a zero-hop advert for this role?'));
+bind('role-advert','Sending role advert',()=>nativeWrite('role advert '+$('role').value+' '+$('role-advert-mode').value,'Send a '+($('role-advert-mode').value==='flood'?'flood':'zero-hop')+' advert for this role?'));
 bind('radio-copy','Copying effective profile',()=>{
   if(!effective) throw Error('Refresh radio status first.');
   if(!window.confirm('Replace the form with the current radio settings? Temporary settings may be active.')) return 'Cancelled; form unchanged.';

@@ -158,6 +158,11 @@ provides a connection for an external bot application.
 - **Command bot over RF:** let the sending companion advertise so the bot
   learns its contact, then send the bot a private `!ping` DM. Expect `Pong`.
   `!help` lists commands permitted for that request; `!help NAME` gives usage.
+  On an Aspen radio, announce the bot through the mesh with authenticated
+  `role advert bot flood`; use `role advert bot zerohop` for radios in range.
+  The host bot's owner console uses `advert` and `advert.zerohop`.
+  See [role adverts](firmware/esp32/MAST_ADMIN.md#runtime-role-names-and-keys)
+  for region selection and rate limits.
   Personal notes use `!remember`, `!recall` and `!notes`. Reminders and
   network commands require separate owner grants; see
   [bot usage and API](firmware/runtime/BOT_RUNTIME.md).

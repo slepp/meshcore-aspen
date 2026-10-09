@@ -222,6 +222,7 @@ struct CommandBot::Core : mesh::Mesh {
   bool reminderActive = false;
   ReplyRouting routing;
   BotRadioPolicy policy;
+  BotTargetAliases targetAliases;
   AdaptiveAdmission adaptive;
   const char *capacityError = nullptr;
   mesh::GroupChannel channels[BotRadioPolicy::ChannelLimit]{};
@@ -1437,11 +1438,7 @@ struct CommandBot::Core : mesh::Mesh {
         if (!packet) finishRadio(job, "Bot advert unavailable; inspect native rate/airtime status");
         else {
           job.outbound = packet;
-#if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
           routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
-#else
-          sendFlood(packet, 0, policy.pathWidth);
-#endif
         }
       } else if (job.io.kind == BotIoRequest::Wait) {
         if (job.io.waitKind == BotIoRequest::TraceWait) {
@@ -1913,18 +1910,23 @@ struct CommandBot::Core : mesh::Mesh {
       size_t end = 2;
       while (end < length && text[end] != ' ') ++end;
       const size_t digits = end - 2;
-      if ((digits != 8 && digits != 64) || end == length) {
-        syntaxError("Use !@BOTKEY8 COMMAND or !@FULLKEY COMMAND"); return;
+      if (end == length || !digits) {
+        syntaxError("Use !@ALIAS COMMAND, !@BOTKEY8 COMMAND or !@FULLKEY COMMAND"); return;
       }
       char key[65];
       for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", self_id.pub_key[i]);
-      for (size_t i = 0; i < digits; ++i) {
-        char c = text[i + 2];
-        if (c >= 'A' && c <= 'F') c += 'a' - 'A';
-        if (c != key[i]) {
-          if (sender) syntaxError("Target does not match this bot; use !help");
-          return;
+      bool matches = targetAliases.matches(text + 2, digits);
+      if (!matches && (digits == 8 || digits == 64)) {
+        matches = true;
+        for (size_t i = 0; i < digits; ++i) {
+          char c = text[i + 2];
+          if (c >= 'A' && c <= 'F') c += 'a' - 'A';
+          if (c != key[i]) { matches = false; break; }
         }
+      }
+      if (!matches) {
+        if (sender) syntaxError("Target does not match this bot; use !help");
+        return;
       }
       while (end < length && text[end] == ' ') ++end;
       if (length - end + 1 > BotTextLimit) {
@@ -1944,7 +1946,7 @@ struct CommandBot::Core : mesh::Mesh {
       reject("Native command policy denies this command/context"); return;
     }
     if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name)) {
-      rejectAdmission(event, packet, sender, secret, "target required: !@BOTKEY8 COMMAND", 0); return;
+      rejectAdmission(event, packet, sender, secret, "target required: !@ALIAS COMMAND or !@BOTKEY8 COMMAND", 0); return;
     }
     const bool readQuery = event.channel[0] && !event.targeted && botReadOnlyQuery(event.name);
     if (readQuery) event.replyLimit -= 13;
@@ -2420,6 +2422,11 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
     core_->repeaters[i].due = millis() + i * 30000;
   }
   core_->meshPolicy = meshPolicy;
+  if (!loadBotTargetAliases(core_->targetAliases)) {
+    fault("Bot target aliases unreadable; repair saved alias configuration");
+    stop();
+    return false;
+  }
   for (unsigned i = 0; i < BotRadioPolicy::ChannelLimit; ++i)
     BotRadioPolicy::nativeChannel(core_->policy.membership(i), core_->channels[i]);
   if (!worker_.begin(core_->self_id.pub_key)) { stop(); fault("Command VM worker unavailable"); return false; }
@@ -2450,6 +2457,48 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
     stop(); fault("Command VM initialization unavailable"); return false;
   }
   return true;
+}
+void CommandBot::targetAliasesCommand(const char *arguments, char *reply, size_t capacity) {
+  BotTargetAliases aliases;
+  if (!*arguments) {
+    if (!loadBotTargetAliases(aliases)) {
+      snprintf(reply, capacity, "Error: saved bot target aliases unreadable"); return;
+    }
+    snprintf(reply, capacity, "Aliases: %s", aliases.names[0][0] ? aliases.names[0] : "off");
+    for (unsigned i = 1; i < 4 && aliases.names[i][0]; ++i) {
+      const size_t used = strlen(reply);
+      if (used < capacity) snprintf(reply + used, capacity - used, ",%s", aliases.names[i]);
+    }
+    const size_t used = strlen(reply);
+    if (used < capacity)
+      snprintf(reply + used, capacity - used, "; live=%s",
+               !core_ ? "inactive" : !memcmp(core_->targetAliases.names, aliases.names, sizeof(aliases.names)) ?
+                   "applied" : "differs; reapply saved aliases");
+    return;
+  }
+  if (strcmp(arguments, "off")) {
+    const char *start = arguments;
+    unsigned slot = 0;
+    while (true) {
+      const char *end = strchr(start, ',');
+      const size_t size = end ? size_t(end - start) : strlen(start);
+      if (slot == 4 || !size || size >= sizeof(aliases.names[slot])) {
+        snprintf(reply, capacity, "Error: aliases requires off or 1..4 comma-separated names of 1..16 bytes"); return;
+      }
+      memcpy(aliases.names[slot++], start, size);
+      if (!end) break;
+      start = end + 1;
+    }
+    if (!aliases.valid()) {
+      snprintf(reply, capacity, "Error: aliases must be unique lowercase letters/digits/-/_, start with a letter and not be an 8-hex key"); return;
+    }
+  }
+  if (!saveBotTargetAliases(aliases)) {
+    snprintf(reply, capacity, "Error: bot alias persistence unknown; live aliases unchanged; inspect aliases before retry"); return;
+  }
+  if (core_) core_->targetAliases = aliases;
+  snprintf(reply, capacity, core_ ? "Saved and applied bot target aliases; identity/name/channel policy unchanged" :
+                                   "Saved bot target aliases; applied on next bot startup");
 }
 void CommandBot::radioPolicyCommand(const char *command, char *reply, size_t capacity) {
   std::unique_ptr<BotRadioPolicy, void (*)(BotRadioPolicy *)> policy(
@@ -3120,11 +3169,7 @@ bool CommandBot::advertise(bool zeroHop) {
   if (!packet) return false;
   if (zeroHop) core_->sendZeroHop(packet);
   else {
-#if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
     core_->routing.flood(*core_, packet, core_->routing.defaultScope(), core_->policy.pathWidth);
-#else
-    core_->sendFlood(packet, 0, core_->policy.pathWidth);
-#endif
   }
   return true;
 }

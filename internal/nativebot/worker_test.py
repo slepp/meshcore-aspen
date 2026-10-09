@@ -70,6 +70,21 @@ class WorkerProcessTest(unittest.TestCase):
         self.addCleanup(cleanup)
         return process
 
+    def test_owner_flood_advert_retains_startup_rate_limit(self):
+        process = self.start()
+        self.ready(process)
+        self.assertEqual(self.admin(process, "bot aliases aspen,aspen-bot,a"),
+                         "Saved and applied bot target aliases; identity/name/channel policy unchanged")
+        self.assertEqual(self.admin(process, "aliases"), "Aliases: aspen,aspen-bot,a; live=applied")
+        self.assertTrue(self.admin(process, "bot aliases aspen,aspen").startswith("Error:"))
+        self.assertEqual(self.admin(process, "bot aliases"), "Aliases: aspen,aspen-bot,a; live=applied")
+        reply = self.admin(process, "advert")
+        self.assertEqual(reply, "Error: bot source unavailable, radio/queue busy, or advert rate/airtime limit")
+        self.assertIn("advert|advert.zerohop", self.admin(process, "help"))
+        self.assertEqual(self.admin(process, "advert.zerohop"), "Bot zero-hop advert queued; verify RF")
+        self.assertEqual(self.admin(process, "advert"), "Error: owner advert rate limited (1 minute)")
+        self.stop(process)
+
     def test_hello_spreading_and_reported_power_boundaries(self):
         for sf, power, valid in ((5, 22, True), (6, 23, True), (7, 18, True),
                                  (12, 30, True), (4, 18, False), (13, 18, False),

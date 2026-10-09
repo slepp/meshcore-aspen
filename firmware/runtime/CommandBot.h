@@ -53,6 +53,7 @@ public:
                                 uint8_t *key, uint8_t *advert, uint8_t &size);
   void setContactLookup(ContactLookup lookup) { contactLookup_ = lookup; }
   void contactStatus(char *text, size_t capacity) const;
+  void targetAliasesCommand(const char *arguments, char *reply, size_t capacity);
   void diagnosticStatus(char *text, size_t capacity) const;
   struct Counters {
     uint32_t malformed = 0, duplicates = 0, rejected = 0, vmFailures = 0,

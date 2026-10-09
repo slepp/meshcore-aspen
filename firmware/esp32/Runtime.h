@@ -69,7 +69,7 @@ bool nativeRoleName(Role role, char name[32]);
 bool setNativeRoleName(Role role, const char *name);
 enum class RolePasswordUpdate { SavedApplied, Unavailable, Uncertain };
 RolePasswordUpdate setNativeRolePassword(Role role, const char *password);
-bool nativeRoleAdvertiseZeroHop(Role role);
+bool nativeRoleAdvertise(Role role, bool zeroHop);
 bool kissName(char name[32]);
 bool setKissName(const char *name);
 unsigned companionChannelCount();

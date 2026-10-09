@@ -17,7 +17,7 @@ type roleOwnerAdmin interface {
 }
 
 var hostRoleRead = regexp.MustCompile(`^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\.info|radio|freq|tx|stats|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval|rxdelay|txdelay|direct\.txdelay|af|dutycycle))$`)
-var hostRoleWrite = regexp.MustCompile(`^(?:set (?:name [\x20-\x7e]{1,31}|repeat (?:on|off)|path\.hash\.mode [012]|advert\.interval [0-9]{1,3}|flood\.advert\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$`)
+var hostRoleWrite = regexp.MustCompile(`^(?:advert(?:\.zerohop)?|set (?:name [\x20-\x7e]{1,31}|repeat (?:on|off)|path\.hash\.mode [012]|advert\.interval [0-9]{1,3}|flood\.advert\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$`)
 var hostRoleError = regexp.MustCompile(`^(?:Error(?:[:, ]|$)|Err(?:[ -]|$))`)
 
 func (a hostRoleAdmin) names() []string {

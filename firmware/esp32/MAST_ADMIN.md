@@ -420,6 +420,7 @@ These commands work through either authenticated backend:
 | `bot name [TEXT]` | Read or persist/apply a 1..31-byte printable bot display name, excluding `:`; never rotate its key |
 | `bot destination SLOT [KEY64\|off]` | Read/set/revoke one of four additional native DM destinations; full keys, fresh authenticated direct routes, no flood fallback |
 | `bot membership SLOT [off\|public\|#tag\|private NAMEHEX KEY32]` | Read or save/apply one of eight simultaneous group memberships; one Public, initially denied; private keys are never printed |
+| `bot aliases [off\|aspen,aspen-bot,a]` | Read saved/applied targets or save/apply up to four aliases; no implicit display-name alias; [addressed-only channels](../runtime/BOT_RUNTIME.md#discovery-targeting-and-owner-commands) |
 | `bot access dm\|native\|SLOT [default\|COMMAND\|action_NAME [MASK\|inherit]]` | Read or save/apply native bare/addressed execution, replies and storage access; `list OFFSET` lists bounded overrides; [mask bits and examples](../runtime/BOT_RUNTIME.md#channels-and-native-command-policy) |
 | `bot thread dm\|native\|SLOT NAME [0\|16\|32\|48\|inherit]` | Read or save/apply a named thread's read/write restriction; `list OFFSET` lists overrides; [thread names, quotas and native events](../runtime/BOT_RUNTIME.md#named-storage-threads) |
 | `bot channel-wait [on\|off]` | Read or grant selected-channel follow-up waits; off by default, no authenticated individual sender |
@@ -455,7 +456,8 @@ since device boot; reading them does not clear history, restart the companion
 or change contacts. Use these commands through authenticated management RF or
 web access without opening a serial port.
 
-On a configured channel, use `!@BOTKEY8 COMMAND` (or a full public key) for
+On a configured channel, use a configured `!@ALIAS COMMAND`,
+`!@BOTKEY8 COMMAND` (or a full public key) for
 custom commands, boards, TRACE and state changes. The eight hex digits are the
 bot key prefix, not a display nickname. Untargeted read-only queries use a
 250..1250 ms jitter window and `[q:XXXXXXXX]` correlation marker for best-effort
@@ -1153,20 +1155,33 @@ Both apply live and survive reboot. Management works without WiFi and with all
 optional application roles disabled. KISS and observer do not gain RF adverts.
 Service key/channel changes are not exposed by this grammar.
 
-After renaming, use `role advert ROLE zerohop` for repeater, room, companion,
-bot or management. This uses the role's native advert data and current identity,
+Use `role advert ROLE flood` to announce repeater, room, companion, bot or
+management through the mesh. For `Aspen-Bot`, run:
+
+```text
+role advert bot flood
+```
+
+Flood adverts use the role's current identity, native name/type, default region
+and configured path-hash width. Repeater, room and companion use their own
+default region; bot and management use the node's service region. Relays must
+allow that region to forward the advert. KISS and observer have no advert
+identity. The `/admin` page has a zero-hop/flood selector.
+
+After renaming, use `role advert ROLE zerohop` for an immediate local
+announcement. This uses the role's native advert data and current identity,
 then native `sendZeroHop`: wire header `0x12`, direct route, zero path hashes.
 Management advertises a native repeater-type CLI endpoint but never forwards
 packets. The shared scheduler/airtime guards still apply. The authenticated owner
 bot control skips the 15-minute advert interval so a rename can be announced
-immediately after startup or a public advert. Public/Lua bot adverts retain that
-interval, including after an owner advert. A busy, inactive or limited role returns an
-error. Success means **queued**, not delivered or learned by a peer. Adverts
+immediately after startup or a public advert. Bot flood adverts and public/Lua
+bot adverts retain that interval, including after an owner zero-hop advert.
+A busy, inactive or limited role returns an error. Success means **queued**,
+not received over RF. Adverts
 retain native RTC timestamps: peers may ignore older/equal timestamps, especially
 after a restart without fresh clock synchronization. Confirm actual RF reception
-and peer name readback separately; this command does not repair clocks or claim
-peer learning. It does not make plain native
-`advert` zero-hop (that command still floods).
+and radio name readback separately. Plain native `advert` also floods the
+native role's identity, not the bot's identity.
 
 To keep a node quiet while retaining its existing contacts, use
 `set autoadvert off`, then check `get autoadvert` for `saved=off live=off`.
@@ -1174,7 +1189,7 @@ The setting survives restart and suppresses repeater/room startup and periodic
 adverts plus the bot startup advert. It leaves the native per-role advert
 intervals unchanged; `set autoadvert on` resumes them. Companion and Management
 have no automatic adverts. The companion app Advert button, native `advert`,
-and authenticated `role advert ROLE zerohop` still send deliberately.
+and authenticated `role advert ROLE zerohop|flood` still send deliberately.
 Operator-installed Lua/Wasm programs can also explicitly request adverts;
 disable such scheduled requests in those programs if configured.
 

@@ -703,13 +703,50 @@ works. `node.neighbors(page)` yields a bounded dispatcher-produced report;
 the VM never reads the live contact cache. `node.plugins(page)` returns the
 copied active manifest metadata.
 
-Use `!@BOTKEY8 COMMAND arguments` to select one bot on a configured channel.
-`BOTKEY8` is the first eight hex digits of its public key; a full 64-hex key is
-also accepted. Targeting is routing selection, not owner authentication.
+Configure target aliases through authenticated administration:
+
+```text
+bot aliases aspen,aspen-bot,a
+bot aliases
+```
+
+The aliases save and apply immediately without changing the bot's display name,
+identity or channel memberships. Up to four unique aliases are allowed, each
+1..16 lowercase letters/digits/`-`/`_`, starting with a letter. Eight-hex aliases
+are rejected to avoid confusion with public-key prefixes. Incoming aliases are
+case-insensitive. `bot aliases off` removes them; there are no implicit aliases
+derived from the display name. Readback reports the saved aliases and whether
+they are applied. If a save has an uncertain outcome, read back and explicitly
+reapply the intended list when `live=differs`. On the host owner socket, `aliases`
+is the equivalent command.
+
+Use `!@aspen COMMAND arguments`, `!@aspen-bot COMMAND arguments` or
+`!@a COMMAND arguments` after that configuration. `!@BOTKEY8 COMMAND` also
+works: `BOTKEY8` is the first eight hex digits of the bot's public key; a full
+64-hex key is accepted. Targeting selects a bot, not an authenticated person.
 Custom commands, board operations, TRACE and state-changing channel work
 require a target; DMs already select a bot. Other bots silently ignore a target
 that does not match. Incoming ordinary path widths 1/2/3 remain interoperable;
 configuration mode 2 represents **three-byte** hashes.
+
+To join `#test` but answer only addressed commands, choose an unused slot
+(`2` here; read all current memberships first):
+
+```text
+bot membership 2 #test
+bot access 2 default 12
+bot membership 2
+bot access 2 list 0
+```
+
+Mask `12` permits addressed execution and replies, without bare execution,
+bare replies or storage. A new membership clears that slot's overrides.
+If reusing an existing membership, remove any per-command/action overrides
+that allow bare execution or replies. On this addressed-only membership,
+bare `!ping`, `!trace`, unknown commands, malformed commands, ordinary text and
+messages targeting another bot produce no response or prefix reminder.
+Aliases and public-key targets work identically. Other memberships keep their
+own policies. Channel keys and aliases do not grant administrator access.
 
 Untargeted native read queries (`ping`, `help`, `plugins`, `neighbors`, `about`,
 `version`, `uptime`, `status`, `signal`, `path`, `air`, `test`, `mt`, `calc`,

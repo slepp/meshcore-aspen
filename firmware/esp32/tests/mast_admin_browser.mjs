@@ -142,6 +142,12 @@ try {
   await click('role-read');
   assert.match(await text('role-detail'),/<img src=x onerror=alert\(1\)>/);
   assert.equal(await evaluate(`document.querySelectorAll('img').length`),0);
+  await click('role-advert');
+  assert(requests.some(r=>r.text==='role advert repeater zerohop'));
+  await evaluate(`document.getElementById('role').value='bot';document.getElementById('role-advert-mode').value='flood';`);
+  await click('role-advert');
+  assert(requests.some(r=>r.text==='role advert bot flood'));
+  assert(await evaluate(`window.__confirms.some(m=>m.includes('flood advert'))`));
   await click('inventory'); await click('source-read');
   assert.equal(await evaluate(`document.getElementById('source').value`),source.toString());
   assert.equal(requests.filter(r=>r.text.startsWith('source read ')).length,86);

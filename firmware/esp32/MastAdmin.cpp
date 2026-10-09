@@ -222,7 +222,7 @@ constexpr Help topics[] = {
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
     {"cloudroom", "cloudroom status|error|advertise ALIAS; direct authenticated administration; private profile/configuration required; RF delivery unconfirmed"},
     {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
-    {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop; role key|channel|password ROLE ..."},
+    {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop|flood; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
     {"key", "key ROLE [pending|cancel|HEX128]; use key help; private imports: encrypted RF only"},
     {"password", "password [help|HEX]; 1..15 printable bytes encoded as hex; changes: encrypted RF only"},
@@ -230,7 +230,7 @@ constexpr Help topics[] = {
     {"source", "source 2/4: source api; api fetch; metadata; fetch package SHA256; begin ID16 SIZE SHA256; chunk ID16 INDEX HEX; help source 3", 2},
     {"source", "source 3/4: source commit|status|read INDEX|rollback|remove|retry|cancel; source help TEXT saves help; source helptext reads it; help source 4", 3},
     {"source", "source 4/4: admin.py source list|install NAME FILE|export NAME FILE|remove NAME; files share one Lua VM; rollback restores source, not data", 4},
-    {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|discovery|adaptive|shared|reminders|events|forward|https ..."},
+    {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|aliases|discovery|adaptive|shared|reminders|events|forward|https ..."},
     {"bot", "bot 2/4: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; help bot 3", 2},
     {"bot", "bot 3/4: bot membership [SLOT ...]; bot access [CONTEXT ...]; Public commands default denied; use help channels; help bot 4", 3},
     {"bot", "bot 4/4: bot thread ...; bot repeaters ...; bot data ...; source api storage; help threads; help repeaters; data help", 4},
@@ -433,12 +433,12 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
       snprintf(reply.text, sizeof(reply.text),
                "role=%s name=persistent/live key=%s channel-slots=0 advert=%s RF=%s",
                name, management ? "import-stage/reboot" : "unchanged",
-               management ? "zerohop" : "none", management ? "shared" : "service-only");
+               management ? "zerohop,flood" : "none", management ? "shared" : "service-only");
       return;
     }
     const unsigned channels = bot ? 1 : nativeRole == Role::Companion ? companionChannelCount() : 0;
     snprintf(reply.text, sizeof(reply.text),
-             "role=%s name=persistent/%s key=generate-stage/reboot channel-slots=%u channel-key-bits=%u RF=shared advert=zerohop",
+             "role=%s name=persistent/%s key=generate-stage/reboot channel-slots=%u channel-key-bits=%u RF=shared advert=zerohop,flood",
              name, bot ? "live" : "active-role", channels, channels ? 128 : 0);
     return;
   }
@@ -479,21 +479,24 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
     return;
   }
   if (!strcmp(operation, "advert")) {
-    if (strcmp(cursor, "zerohop")) {
-      strcpy(reply.text, "Error: role advert ROLE zerohop"); return;
+    const bool zeroHop = !strcmp(cursor, "zerohop");
+    if (!zeroHop && strcmp(cursor, "flood")) {
+      strcpy(reply.text, "Error: role advert ROLE zerohop|flood"); return;
     }
     if (kiss) {
       strcpy(reply.text, "Error: KISS is a service label, not an advertised RF role"); return;
     }
-    const bool queued = management ? management_->advertiseZeroHop() :
-                        bot ? commandBotService().advertiseOwnerZeroHop() :
-                              nativeRoleAdvertiseZeroHop(nativeRole);
-    strcpy(reply.text, queued ? "Queued zero-hop advert; delivery/peer learning unconfirmed" :
+    const bool queued = management ? management_->advertise(zeroHop) :
+                        bot ? (zeroHop ? commandBotService().advertiseOwnerZeroHop() :
+                                         commandBotService().advertise(false)) :
+                              nativeRoleAdvertise(nativeRole, zeroHop);
+    strcpy(reply.text, queued ? (zeroHop ? "Queued zero-hop advert; RF reception unconfirmed" :
+                                          "Queued flood advert; RF reception unconfirmed") :
            "Error: advert unavailable; role inactive, radio/queue busy or rate/airtime limit");
     return;
   }
   if (management || kiss) {
-    strcpy(reply.text, "Error: service supports role config/name only; management also supports advert zerohop");
+    strcpy(reply.text, "Error: service supports role config/name only; management also supports advert zerohop|flood");
     return;
   }
   if (!strcmp(operation, "key")) {
@@ -1883,6 +1886,8 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
               "Saved authorized DM forwarding pair; bot disabled") :
              "Error: forward policy not applied; inspect native fault");
     }
+  } else if (!strcmp(command, "bot aliases") || !strncmp(command, "bot aliases ", 12)) {
+    commandBotService().targetAliasesCommand(command[11] ? command + 12 : "", reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot adaptive") || !strncmp(command, "bot adaptive ", 13)) {
     commandBotService().adaptiveCommand(command, reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot policy") || !strncmp(command, "bot channel ", 12) ||

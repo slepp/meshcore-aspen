@@ -26,7 +26,9 @@ This page never overwrites that configuration. Running state is shown below; bot
 <label>Scoped role command <input id="role-command" maxlength="160" value="get name" size="60"></label><button id="role-run">Run role command</button>
 <pre id="role-detail">Role owner controls are enabled only when the host provides its existing role command adapter.</pre>
 <p>These commands use the running relay/room engine and its durable save helpers, not a second configuration store.
-Names preserve identities. Read help for path-hash and advert intervals; native bounds remain authoritative.
+Names preserve identities. Use <code>advert</code> to flood the selected role's identity through its default region,
+or <code>advert.zerohop</code> to announce it only to radios in range. Queuing does not confirm RF reception.
+Read help for path-hash and advert intervals; native bounds remain authoritative.
 Shared PHY, credentials, identities, ACLs and restart are unavailable here. Companion settings remain in the native app/CLI.</p></section>
 <p>In the scoped role console, use <code>region def can ab edm</code>, then
 <code>region home ab</code> and <code>region save</code>. Read <code>region</code>
@@ -64,9 +66,9 @@ Inspection unlocks only a matching durable source hash and terminal status. Othe
 const $=id=>document.getElementById(id);
 let token='',expires=0,busy=false,nativeOwner=false,nodeBackup=false,uncertain=false,uploaded=null,pending=null,roleOwners=[];
 const readOnly=/^(?:help(?: (?:bot|source|data|role|stats))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|name|key|stats|log|diagnostics|admission|contacts|policy|mesh|limits|contention|shared|home|reminders|events|channel-wait|membership(?: [0-7])?|(?:access|thread)(?: (?:dm|native|[0-7])(?: (?:default|[a-z][a-z0-9_-]{0,23}|list (?:[0-5]?[0-9]|6[0-4])))?)?|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch|threads))?|read [0-9]+)|data (?:help|status|read [0-9a-f]{16} [0-9]+))$/;
-const writeOnly=/^(?:bot (?:name [\x20-\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|membership [0-7] (?:off|public|#[a-z0-9_-]{1,31}|private [0-9a-f]{2,64} [0-9a-f]{32})|access (?:dm|native|[0-7]) (?:default|[a-z][a-z0-9_-]{0,23}) (?:[0-5]?[0-9]|6[0-3]|inherit)|thread (?:dm|native|[0-7]) [a-z][a-z0-9_-]{0,23} (?:0|16|32|48|inherit)|cancel)|source (?:begin [0-9a-f]{16} [0-9]{1,4} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel|rollback|remove|retry|help [\x20-\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel)(?:-thread)? [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$/;
+const writeOnly=/^(?:advert(?:\.zerohop)?|bot (?:name [\x20-\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|membership [0-7] (?:off|public|#[a-z0-9_-]{1,31}|private [0-9a-f]{2,64} [0-9a-f]{32})|access (?:dm|native|[0-7]) (?:default|[a-z][a-z0-9_-]{0,23}) (?:[0-5]?[0-9]|6[0-3]|inherit)|thread (?:dm|native|[0-7]) [a-z][a-z0-9_-]{0,23} (?:0|16|32|48|inherit)|cancel)|source (?:begin [0-9a-f]{16} [0-9]{1,4} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel|rollback|remove|retry|help [\x20-\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel)(?:-thread)? [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$/;
 const roleRead=/^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\.info|radio|freq|tx|stats|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval|rxdelay|txdelay|direct\.txdelay|af|dutycycle))$/;
-const roleWrite=/^(?:set (?:name [\x20-\x7e]{1,31}|repeat (?:on|off)|path\.hash\.mode [012]|advert\.interval [0-9]{1,3}|flood\.advert\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$/;
+const roleWrite=/^(?:advert(?:\.zerohop)?|set (?:name [\x20-\x7e]{1,31}|repeat (?:on|off)|path\.hash\.mode [012]|advert\.interval [0-9]{1,3}|flood\.advert\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$/;
 const hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
 const digest=async b=>hex(new Uint8Array(await crypto.subtle.digest('SHA-256',b)));
 function controls(){
@@ -98,8 +100,10 @@ async function command(text){
   if(!/^[\x20-\x7e]{1,160}$/.test(text))throw Error('Command requires 1..160 printable ASCII bytes.');
   const backupRead=/^backup (?:help|status|load|read [0-9a-f]{16} \d+)$/.test(text);
   const backupWrite=/^backup (?:start [0-9a-f]{64}|cancel|clear)$/.test(text);
-  if(!readOnly.test(text)&&!writeOnly.test(text)&&!backupRead&&!backupWrite)throw Error('Unsupported host admin command. Credentials, private keys and radio provisioning are unavailable over HTTP; no request sent.');
-  const write=!readOnly.test(text)&&!backupRead;
+  const aliasRead=/^(?:bot )?aliases$/.test(text);
+  const aliasWrite=/^(?:bot )?aliases (?:off|[a-z][a-z0-9_-]{0,15}(?:,[a-z][a-z0-9_-]{0,15}){0,3})$/.test(text);
+  if(!readOnly.test(text)&&!writeOnly.test(text)&&!backupRead&&!backupWrite&&!aliasRead&&!aliasWrite)throw Error('Unsupported host admin command. Credentials, private keys and radio provisioning are unavailable over HTTP; no request sent.');
+  const write=!readOnly.test(text)&&!backupRead&&!aliasRead;
   if(write){
     if(uncertain)throw Error('Prior write outcome unknown; inspect affected state. No write sent.');
     pending={command:text,snapshot:uploaded?{...uploaded}:null};
@@ -267,6 +271,12 @@ $('inspect').onclick=()=>action(async()=>{
     uncertain=false;pending=null;return 'Affected '+item.role+' setting confirmed by exact owner readback; no write was replayed.\n'+$('role-detail').textContent;
   }
   if(pending?.command.startsWith('source '))return inspectSource();
+  const alias=/^(?:bot )?aliases (.+)$/.exec(pending?.command||'');
+  if(alias){
+    const result=await command('bot aliases');
+    if(result!=='Aliases: '+alias[1]+'; live=applied')return 'Bot aliases remain unconfirmed; writes stay blocked.\n'+result;
+    uncertain=false;pending=null;return 'Saved and applied bot aliases confirmed; no write replayed.\n'+result;
+  }
   return await command('bot status')+'\n'+await command('data status')+'\nUnresolved operation: '+(pending?.command||'none')+
     (uncertain?'\nGeneric status does not confirm this operation; writes stay blocked. Use scoped owner readback.':'');
 });

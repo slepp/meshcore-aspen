@@ -768,6 +768,73 @@ bool BotMeshPolicy::valid() const {
   }
   return true;
 }
+bool BotTargetAliases::valid() const {
+  bool ended = false;
+  for (unsigned i = 0; i < 4; ++i) {
+    const size_t size = strnlen(names[i], sizeof(names[i]));
+    if (size == sizeof(names[i])) return false;
+    if (!size) { ended = true; continue; }
+    if (ended || names[i][0] < 'a' || names[i][0] > 'z') return false;
+    bool hex = true;
+    for (size_t j = 0; j < size; ++j) {
+      const char c = names[i][j];
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_'))
+        return false;
+      hex = hex && ((c >= 'a' && c <= 'f') || (c >= '0' && c <= '9'));
+    }
+    if (size == 8 && hex) return false;
+    for (unsigned j = 0; j < i; ++j)
+      if (!strcmp(names[i], names[j])) return false;
+  }
+  return true;
+}
+bool BotTargetAliases::matches(const char *text, size_t size) const {
+  for (const auto &name : names) {
+    if (!size || strlen(name) != size) continue;
+    size_t i = 0;
+    for (; i < size; ++i) {
+      char c = text[i];
+      if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+      if (c != name[i]) break;
+    }
+    if (i == size) return true;
+  }
+  return false;
+}
+bool loadBotTargetAliases(BotTargetAliases &aliases) {
+  aliases = {};
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-onchip", NVS_READONLY, &handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK) return failed("target aliases open", result);
+  uint8_t record[4 + sizeof(aliases.names)]{};
+  size_t size = sizeof(record);
+  result = nvs_get_blob(handle, "bot-aliases", record, &size);
+  nvs_close(handle);
+  if (result == ESP_ERR_NVS_NOT_FOUND) return true;
+  if (result != ESP_OK || size != sizeof(record) || memcmp(record, "BTA\1", 4))
+    return failed("target aliases read/shape", ESP_ERR_INVALID_STATE);
+  memcpy(aliases.names, record + 4, sizeof(aliases.names));
+  if (aliases.valid()) return true;
+  aliases = {};
+  return failed("target aliases validation", ESP_ERR_INVALID_STATE);
+}
+bool saveBotTargetAliases(const BotTargetAliases &aliases) {
+  if (!aliases.valid()) return failed("target aliases validation", ESP_ERR_INVALID_ARG);
+  uint8_t record[4 + sizeof(aliases.names)]{};
+  memcpy(record, "BTA\1", 4);
+  memcpy(record + 4, aliases.names, sizeof(aliases.names));
+  nvs_handle_t handle;
+  auto result = nvs_open("mc-onchip", NVS_READWRITE, &handle);
+  if (result != ESP_OK) return failed("target aliases open", result);
+  result = nvs_set_blob(handle, "bot-aliases", record, sizeof(record));
+  if (result == ESP_OK) result = nvs_commit(handle);
+  nvs_close(handle);
+  if (result != ESP_OK) return failed("target aliases commit; outcome unknown", result);
+  BotTargetAliases actual;
+  return (loadBotTargetAliases(actual) && !memcmp(actual.names, aliases.names, sizeof(aliases.names))) ||
+      failed("target aliases readback; outcome unknown", ESP_ERR_INVALID_STATE);
+}
 bool loadBotMeshPolicy(BotMeshPolicy &policy) {
   policy = {};
   static_assert(sizeof(ONCHIP_COMMAND_BOT_NAME) <= 32, "Bot name exceeds native name capacity");

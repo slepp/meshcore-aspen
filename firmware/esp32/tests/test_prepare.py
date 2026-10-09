@@ -148,6 +148,12 @@ class BuildIsolation(unittest.TestCase):
                 text = (native / role / f"Onchip{role.title()}.cpp").read_text()
                 self.assertIn("getTotalAirTimeSeconds()", text)
                 self.assertIn("ONCHIP_FIRMWARE_VERSION", text)
+                self.assertIn("::onchipAdvertise(bool zeroHop)", text)
+                self.assertIn("if (zeroHop) sendZeroHop(packet);", text)
+                self.assertIn("sendFloodScoped(default_scope, packet, 0", text)
+                wrapper = (native / f"{role.title()}.cpp").read_text()
+                self.assertIn(f"bool {role}Advertise(bool zeroHop)", wrapper)
+                self.assertIn("meshInstance->onchipAdvertise(zeroHop)", wrapper)
                 self.assertNotIn("FIRMWARE_VERSION,", text.replace("ONCHIP_FIRMWARE_VERSION,", ""))
                 if role == "repeater":
                     self.assertIn("const size_t owner_info_capacity", text)

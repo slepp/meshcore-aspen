@@ -175,8 +175,12 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
              dbgHeapFree(), unsigned(BotSession::StorageBytes), unsigned(BotWorker::StorageBytes), unsigned(CommandBot::StorageBytes));
   } else if (!strcmp(text, "bot name")) {
     say(bot.botName() ? bot.botName() : "Error: Lua bot unavailable");
-  } else if (!strcmp(text, "bot advert") || !strcmp(text, "bot advert zero")) {
-    say(bot.advertise(!strcmp(text, "bot advert zero")) ? "Bot advert queued; check companion reception over RF" : "Error: bot advert radio admission failed");
+  } else if (!strcmp(text, "bot aliases") || !strncmp(text, "bot aliases ", 12)) {
+    bot.targetAliasesCommand(text[11] ? text + 12 : "", reply.text, sizeof(reply.text));
+  } else if (!strcmp(text, "bot advert") || !strcmp(text, "bot advert zero") ||
+             !strcmp(text, "bot advert.zerohop")) {
+    say(bot.advertise(strcmp(text, "bot advert") != 0) ? "Bot advert queued; RF reception unconfirmed" :
+                                                      "Error: bot advert radio admission failed");
   } else if (!strcmp(text, "bot home") || !strncmp(text, "bot home ", 9) ||
              !strncmp(text, "bot https", 9) || !strncmp(text, "wifi", 4)) {
     say("Error: HTTPS and WiFi are unsupported on Pine; use mesh.send/kv/timers and authenticated RF source administration");
