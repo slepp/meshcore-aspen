@@ -99,13 +99,14 @@ bool syslogCommand(const char *command, char *reply, size_t capacity) {
   } else return false;
   return true;
 }
-void sendSyslog(const char *message) {
+void sendSyslog(const char *message, DiagnosticSubsystem subsystem, uint32_t utc, uint64_t uptimeMs) {
   SyslogConfig config;
   if (!snapshot(config) || !config.enabled) return;
   if (WiFi.status() != WL_CONNECTED) { ++offline; return; }
   if (!rate.admit(millis())) { ++limited; return; }
-  char packet[256];
-  const size_t size = formatSyslog(radio_network::hostname, message, packet, sizeof(packet));
+  char packet[512];
+  const size_t size = formatSyslog(radio_network::hostname, subsystem, utc, uptimeMs,
+                                 message, packet, sizeof(packet));
   if (!size) { ++failed; return; }
   UdpSend send{};
   send.config = config;

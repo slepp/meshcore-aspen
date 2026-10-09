@@ -68,15 +68,38 @@ stats vm
 
 Replace the destination with your UDP syslog collector's IPv4 address. The
 default port is 514. The setting survives reboot; `set syslog off` stops remote
-logging. The collector receives RFC 5424 `local0.info` messages from the device
-hostname, with a missing timestamp (`-`); use the collector's receipt time.
+logging. The collector receives BSD/RFC 3164 `local0.info` messages. The
+hostname identifies the device; the program tag identifies `system`, `wifi`,
+`clock`, `companion`, `bot`, `bot-vm`, `telemetry`, `packet` or `backup`.
+With a trusted clock, the header timestamp is UTC: configure the collector
+to interpret the sender's timestamps as UTC. The body also includes Unix
+`utc` and `uptime_ms` captured when the event was queued. Before clock
+synchronization, the device sends a tag-only BSD message with
+`clock=unsynced`; use the collector's receipt time rather than a fabricated date.
 Allow UDP from the radio on the collector and keep this unencrypted traffic
 on a trusted network.
 
 Logs include boot/reset reason, WiFi and UTC transitions, companion connection
-errors, telemetry error/recovery and numeric Lua/Wasm execution measurements.
-Packet contents, caller commands, script error text and credentials are not
-forwarded. UDP is fire and forget: `submitted` counts local stack submissions,
+errors, telemetry completions/drop reasons and numeric Lua/Wasm execution
+measurements. Telemetry recovery requires a completed HTTP 2xx response, not
+just admission to the worker. Failed completions include the TLS phase,
+numeric SDK result, internal heap snapshots and backoff.
+
+The full ESP32 and host bot profiles also emit `Bot audit` records for accepted,
+started, completed, rejected and cancelled commands. Records include the job
+ID, command name, DM/channel method, RF/engine/reflection carrier, addressed
+flag and caller. An authenticated DM records the full public key and `auth=1`.
+A channel records its name and escaped claimed nickname with `auth=0`:
+channel encryption does not authenticate a person's nickname. Completed
+commands describe VM completion, not proof that a reply reached its recipient.
+VM measurements include the job ID and operation for correlation. Repeated
+copies of the same request do not create a second invocation.
+
+Command arguments, note/message contents, script error text, channel secrets
+and credentials are not forwarded. Public keys, nicknames and channel names
+are still operator data: protect collector access and retention. Compact
+nRF bot profiles retain numeric diagnostics without these command audit records.
+UDP is fire and forget: `submitted` counts local stack submissions,
 not reception. `failed`, `limited` and `offline` count transport/encoding
 failures, the eight-message-per-second limit and disconnected WiFi.
 

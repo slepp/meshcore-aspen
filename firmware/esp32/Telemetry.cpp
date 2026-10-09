@@ -236,7 +236,5 @@ void TelemetryPublisher::publish(uint64_t now, const char *body, size_t size) {
   ++status_.attempts;
   status_.lastAttemptMs = now;
   status_.pending = true;
-  status_.httpStatus = 0;
-  status_.error = TelemetryError::None;
 }
 } // namespace onchip

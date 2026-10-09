@@ -51,7 +51,7 @@ public:
   void synchronizeTime(uint32_t utc, ClockSource source = ClockSource::Network) {
     rtc_.synchronize(utc, source);
   }
-  static constexpr size_t DiagnosticCapacity = 160;
+  static constexpr size_t DiagnosticCapacity = ONCHIP_BOT_COMPACT_PROFILE ? 160 : 384;
   // Set before begin; the dispatch-thread sink must copy without waiting.
   void setDiagnosticSink(bool (*sink)(const char *)) { diagnosticSink_ = sink; }
   using ContactLookup = bool (*)(const uint8_t *hash, unsigned &cursor,

@@ -319,7 +319,7 @@ esp_err_t backupDownload(httpd_req_t *request) {
   for (uint32_t offset = 0; offset < backup.bytes();) {
     const size_t count = std::min(size_t(backup.bytes() - offset), sizeof(bytes));
     if (backup.read(offset, bytes, count) != count) {
-      diagnosticEvent("Node backup download read failed"); return ESP_FAIL;
+      diagnosticEvent("Node backup download read failed", DiagnosticSubsystem::Backup); return ESP_FAIL;
     }
     if (httpd_resp_send_chunk(request, reinterpret_cast<const char *>(bytes), count) != ESP_OK)
       return ESP_FAIL;

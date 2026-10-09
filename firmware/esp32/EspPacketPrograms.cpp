@@ -72,14 +72,14 @@ public:
     Serial.printf("Packet slot %u: %s\n", slot, error);
     char message[96];
     snprintf(message, sizeof(message), "Packet slot %u controller error; inspect packet %u status", slot, slot);
-    diagnosticEvent(message);
+    diagnosticEvent(message, DiagnosticSubsystem::Packet);
   }
 };
 uint32_t clock() { return micros(); }
 void fault(const char *engine, const packet_engine::Metadata &m, packet_engine::Fault f) {
   char message[160];
   snprintf(message, sizeof(message), "%s stage=%u: %s", engine, unsigned(m.stage), packet_engine::faultText(f));
-  Serial.println(message); diagnosticEvent(message);
+  Serial.println(message); diagnosticEvent(message, DiagnosticSubsystem::Packet);
 }
 struct Service {
   Store store;

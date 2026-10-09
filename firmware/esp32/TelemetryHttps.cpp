@@ -51,9 +51,12 @@ void performTelemetryPost(BotHttpsTransport &transport, const TelemetryEndpoint 
   const auto write = [&](const char *data, size_t bytes) {
     size_t offset = 0;
     while (offset < bytes && alive()) {
-      const size_t chunk = std::min<size_t>(512, bytes - offset);
-      const int count = transport.write(reinterpret_cast<const uint8_t *>(data + offset), chunk);
-      if (count <= 0 || size_t(count) > chunk) return false;
+      // A sample fits one TLS record. Avoid twelve small TCP_NODELAY records
+      // competing with the radio's internal heap while their ACKs are pending.
+      const size_t remaining = bytes - offset;
+      const int count = transport.write(reinterpret_cast<const uint8_t *>(data + offset), remaining);
+      if (count < 0 || size_t(count) > remaining) return false;
+      if (!count) { transport.idle(); continue; }
       offset += size_t(count);
     }
     return offset == bytes;

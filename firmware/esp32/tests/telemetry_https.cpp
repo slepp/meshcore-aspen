@@ -10,8 +10,10 @@ using namespace onchip;
 unsigned long millis() { return 0; }
 void delay(unsigned long) {}
 struct Transport : BotHttpsTransport {
-  bool trusted = true, opens = true, stall = false, shortWrite = false;
+  bool trusted = true, opens = true, stall = false, shortWrite = false, blockWrite = false;
   unsigned closes = 0, connections = 0;
+  unsigned writes = 0;
+  size_t largestWrite = 0;
   uint32_t clock = 0;
   std::string sent, response = "HTTP/1.1 204 No Content\r\nX-Test: value\r\n\r\n";
   size_t offset = 0;
@@ -20,6 +22,8 @@ struct Transport : BotHttpsTransport {
     assert(config.validPeer()); ++connections; return opens;
   }
   int write(const uint8_t *data, size_t size) override {
+    ++writes; largestWrite = std::max(largestWrite, size);
+    if (blockWrite && writes == 1) return 0;
     if (shortWrite) size = std::min<size_t>(3, size);
     sent.append(reinterpret_cast<const char *>(data), size); return int(size);
   }
@@ -105,6 +109,17 @@ static void transport() {
   assert(ok.sent.find("Authorization: Bearer secret-token\r\n") != std::string::npos);
   assert(ok.sent.find("Content-Type: text/plain\r\n") != std::string::npos);
   assert(ok.sent.substr(ok.sent.size() - strlen(body)) == body);
+  Transport blocked; blocked.blockWrite = true;
+  assert(run(blocked).ok && blocked.clock == 100);
+  Transport writeTimeout; writeTimeout.blockWrite = true; writeTimeout.stall = true;
+  assert(run(writeTimeout).error == TelemetryError::Timeout);
+  Transport batch;
+  const std::string maximumBody(TelemetryBodyLimit, 'x');
+  TelemetryCompletion maximumResult;
+  performTelemetryPost(batch, endpoint, maximumBody.data(), maximumBody.size(),
+                       15000, cancelled, stopped, maximumResult);
+  assert(maximumResult.ok && batch.writes == 2 && batch.largestWrite == TelemetryBodyLimit);
+  assert(batch.sent.substr(batch.sent.size() - maximumBody.size()) == maximumBody);
   for (unsigned status : {200, 202, 204, 301, 400, 401, 403, 429, 500, 503}) {
     Transport t;
     t.response = "HTTP/1.1 " + std::to_string(status) + " Result\r\nContent-Length: 0\r\n\r\n";

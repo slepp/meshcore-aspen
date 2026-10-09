@@ -204,12 +204,13 @@ static void publisher() {
   assert(publisher.status().error == TelemetryError::Busy && publisher.status().dropped == 2);
   sink.accept = true; publisher.publish(180000, "a x=2i\n", 7);
   assert(publisher.status().pending && publisher.status().lastAttemptMs == 180000);
+  assert(publisher.status().error == TelemetryError::Busy && publisher.status().successes == 0);
   publisher.publish(180001, "a x=3i\n", 7);
   assert(sink.submits == 1 && sink.body == "a x=2i\n");
   sink.result = {true, 204, TelemetryError::None}; sink.done = true;
   publisher.poll(180100);
   assert(!publisher.status().pending && publisher.status().successes == 1 &&
-         publisher.status().lastSuccessMs == 180100);
+         publisher.status().lastSuccessMs == 180100 && publisher.status().error == TelemetryError::None);
   uint64_t now = publisher.status().nextMs;
   for (unsigned i = 0; i < 9; ++i) {
     publisher.publish(now, "a x=4i\n", 7);

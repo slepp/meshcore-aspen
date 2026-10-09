@@ -219,7 +219,7 @@ void connectWifi() {
       wifi_loss_generation.fetch_add(1, std::memory_order_relaxed);
 #ifdef MESHCORE_ONCHIP
       snprintf(message, sizeof(message), "WiFi association lost: reason %u", info.wifi_sta_disconnected.reason);
-      onchip::diagnosticEvent(message);
+      onchip::diagnosticEvent(message, onchip::DiagnosticSubsystem::Wifi);
 #else
       Serial.printf("WiFi association lost: reason %u\n",
                     info.wifi_sta_disconnected.reason);
@@ -227,13 +227,13 @@ void connectWifi() {
     } else if (event == ARDUINO_EVENT_WIFI_STA_LOST_IP) {
       wifi_loss_generation.fetch_add(1, std::memory_order_relaxed);
 #ifdef MESHCORE_ONCHIP
-      onchip::diagnosticEvent("WiFi lost IP address");
+      onchip::diagnosticEvent("WiFi lost IP address", onchip::DiagnosticSubsystem::Wifi);
 #endif
     } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
 #ifdef MESHCORE_ONCHIP
       snprintf(message, sizeof(message), "WiFi associated: channel %u, AP auth mode %u",
                info.wifi_sta_connected.channel, info.wifi_sta_connected.authmode);
-      onchip::diagnosticEvent(message);
+      onchip::diagnosticEvent(message, onchip::DiagnosticSubsystem::Wifi);
 #else
       Serial.printf("WiFi associated: channel %u, AP auth mode %u\n",
                     info.wifi_sta_connected.channel,
@@ -241,7 +241,7 @@ void connectWifi() {
 #endif
     } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
 #ifdef MESHCORE_ONCHIP
-      onchip::diagnosticEvent("WiFi IP ready");
+      onchip::diagnosticEvent("WiFi IP ready", onchip::DiagnosticSubsystem::Wifi);
 #endif
     }
   });

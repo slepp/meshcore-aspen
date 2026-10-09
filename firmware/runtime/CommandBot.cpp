@@ -273,6 +273,32 @@ struct CommandBot::Core : mesh::Mesh {
   uint32_t initializationRetryAt = 0;
   unsigned initializationRetries = 0;
   BotWorker::Result sourceResult{};
+  void audit(const BotEvent &event, uint32_t job, const char *phase, const char *outcome) {
+#if !ONCHIP_BOT_COMPACT_PROFILE
+    if (event.kind != BotEvent::Command) return;
+    const auto quoted = [](const char *text, char (&out)[67]) {
+      size_t size = 0;
+      out[size++] = '"';
+      for (unsigned i = 0; i < 32 && text[i]; ++i) {
+        const unsigned char byte = text[i];
+        if (byte == '"' || byte == '\\') out[size++] = '\\';
+        out[size++] = byte >= 32 && byte <= 126 ? char(byte) : '?';
+      }
+      out[size++] = '"'; out[size] = 0;
+    };
+    char actor[67]{}, channel[67]{};
+    if (event.authenticated) {
+      for (unsigned i = 0; i < 32; ++i)
+        snprintf(actor + 2 * i, sizeof(actor) - 2 * i, "%02x", event.sender[i]);
+    } else quoted(event.nickname, actor);
+    quoted(event.channel, channel);
+    owner.diagnostic("Bot audit phase=%s job=%u command=%s method=%s carrier=%s auth=%u targeted=%u actor=%s channel=%s outcome=%s\n",
+                     phase, job, botThreadName(event.name, strlen(event.name)) ? event.name : "invalid",
+                     event.channelVerified ? "channel" : "dm",
+                     event.local ? "reflection" : event.engineOrigin ? "engine" : "rf",
+                     unsigned(event.authenticated), unsigned(event.targeted), actor, channel, outcome);
+#endif
+  }
   uint32_t eventAt = 0, startupGeneration[2]{}, sampledGeneration = 0;
   uint32_t scheduledGeneration = 0, scheduledAt = 0;
   bool discovery = false, discoverySent = false;
@@ -1845,7 +1871,9 @@ struct CommandBot::Core : mesh::Mesh {
         for (unsigned i = 0; i < 4; ++i) snprintf(marker + 3 + 2 * i, 3, "%02x", job.event.request[i]);
         strcpy(marker + 11, "] ");
         if (!memcmp(marker, message, 13) && !memcmp(job.event.channelId, event.channelId, 32)) {
-          ++stats.readSuppressed; wipe(&job, sizeof(job));
+          ++stats.readSuppressed;
+          audit(job.event, job.job, "cancelled", "another-bot-replied");
+          wipe(&job, sizeof(job));
         }
       }
     }
@@ -1917,6 +1945,7 @@ struct CommandBot::Core : mesh::Mesh {
     }
     if (!slot) { reject("Bot dedup capacity exhausted"); return; }
     const auto syntaxError = [&](const char *message) {
+      audit(event, 0, "rejected", "syntax");
       ++stats.malformed; reject(message);
       if (!sender || event.local || sender->id.matches(self_id.pub_key)) return;
       if (!(policy.flags(event, event.name) &
@@ -1972,18 +2001,22 @@ struct CommandBot::Core : mesh::Mesh {
     policy.bindStorage(event);
     if (!(event.policyFlags & (event.targeted ? BotRadioPolicy::AddressedExecute :
                                              BotRadioPolicy::BareExecute))) {
+      audit(event, 0, "rejected", "policy");
       reject("Native command policy denies this command/context"); return;
     }
     if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name)) {
+      audit(event, 0, "rejected", "target-required");
       rejectAdmission(event, packet, sender, secret, "target required: !@ALIAS COMMAND or !@BOTKEY8 COMMAND", 0); return;
     }
     const bool readQuery = event.channel[0] && !event.targeted && botReadOnlyQuery(event.name);
     if (readQuery) event.replyLimit -= 13;
     if (const char *error = owner.worker_.admissionError(event)) {
+      audit(event, 0, "rejected", "source-admission");
       reject(error);
       return;
     }
     if (administratorBlocked && !botReservedCommand(event.name)) {
+      audit(event, 0, "rejected", "source-unavailable");
       reject("Command source unavailable; use mast recovery"); return;
     }
     Invocation *invocation = nullptr;
@@ -1991,18 +2024,22 @@ struct CommandBot::Core : mesh::Mesh {
       if (!candidate.used && !invocation) invocation = &candidate;
     }
     if (nextJob == UINT32_MAX) {
+      audit(event, 0, "rejected", "job-capacity");
       reject("Bot job identifiers exhausted"); return;
     }
     if (!initialized || !invocation || !canInvoke(event) || sourceResultReady) {
+      audit(event, 0, "rejected", "busy");
       ++stats.busy;
       rejectAdmission(event, packet, sender, secret, "busy", 5000); return;
     }
     if (!capacity(0, false)) {
+      audit(event, 0, "rejected", "airtime");
       ++stats.airtimeLimited;
       rejectAdmission(event, packet, sender, secret, "airtime budget", creditWait(now)); return;
     }
     const auto decision = admitWork(event);
     if (decision != AdaptiveAdmission::Allowed) {
+      audit(event, 0, "rejected", AdaptiveAdmission::name(decision));
       rejectAdmission(event, packet, sender, secret, AdaptiveAdmission::name(decision), 0);
       return;
     }
@@ -2062,10 +2099,12 @@ struct CommandBot::Core : mesh::Mesh {
     *invocation = {};
     invocation->used = true; invocation->job = ++nextJob;
     invocation->event = event;
+    audit(event, invocation->job, "accepted", "queued");
     if (sender) { invocation->route = sender->route; memcpy(invocation->secret, secret, 32); }
     else {
       invocation->route.scoped = routing.scope(packet);
       if (!matched) {
+        audit(event, invocation->job, "rejected", "reply-channel");
         wipe(invocation, sizeof(*invocation)); reject("Native reply channel unavailable"); return;
       }
       invocation->groupChannel = *matched;
@@ -2082,9 +2121,11 @@ struct CommandBot::Core : mesh::Mesh {
       if (!event.local) observe(*invocation, event.path);
     } else if (!invocation->deferred) {
       if (!owner.worker_.invoke(event, invocation->job)) {
+        audit(event, invocation->job, "rejected", "worker-admission");
         *slot = {}; wipe(invocation, sizeof(*invocation));
         reject("Bot worker admission failed"); return;
       }
+      audit(event, invocation->job, "started", "running");
     }
     if (sender) acknowledge(packet, *sender, secret, data, originalLength, size);
   }
@@ -2672,6 +2713,7 @@ void CommandBot::loop() {
       if (invocation.deferred && int32_t(millis() - invocation.notBefore) < 0) continue;
       invocation.deferred = false;
       if (!worker_.invoke(invocation.event, invocation.job)) {
+        core_->audit(invocation.event, invocation.job, "rejected", "worker-admission");
         core_->reject("Bot collection worker admission failed");
         BotAction action;
         action.kind = BotAction::Reply;
@@ -2679,7 +2721,7 @@ void CommandBot::loop() {
                  "Error: Bot busy; collected command not executed");
         core_->act(action, invocation);
         wipe(&invocation, sizeof(invocation));
-      }
+      } else core_->audit(invocation.event, invocation.job, "started", "running");
     }
   BotWorker::Result result;
   if (worker_.poll(result)) {
@@ -2732,6 +2774,8 @@ void CommandBot::loop() {
           core_->act(action, invocation);
         }
         if (!submitted) core_->adminAcknowledged(invocation.adminTicket, false);
+        core_->audit(invocation.event, invocation.job, "completed",
+                     result.ok ? "ok" : "vm-failed");
         wipe(&invocation, sizeof(invocation));
         break;
       }
@@ -2766,10 +2810,10 @@ void CommandBot::loop() {
         sourceLifecycleFault_ = false;
       }
     }
-    diagnostic("Command VM: %llu us, %u peak allocator bytes, %u instructions, %u parser steps\n",
+    diagnostic("Command VM: %llu us, %u peak allocator bytes, %u instructions, %u parser steps; job=%u operation=%u\n",
                   static_cast<unsigned long long>(result.stats.elapsedUs),
                   unsigned(result.stats.peakBytes), result.stats.instructions,
-                  result.stats.parserSteps);
+                  result.stats.parserSteps, result.job, unsigned(result.operation));
     if (result.stats.wasmPoolBytes)
       diagnostic("Wasm pool=%u peak=%u session=%u linear=%u stack=8192 bytes\n",
                  result.stats.wasmPoolBytes, result.stats.wasmPoolHighWaterBytes,
@@ -2952,6 +2996,7 @@ void CommandBot::meshPolicyStatus(char *text, size_t capacity) const {
 void CommandBot::cancelJobs(uint32_t except) {
   if (!core_) return;
   for (auto &job : core_->invocations) if (job.used && job.job != except) {
+    if (!job.cancelled) core_->audit(job.event, job.job, "cancelled", "owner-request");
     if (job.collecting || job.deferred) { wipe(&job, sizeof(job)); continue; }
     job.cancelled = true;
     if (job.ioPending) core_->finishRadio(job, "Owner cancelled; admitted radio outcome may be unknown");

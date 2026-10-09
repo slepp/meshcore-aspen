@@ -27,13 +27,17 @@
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #endif
 
 namespace onchip {
 static_assert(CompanionSessions::MaxClients == ONCHIP_COMPANION_MAX_CLIENTS,
               "Companion server and combined capacity profile disagree");
 struct Diagnostic {
-  char message[160];
+  uint64_t uptimeMs;
+  uint32_t utc;
+  char message[DiagnosticMessageCapacity];
+  DiagnosticSubsystem subsystem;
   bool companion;
   bool remote;
 };
@@ -41,7 +45,7 @@ struct Diagnostic {
 static_assert(sizeof(Diagnostic::message) >= CommandBot::DiagnosticCapacity,
               "Command diagnostic must fit without truncation");
 #endif
-static_assert(sizeof(Diagnostic) == 162, "Diagnostics queue record budget changed");
+static_assert(sizeof(Diagnostic) == 400, "Diagnostics queue record budget changed");
 static std::atomic<QueueHandle_t> diagnosticQueue{nullptr};
 static std::atomic<uint32_t> droppedDiagnostics{0};
 static std::atomic<uint32_t> usbDropped{0}, completedDiagnostics{0};
@@ -304,8 +308,18 @@ static bool refreshRolePresence() {
   return true;
 }
 
-static bool queueDiagnostic(const char *message, bool companion, bool remote = false) {
+static bool queueDiagnostic(const char *message, bool companion, bool remote = false,
+                            DiagnosticSubsystem subsystem = DiagnosticSubsystem::System) {
   Diagnostic entry{};
+  uint32_t earliest = 0, latest = 0;
+  if (trustedNetworkTime(earliest, latest))
+    entry.utc = uint32_t((uint64_t(earliest) + latest) / 2);
+#ifdef ARDUINO_ARCH_ESP32
+  entry.uptimeMs = uint64_t(esp_timer_get_time()) / 1000;
+#else
+  entry.uptimeMs = millis();
+#endif
+  entry.subsystem = subsystem;
   const int size = message ? snprintf(entry.message, sizeof(entry.message), "%s", message) : -1;
   if (size <= 0 || size_t(size) >= sizeof(entry.message)) {
     ++droppedDiagnostics;
@@ -321,16 +335,16 @@ static bool queueDiagnostic(const char *message, bool companion, bool remote = f
   return true;
 }
 static void companionDiagnostic(const char *message) {
-  queueDiagnostic(message, true, true);
+  queueDiagnostic(message, true, true, DiagnosticSubsystem::Companion);
 }
-bool diagnosticEvent(const char *message) {
+bool diagnosticEvent(const char *message, DiagnosticSubsystem subsystem) {
 #if defined(ARDUINO_ARCH_ESP32) && (!defined(MESHCORE_MAST_ADMIN) || !MESHCORE_MAST_ADMIN)
   if (!diagnosticQueue && message && *message) {
     Serial.println(message);
     return true;
   }
 #endif
-  return queueDiagnostic(message, false, true);
+  return queueDiagnostic(message, false, true, subsystem);
 }
 void diagnosticLoopSample(uint32_t started, uint32_t finished) {
 #ifdef ARDUINO_ARCH_ESP32
@@ -365,7 +379,7 @@ static void diagnosticWorker(void *argument) {
 #if MESHCORE_NODE_BACKUP
     nodeBackup().work();
 #endif
-    char line[176];
+    char line[DiagnosticMessageCapacity + 16];
     const int size = snprintf(line, sizeof(line), "%s%s%s",
                               entry.companion ? "Companion: " : "", entry.message,
                               entry.message[0] && entry.message[strlen(entry.message) - 1] == '\n' ? "" : "\n");
@@ -377,7 +391,7 @@ static void diagnosticWorker(void *argument) {
     if (size > 0 && size_t(size) < sizeof(line))
       Serial.write(reinterpret_cast<const uint8_t *>(line), size);
 #endif
-    if (entry.remote) sendSyslog(entry.message);
+    if (entry.remote) sendSyslog(entry.message, entry.subsystem, entry.utc, entry.uptimeMs);
     ++completedDiagnostics;
   }
 }
@@ -429,7 +443,7 @@ bool beginDiagnostics() {
 }
 #if MESHCORE_NODE_BACKUP
 bool backupWorkerReady() { return diagnosticQueue.load() != nullptr; }
-void wakeBackupWorker() { diagnosticEvent("Node backup preparation requested"); }
+void wakeBackupWorker() { diagnosticEvent("Node backup preparation requested", DiagnosticSubsystem::Backup); }
 #endif
 CompanionSessions &companionSessions() {
 #ifdef COMPANION_SESSIONS_HOST
@@ -511,7 +525,9 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
           !strncmp(text, "Command phases: ", 16) || !strncmp(text, "Command task: ", 14) ||
           !strncmp(text, "Wasm pool=", 10) || !strncmp(text, "Command LittleFS source read: ", 29) ||
           !strncmp(text, "Command SPIFFS source read: ", 27);
-      return queueDiagnostic(text, false, metrics);
+      const bool audit = !strncmp(text, "Bot audit ", 10);
+      return queueDiagnostic(text, false, metrics || audit,
+                             audit ? DiagnosticSubsystem::Bot : DiagnosticSubsystem::BotVm);
     });
   commandBot.setContactLookup(companionContactAdvert);
   if (!commandBot.begin(mux)) {
@@ -638,7 +654,8 @@ void loop() {
     uint32_t lower = 0, upper = 0;
     const bool trusted = trustedNetworkTime(lower, upper);
     if (!clockKnown || trusted != clockTrusted) {
-      diagnosticEvent(trusted ? "UTC synchronized" : "UTC unavailable; inspect get sntp.current");
+      diagnosticEvent(trusted ? "UTC synchronized" : "UTC unavailable; inspect get sntp.current",
+                      DiagnosticSubsystem::Clock);
       clockKnown = true;
       clockTrusted = trusted;
     }

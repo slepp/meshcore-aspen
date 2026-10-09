@@ -51,10 +51,11 @@ are different mechanisms.
 
 Use `stats memory`, `stats psram`, `stats vm` and `stats system` through
 Management to inspect the running image rather than extrapolating these
-historical build sizes. The eight-entry diagnostics queue has 1,296 bytes of
+historical build sizes. The eight-entry diagnostics queue has 3,200 bytes of
 fixed record storage in PSRAM (internal-heap fallback if PSRAM allocation
 fails), an internal FreeRTOS control block and the existing 4 KiB internal
-worker stack. Its syslog formatter uses a fixed 256-byte worker buffer.
+worker stack. Each record holds a bounded 384-byte message, subsystem and
+event timestamps. Its syslog formatter uses a fixed 512-byte worker buffer.
 Raw lwIP UDP sends temporarily allocate one PCB and a packet buffer; they
 consume no BSD socket slots and create no additional task. See
 [remote logs and memory checks](MAST_ADMIN.md#remote-logs-and-memory-checks)
@@ -256,8 +257,9 @@ pool allocation. Initialization failure frees the pool; successful
 initialization leaves it reserved even if subsequent module load/init fails.
 
 ESP FreeRTOS task stack requests are bytes: command VM 16,384, storage 6,144,
-HTTPS worker 16,384 when present, diagnostics 4,096 plus 1,288 queue payload
-bytes and FreeRTOS overhead. These are **internal RAM**, not Lua/WAMR heaps.
+HTTPS worker 16,384 when present, diagnostics 4,096 plus FreeRTOS overhead.
+These task stacks are **internal RAM**, not Lua/WAMR heaps; the diagnostics
+queue's 3,200 payload bytes use PSRAM when available.
 An enabled/configured MQTT Observer adds an 8,192-byte task, SDK MQTT buffers
 and eight event queue slots; the empty-MQTT public build does not start them.
 WiFi, radio/DMA, HTTP, sockets, filesystem caches, SDK tasks and queue control

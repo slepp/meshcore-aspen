@@ -4,6 +4,7 @@
 #include "Clock.h"
 #include "LocalRadio.h"
 #include "PacketServices.h"
+#include "Syslog.h"
 #include <FS.h>
 #include <helpers/ArduinoHelpers.h>
 
@@ -42,8 +43,8 @@ packet_engine::Fault packetComposeOwned(const packet_engine::ComposeRequest &,
     const uint8_t *, uint16_t, uint8_t *, uint16_t &);
 packet_engine::Fault nativeRoleComposePacket(Role, const packet_engine::ComposeRequest &,
     const uint8_t *, uint16_t, uint8_t *, uint16_t &);
-// Only fixed status text and numeric measurements, never caller data or secrets.
-bool diagnosticEvent(const char *message);
+// Only fixed status text, measurements and sanitized audit metadata; never arguments or secrets.
+bool diagnosticEvent(const char *message, DiagnosticSubsystem subsystem = DiagnosticSubsystem::System);
 bool beginDiagnostics();
 bool diagnosticsCommand(const char *command, char *reply, size_t capacity);
 void diagnosticLoopSample(uint32_t started, uint32_t finished);

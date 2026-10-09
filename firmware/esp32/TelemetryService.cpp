@@ -104,15 +104,31 @@ void telemetryLoop(RadioDashboard &dashboard, const RadioDashboard::RadioStatus 
   const auto now = uptime();
   publisher.poll(now);
   static TelemetryError lastError = TelemetryError::Disabled;
+  static uint64_t lastCompletedAttempt = 0, lastDrop = 0;
   const auto &status = publisher.status();
-  if (status.error != lastError) {
-    if (status.error == TelemetryError::None) diagnosticEvent("Telemetry upload recovered");
-    else if (status.error != TelemetryError::Disabled) {
-      char event[96];
-      snprintf(event, sizeof(event), "Telemetry upload unavailable: %s HTTP=%u",
-               telemetryErrorName(status.error), status.httpStatus);
-      diagnosticEvent(event);
-    }
+  if (status.tlsAttempt != lastCompletedAttempt) {
+    const bool accepted = status.httpStatus >= 200 && status.httpStatus < 300;
+    char event[DiagnosticMessageCapacity];
+    snprintf(event, sizeof(event),
+             "Telemetry upload %s: attempt=%" PRIu64 " error=%s HTTP=%u detail=%s sdk=%d "
+             "heap_before=%u heap_connected=%u heap_failure=%u heap_after=%u backoff_s=%u",
+             accepted ? (lastError != TelemetryError::None && lastError != TelemetryError::Disabled ?
+                         "recovered" : "accepted") : "unavailable",
+             status.tlsAttempt, telemetryErrorName(status.error), status.httpStatus,
+             botHttpsFailureName(status.tls.point), status.tls.sdk,
+             status.tls.before, status.tls.connected, status.tls.failure, status.tls.after,
+             status.backoffSeconds);
+    diagnosticEvent(event, DiagnosticSubsystem::Telemetry);
+    lastCompletedAttempt = status.tlsAttempt;
+    lastError = status.error;
+  }
+  if (status.lastDropMs != lastDrop && status.error != TelemetryError::None &&
+      status.error != TelemetryError::Disabled) {
+    char event[96];
+    snprintf(event, sizeof(event), "Telemetry sample dropped: error=%s backoff_s=%u",
+             telemetryErrorName(status.error), status.backoffSeconds);
+    diagnosticEvent(event, DiagnosticSubsystem::Telemetry);
+    lastDrop = status.lastDropMs;
     lastError = status.error;
   }
   if (!publisher.config().enabled && !publisher.status().pending) releaseRoleStorage(workspace);

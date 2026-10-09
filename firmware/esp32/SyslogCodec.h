@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "Syslog.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <inttypes.h>
 
 namespace onchip {
 struct SyslogConfig {
@@ -47,13 +50,38 @@ inline bool parseSyslogDestination(const char *text, SyslogConfig &config) {
   return true;
 }
 
-inline size_t formatSyslog(const char *host, const char *message,
+inline const char *syslogSubsystemName(DiagnosticSubsystem subsystem) {
+  static const char *const names[] = {"system", "wifi", "clock", "companion", "bot",
+                                    "bot-vm", "telemetry", "packet", "backup"};
+  const unsigned index = unsigned(subsystem);
+  return index < sizeof(names) / sizeof(*names) ? names[index] : nullptr;
+}
+
+inline size_t formatSyslog(const char *host, DiagnosticSubsystem subsystem,
+                           uint32_t utc, uint64_t uptimeMs, const char *message,
                            char *output, size_t capacity) {
+  const auto *tag = syslogSubsystemName(subsystem);
+  if (!output || !capacity || !tag) return 0;
   if (!host || !*host || strlen(host) > 32 || !message || !*message) return 0;
   for (const unsigned char *p = reinterpret_cast<const unsigned char *>(host); *p; ++p)
     if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
           (*p >= '0' && *p <= '9') || *p == '-')) return 0;
-  const int header = snprintf(output, capacity, "<134>1 - %s meshcore - - - ", host);
+  char timestamp[16]{};
+  if (utc) {
+    const time_t seconds = utc;
+    struct tm time{};
+    if (!gmtime_r(&seconds, &time) || time.tm_mon < 0 || time.tm_mon > 11) return 0;
+    static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    snprintf(timestamp, sizeof(timestamp), "%s %2d %02d:%02d:%02d",
+             months[time.tm_mon], time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec);
+  }
+  // Before a trusted clock is available, the receiver supplies the BSD header.
+  const int header = utc ?
+      snprintf(output, capacity, "<134>%s %s %s: uptime_ms=%" PRIu64 " utc=%u ",
+               timestamp, host, tag, uptimeMs, utc) :
+      snprintf(output, capacity, "<134>%s: host=%s uptime_ms=%" PRIu64 " clock=unsynced ",
+               tag, host, uptimeMs);
   if (header < 0 || size_t(header) >= capacity) return 0;
   size_t used = size_t(header);
   for (const unsigned char *p = reinterpret_cast<const unsigned char *>(message); *p; ++p) {

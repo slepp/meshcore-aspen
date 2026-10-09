@@ -121,6 +121,11 @@ The publisher uses the existing in-process RadioDashboard totals and native
 hardware/role/Lua statistics, not HTTP scraping or a second packet observer.
 It emits one bounded batch (at most 6144 bytes) per period. Up to three configured remote peers rotate
 through each batch as `meshcore_repeater` lines, alongside local metrics.
+The native POST offers the batch as one TLS record, rather than fragmenting it
+into 512-byte records. This reduces queued TCP/WiFi allocations while the
+receiver's ACKs are pending. Partial writes and temporarily blocked writes still
+check cancellation and the request deadline; the internal radio reserve remains
+32 KiB.
 Remote numeric stats and supported battery voltage use the original RF sample
 timestamp, including when the latest poll fails. Availability, freshness,
 waiting and error fields describe the current monitor state. Peer rotation
@@ -157,6 +162,10 @@ reading. Older firmware's remote numeric points used receipt time.
 admission or by cancellation (`dropped`). These categories are not disjoint:
 a timed-out request can be both failed and discarded. An admission is not
 proof that a socket connected or any bytes reached the server.
+While `pending=1`, the previous completed error and HTTP status remain visible
+until the new attempt finishes. Syslog's `telemetry` records identify completed
+uploads and their TLS phase, heap snapshots and backoff. `recovered` requires
+a completed HTTP 2xx response; queuing a new attempt is not recovery.
 `telemetry times` reports monotonic milliseconds since boot, zero meaning
 no such event, not UTC. HTTP status and a finite error category are exposed;
 server response bodies and credential values are not.

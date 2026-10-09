@@ -278,6 +278,12 @@ struct Peer : PeerState, mesh::Mesh {
 static void native_channel_policy() {
   assert(saveBotEnabled(true) && saveBotRadioPolicy({}));
   Fixture f; f.start(); Peer peer;
+  static std::string audit;
+  audit.clear();
+  f.bot.setDiagnosticSink([](const char *text) {
+    if (!strncmp(text, "Bot audit ", 10)) audit += text;
+    return true;
+  });
   f.learn(peer);
   uint8_t identity[32]; memcpy(identity, f.bot.publicKey(), sizeof(identity));
   char reply[162]{};
@@ -347,9 +353,19 @@ static void native_channel_policy() {
     return peer.groupReplies(f.radio, 3, name, key);
   };
   assert(group("operator: !ping", "#first") == std::vector<std::string>{"Pong"});
+  assert(audit.find("phase=accepted") != std::string::npos &&
+         audit.find("phase=started") != std::string::npos &&
+         audit.find("phase=completed") != std::string::npos);
+  assert(audit.find("command=ping method=channel carrier=rf auth=0 targeted=1 actor=\"operator\" channel=\"#first\" outcome=ok") != std::string::npos);
+  audit.clear();
+  assert(group("op\\\"er: !ping", "#first") == std::vector<std::string>{"Pong"});
+  assert(audit.find("actor=\"op\\\\\\\"er\"") != std::string::npos);
+  audit.clear();
   assert(group("operator: !ping", "#second") == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "Private", privateChannel.secret) == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "Public", publicChannel.secret).empty());
+  assert(audit.find("phase=rejected") != std::string::npos &&
+         audit.find("channel=\"Public\" outcome=policy") != std::string::npos);
   policy("access 2 ping 12");
   assert(group("operator: !ping", "Public", publicChannel.secret) == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "Public", publicChannel.secret, false).empty());
@@ -378,6 +394,10 @@ static void native_channel_policy() {
   }
   const auto bracketedHelp = group("operator: !@[Aspen-Bot] help", "#test", nullptr, false);
   assert(!bracketedHelp.empty() && bracketedHelp[0].find("!ping") != std::string::npos);
+  audit.clear();
+  group("operator: !@aspen help fixture-private-argument", "#test", nullptr, false);
+  assert(audit.find("command=help") != std::string::npos &&
+         audit.find("fixture-private-argument") == std::string::npos);
   assert(group("operator: !ping", "#test") == std::vector<std::string>{"Pong"});
   assert(group("operator: !@aspen trace", "#test", nullptr, false).size() == 1);
   f.bot.stop(); f.start(); f.learn(peer);
@@ -417,9 +437,14 @@ static void native_channel_policy() {
   assert(peer.groupReplies(f.radio, 3, "#second") == std::vector<std::string>{"#second"});
   assert(peer.groupReplies(f.radio, 3, "Private", privateChannel.secret) == std::vector<std::string>{"Private"});
   policy("access dm keep 53");
+  audit.clear();
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(peer.command(identity, "!keep")); f.step();
   assert(peer.replies(identity, f.radio).empty());
+  char caller[65]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(caller + 2 * i, 3, "%02x", peer.self_id.pub_key[i]);
+  assert(audit.find(std::string("command=keep method=dm carrier=rf auth=1 targeted=0 actor=") +
+                    caller + " channel=\"\" outcome=ok") != std::string::npos);
   assert(f.command(peer, "!fetch") == "retained");
   policy("access dm keep 31");
   assert(f.command(peer, "!keep").find("denies storage write") != std::string::npos);
