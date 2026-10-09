@@ -864,8 +864,8 @@ Physical field acceptance is recorded separately; these are not live-RF claims.
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
 | `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Long replies retain whole hashes and explicitly mark truncation; ninth paths, missing paths and RX queue overflow also mark the result truncated |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
-| `!about` | Persistent command-bot public key and role identity |
-| `!version` | Pinned upstream MeshCore revision, linked Lua version and compilation date/time; no firmware image hash |
+| `!about` | Bot introduction and pointers to command help and installed programs |
+| `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
 | `!uptime` | Boot uptime snapshot, extended across the 32-bit millisecond clock rollover |
 | `!status` | Bot readiness/fault flag, selected/ready role masks, WiFi connection state and explicit unavailable battery measurement |
 | `!signal` | This request's measured RSSI/SNR and comma-separated repeater hashes; local reflection and missing measurements are identified |
@@ -878,8 +878,7 @@ not Lua-maintained counters or the last packet seen by the radio. Authenticated
 DMs and the configured, verified command channel use the same admission,
 deduplication, rate and airtime limits as other commands. No owner grant is
 needed and no private configuration, credentials, fault text or remote keys
-are included. `!about` exposes only the bot's own public key. These additions
-do not change the installed field image.
+are included. `!about` directs users to `!help`, `!help NAME` and `!plugins`.
 
 `!status` role masks use repeater=1, room=2, companion=4 and observer=8;
 the command-bot readiness is shown separately. WiFi is reported only where

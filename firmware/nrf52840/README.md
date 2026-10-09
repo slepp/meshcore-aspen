@@ -218,7 +218,7 @@ authenticated administrator CLI expose the following controls:
 | --- | --- | --- |
 | Repeater name | `set name Pine-Relay`, `get name` | Native saved preferences; subsequent adverts use the new name |
 | Bot name | `set bot.name Pine-Bot`, `get bot.name` | Saved alongside its existing identity; immediate, no reboot |
-| Name notification | `advert.zerohop`, `bot advert.zerohop` | Native signed direct adverts with no hops; queue receipt is not peer learning |
+| Name notification | `advert.zerohop`, `bot advert.zerohop` | Announce the saved name to radios in range |
 | Public identities | `get pub.key`, `get bot.pub.key` | Reports active and saved keys, plus `reboot=1` for a staged change |
 | Deliberate identity import | `set prv.key <128-hex-native-private-key>`, `set bot.prv.key <128-hex-native-private-key>` | **Local USB only**; verified/atomically saved, reboot required |
 | Shared RF profile | Native `set radio`, `get radio`, `set tx`, `get tx` | One physical authority for both roles; radio changes report reboot required, TX power applies natively |
@@ -287,11 +287,10 @@ For a name notification without relay forwarding, use native
 `advert.zerohop` for the repeater and `bot advert.zerohop` for the bot.
 Use `advert` or `bot advert` to flood the corresponding identity instead.
 The bot command is available through the authenticated native repeater CLI
-as well as USB. A queued advert does not confirm RF reception.
+as well as USB.
 The latter is available through USB or the existing authenticated, encrypted
 repeater admin CLI. Both use upstream `sendZeroHop`, with an empty direct
 route (no routing hashes); the saved three-byte flood policy is unchanged.
-Queue acceptance does not establish that another radio learned the name.
 An operator advert before the startup deadline replaces the automatic attempt.
 A failed allocation is reported and is not retried automatically. All adverts
 use the existing bounded packet pool, native dispatcher/CAD and shared PHY

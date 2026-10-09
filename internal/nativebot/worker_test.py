@@ -81,7 +81,7 @@ class WorkerProcessTest(unittest.TestCase):
         reply = self.admin(process, "advert")
         self.assertEqual(reply, "Error: bot source unavailable, radio/queue busy, or advert rate/airtime limit")
         self.assertIn("advert|advert.zerohop", self.admin(process, "help"))
-        self.assertEqual(self.admin(process, "advert.zerohop"), "Bot zero-hop advert queued; verify RF")
+        self.assertEqual(self.admin(process, "advert.zerohop"), "Bot zero-hop advert queued")
         self.assertEqual(self.admin(process, "advert"), "Error: owner advert rate limited (1 minute)")
         self.stop(process)
 
@@ -547,7 +547,7 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertEqual(self.admin(first, "name Host Mast", 29),
                          "Saved and applied bot name; identity unchanged")
         self.assertEqual(self.admin(first, "advert.zerohop"),
-                         "Bot zero-hop advert queued; verify RF")
+                         "Bot zero-hop advert queued")
         self.assertIn("rate limited (1 minute)", self.admin(first, "advert.zerohop"))
         self.assertIn("reboot required",
                       self.admin(first, "channel 546573744368616e6e656c 00112233445566778899aabbccddeeff"))

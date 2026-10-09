@@ -33,7 +33,6 @@
     {"type": "context", "kind": "dm", "peer": "alice", "owner": true},
     {"type": "reply", "text": "Owner call 1"},
     {"type": "reflection", "peer": "alice", "command": "!owner-test"},
-    {"type": "async_reply", "peer": "alice", "kind": "dm", "text_contains": "permission not granted"},
     {"type": "reply", "text": "Owner calls 1"},
     {"type": "context", "kind": "dm", "peer": "bob", "owner": false},
     {"type": "reply", "text_contains": "permission not granted"},

@@ -305,7 +305,7 @@ func (s *Service) apply(ctx context.Context) (string, error) {
 	}
 	s.install(candidate, next, "")
 	if queued {
-		return "KEY " + next.String() + " applied; zero-hop advert queued; verify RF", nil
+		return "KEY " + next.String() + " applied; zero-hop advert queued", nil
 	}
 	return "KEY " + next.String() + " applied; zero-hop advert not queued; use advert.zerohop", nil
 }

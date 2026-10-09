@@ -264,7 +264,7 @@ else:
 	}
 	mast.mu.Unlock()
 	reply = admin("key bot apply")
-	if reply != "KEY "+next.String()+" applied; zero-hop advert queued; verify RF" {
+	if reply != "KEY "+next.String()+" applied; zero-hop advert queued" {
 		t.Fatal("apply failed: " + reply)
 	}
 	if admin("key bot") != "KEY "+next.String() || status()["bot"].PublicKey != next.String() {

@@ -145,6 +145,7 @@ struct BotEvent {
   BotPath path;
   uint8_t route[BotTraceLimit]{}, routeSize = 0, routeWidth = 1;
   bool routeExplicit = false, local = false, signal = false;
+  bool engineOrigin = false, reflectionOrigin = false;
   float rssi = 0, snr = 0;
   uint32_t frequency = 0, bandwidth = 0;
   uint8_t sf = 0, cr = 0, routeType = 0;

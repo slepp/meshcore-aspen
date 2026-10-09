@@ -254,8 +254,9 @@ use `source status` there, since its command set is bot-scoped.
 1. **Roles:** `roles MASK` and `bot on|off` save next-boot selection. Inspect
    saved/running state, then use `apply` when ready to disconnect clients and
    activate it. Management/KISS stay independent.
-2. **Names:** use `role name ROLE TEXT`; this preserves keys. An advert control
-   queues a transmission, not contact learning. See [runtime names/keys](#runtime-role-names-and-keys).
+2. **Names:** use `role name ROLE TEXT`; this preserves keys. Use
+   `role advert ROLE zerohop` to announce the name to radios in range.
+   See [runtime names/keys](#runtime-role-names-and-keys).
 3. **Keys:** back up first. Staging does not apply a replacement. Read
    active/pending keys and use the documented role restart or host `key bot apply`.
    **Changing a bot key does not transfer its notes/timers/reminders to the
@@ -1304,9 +1305,8 @@ required` without changing its bytes or any pending stage.
 Apply reloads only the native bot worker. The bot temporarily stops accepting
 commands while its selected source becomes ready. It commits the new identity,
 enables the worker and attempts one signed zero-hop advert with the saved name.
-`applied; zero-hop advert queued; verify RF` means queue admission, **not**
-confirmed transmission or companion reception. If it reports `not queued`,
-retry `advert.zerohop` once the radio/airtime queue is available. The dashboard,
+The reply reports `applied; zero-hop advert queued`. If it reports `not queued`,
+retry `advert.zerohop` once the radio queue is available. The dashboard,
 `key bot` and future HELLO all use the saved new full key.
 The companion must learn the new key before sending encrypted bot commands;
 the bot also needs a fresh companion advert after its worker reload.

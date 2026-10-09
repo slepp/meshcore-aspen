@@ -16,7 +16,7 @@ constexpr uint32_t stageMask(Stage stage) { return 1u << unsigned(stage); }
 enum class Decision : uint8_t { Continue, Drop, Failed };
 enum class Fault : uint8_t {
   None, Execution, Fuel, Deadline, Bounds, EmissionLimit, EmissionRejected,
-  InvalidDecision, Reentrant, EmissionOrigin
+  InvalidDecision, Reentrant, EmissionOrigin, InvalidPacket
 };
 inline const char *faultText(Fault fault) {
   switch (fault) {
@@ -29,17 +29,20 @@ inline const char *faultText(Fault fault) {
     case Fault::EmissionRejected: return "packet engine scheduler admission failed";
     case Fault::InvalidDecision: return "packet engine returned an invalid decision";
     case Fault::Reentrant: return "packet engine recursively entered the pipeline";
-    case Fault::EmissionOrigin: return "packet engine cannot emit from generated packets or local reflections";
+    case Fault::EmissionOrigin: return "packet engine cannot emit from generated packets, reflections or their native replies";
+    case Fault::InvalidPacket: return "packet engine produced an invalid native packet";
   }
   return "unknown packet engine fault";
 }
 struct Metadata {
   Stage stage = Stage::Receive;
   uint8_t source = UINT8_MAX, destination = UINT8_MAX, payloadType = UINT8_MAX;
-  bool local = false, authenticated = false, engineOrigin = false;
+  bool local = false, authenticated = false, engineOrigin = false, reflectionOrigin = false;
   uint32_t generation = 0, job = 0;
   int16_t rssi = 0, snrQuarterDb = 0;
+  uint8_t identity[32]{};
 };
+using Validator = Fault (*)(const Metadata &, const uint8_t *, uint16_t, bool emission);
 struct Emission {
   uint8_t bytes[Capacity]{};
   uint16_t length = 0;
@@ -80,13 +83,14 @@ class Call {
   Emission *emissions_;
   uint8_t &emissionCount_;
   uint32_t fuel_, started_, limit_;
-  bool allowEmit_;
+  bool allowEmit_, allowEmpty_;
   Fault fault_ = Fault::None;
   Call(Host &host, uint8_t *bytes, uint16_t length, uint16_t capacity,
-       Emission *emissions, uint8_t &count, const Budget &budget, bool allowEmit)
+       Emission *emissions, uint8_t &count, const Budget &budget, bool allowEmit, bool allowEmpty)
       : host_(host), bytes_(bytes), length_(length), capacity_(capacity),
         emissions_(emissions), emissionCount_(count), fuel_(budget.fuel),
-        started_(host.microsNow()), limit_(budget.microseconds), allowEmit_(allowEmit) {}
+        started_(host.microsNow()), limit_(budget.microseconds), allowEmit_(allowEmit),
+        allowEmpty_(allowEmpty) {}
 public:
   void fail(Fault fault) {
     if (fault_ == Fault::None && fault != Fault::None) fault_ = fault;
@@ -120,10 +124,10 @@ public:
   }
   bool replace(const uint8_t *input, uint16_t length) {
     if (!consume()) return false;
-    if (!input || !length || length > capacity_) {
+    if ((!input && length) || (!length && !allowEmpty_) || length > capacity_) {
       fail(Fault::Bounds); return false;
     }
-    memmove(bytes_, input, length);
+    if (length) memmove(bytes_, input, length);
     if (length < length_) memset(bytes_ + length, 0, length_ - length);
     length_ = length;
     return true;
@@ -204,13 +208,15 @@ public:
     return true;
   }
   Decision process(const Metadata &metadata, uint8_t *bytes, uint16_t &length,
-                   uint16_t capacity) {
+                   uint16_t capacity, Validator validate = nullptr) {
     if (running_) {
       recursion_ = true;
       host_.fault("pipeline", metadata, Fault::Reentrant);
       return Decision::Continue;
     }
-    if (!bytes || !length || capacity > Capacity || length > capacity ||
+    const bool plaintext = metadata.stage == Stage::PlainReceive ||
+                           metadata.stage == Stage::PlainCompose;
+    if (!bytes || (!length && !plaintext) || capacity > Capacity || length > capacity ||
         unsigned(metadata.stage) > unsigned(Stage::PlainCompose)) {
       host_.fault("pipeline", metadata, Fault::Bounds);
       return Decision::Continue;
@@ -226,8 +232,15 @@ public:
       if (!entry.enabled || !(entry.budget.stages & stageMask(metadata.stage))) continue;
       ++entry.calls;
       Call call(host_, candidate_, candidateLength, capacity, emissions_, emissionCount,
-                entry.budget, !metadata.engineOrigin && !metadata.local);
+                entry.budget, !metadata.engineOrigin && !metadata.reflectionOrigin &&
+                !metadata.local, plaintext);
       result = entry.engine->process(metadata, call);
+      if (validate && result == Decision::Continue &&
+          (call.length_ != length || memcmp(candidate_, bytes, length)))
+        call.fail(validate(metadata, candidate_, call.length_, false));
+      if (validate)
+        for (uint8_t j = 0; j < emissionCount; ++j)
+          call.fail(validate(metadata, emissions_[j].bytes, emissions_[j].length, true));
       call.consume(0);
       if (recursion_) call.fail(Fault::Reentrant);
       if (result == Decision::Failed) call.fail(Fault::Execution);

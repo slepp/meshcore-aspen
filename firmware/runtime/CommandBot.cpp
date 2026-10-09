@@ -356,6 +356,10 @@ struct CommandBot::Core : mesh::Mesh {
     }
     if (!slot) { ++stats.eventsDropped; return; }
     BotEvent event = original;
+#ifdef MESH_PACKET_ENGINE_API
+    event.engineOrigin = packet->_engineOrigin;
+    event.reflectionOrigin = packet->_reflectionOrigin;
+#endif
     event.kind = BotEvent::Message;
     memcpy(event.message, text, size); event.message[size] = 0;
     event.routeType = packet->getRouteType();
@@ -1191,6 +1195,10 @@ struct CommandBot::Core : mesh::Mesh {
         continue;
       }
       auto &job = *invocation;
+#ifdef MESH_PACKET_ENGINE_API
+      mesh::PacketOriginScope origin(packetOrigin(),
+          {job.event.engineOrigin, job.event.reflectionOrigin});
+#endif
       job.repeaterIndex = -1;
       job.io = request; resetBotIoResult(job.result); job.result.token = request.token;
       job.ioPending = true; job.deadline = millis() + request.delayMs;
@@ -1404,8 +1412,12 @@ struct CommandBot::Core : mesh::Mesh {
                     false, packet, principal(job.event))) {
         releasePacket(packet); finishRadio(job, capacityError); continue;
       }
+#ifdef MESH_PACKET_ENGINE_API
+      job.expectedAck = packet->_expectedAck;
+#else
       mesh::Utils::sha256(reinterpret_cast<uint8_t *>(&job.expectedAck), 4,
                           plain, size + 5, self_id.pub_key, 32);
+#endif
       job.ackExpected = true; job.acked = false; job.outbound = packet;
       memcpy(job.dmTarget, destination ? destination->id.pub_key : job.event.sender, 32);
       rememberOutbound(packet);
@@ -1414,6 +1426,10 @@ struct CommandBot::Core : mesh::Mesh {
       ++stats.replies;
     }
     for (auto &job : invocations) if (job.used && job.ioPending) {
+#ifdef MESH_PACKET_ENGINE_API
+      mesh::PacketOriginScope origin(packetOrigin(),
+          {job.event.engineOrigin, job.event.reflectionOrigin});
+#endif
       if (!owner.worker_.ioCurrent(job.io.token)) {
         finishRadio(job, "Radio operation cancelled; outcome may be unknown");
       } else if (repeaterIo(job) && (job.io.grant != repeaterGrant || !repeaterAuthority(job))) {
@@ -1589,6 +1605,10 @@ struct CommandBot::Core : mesh::Mesh {
   bool acknowledge(mesh::Packet *request, Contact &sender, const uint8_t *secret,
                    const uint8_t *data, size_t textSize, size_t size) {
     uint8_t ack[6]{};
+#ifdef MESH_PACKET_ENGINE_API
+    data = originalReceivedPlaintext(data, size);
+    textSize = mesh::plaintextTextLength(data, size);
+#endif
     mesh::Utils::sha256(ack, 4, data, textSize + 5, sender.id.pub_key, 32);
     if (sender.ackSent && uint32_t(millis() - sender.ackAt) < 1000 &&
         !memcmp(sender.ackHash, ack, sizeof(sender.ackHash))) return true;
@@ -1724,6 +1744,10 @@ struct CommandBot::Core : mesh::Mesh {
           memcpy(job.hashes[job.hashCount++], hash, sizeof(hash));
           if (job.rxCount == BotReceiveLimit || job.nextPacket == UINT32_MAX) job.overflow = true;
           else {
+#ifdef MESH_PACKET_ENGINE_API
+            job.event.engineOrigin = job.event.engineOrigin || packet->_engineOrigin;
+            job.event.reflectionOrigin = job.event.reflectionOrigin || packet->_reflectionOrigin;
+#endif
             auto &copy = job.received[job.rxCount++];
             copy = {};
             memcpy(copy.text, data + 5, length); copy.text[length] = 0;
@@ -1841,6 +1865,10 @@ struct CommandBot::Core : mesh::Mesh {
         if (job.hashCount == BotReceiveDedupLimit) { job.overflow = true; continue; }
         memcpy(job.hashes[job.hashCount++], event.request, 16);
         if (job.rxCount == BotReceiveLimit || job.nextPacket == UINT32_MAX) { job.overflow = true; continue; }
+#ifdef MESH_PACKET_ENGINE_API
+        job.event.engineOrigin = job.event.engineOrigin || packet->_engineOrigin;
+        job.event.reflectionOrigin = job.event.reflectionOrigin || packet->_reflectionOrigin;
+#endif
         auto &copy = job.received[job.rxCount++];
         copy = {}; memcpy(copy.text, message, messageSize);
         copy.at = millis(); copy.info.id = ++job.nextPacket;
@@ -1982,6 +2010,10 @@ struct CommandBot::Core : mesh::Mesh {
     memcpy(slot->request, event.request, sizeof(event.request));
     if (sender) sender->heard = now;
     event.routeType = packet->getRouteType();
+#ifdef MESH_PACKET_ENGINE_API
+    event.engineOrigin = packet->_engineOrigin;
+    event.reflectionOrigin = packet->_reflectionOrigin;
+#endif
     const auto *received = packets.reception(packet);
     if (!event.local && !received) owner.fault("Bot packet receive signal unavailable");
     event.rssi = received ? received->rssi : 0;
@@ -2106,6 +2138,10 @@ struct CommandBot::Core : mesh::Mesh {
   }
   bool act(const BotAction &action, Invocation &invocation) {
     const auto &pending = invocation.event;
+#ifdef MESH_PACKET_ENGINE_API
+    mesh::PacketOriginScope origin(packetOrigin(),
+        {pending.engineOrigin, pending.reflectionOrigin});
+#endif
     if (action.kind == BotAction::Reply &&
         (invocation.suppressReply || !(policy.flags(pending, pending.name) &
           (pending.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply)))) return true;
@@ -2194,7 +2230,11 @@ void CommandBot::Core::ownerSend(const uint8_t request[16], const uint8_t recipi
   *slot = {};
   slot->used = true; slot->at = millis(); slot->packet = packet; slot->flags = 4;
   memcpy(slot->id, request, 16);
+#ifdef MESH_PACKET_ENGINE_API
+  slot->ack = packet->_expectedAck;
+#else
   mesh::Utils::sha256(reinterpret_cast<uint8_t *>(&slot->ack), 4, plain, 5 + size, self_id.pub_key, 32);
+#endif
   ownerState(*slot, 1);
   rememberOutbound(packet);
   routing.send(*this, packet, contact->route, policy.pathWidth);

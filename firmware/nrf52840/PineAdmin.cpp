@@ -179,7 +179,7 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
     bot.targetAliasesCommand(text[11] ? text + 12 : "", reply.text, sizeof(reply.text));
   } else if (!strcmp(text, "bot advert") || !strcmp(text, "bot advert zero") ||
              !strcmp(text, "bot advert.zerohop")) {
-    say(bot.advertise(strcmp(text, "bot advert") != 0) ? "Bot advert queued; RF reception unconfirmed" :
+    say(bot.advertise(strcmp(text, "bot advert") != 0) ? "Bot advert queued" :
                                                       "Error: bot advert radio admission failed");
   } else if (!strcmp(text, "bot home") || !strncmp(text, "bot home ", 9) ||
              !strncmp(text, "bot https", 9) || !strncmp(text, "wifi", 4)) {

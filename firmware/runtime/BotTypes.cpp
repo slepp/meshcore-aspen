@@ -510,15 +510,15 @@ function help(name,page) return command_help(name,page) end
 function plugins(page) return node.plugins(page) end
 function neighbors(page) return node.neighbors(page) end
 function admin(text) return node.admin(text or "bot help") end
-command("about","","Bot full public key")
-command("version","","Native/Lua build; image hash unavailable")
+command("about","","Bot introduction and command help")
+command("version","","MeshCore/Lua versions and build date")
 command("uptime","","Elapsed time since boot")
 command("status","","Bot readiness, roles and WiFi snapshot")
 command("signal","","Request RSSI/SNR/path; local reflection marked")
-command("air","page?:int:1:4","Scheduler ms/queues/TX counters; not delivery","air","public","!air 2")
+command("air","page?:int:1:4","Scheduler airtime, queues and TX counters","air","public","!air 2")
 command("help","name?:string:24,page?:int:1:40","Commands/arguments; !help PAGE or NAME [PAGE]","help","public","!help remember")
 command("plugins","page?:int:1:4","Active source/manifest/modules; shared Lua namespace","plugins","public","!plugins 2")
-command("neighbors","page?:int:1:16","Signed adverts/cached routes; not live adjacency","neighbors","public","!neighbors 2")
+command("neighbors","page?:int:1:16","Contacts from signed adverts and cached routes","neighbors","public","!neighbors 2")
 command("admin","text?:text:155","Trusted-owner DM: bot status/help/cancel","admin","owner","!admin bot status")
 )lua";
 static_assert(sizeof(BotDiagnosticSource) <= 2048, "Keep compiled diagnostics independently bounded");
@@ -559,16 +559,11 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
       size = snprintf(output, capacity, "Air gen=%u cfg=%u; bot60s limit=%ums; u32 totals wrap/reset; history/duty unavailable",
                       unsigned(a.generation), unsigned(a.configurationGeneration), unsigned(a.limitMs));
   } else if (!strcmp(name, "about")) {
-    if (!n.available || !n.hasIdentity) size = snprintf(output, capacity, "Error: bot identity unavailable");
-    else {
-      char key[65];
-      for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", n.publicKey[i]);
-      size = snprintf(output, capacity, "mc-onchip/command-bot; key=%s", key);
-    }
+    size = snprintf(output, capacity, "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
   } else if (!strcmp(name, "version")) {
     if (!n.available || !n.nativeRevision[0] || !n.build[0])
       size = snprintf(output, capacity, "Error: build metadata unavailable");
-    else size = snprintf(output, capacity, "MeshCore rev %s; Lua %s; built %s; image hash unavailable",
+    else size = snprintf(output, capacity, "MeshCore rev %s; Lua %s; built %s",
                          n.nativeRevision, luaVersion, n.build);
   } else if (!strcmp(name, "uptime")) {
     if (!n.available) size = snprintf(output, capacity, "Error: uptime unavailable");

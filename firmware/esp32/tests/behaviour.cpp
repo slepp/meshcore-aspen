@@ -542,6 +542,39 @@ static void packet_pipeline_scheduler_emissions() {
   assert(f.mux.receiveRaw(raw, length, sizeof(raw), -91, 4.25f) && raw[0] == 0x11);
 }
 
+static void engine_stop_preserves_native_origin_jobs() {
+  Fixture f;
+  onchip::LocalRadio local;
+  assert(local.attach(f.mux));
+  onchip::NativePacketHost host(f.mux, packetClock, packetReport);
+  assert(host.begin());
+  const uint8_t bytes[] = {0x51, 0x52};
+  uint32_t job;
+  assert(local.queueTransmitWithOrigin(bytes, sizeof(bytes), 0, 1000, 0, job,
+                                       {true, true}));
+  packet_engine::Emission emission;
+  memcpy(emission.bytes, bytes, sizeof(bytes));
+  emission.length = sizeof(bytes);
+  emission.delayMs = 1000;
+  assert(f.mux.admitEnginePackets(&emission, 1));
+  host.stop();
+  mesh::QueuedRadioStats stats;
+  assert(local.getQueuedRadioStats(stats) && stats.aggregate_queued == 1 &&
+         local.queuedCount() == 1);
+  mesh::QueuedTransmitResult result;
+  assert(local.pollQueuedResult(result) && result.job == job &&
+         result.state == queued_tx::ACCEPTED);
+  clock_ms += 1000;
+  f.step();
+  assert(f.radio.transmitted.size() == 1);
+  f.finish(10);
+  assert(local.pollQueuedResult(result) && result.job == job &&
+         result.state == queued_tx::SUCCEEDED && result.rf_ms == 10);
+  assert(!local.pollQueuedResult(result) && local.getPacketsSent() == 1);
+  assert(local.getQueuedRadioStats(stats) && stats.source_successes == 1 &&
+         stats.source_rf_ms == 10 && stats.aggregate_queued == 0);
+}
+
 int main() {
   operator_phy_boot();
   assert(onchip::clearsAdminPassword("password "));
@@ -552,6 +585,7 @@ int main() {
   embedded_sources();
   packet_pipeline_fanout_and_transmit();
   packet_pipeline_scheduler_emissions();
+  engine_stop_preserves_native_origin_jobs();
   for (auto command : {"clkreboot",
                        "set radio 900,250,7,5", "set tx 22", "clear stats"})
     assert(onchip::unsafeCLI(command));

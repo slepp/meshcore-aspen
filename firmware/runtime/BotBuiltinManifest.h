@@ -5,9 +5,9 @@
 #include "BotRegistry.h"
 namespace onchip {
 constexpr BotCommand BotBuiltinCommands[] = {
-  {BotCommand::Public, "about", "about", "", "Bot full public key", "!about"},
+  {BotCommand::Public, "about", "about", "", "Bot introduction and command help", "!about"},
   {BotCommand::Owner, "admin", "admin", "text?:text:155", "Trusted-owner DM: bot status/help/cancel", "!admin bot status"},
-  {BotCommand::Public, "air", "air", "page?:int:1:4", "Scheduler ms/queues/TX counters; not delivery", "!air 2"},
+  {BotCommand::Public, "air", "air", "page?:int:1:4", "Scheduler airtime, queues and TX counters", "!air 2"},
   {BotCommand::Shared, "board", "board", "action:string:6,key?:string:26,text?:text:120", "Target/grant: put KEY TEXT|get KEY|list [PREFIX]|delete KEY", "!@BOTKEY8 board put plan lunch"},
   {BotCommand::Public, "calc", "calc", "expression:text:120", "Decimal + - * / (); depth <=8", "!calc (2+3)*4"},
   {BotCommand::Public, "cancel", "cancel", "id:string:10", "Cancel personal ID; unknown is uncertain TX", "!cancel 1"},
@@ -17,7 +17,7 @@ constexpr BotCommand BotBuiltinCommands[] = {
   {BotCommand::Public, "help", "help", "name?:string:24,page?:int:1:40", "Commands/arguments; !help PAGE or NAME [PAGE]", "!help remember"},
   {BotCommand::Public, "list-memories", "notes", "prefix?:string:32", "Alias of notes", ""},
   {BotCommand::Public, "mt", "mt", "seconds?:int:1:30", "Observe unique paths; default 5s", "!mt 5"},
-  {BotCommand::Public, "neighbors", "neighbors", "page?:int:1:16", "Signed adverts/cached routes; not live adjacency", "!neighbors 2"},
+  {BotCommand::Public, "neighbors", "neighbors", "page?:int:1:16", "Contacts from signed adverts and cached routes", "!neighbors 2"},
   {BotCommand::Public, "notes", "notes", "prefix?:string:32", "Private keys; narrow prefix if truncated", ""},
   {BotCommand::Public, "path", "path", "", "Received flood path; direct path may be unknown", "!path"},
   {BotCommand::Public, "ping", "ping", "", "Reply Pong", "!ping"},
@@ -33,7 +33,7 @@ constexpr BotCommand BotBuiltinCommands[] = {
   {BotCommand::Public, "test", "test", "", "Heard path and measured RSSI/SNR; local marked", "!test"},
   {BotCommand::Public, "trace", "trace", "route?:string:154", "TRACE width:hex or heard route", "!trace 1:a1b2"},
   {BotCommand::Public, "uptime", "uptime", "", "Elapsed time since boot", "!uptime"},
-  {BotCommand::Public, "version", "version", "", "Native/Lua build; image hash unavailable", "!version"},
+  {BotCommand::Public, "version", "version", "", "MeshCore/Lua versions and build date", "!version"},
   {BotCommand::Home, "weather", "weather", "place?:text:80", "Configured home weather; DM/grant; place required", "!weather Calgary"},
 };
 constexpr BotManifestView BotBuiltinManifest{BotBuiltinCommands,

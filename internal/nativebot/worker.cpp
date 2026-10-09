@@ -358,8 +358,7 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
     const auto result = source.ready() ? onchip::HostBotOwner::advertise(bot, zeroHop) :
         onchip::HostBotOwner::AdvertResult::Unavailable;
     std::strcpy(reply, result == onchip::HostBotOwner::AdvertResult::Queued ?
-        (zeroHop ? "Bot zero-hop advert queued; verify RF" :
-                   "Bot flood advert queued; RF reception unconfirmed") :
+        (zeroHop ? "Bot zero-hop advert queued" : "Bot flood advert queued") :
         result == onchip::HostBotOwner::AdvertResult::RateLimited ?
         "Error: owner advert rate limited (1 minute)" :
         "Error: bot source unavailable, radio/queue busy, or advert rate/airtime limit");

@@ -3,7 +3,7 @@
 Build a native packet module against
 [`PacketPipeline.h`](../shared/PacketPipeline.h) and attach it with
 [`NativePacketHost`](../esp32/NativePacketHost.h) on Aspen's radio dispatch
-task. The module can read, replace, modify or drop raw packets, and stage
+task. The module can read, replace, modify or drop packets, and stage
 up to two transmissions per hook invocation. Nothing is enabled by default.
 This interface currently takes compiled C++ modules; it does not install
 WASM or Lua packet programs.
@@ -19,10 +19,40 @@ The shared modem exposes these raw hooks:
 | `Reflection` | A local copy after confirmed RF completion; changing this copy does not change the packet already transmitted |
 
 `local` distinguishes reflection from RF reception. `engineOrigin` identifies
-generated packets as they pass through transmit and reflection hooks.
-The declared `Relay`, `PlainReceive` and `PlainCompose` stages are reserved
-for the native-role bridge and are not yet called. Raw ciphertext edits do
-not recompute encryption MACs, signatures or message ACK hashes.
+generated packets and native replies derived from them. `reflectionOrigin`
+also follows replies derived from a local reflection, even when the reply
+itself is an outgoing packet with `local=false`. Native receive and relay
+hooks use the packet's stored RSSI/SNR, including after a receive delay.
+Raw ciphertext edits do not recompute encryption MACs, signatures or message
+ACK hashes.
+
+Aspen's on-device roles also expose these hooks:
+
+| Stage | Packet and consequence |
+| --- | --- |
+| `Relay` | A complete wire packet after the role's routing edits, before scheduler admission; includes direct and multipart ACK forwarding |
+| `PlainReceive` | Decrypted peer, anonymous, path-return or group data after a valid MAC, or advert application data after signature verification |
+| `PlainCompose` | Owned-identity peer, anonymous, path-return or group data before encryption, or advert application data before signing |
+
+`payloadType` identifies the native payload and `identity` contains the owning
+role's 32-byte public key. Private keys and shared secrets remain in native code.
+For group data, `authenticated` records a valid channel MAC, not a verified
+sender identity.
+Plaintext receive edits change local handling, not the encrypted or signed
+packet that another role may forward. The receive length includes AES padding.
+An empty advert application body still invokes its hook.
+
+Message ACK hashes use the **original received plaintext** even if a receive
+engine changes the message or its length. Extended retries preserve the original
+attempt byte separately from the text hash. Outgoing
+message and room-post ACKs use the **final composed plaintext** before encryption.
+Changing raw ciphertext later cannot update that expected ACK.
+
+A plaintext receive drop prevents local handling. A compose drop prevents packet
+creation; its caller reports the normal packet-creation failure. A relay drop
+prevents that forwarding operation without claiming a transmission occurred.
+At native hooks, malformed wire encodings, invalid plaintext envelopes and
+invalid emitted packets fault the engine before any effects enter the scheduler.
 
 ## Registration
 
@@ -64,7 +94,7 @@ until the invocation finishes and the entire emission batch fits the scheduler.
 staged emissions can replace it.
 
 An execution error, bad return value, invalid memory range, fuel exhaustion,
-deadline overrun or recursive pipeline entry discards the invocation's edits
+deadline overrun, invalid native packet or recursive pipeline entry discards the invocation's edits
 and emissions, disables the failing engine and calls the host fault reporter.
 The original bytes at that hook continue. Later hooks retain edits already
 committed by earlier hooks.
@@ -83,8 +113,11 @@ complete raw packet with priority, delay and expiry. It does not send
 immediately, bypass the airtime cap or promise RF completion.
 
 Engines may inspect, modify or drop generated packets, but cannot emit from a
-generated packet or any local reflection. Guard `emit()` with the metadata
-flags to avoid `EmissionOrigin` faults. This prevents local feedback from
+generated packet, local reflection or native reply derived from either.
+Guard `emit()` with `engineOrigin`, `reflectionOrigin` and `local` to avoid
+`EmissionOrigin` faults. Native bot jobs retain these flags across worker
+dispatch; room posts and client synchronization retain them until their
+deferred transmissions. This prevents local feedback from
 creating another transmission. RF packets received from another radio remain
 ordinary receive events; an engine must still avoid over-air forwarding loops.
 
@@ -93,8 +126,10 @@ RF starts reports reason 11 with `FAILED`. Neither means a transmission occurred
 Only `SUCCEEDED` produces reflection. `UNKNOWN` remains uncertain and is not
 automatically replayed.
 
-`stop()` detaches the pipeline and cancels its generated packets still in the
-queue. A packet already transmitting completes through the normal radio path;
+`stop()` detaches the pipeline and cancels packets queued by its dedicated
+source. Native-role replies keep their normal completion and airtime accounting,
+including replies carrying an engine-origin flag.
+A packet already transmitting completes through the normal radio path;
 stopping an engine cannot recall it.
 
 ## Local checks
@@ -102,10 +137,16 @@ stopping an engine cannot recall it.
 ```sh
 python3 -m unittest discover -s firmware/esp32/tests -p test_packet_pipeline.py -v
 make -C firmware/esp32 arbiter-test BUILD="$PWD/.tmp/onchip-packet-native"
+make -C firmware/esp32 packet-bridge-test BUILD="$PWD/.tmp/onchip-packet-native"
+make -C firmware/esp32 bot-packet-origin-test BUILD="$PWD/.tmp/onchip-packet-native"
 ```
 
 The portable check covers registration, mutation/rollback, drop, budgets,
 recursion, emission-origin guards and atomic emission rejection. The arbiter
 check covers RF/host/native fanout, source-specific drops, transmission,
 reflection and generated packets sharing the scheduler and airtime accounting.
-Neither command changes a connected radio.
+The bridge check exercises native encryption/signing boundaries, original and
+final plaintext ACKs, extended retries, relay drops, delayed signal metadata,
+deferred room synchronization and invalid-edit rollback. The bot check covers
+local command filtering and asynchronous reply composition/completion.
+These commands do not change a connected radio.

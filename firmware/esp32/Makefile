@@ -81,7 +81,9 @@ esp-field-update-test:
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" rollback-error
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-rollback-error
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v test_esp_field_update tools.hardware.tests.test_esp32_slot
-.PHONY: prepare firmware buildfs provision-fs test local-test arbiter-test python-test mast-phy-test lifecycle-test clock-network-test
+.PHONY: prepare firmware buildfs provision-fs test local-test arbiter-test packet-bridge-test python-test mast-phy-test lifecycle-test clock-network-test
+packet-bridge-test:
+	$(MAKE) lifecycle-test PACKET_BRIDGE_ONLY=1
 prepare:
 	$(MAKE) -C $(ROOT) onchip-upstream
 	python3 prepare.py --upstream $(UPSTREAM) --target $(BUILD) --check-target
@@ -105,10 +107,12 @@ firmware: prepare
 .PHONY: field-rebuild
 field-rebuild:
 	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --check-target
+	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --check-packet-bridge
 	@test -f "$(BUILD)/platformio.local.ini" -a -f "$(BUILD)/examples/kiss_modem/onchip/BuildClock.h" || \
 		{ echo "A previously prepared field project is required." >&2; exit 1; }
 	@if test -n "$(CONFIG)"; then install -m 600 "$(CONFIG)" "$(BUILD)/platformio.local.ini"; fi
 	cp $(filter-out wifi_kiss_main.cpp,$(wildcard *.cpp *.h)) ../runtime/*.cpp ../runtime/*.h "$(BUILD)/examples/kiss_modem/onchip/"
+	cp ../shared/WifiKissMultiplexer.* ../shared/PacketPipeline.h ../shared/QueuedTxProtocol.h "$(BUILD)/examples/kiss_modem/"
 	cp ../shared/RadioDashboard.cpp ../shared/RadioDashboard.h ../shared/RadioDashboardPage.h "$(BUILD)/examples/kiss_modem/"
 	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --field-network
 	TMPDIR="$(ROOT)/.tmp" python3 -B prepare_wasm.py --target "$(BUILD)" --enabled $(ONCHIP_BOT_WASM)
@@ -275,13 +279,15 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 		$(PHY_BUILD)/ed/*.o $(PHY_BUILD)/CayenneLPP.o $(PHY_BUILD)/CayenneLPPPolyline.o \
 		-o $(TEST_BUILD)/lifecycle
 	BOT_WASM_CREDENTIAL_MODULE="$(ROOT)/.tmp/wasm-examples/c-admin.wasm" \
-		$(TEST_BUILD)/lifecycle $(if $(AUTOMATIC_ADVERTS_ONLY),--automatic-adverts-test,$(if $(ADMIN_CLI_CORE_ONLY),--admin-cli-core-test,$(if $(RADIO_TIME_ONLY),--radio-time-test,$(if $(OBSERVER_PUBLIC_ONLY),--observer-public-test,$(if $(ADAPTIVE_ADMIN_ONLY),--adaptive-admin-test,$(if $(NATIVE_DISCOVERY_ONLY),--native-discovery-test,$(TEST_BUILD)/roles.json $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin $(TEST_BUILD)/python-query.bin $(TEST_BUILD)/native-status.bin))))))
+		$(TEST_BUILD)/lifecycle $(if $(PACKET_BRIDGE_ONLY),--packet-bridge-test,$(if $(AUTOMATIC_ADVERTS_ONLY),--automatic-adverts-test,$(if $(ADMIN_CLI_CORE_ONLY),--admin-cli-core-test,$(if $(RADIO_TIME_ONLY),--radio-time-test,$(if $(OBSERVER_PUBLIC_ONLY),--observer-public-test,$(if $(ADAPTIVE_ADMIN_ONLY),--adaptive-admin-test,$(if $(NATIVE_DISCOVERY_ONLY),--native-discovery-test,$(TEST_BUILD)/roles.json $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin $(TEST_BUILD)/python-query.bin $(TEST_BUILD)/native-status.bin)))))))
+ifeq ($(PACKET_BRIDGE_ONLY),)
 ifeq ($(OBSERVER_PUBLIC_ONLY),)
 ifeq ($(if $(SIGNED_INTEGRATION),,$(BOT_INTEGRATION)),)
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/rf_vector.py verify $(TEST_BUILD)/python-signer.bin $(TEST_BUILD)/native-receipt.bin
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/rf_vector.py verify-status $(TEST_BUILD)/python-query.bin $(TEST_BUILD)/native-status.bin 2
 ifeq ($(SIGNED_INTEGRATION),)
 	node tests/dashboard_roles.js $(ROOT)/firmware/shared/RadioDashboardPage.h $(TEST_BUILD)/roles.json
+endif
 endif
 endif
 endif

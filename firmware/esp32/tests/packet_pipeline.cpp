@@ -134,18 +134,45 @@ static void emissions_and_drop() {
   assert(bytes[0] == 1 && length == 2 && host.sent.size() == 3 &&
          host.errors.back() == Fault::EmissionRejected && pipeline.enabled(0) &&
          pipeline.enabled(1));
-  for (unsigned origin = 0; origin < 2; ++origin) {
+  for (unsigned origin = 0; origin < 3; ++origin) {
     Metadata metadata;
     metadata.local = !origin;
-    metadata.engineOrigin = origin;
+    metadata.engineOrigin = origin == 1;
+    metadata.reflectionOrigin = origin == 2;
     assert(pipeline.process(metadata, bytes, length, sizeof(bytes)) == Decision::Continue);
     assert(host.errors.back() == Fault::EmissionOrigin && bytes[0] == 1 &&
            length == 2 && !pipeline.enabled(0));
     assert(pipeline.enable(0, true));
   }
 }
+static void protocol_validation_is_transactional() {
+  for (bool emission : {false, true}) {
+    TestHost host;
+    Pipeline pipeline(host);
+    TestEngine first(host), invalid(host);
+    first.emit = true;
+    invalid.value = 0x72;
+    assert(pipeline.attach(first, budget("first")) == Registration::Attached);
+    assert(pipeline.attach(invalid, budget("invalid")) == Registration::Attached);
+    uint8_t bytes[Capacity] = {1, 2};
+    uint16_t length = 2;
+    Metadata metadata;
+    const auto validateEdit = [](const Metadata &, const uint8_t *data, uint16_t, bool) {
+      return data[0] == 0x72 ? Fault::InvalidPacket : Fault::None;
+    };
+    const auto validateEmission = [](const Metadata &, const uint8_t *, uint16_t, bool effect) {
+      return effect ? Fault::InvalidPacket : Fault::None;
+    };
+    assert(pipeline.process(metadata, bytes, length, sizeof(bytes),
+                            emission ? validateEmission : validateEdit) == Decision::Continue);
+    assert(bytes[0] == 1 && length == 2 && host.sent.empty() &&
+           host.errors.back() == Fault::InvalidPacket);
+    assert(!pipeline.enabled(emission ? 0 : 1));
+  }
+}
 int main() {
   registration_and_stages();
   transaction_and_faults();
   emissions_and_drop();
+  protocol_validation_is_transactional();
 }

@@ -17,6 +17,11 @@
 class KissLocalSource {
 public:
   virtual void received(const uint8_t*, uint16_t, float, float, bool) = 0;
+  virtual void receivedWithOrigin(const uint8_t* packet, uint16_t length,
+                                  float rssi, float snr, bool local,
+                                  bool, bool) {
+    received(packet, length, rssi, snr, local);
+  }
   virtual void completed(uint32_t job, uint8_t state, uint8_t reason,
                          uint32_t queue_ms, uint32_t rf_ms, uint32_t estimate) = 0;
 };
@@ -92,6 +97,9 @@ public:
   }
   void observePackets(KissPacketObserver& observer) { _packet_observer = &observer; }
   void packetPipeline(packet_engine::Pipeline* pipeline) { _packet_pipeline = pipeline; }
+  bool processNativePacket(uint8_t slot, packet_engine::Metadata metadata,
+                           uint8_t* packet, uint16_t& length, uint16_t capacity,
+                           packet_engine::Validator validate);
   bool beginEngineSource(float factor = 1);
   void stopEngineSource();
   bool admitEnginePackets(const packet_engine::Emission*, uint8_t count);
@@ -101,7 +109,8 @@ public:
   void detachLocal(uint8_t slot);
   bool setLocalPolicy(uint8_t slot, float factor);
   bool submitLocal(uint8_t slot, const uint8_t* packet, uint16_t length,
-                   uint32_t job, uint8_t priority, uint32_t delay, uint32_t expiry);
+                   uint32_t job, uint8_t priority, uint32_t delay, uint32_t expiry,
+                   bool engineOrigin = false, bool reflectionOrigin = false);
   void received(const uint8_t* packet, uint16_t length, float rssi, float snr);
   // Filter RF once, then deliver the same bytes to native roles and the modem.
   bool receiveRaw(uint8_t* packet, uint16_t& length, uint16_t capacity,
@@ -225,6 +234,7 @@ private:
     bool used;
     bool extended;
     bool engineOrigin;
+    bool reflectionOrigin;
     ClientTarget source;
     uint32_t id;
     uint32_t sequence;
@@ -246,7 +256,8 @@ private:
                     uint16_t capacity, uint8_t source = UINT8_MAX,
                     uint32_t generation = 0, uint32_t job = 0,
                     uint8_t destination = UINT8_MAX, bool local = false,
-                    float rssi = 0, float snr = 0, bool engineOrigin = false);
+                    float rssi = 0, float snr = 0, bool engineOrigin = false,
+                    bool reflectionOrigin = false);
   void deliverReceived(const uint8_t* packet, uint16_t length, float rssi, float snr);
   mesh::RNG* _rng = nullptr;
   SetRadioCallback _configure = nullptr;
@@ -278,7 +289,8 @@ private:
   bool extension(uint8_t slot, const uint8_t* decoded, uint16_t length);
   void submit(uint8_t slot, const uint8_t* packet, uint16_t length,
               bool extended, uint32_t id, uint8_t priority,
-              uint32_t delay, uint32_t expiry);
+              uint32_t delay, uint32_t expiry, bool engineOrigin = false,
+              bool reflectionOrigin = false);
   void notify(const TxJob& job, uint8_t state, uint8_t reason,
               uint32_t queue_ms = 0, uint32_t rf_ms = 0, uint32_t estimate = 0,
               const ClientTarget* delivery = nullptr);

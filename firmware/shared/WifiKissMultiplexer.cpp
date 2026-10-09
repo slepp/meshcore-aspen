@@ -334,7 +334,7 @@ bool WifiKissMultiplexer::beginEngineSource(float factor) {
 void WifiKissMultiplexer::stopEngineSource() {
   _engine_source.active = false;
   for (auto &job : _jobs) {
-    if (!job.used || !job.engineOrigin) continue;
+    if (!job.used || job.source.slot != ENGINE_SLOT) continue;
     job.used = false;
     notify(job, queued_tx::FAILED, queued_tx::DISCONNECTED, millis() - job.admitted);
   }
@@ -402,7 +402,8 @@ bool WifiKissMultiplexer::setLocalPolicy(uint8_t slot, float factor) {
 
 bool WifiKissMultiplexer::submitLocal(uint8_t slot, const uint8_t* packet, uint16_t length,
                                     uint32_t job, uint8_t priority, uint32_t delay,
-                                    uint32_t expiry) {
+                                    uint32_t expiry, bool engineOrigin,
+                                    bool reflectionOrigin) {
   if (slot < KISS_MAX_TCP_CLIENTS || slot >= KISS_MAX_TCP_CLIENTS + KISS_LOCAL_SOURCES ||
       !sourceState(slot).active || !localReady() || !job || !packet ||
       !length || length > KISS_MAX_PACKET_SIZE ||
@@ -411,7 +412,8 @@ bool WifiKissMultiplexer::submitLocal(uint8_t slot, const uint8_t* packet, uint1
   bool room = false;
   for (const auto& entry : _jobs) if (!entry.used) { room = true; break; }
   if (!room) return false;
-  submit(slot, packet, length, true, job, priority, delay, expiry);
+  submit(slot, packet, length, true, job, priority, delay, expiry,
+         engineOrigin, reflectionOrigin);
   return true;
 }
 
@@ -426,7 +428,8 @@ void WifiKissMultiplexer::received(const uint8_t* packet, uint16_t length,
 bool WifiKissMultiplexer::filterPacket(
     packet_engine::Stage stage, uint8_t* packet, uint16_t& length,
     uint16_t capacity, uint8_t source, uint32_t generation, uint32_t job,
-    uint8_t destination, bool local, float rssi, float snr, bool engineOrigin) {
+    uint8_t destination, bool local, float rssi, float snr, bool engineOrigin,
+    bool reflectionOrigin) {
   if (!_packet_pipeline) return true;
   packet_engine::Metadata metadata;
   metadata.stage = stage;
@@ -436,6 +439,7 @@ bool WifiKissMultiplexer::filterPacket(
   metadata.destination = destination;
   metadata.local = local;
   metadata.engineOrigin = engineOrigin;
+  metadata.reflectionOrigin = reflectionOrigin;
   metadata.rssi = isfinite(rssi) ? int16_t(fminf(fmaxf(rssi, -32768.0f), 32767.0f)) : 0;
   metadata.snrQuarterDb = isfinite(snr) ? int16_t(fminf(fmaxf(snr * 4, -32768.0f), 32767.0f)) : 0;
   return _packet_pipeline->process(metadata, packet, length, capacity) !=
@@ -452,6 +456,16 @@ bool WifiKissMultiplexer::receiveRaw(uint8_t* packet, uint16_t& length,
   return true;
 }
 
+bool WifiKissMultiplexer::processNativePacket(
+    uint8_t slot, packet_engine::Metadata metadata, uint8_t* packet,
+    uint16_t& length, uint16_t capacity, packet_engine::Validator validate) {
+  if (!_packet_pipeline) return true;
+  const auto& source = sourceState(slot);
+  metadata.generation = source.generation;
+  return _packet_pipeline->process(metadata, packet, length, capacity, validate) !=
+         packet_engine::Decision::Drop;
+}
+
 void WifiKissMultiplexer::deliverReceived(const uint8_t* packet, uint16_t length,
                                          float rssi, float snr) {
   if (_packet_observer) _packet_observer->packet(packet, length, false, 0, rssi, snr);
@@ -465,7 +479,8 @@ void WifiKissMultiplexer::deliverReceived(const uint8_t* packet, uint16_t length
     if (filterPacket(packet_engine::Stage::LocalDelivery, candidate, candidateLength,
                      sizeof(candidate), UINT8_MAX, 0, 0, KISS_MAX_TCP_CLIENTS + i,
                      false, rssi, snr))
-      local.sink->received(candidate, candidateLength, rssi, snr, false);
+      local.sink->receivedWithOrigin(candidate, candidateLength, rssi, snr,
+                                     false, false, false);
   }
 #else
   (void)packet; (void)length; (void)rssi; (void)snr;
@@ -1551,11 +1566,14 @@ bool WifiKissMultiplexer::extension(uint8_t slot, const uint8_t *decoded,
 void WifiKissMultiplexer::submit(uint8_t slot, const uint8_t *packet,
                                  uint16_t length, bool extended, uint32_t id,
                                  uint8_t priority, uint32_t delay,
-                                 uint32_t expiry) {
+                                 uint32_t expiry, bool engineOrigin,
+                                 bool reflectionOrigin) {
   using namespace queued_tx;
   TxJob job{};
   job.source = {slot, sourceState(slot).generation};
   job.extended = extended;
+  job.engineOrigin = engineOrigin;
+  job.reflectionOrigin = reflectionOrigin;
   job.id = id;
   if (!length || length > KISS_MAX_PACKET_SIZE || !_configuration_generation ||
       _configuration_fault) {
@@ -1567,7 +1585,8 @@ void WifiKissMultiplexer::submit(uint8_t slot, const uint8_t *packet,
   job.length = length;
   memcpy(job.packet, packet, length);
   if (!filterPacket(packet_engine::Stage::Admission, job.packet, job.length,
-                    sizeof(job.packet), slot, job.source.generation, id)) {
+                    sizeof(job.packet), slot, job.source.generation, id,
+                    UINT8_MAX, false, 0, 0, engineOrigin, reflectionOrigin)) {
     notify(job, REJECTED, ENGINE_DROP);
     return;
   }
@@ -1604,7 +1623,7 @@ void WifiKissMultiplexer::notify(const TxJob &job, uint8_t state,
     _dashboard->transmitted(millis(), job.packet, job.length, job.source.slot,
                             job.source.generation, job.id, state, reason,
                             queue_ms, rf_ms, estimate);
-  if (job.engineOrigin) return;
+  if (job.source.slot == ENGINE_SLOT) return;
 #if KISS_LOCAL_SOURCES > 0
   if (job.source.slot >= KISS_MAX_TCP_CLIENTS &&
       job.source.slot < KISS_MAX_TCP_CLIENTS + KISS_LOCAL_SOURCES) {
@@ -1751,7 +1770,7 @@ void WifiKissMultiplexer::serviceTransmit() {
   if (!filterPacket(packet_engine::Stage::Transmit, _sending.packet, _sending.length,
                     sizeof(_sending.packet), _sending.source.slot,
                     _sending.source.generation, _sending.id, UINT8_MAX, false,
-                    0, 0, _sending.engineOrigin)) {
+                    0, 0, _sending.engineOrigin, _sending.reflectionOrigin)) {
     notify(_sending, FAILED, ENGINE_DROP, ready - _sending.admitted);
     return;
   }
@@ -1810,7 +1829,7 @@ void WifiKissMultiplexer::reflect(const TxJob &job) {
   TxJob reflection = job;
   if (!filterPacket(packet_engine::Stage::Reflection, reflection.packet, reflection.length,
                     sizeof(reflection.packet), job.source.slot, job.source.generation,
-                    job.id, UINT8_MAX, true, 0, 0, job.engineOrigin)) return;
+                    job.id, UINT8_MAX, true, 0, 0, job.engineOrigin, true)) return;
 #if KISS_LOCAL_SOURCES > 0
   for (uint8_t i = 0; i < KISS_LOCAL_SOURCES; ++i) {
     auto& local = _locals[i];
@@ -1823,9 +1842,11 @@ void WifiKissMultiplexer::reflect(const TxJob &job) {
         if (filterPacket(packet_engine::Stage::LocalDelivery, candidate, length,
                          sizeof(candidate), job.source.slot, job.source.generation,
                          job.id, KISS_MAX_TCP_CLIENTS + i, true,
-                         LOCAL_LOOPBACK_RSSI, LOCAL_LOOPBACK_SNR / 4.0f, job.engineOrigin))
-          local.sink->received(candidate, length, LOCAL_LOOPBACK_RSSI,
-                               LOCAL_LOOPBACK_SNR / 4.0f, true);
+                         LOCAL_LOOPBACK_RSSI, LOCAL_LOOPBACK_SNR / 4.0f,
+                         job.engineOrigin, true))
+          local.sink->receivedWithOrigin(candidate, length, LOCAL_LOOPBACK_RSSI,
+                                         LOCAL_LOOPBACK_SNR / 4.0f, true,
+                                         job.engineOrigin, true);
       }
   }
 #endif

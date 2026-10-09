@@ -1258,7 +1258,11 @@ static void diagnosticCommands() {
     e.authenticated = !channel; e.channelVerified = channel;
     strcpy(e.channel, channel ? "#example1" : "");
     e.replyLimit = channel ? BotReplyLimit - 33 : BotReplyLimit;
-    assert(command("!about").find("key=ab00") != std::string::npos);
+    const auto limit = e.replyLimit;
+    e.replyLimit = 108;
+    assert(command("!about") ==
+           "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
+    e.replyLimit = limit;
     assert(command("!version").find("MeshCore rev d92964352441; Lua 5.5.1; built fixture compilation") == 0);
     assert(command("!uptime") == "Uptime snapshot since boot: 49d 17h 2m 49s");
     auto status = command("!status");
@@ -1293,7 +1297,8 @@ static void diagnosticCommands() {
   e.path.known = false; e.signal = false;
   assert(command("!signal") == "Packet RF measurement unavailable; path=unknown (direct)");
   e.node.available = e.air.available = false;
-  for (const char *c : {"!about", "!version", "!uptime", "!status", "!air"})
+  assert(command("!about").find("!help NAME") != std::string::npos);
+  for (const char *c : {"!version", "!uptime", "!status", "!air"})
     assert(command(c).find("unavailable") != std::string::npos);
   e.authenticated = false;
   run(BotDefaultSource, e, false);

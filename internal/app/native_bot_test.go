@@ -250,7 +250,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	mast.mu.Lock()
 	advertStart := len(mast.txPackets)
 	mast.mu.Unlock()
-	if reply := admin("advert.zerohop"); reply != "Bot zero-hop advert queued; verify RF" {
+	if reply := admin("advert.zerohop"); reply != "Bot zero-hop advert queued" {
 		t.Fatalf("owner rename advert was not queued immediately: %s", reply)
 	}
 	waitAuthority(t, func() bool {
@@ -523,7 +523,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	mast.mu.Lock()
 	ownerStart := len(mast.txPackets)
 	mast.mu.Unlock()
-	if reply := admin("advert.zerohop"); reply != "Bot zero-hop advert queued; verify RF" {
+	if reply := admin("advert.zerohop"); reply != "Bot zero-hop advert queued" {
 		t.Fatalf("owner notification after source activation was not queued: %s", reply)
 	}
 	waitAuthority(t, func() bool {

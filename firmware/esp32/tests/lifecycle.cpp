@@ -1857,7 +1857,12 @@ static void python_signed_interop(const char *path, const char *receiptPath,
   puts("PASS Python sender packet decrypted and authenticated by pinned native MeshCore");
 }
 
+#include "packet_bridge_cases.h"
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--packet-bridge-test")) {
+    packet_bridge_test::run();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--observer-public-test")) {
     public_observer_service();
     return 0;

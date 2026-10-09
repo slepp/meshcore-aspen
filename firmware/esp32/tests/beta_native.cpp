@@ -1848,7 +1848,7 @@ static void automatic_adverts() {
     timeMs += 48u * 60 * 60 * 1000; f.step(300); noAdverts();
     for (const char *role : {"repeater", "room", "companion", "bot", "management"}) {
       f.radio.sent.clear();
-      assert(f.action(("role advert " + std::string(role) + " zerohop").c_str()).find("Queued zero-hop") == 0);
+      assert(f.action(("role advert " + std::string(role) + " zerohop").c_str()) == "Queued zero-hop advert");
       f.step(300);
       uint8_t key[32];
       assert(identityPublicKey(!strcmp(role, "bot") ? "command-bot" : role, key));

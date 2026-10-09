@@ -186,6 +186,9 @@ def generate(upstream, target):
     shutil.copytree(source.parent / "runtime/wasm/sdk", dest / "wasm/sdk", dirs_exist_ok=True)
     shutil.copytree(source.parent / "shared/cloudroom", dest / "cloudroom", dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("tests", "Makefile"))
+    sys.path.insert(0, str(source))
+    from packet_bridge import stage as stage_packet_engines
+    stage_packet_engines(target)
     mesh_path = target / "src/Mesh.cpp"
     mesh = mesh_path.read_text()
     guard = "                if (2u + hash_size * hash_count > unsigned(len)) break;"
@@ -681,6 +684,7 @@ if __name__ == "__main__":
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--check-target", action="store_true")
+    parser.add_argument("--check-packet-bridge", action="store_true")
     parser.add_argument("--field-network", action="store_true",
                         help="refresh dispatch and HTTP sources without regenerating retained role wrappers or clock")
     args = parser.parse_args()
@@ -688,7 +692,10 @@ if __name__ == "__main__":
         check_target(args.upstream, args.target)
     except ValueError as error:
         parser.error(str(error))
-    if args.field_network:
+    if args.check_packet_bridge:
+        from packet_bridge import check
+        check(args.target)
+    elif args.field_network:
         stage_field_network(args.target)
     elif not args.check_target:
         generate(args.upstream, args.target)

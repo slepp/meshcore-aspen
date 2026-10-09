@@ -48,6 +48,12 @@ bot-channel-policy-test: bot-host-runner
 .PHONY: bot-native-services-test
 bot-native-services-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --native-services-test
+.PHONY: bot-packet-origin-test
+bot-packet-origin-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --packet-origin-test
+.PHONY: bot-command-replies-test
+bot-command-replies-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --diagnostics-test
 .PHONY: bot-thread-policy-test
 bot-thread-policy-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --thread-policy-test

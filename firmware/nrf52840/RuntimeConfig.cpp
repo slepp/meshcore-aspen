@@ -284,8 +284,7 @@ bool RuntimeConfig::handleCommand(uint32_t senderTimestamp, const char* command,
   }
   if (!strcmp(command, "bot advert.zerohop") || !strcmp(command, "bot advert")) {
     const bool zeroHop = !strcmp(command, "bot advert.zerohop");
-    strcpy(reply, bot.advertise(zeroHop) ? (zeroHop ? "Queued zero-hop advert; RF reception unconfirmed" :
-                                                   "Queued flood advert; RF reception unconfirmed") :
+    strcpy(reply, bot.advertise(zeroHop) ? (zeroHop ? "Queued zero-hop advert" : "Queued flood advert") :
                                      "Error: bot advert unavailable");
   } else if (!strcmp(command, "get capabilities")) {
     strcpy(reply, "roles=repeater,bot;bot-name=saved;key-import=USB-only;private-export=disabled;"

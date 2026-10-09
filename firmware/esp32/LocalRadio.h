@@ -7,6 +7,7 @@
 #else
 #include "WifiKissMultiplexer.h"
 #include <Dispatcher.h>
+#include "NativePacketContracts.h"
 #include <cmath>
 
 #ifndef MESH_QUEUED_RADIO_API
@@ -14,6 +15,14 @@
 #endif
 
 namespace onchip {
+#ifdef MESH_PACKET_ENGINE_API
+static_assert(uint8_t(mesh::PacketEngineStage::Relay) ==
+                  uint8_t(packet_engine::Stage::Relay) &&
+              uint8_t(mesh::PacketEngineStage::PlainReceive) ==
+                  uint8_t(packet_engine::Stage::PlainReceive) &&
+              uint8_t(mesh::PacketEngineStage::PlainCompose) ==
+                  uint8_t(packet_engine::Stage::PlainCompose), "native packet stages");
+#endif
 class LocalRadio final : public mesh::Radio, public KissLocalSource {
   static constexpr unsigned CAPACITY = KISS_REQUEST_QUEUE_DEPTH + 1;
   WifiKissMultiplexer *mux = nullptr;
@@ -24,7 +33,7 @@ class LocalRadio final : public mesh::Radio, public KissLocalSource {
     uint8_t data[256];
     uint16_t length;
     float rssi, snr;
-    bool local;
+    bool local, engineOrigin, reflectionOrigin;
   };
   Reception incoming[8]{};
   unsigned rxHead = 0, rxCount = 0;
@@ -32,6 +41,7 @@ class LocalRadio final : public mesh::Radio, public KissLocalSource {
   unsigned resultHead = 0, resultCount = 0;
   float lastRSSI = 0, lastSNR = 0;
   bool lastLocal = false;
+  mesh::PacketOrigin lastOrigin;
   uint32_t rxPackets = 0, txPackets = 0, rxDropped = 0, rxAirtime = 0;
 
 public:
@@ -52,6 +62,7 @@ public:
     rxPackets = txPackets = rxDropped = rxAirtime = 0;
     lastRSSI = lastSNR = 0;
     lastLocal = false;
+    lastOrigin = {};
     memset(incoming, 0, sizeof(incoming));
     for (auto &result : results) result = {};
   }
@@ -75,6 +86,11 @@ public:
   }
   bool queueTransmit(const uint8_t *p, int n, uint8_t priority, uint32_t delay,
                      uint32_t expiry, uint32_t &job) override {
+    return queueTransmitWithOrigin(p, n, priority, delay, expiry, job, {});
+  }
+  bool queueTransmitWithOrigin(const uint8_t *p, int n, uint8_t priority,
+                               uint32_t delay, uint32_t expiry, uint32_t &job,
+                               mesh::PacketOrigin origin) override {
     if (!queuedReady() || outstanding >= CAPACITY || n <= 0 || n > 255)
       return false;
     if (nextJob == UINT32_MAX)
@@ -85,7 +101,8 @@ public:
     accepted = {};
     accepted.job = id;
     accepted.state = queued_tx::ACCEPTED;
-    if (!mux->submitLocal(slot, p, n, id, priority, delay, expiry)) {
+    if (!mux->submitLocal(slot, p, n, id, priority, delay, expiry,
+                          origin.engine, origin.reflection)) {
       --resultCount;
       --outstanding;
       return false;
@@ -120,6 +137,10 @@ public:
   }
   void received(const uint8_t *p, uint16_t n, float rssi, float snr,
                 bool local) override {
+    receivedWithOrigin(p, n, rssi, snr, local, false, local);
+  }
+  void receivedWithOrigin(const uint8_t *p, uint16_t n, float rssi, float snr,
+                          bool local, bool engineOrigin, bool reflectionOrigin) override {
     if (!local && n > 0 && n <= 255)
       rxAirtime += getEstAirtimeFor(n);
     if (n > 255 || rxCount == 8) {
@@ -132,6 +153,8 @@ public:
     r.rssi = local ? NAN : rssi;
     r.snr = local ? NAN : snr;
     r.local = local;
+    r.engineOrigin = engineOrigin;
+    r.reflectionOrigin = reflectionOrigin;
   }
   int recvRaw(uint8_t *p, int capacity) override {
     if (!rxCount)
@@ -149,11 +172,35 @@ public:
     lastRSSI = r.rssi;
     lastSNR = r.snr;
     lastLocal = r.local;
+    lastOrigin = {r.engineOrigin, r.reflectionOrigin};
     rxHead = (rxHead + 1) % 8;
     --rxCount;
     return n;
   }
   bool lastReceiveWasLocal() const override { return lastLocal; }
+  mesh::PacketOrigin lastReceiveOrigin() const override { return lastOrigin; }
+  bool processPacketEngine(const mesh::PacketEngineInfo &info, uint8_t *bytes,
+                           uint16_t &length, uint16_t capacity) override {
+    if (slot < 0 || !mux) return true;
+    packet_engine::Metadata metadata;
+    metadata.stage = static_cast<packet_engine::Stage>(info.stage);
+    metadata.payloadType = info.type;
+    metadata.local = info.local;
+    metadata.engineOrigin = info.origin.engine;
+    metadata.reflectionOrigin = info.origin.reflection;
+    metadata.authenticated = metadata.stage == packet_engine::Stage::PlainReceive;
+    if (info.identity) memcpy(metadata.identity, info.identity, sizeof(metadata.identity));
+    if (metadata.stage == packet_engine::Stage::PlainReceive) metadata.destination = slot;
+    else metadata.source = slot;
+    if (!info.local && metadata.stage != packet_engine::Stage::PlainCompose) {
+      metadata.rssi = std::isfinite(info.rssi) ?
+          std::fmin(std::fmax(info.rssi, -32768.0f), 32767.0f) : 0;
+      metadata.snrQuarterDb = std::isfinite(info.snr) ?
+          std::fmin(std::fmax(info.snr * 4, -32768.0f), 32767.0f) : 0;
+    }
+    return mux->processNativePacket(slot, metadata, bytes, length, capacity,
+                                   validateNativePacket);
+  }
   uint32_t getEstAirtimeFor(int n) override {
     return mux->physicalRadio().getEstAirtimeFor(n);
   }

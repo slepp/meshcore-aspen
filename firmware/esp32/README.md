@@ -797,8 +797,7 @@ end on expiration or reboot. See
 persist/apply the administrator and KISS service names independently of optional
 roles. `role advert ROLE zerohop` queues an explicit native zero-hop advert for
 repeater/room/companion/bot/management; KISS and observer are not advert targets.
-Queued does not mean delivered or learned by a peer. The shared multiplexer remains the sole physical
-RF authority. See [runtime role configuration](MAST_ADMIN.md#runtime-role-names-and-keys)
+The shared modem schedules these transmissions. See [runtime role configuration](MAST_ADMIN.md#runtime-role-names-and-keys)
 for exact commands, failure semantics and old-identity bot-data behavior.
 
 Companion CMD19 with the exact `reboot` token and CMD51 with the exact `reset`

@@ -191,7 +191,7 @@ class LocalLuaTests(unittest.TestCase):
                     "@source remove", "@pump 800", "@restart", "!ping", "!recall camp", "!about",
                 ],
                 "expect": [
-                    {"type": "reply", "text_contains": "mc-onchip/command-bot; key="},
+                    {"type": "reply", "text_contains": "Mesh command bot. !help"},
                     {"type": "reply", "text": "Pong from the regional bot"},
                     {"type": "reply", "text": "Note camp created; committed"},
                     {"type": "reply", "text": "tea"},
@@ -215,7 +215,7 @@ class LocalLuaTests(unittest.TestCase):
                     {"type": "restart", "source": "bundled"},
                     {"type": "reply", "text": "Pong"},
                     {"type": "reply", "text": "tea"},
-                    {"type": "reply", "text_contains": "mc-onchip/command-bot; key="},
+                    {"type": "reply", "text_contains": "Mesh command bot. !help"},
                 ],
             }))
             result = self.local(EXAMPLES / "overrides.lua", scenario)

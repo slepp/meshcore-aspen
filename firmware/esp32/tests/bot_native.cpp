@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CommandBot.h"
+#ifdef MESH_PACKET_ENGINE_API
+#include "NativePacketHost.h"
+#endif
 #include "BotRegistry.h"
 #if ONCHIP_BOT_WASM
 #include "BotWasm.h"
@@ -3013,6 +3016,69 @@ static void native_events() {
   assert(!f.bot.eventAccess() && !f.bot.eventMask());
   puts("PASS dispatcher subscriptions: default-off owner grants, no staging startup, activate startup, connectivity/node snapshots, authenticated DM vs channel nickname, RF dedup, unsubscribe, failed revoke and public Pong");
 }
+#ifdef MESH_PACKET_ENGINE_API
+static void native_packet_origins() {
+  struct Recorder final : packet_engine::Engine {
+    std::vector<packet_engine::Metadata> seen;
+    packet_engine::Decision process(const packet_engine::Metadata &metadata,
+                                    packet_engine::Call &) override {
+      seen.push_back(metadata);
+      return packet_engine::Decision::Continue;
+    }
+  };
+  assert(saveBotEnabled(true));
+  assert(saveBotRadioPolicy({}));
+  for (bool generated : {false, true}) {
+    Fixture f; f.start();
+    Peer peer; f.learn(peer);
+    onchip::NativePacketHost host(f.mux, [] { return uint32_t(millis() * 1000); },
+        [](const char *, const packet_engine::Metadata &, packet_engine::Fault) { assert(false); });
+    Recorder recorder;
+    assert(host.begin());
+    assert(host.pipeline().attach(recorder, {"bot-origin", 0xff, 200, 1000}) ==
+           packet_engine::Registration::Attached);
+    const auto request = peer.command(f.bot.publicKey(), "!ping");
+    if (generated) {
+      packet_engine::Emission emission;
+      emission.length = request.size();
+      memcpy(emission.bytes, request.data(), request.size());
+      assert(f.mux.admitEnginePackets(&emission, 1));
+    } else f.reflect(request);
+    f.step();
+    assert(peer.replies(f.bot.publicKey(), f.radio).empty());
+    RadioDashboard::RoleStatus status;
+    f.bot.dashboardStatus(status);
+    bool received = false;
+    for (const auto &metadata : recorder.seen)
+      if (metadata.destination == status.source_slot &&
+          metadata.stage == packet_engine::Stage::PlainReceive) {
+        received = true;
+        assert(metadata.local && metadata.reflectionOrigin &&
+               metadata.engineOrigin == generated);
+      }
+    assert(received && f.bot.jobsInUse() == 0);
+    recorder.seen.clear();
+    assert(f.command(peer, "!ping") == "Pong");
+    unsigned stages = 0;
+    for (const auto &metadata : recorder.seen) {
+      if (metadata.source != status.source_slot) continue;
+      if (metadata.stage == packet_engine::Stage::PlainCompose ||
+          metadata.stage == packet_engine::Stage::Admission ||
+          metadata.stage == packet_engine::Stage::Transmit) {
+        stages |= packet_engine::stageMask(metadata.stage);
+        assert(!metadata.local && !metadata.reflectionOrigin && !metadata.engineOrigin);
+      }
+    }
+    assert(stages == (packet_engine::stageMask(packet_engine::Stage::PlainCompose) |
+                      packet_engine::stageMask(packet_engine::Stage::Admission) |
+                      packet_engine::stageMask(packet_engine::Stage::Transmit)));
+    mesh::QueuedRadioStats stats;
+    assert(f.bot.radioStatistics(stats) && stats.source_successes >= 1 &&
+           f.bot.jobsInUse() == 0 && status.ready);
+  }
+  puts("PASS bot reflection origins, silent local commands and subsequent asynchronous RF replies");
+}
+#endif
 static void native_diagnostics() {
   assert(saveBotRadioPolicy({}));
   {
@@ -3031,14 +3097,11 @@ static void native_diagnostics() {
          status.find("roles selected/ready=0/0") != std::string::npos &&
          status.find("battery=unavailable") != std::string::npos &&
          status.find("WiFi=unavailable") != std::string::npos);
-  char key[65];
-  mesh::Utils::toHex(key, f.bot.publicKey(), 32);
-  std::string expectedKey(key);
-  std::transform(expectedKey.begin(), expectedKey.end(), expectedKey.begin(), ::tolower);
-  assert(f.command(first, "!about") == "mc-onchip/command-bot; key=" + expectedKey);
+  assert(f.command(first, "!about") ==
+         "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
   const auto version = f.command(first, "!version");
-  assert(version.find("MeshCore d92964352441; Lua 5.5.1; compiled ") == 0 &&
-         version.find("image hash unavailable") != std::string::npos);
+  assert(version.find("MeshCore rev d92964352441; Lua 5.5.1; built ") == 0 &&
+         version.find("image hash unavailable") == std::string::npos);
   assert(f.command(first, "!uptime").find("Uptime snapshot since boot:") == 0);
   RadioDashboard::RoleStatus botStatus; f.bot.dashboardStatus(botStatus);
   mesh::QueuedRadioStats before;
@@ -3050,8 +3113,10 @@ static void native_diagnostics() {
   assert(air.find(counts) != std::string::npos);
   for (uint8_t width : {1, 2, 3}) {
     const auto signal = f.command(first, "!signal", width, Bytes(width, 0x12));
+    std::string path;
+    for (unsigned i = 0; i < width; ++i) path += "12";
     assert(signal.find("RSSI=-91.5dBm SNR=5.25dB") != std::string::npos &&
-           signal.find("path=" + std::to_string(width) + ":") != std::string::npos);
+           signal.find("path=" + path) != std::string::npos);
   }
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!signal", 1, {0x12}), -101.0f, 1.25f);
@@ -3059,13 +3124,12 @@ static void native_diagnostics() {
   f.step();
   const auto firstReplies = first.replies(f.bot.publicKey(), f.radio);
   const auto secondReplies = second.replies(f.bot.publicKey(), f.radio);
-  assert(firstReplies.size() == 1 && firstReplies[0].find("RSSI=-101dBm SNR=1.25dB; path=1:12") != std::string::npos);
-  assert(secondReplies.size() == 1 && secondReplies[0].find("RSSI=-81dBm SNR=3.75dB; path=3:abcdef") != std::string::npos);
+  assert(firstReplies.size() == 1 && firstReplies[0].find("RSSI=-101dBm SNR=1.25dB; path=12") != std::string::npos);
+  assert(secondReplies.size() == 1 && secondReplies[0].find("RSSI=-81dBm SNR=3.75dB; path=abcdef") != std::string::npos);
   timeMs += 61000; f.radio.sent.clear();
   f.reflect(first.command(f.bot.publicKey(), "!signal")); f.step();
   const auto local = first.replies(f.bot.publicKey(), f.radio);
-  assert(local.size() == 1 && local[0].find("local reflection; RF unmeasured") != std::string::npos &&
-         local[0].find("RSSI") == std::string::npos);
+  assert(local.empty());
   for (const char *command : {"!about", "!version", "!uptime", "!status", "!signal", "!air",
                              "!air 2", "!air 3", "!air 4", "!help", "!help signal"}) {
     timeMs += 61000; f.radio.sent.clear();
@@ -4371,6 +4435,16 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--diagnostics-test")) {
+    native_diagnostics();
+    return 0;
+  }
+#ifdef MESH_PACKET_ENGINE_API
+  if (argc == 2 && !strcmp(argv[1], "--packet-origin-test")) {
+    native_packet_origins();
+    return 0;
+  }
+#endif
   if (argc == 2 && !strcmp(argv[1], "--native-services-test")) {
     network_service_lifecycle();
     return 0;
@@ -4586,6 +4660,16 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--diagnostics-test")) {
+    native_diagnostics();
+    return 0;
+  }
+#ifdef MESH_PACKET_ENGINE_API
+  if (argc == 2 && !strcmp(argv[1], "--packet-origin-test")) {
+    native_packet_origins();
+    return 0;
+  }
+#endif
   if (argc == 2 && !strcmp(argv[1], "--native-services-test")) {
     network_service_lifecycle();
     return 0;

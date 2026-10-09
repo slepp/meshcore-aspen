@@ -490,8 +490,7 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
                         bot ? (zeroHop ? commandBotService().advertiseOwnerZeroHop() :
                                          commandBotService().advertise(false)) :
                               nativeRoleAdvertise(nativeRole, zeroHop);
-    strcpy(reply.text, queued ? (zeroHop ? "Queued zero-hop advert; RF reception unconfirmed" :
-                                          "Queued flood advert; RF reception unconfirmed") :
+    strcpy(reply.text, queued ? (zeroHop ? "Queued zero-hop advert" : "Queued flood advert") :
            "Error: advert unavailable; role inactive, radio/queue busy or rate/airtime limit");
     return;
   }
