@@ -8,9 +8,9 @@ On nRF52, choose [production Lua](../nrf52840/PRODUCTION-LUA.md) or the smaller
 native-note/BLE image for your workload. The production Lua guide gives its
 runtime limits; use `mem` and `bot memory` to check the selected image.
 
-This reference preserves a historical profile comparison made before the
-initial source snapshot. These numbers have not been recalculated for the
-current tree. For a release's image sizes, read its manifest. All quantities are
+The recorded profile comparison below predates the initial source snapshot;
+its historical tables are unchanged. Current payload allocations are described
+separately below. For a release's image sizes, read its manifest. All quantities are
 **bytes**, unless stated otherwise.
 [Machine-readable results](../../test_support/resource_budget/measurements.json)
 contain sections, binary/ELF hashes, dependency hashes and compiler-derived
@@ -61,14 +61,44 @@ consume no BSD socket slots and create no additional task. See
 [remote logs and memory checks](MAST_ADMIN.md#remote-logs-and-memory-checks)
 for commands and counter meanings.
 
-The companion's 64-entry message journal uses PSRAM rather than internal RAM
-(11,392 bytes with the current 176-byte frame limit). It is allocated before
+The companion's 64-entry message journal and per-client output queues use PSRAM
+(17,088 bytes with two clients, 16 output frames each and a 176-byte frame limit).
+They are allocated before
 the companion listener starts, with no internal-memory fallback. Allocation
-failure stops companion startup and reports the affected journal. Stopping and
-starting the listener retains its history; a native-session reset clears it.
-The companion's lock, task stack and socket/session state remain in internal
+failure stops companion startup and reports the affected workspace. Stopping
+and starting the listener retains its history; a native-session reset clears
+history and queued output. The companion's lock, task stack, socket buffers
+and session controls remain in internal
 RAM. This leaves more internal memory for WiFi/TLS while preserving the
 32 KiB radio reserve.
+
+### Aspen software payload buffers
+
+The `public_aspen` profile allocates one 33,672-byte PSRAM block for 12 queued
+KISS frames, one active frame, modem output framing and the input/output bytes
+of one TCP client plus three logical MKISS ports. Source generations, socket
+objects, framing counters, transmit jobs and the physical-radio send buffer
+remain internal. Queue capacities, frame limits and session-renewal behavior
+are unchanged. Allocation happens after PSRAM initialization; failure stops
+radio startup, without falling back to internal RAM.
+
+An enabled observer allocates 8,232 bytes in PSRAM for its MQTT settings and
+JSON workspace, including when MQTT is unconfigured. Its atomics and FreeRTOS
+queues remain internal. Failure leaves the observer faulted without stopping
+the native roles. A disabled observer needs no payload allocation.
+
+Matched `public_aspen` builds before and after these buffer moves use
+135,440 and 87,960 linker RAM bytes respectively: **47,480 bytes reclaimed**.
+This profile includes Lua, Wasm, HTTPS and native shared-room support. Different
+TCP/UART client counts change the KISS workspace size. Linker RAM excludes
+runtime task stacks, SDK heaps and dynamic PSRAM allocations; read
+`stats memory` and `stats psram` for the running node.
+
+Lua's compiled prototypes/bytecode and Wasm's retained module bytes already
+use PSRAM, as do their interpreter data allocations. Native interpreter
+instructions and bundled source literals stay in flash. See
+[VM storage and limits](../runtime/WASM_RUNTIME.md#runtime-and-module-profile)
+for the interpreter bounds.
 
 ## Recorded ESP32 comparison
 

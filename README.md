@@ -112,7 +112,7 @@ delivery, with the proposed desktop DM path kept separate.
 | Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
 
 Aspen, Birch, Pine and Willow use independent product versions, separately
-from their MeshCore base. This source reports Aspen 0.1.10, Birch 0.1.1,
+from their MeshCore base. This source reports Aspen 0.1.11, Birch 0.1.1,
 Pine 0.1.0 and Willow 0.0.2. Product tags are `NAME-vVERSION`.
 Birch contains a matching host and native worker for a separately configured
 modem. Pine's `pine-0.1.0` firmware identity replaces the older

@@ -414,6 +414,10 @@ void setup() {
   };
 #endif
 
+  if (!kiss_stream.begin()) {
+    Serial.println("KISS payload storage unavailable; radio service disabled");
+    halt();
+  }
   modem = new KissModem(kiss_stream, identity, rng, radio_driver, board, sensors);
   modem->setRadioCallback(onSetRadio);
   modem->setTxPowerCallback(onSetTxPower);

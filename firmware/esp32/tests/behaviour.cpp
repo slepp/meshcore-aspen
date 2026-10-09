@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Reuse the existing physical arbiter fixtures and their independent wire
 // vectors.
+#if KISS_PSRAM_PAYLOADS
+#include <esp_heap_caps.h>
+#endif
 #define main upstream_mux_tests
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wreturn-type"
@@ -13,6 +16,54 @@
 #include "OwnedPacket.h"
 #include <helpers/StatsFormatHelper.h>
 #include <helpers/StaticPoolPacketManager.h>
+
+#if KISS_PSRAM_PAYLOADS
+struct KissPayloadTest {
+  static void storage(WifiKissMultiplexer& mux) {
+    assert(psram_test::contains(mux._queue));
+    assert(psram_test::contains(&mux.activeFrame()));
+    assert(psram_test::contains(mux._output));
+    for (auto& client : mux._clients) {
+      assert(psram_test::contains(client.input));
+      assert(psram_test::contains(client.output));
+      assert(!psram_test::contains(&client.socket));
+    }
+    for (auto& port : mux._session_ports) {
+      assert(psram_test::contains(port.input));
+      assert(psram_test::contains(port.output));
+    }
+    assert(psram_test::contains(mux._stream.input));
+    assert(psram_test::contains(mux._stream.output));
+    assert(!psram_test::contains(mux._sending.packet));
+    assert(!psram_test::contains(mux._jobs));
+    assert(!psram_test::contains(&mux._queue_count));
+  }
+};
+
+static void payload_allocation() {
+  assert(psram_test::allocations.empty());
+  {
+    WifiKissMultiplexer mux;
+    assert(psram_test::allocations.empty());
+    psram_test::failAfter = 0;
+    assert(!mux.begin() && psram_test::allocations.empty());
+    const unsigned attempts = psram_test::attempts;
+    assert(mux.write(KISS_FEND) == 0 && mux.available() == 0);
+    assert(psram_test::attempts == attempts + 1);
+    psram_test::failAfter = -1;
+    assert(mux.begin() && psram_test::allocations.size() == 1);
+    KissPayloadTest::storage(mux);
+    assert(mux.begin() && psram_test::allocations.size() == 1);
+    TestUART stream;
+    assert(mux.attachStream(stream));
+    mux.detachStream();
+    KissPayloadTest::storage(mux);
+    assert(mux.attachStream(stream));
+    KissPayloadTest::storage(mux);
+  }
+  assert(psram_test::allocations.empty());
+}
+#endif
 
 struct StatsClock : mesh::MillisecondClock {
   unsigned long getMillis() override { return 123456; }
@@ -713,6 +764,10 @@ static void native_owned_packet_composition() {
   puts("PASS owned packet helper signs adverts and encrypts direct/anonymous/group datagrams with native keys and bounded routes");
 }
 int main() {
+#if KISS_PSRAM_PAYLOADS
+  payload_allocation();
+  upstream_mux_tests();
+#endif
   operator_phy_boot();
   assert(onchip::clearsAdminPassword("password "));
   assert(!onchip::clearsAdminPassword("password configured"));
@@ -732,4 +787,7 @@ int main() {
                        "reboot", "set prv.key deadbeef", "erase"})
     assert(!onchip::unsafeCLI(command));
   puts("On-chip local arbiter and command boundaries passed");
+#if KISS_PSRAM_PAYLOADS
+  assert(psram_test::allocations.empty());
+#endif
 }

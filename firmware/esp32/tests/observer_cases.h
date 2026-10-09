@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Observer.h"
 #include "Clock.h"
+#include "RoleStorage.h"
 #include <fstream>
 
 #ifdef ONCHIP_CLOCK_TEST_BUSY
@@ -16,6 +17,12 @@ bool onchipClockTestBusy() {
 
 namespace onchip {
 struct ObserverTest {
+  static void storage(const Observer &observer) {
+    assert(psram_test::contains(observer.storage));
+    assert(psram_test::contains(&observer.storage->settings));
+    assert(psram_test::contains(observer.storage->json));
+    assert(!psram_test::contains(&observer.connected));
+  }
   static void service(Observer &observer) { observer.service(); }
   static void connect(Observer &observer, bool online) {
     auto c = observer.client;
@@ -28,6 +35,7 @@ struct ObserverTest {
     vQueueDelete(observer.statusQueue);
     observer.client = nullptr;
     observer.queue = observer.statusQueue = nullptr;
+    releaseRoleStorage(observer.storage);
   }
   static unsigned drops(const Observer &observer) {
     return observer.dropped.load();
@@ -60,10 +68,21 @@ struct ObserverTest {
 };
 } // namespace onchip
 static void public_observer_service() {
+  {
+    onchip::Observer refused;
+    WifiKissMultiplexer mux;
+    psram_test::failAfter = 0;
+    assert(!refused.begin(mux));
+    psram_test::failAfter = -1;
+    RadioDashboard::RoleStatus status{};
+    refused.dashboardStatus(status);
+    assert(!strcmp(status.state, "fault") && strstr(status.fault, "PSRAM"));
+  }
   onchip::beginClocks();
   onchip::Observer observer;
   Fixture f;
   assert(observer.begin(f.mux));
+  onchip::ObserverTest::storage(observer);
   char ownerToken[1024]{}, ownerTokenError[120]{};
   assert(!observer.mintToken("broker.example", ownerToken, sizeof(ownerToken),
                             ownerTokenError, sizeof(ownerTokenError)));

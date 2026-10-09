@@ -104,7 +104,9 @@ class VersionTests(unittest.TestCase):
         config.read(ROOT / "firmware/esp32/platformio.public.ini.example")
         flags = {line.strip() for line in config["env:public_aspen"]["build_flags"].splitlines()}
         self.assertIn("-D ONCHIP_BOT_HTTPS=1", flags)
-        self.assertIn("-D KISS_MAX_TCP_CLIENTS=3", flags)
+        self.assertIn("-D KISS_MAX_TCP_CLIENTS=1", flags)
+        self.assertIn("-D ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1", flags)
+        self.assertIn("-D ONCHIP_CLOUD_ROOM_CONNECTIONS=2", flags)
         self.assertIn("-D MESHCORE_PUBLIC_PROVISIONING=1", flags)
         for name in ("ONCHIP_OPERATOR_HEADER", "ONCHIP_BOT_HOME_ADDRESS", "ONCHIP_BOT_HOME_TOKEN",
                      "ONCHIP_BOT_HOME_CA", "ONCHIP_MQTT_URI"):

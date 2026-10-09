@@ -126,12 +126,14 @@ void CompanionSessions::resetNativeSession() {
     if (client.active) client.closing = true;
     client.pending = client.appStarted = client.notified = client.cursorStarted = false;
     client.command = Frame{};
-    for (auto& frame : client.output) frame = Frame{};
     client.head = client.count = client.version = 0;
     client.cursor = 0;
   }
-  if (journal)
+  if (journal) {
     for (auto& frame : journal->frames) frame = Frame{};
+    for (auto& output : journal->output)
+      for (auto& frame : output) frame = Frame{};
+  }
   sequence = 0;
   nextClient = 0;
   operation = Operation::None;
@@ -190,7 +192,7 @@ bool CompanionSessions::enqueue(unsigned slot, const uint8_t* data, size_t size)
   auto& client = clients[slot];
   if (!client.active || client.closing) return false;
   if (client.count == OutputDepth) { drop(slot, OutputFull); return false; }
-  auto& frame = client.output[(client.head + client.count) % OutputDepth];
+  auto& frame = journal->output[slot][(client.head + client.count) % OutputDepth];
   frame.size = size;
   memcpy(frame.data, data, size);
   ++client.count;
@@ -415,11 +417,11 @@ bool CompanionSessions::begin() {
 #if defined(COMPANION_SESSIONS_HOST)
     journal = new (std::nothrow) Journal;
 #else
-    journal = allocateRoleStorage<Journal>("companion message journal");
+    journal = allocateRoleStorage<Journal>("companion journal/output");
 #endif
     if (!journal) {
       if (diagnostic)
-        diagnostic("Companion message journal allocation failed; listener not started");
+        diagnostic("Companion journal/output allocation failed; listener not started");
       return false;
     }
   }
@@ -531,7 +533,7 @@ void CompanionSessions::networkPass() {
       pending = clients[i].pending;
       if (!closing && !peer.size && clients[i].count) {
         auto& client = clients[i];
-        const auto& frame = client.output[client.head];
+        const auto& frame = journal->output[i][client.head];
         peer.output[0] = '>';
         peer.output[1] = frame.size;
         peer.output[2] = frame.size >> 8;

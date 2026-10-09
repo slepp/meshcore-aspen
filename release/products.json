@@ -8,7 +8,7 @@
     "commit": "d92964352441e53b93e8667b802e04f6e072b39e"
   },
   "products": {
-    "aspen": {"version": "0.1.10"},
+    "aspen": {"version": "0.1.11"},
     "birch": {"version": "0.1.1"},
     "pine": {"version": "0.1.0"},
     "willow": {"version": "0.0.2"}

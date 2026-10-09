@@ -1,4 +1,7 @@
 #include "WifiKissMultiplexer.h"
+#if KISS_PSRAM_PAYLOADS
+#include "RoleStorage.h"
+#endif
 
 #include <errno.h>
 #include <math.h>
@@ -176,6 +179,45 @@ WifiKissMultiplexer::WifiKissMultiplexer()
   }
 }
 
+WifiKissMultiplexer::~WifiKissMultiplexer() {
+#if KISS_PSRAM_PAYLOADS
+  onchip::releaseRoleStorage(_payloads);
+#endif
+}
+
+bool WifiKissMultiplexer::begin() {
+#if KISS_PSRAM_PAYLOADS
+  if (_payloads) return true;
+  _payloads = onchip::allocateRoleStorage<PayloadStorage>("KISS payloads");
+  if (!_payloads) return false;
+  _queue = _payloads->queue;
+  _output = _payloads->output;
+  unsigned index = 0;
+  auto bind = [&](WireState& state) {
+    state.input = _payloads->wires[index].input;
+    state.output = _payloads->wires[index++].output;
+  };
+  for (auto& client : _clients) bind(client);
+  for (auto& port : _session_ports) bind(port);
+#if KISS_STREAM_ENDPOINT
+  bind(_stream);
+#endif
+#endif
+  return true;
+}
+
+void WifiKissMultiplexer::resetWireState(WireState& state) {
+#if KISS_PSRAM_PAYLOADS
+  auto* input = state.input;
+  auto* output = state.output;
+#endif
+  state = {};
+#if KISS_PSRAM_PAYLOADS
+  state.input = input;
+  state.output = output;
+#endif
+}
+
 bool WifiKissMultiplexer::setNativeRolePresence(uint8_t mask,
                                                 const uint8_t* keys,
                                                 uint8_t count) {
@@ -231,6 +273,7 @@ WifiKissMultiplexer::WireState& WifiKissMultiplexer::wireState(uint8_t slot) {
 
 bool WifiKissMultiplexer::attachStream(Stream& stream) {
 #if KISS_STREAM_ENDPOINT
+  if (!begin()) return false;
   if (_stream_io) {
     Serial.println("KISS stream already attached");
     return false;
@@ -254,7 +297,7 @@ void WifiKissMultiplexer::detachStream() {
   if (!_stream_io) return;
   removeClient(STREAM_SLOT);
   _stream_io = nullptr;
-  _stream = {};
+  resetWireState(_stream);
 #endif
 }
 
@@ -297,6 +340,7 @@ void WifiKissMultiplexer::pollStream() {
 
 int WifiKissMultiplexer::attachLocal(KissLocalSource& sink) {
 #if KISS_LOCAL_SOURCES > 0
+  if (!begin()) return -1;
   for (uint8_t i = 0; i < KISS_LOCAL_SOURCES; ++i) {
     auto& local = _locals[i];
     if (local.active) continue;
@@ -317,6 +361,7 @@ int WifiKissMultiplexer::attachLocal(KissLocalSource& sink) {
 }
 
 bool WifiKissMultiplexer::beginEngineSource(float factor) {
+  if (!begin()) return false;
   if (_engine_source.active || !isfinite(factor) || factor < 0) {
     Serial.println("Packet engine source already active or airtime factor invalid");
     return false;
@@ -488,6 +533,7 @@ void WifiKissMultiplexer::deliverReceived(const uint8_t* packet, uint16_t length
 }
 
 void WifiKissMultiplexer::poll(WiFiServer &server) {
+  if (!begin()) return;
   for (uint8_t offset = 0; offset < KISS_MAX_TCP_CLIENTS; ++offset) {
     const uint8_t slot = (_poll_cursor + offset) % KISS_MAX_TCP_CLIENTS;
     auto &client = _clients[slot];
@@ -542,21 +588,21 @@ size_t WifiKissMultiplexer::clientCount() const {
 
 int WifiKissMultiplexer::available() {
   if (_active_valid && _active_input_offset == 0 &&
-      !isTargetConnected(_active.source)) {
+      !isTargetConnected(activeFrame().source)) {
     completeActive();
   }
   if (!_active_valid && !loadNextFrame())
     return 0;
-  if (_active_input_offset >= _active.encoded_length)
+  if (_active_input_offset >= activeFrame().encoded_length)
     return 0;
-  return _active.encoded_length - _active_input_offset;
+  return activeFrame().encoded_length - _active_input_offset;
 }
 
 int WifiKissMultiplexer::read() {
   if (available() <= 0)
     return -1;
-  const uint8_t byte = _active.encoded[_active_input_offset++];
-  if (_active_input_offset >= _active.encoded_length) {
+  const uint8_t byte = activeFrame().encoded[_active_input_offset++];
+  if (_active_input_offset >= activeFrame().encoded_length) {
     _active_input_consumed = true;
   }
   return byte;
@@ -565,7 +611,7 @@ int WifiKissMultiplexer::read() {
 int WifiKissMultiplexer::peek() {
   if (available() <= 0)
     return -1;
-  return _active.encoded[_active_input_offset];
+  return activeFrame().encoded[_active_input_offset];
 }
 
 void WifiKissMultiplexer::flush() {
@@ -579,11 +625,13 @@ void WifiKissMultiplexer::flush() {
 int WifiKissMultiplexer::availableForWrite() { return 1460; }
 
 size_t WifiKissMultiplexer::write(uint8_t byte) {
+  if (!begin()) return 0;
   processOutputByte(byte);
   return 1;
 }
 
 size_t WifiKissMultiplexer::write(const uint8_t *data, size_t size) {
+  if (!begin()) return 0;
   for (size_t i = 0; i < size; ++i)
     processOutputByte(data[i]);
   return size;
@@ -1079,6 +1127,7 @@ bool WifiKissMultiplexer::applyMastProfile(const uint8_t *profile, bool persist)
 bool WifiKissMultiplexer::setInitialConfiguration(const RadioConfig &config,
                                                  bool require_operator_phy) {
   configurationFailed();
+  if (!begin()) return false;
   queued_tx::put32(_profile, config.freq_hz);
   queued_tx::put32(_profile + 4, config.bw_hz);
   _profile[8] = config.sf;
@@ -1280,7 +1329,7 @@ bool WifiKissMultiplexer::extension(uint8_t slot, const uint8_t *decoded,
         const bool report = client.signal_report;
         if (!sessionPort(slot) || client.negotiated)
           removeClient(slot);
-        client = {};
+        resetWireState(client);
         client.active = true;
         client.signal_report = sessionPort(slot) ? report : true;
         client.source_factor = 1;
@@ -1318,7 +1367,7 @@ bool WifiKissMultiplexer::extension(uint8_t slot, const uint8_t *decoded,
         _session_cursor = 0;
         for (uint8_t port = 1; port < SESSION_PORTS; ++port) {
           auto &child = wireState(sessionSource(port));
-          child = {};
+          resetWireState(child);
           child.active = true;
           child.signal_report = true;
           child.source_factor = 1;
@@ -1863,22 +1912,22 @@ void WifiKissMultiplexer::reflect(const TxJob &job) {
 }
 bool WifiKissMultiplexer::loadNextFrame() {
   while (_queue_count > 0) {
-    _active = _queue[_queue_head];
+    activeFrame() = _queue[_queue_head];
     _queue_head = (_queue_head + 1) % KISS_REQUEST_QUEUE_DEPTH;
     --_queue_count;
-    if (!isTargetConnected(_active.source))
+    if (!isTargetConnected(activeFrame().source))
       continue;
 
     _active_valid = true;
     _active_input_offset = 0;
     _active_input_consumed = false;
-    const uint8_t port = (_active.decoded[0] >> 4) & 0x0F;
-    const uint8_t command = _active.decoded[0] & 0x0F;
+    const uint8_t port = (activeFrame().decoded[0] >> 4) & 0x0F;
+    const uint8_t command = activeFrame().decoded[0] & 0x0F;
     _active_is_data =
-        port == 0 && command == KISS_CMD_DATA && _active.decoded_length > 1;
+        port == 0 && command == KISS_CMD_DATA && activeFrame().decoded_length > 1;
     _active_waits_for_response =
         _active_is_data || (port == 0 && command == KISS_CMD_SETHARDWARE &&
-                            _active.decoded_length > 1);
+                            activeFrame().decoded_length > 1);
     return true;
   }
   return false;
@@ -1944,7 +1993,7 @@ void WifiKissMultiplexer::routeOutputFrame(const uint8_t *encoded,
   if (subcommand == HW_RESP_TX_DONE) {
     if (_active_valid && _active_input_consumed && _active_is_data &&
         decoded_length == 3) {
-      sendFrame(_active.source, encoded, encoded_length);
+      sendFrame(activeFrame().source, encoded, encoded_length);
       if (decoded[2] == 1) {
         sendLocalReflection();
       }
@@ -1956,7 +2005,7 @@ void WifiKissMultiplexer::routeOutputFrame(const uint8_t *encoded,
   }
 
   if (_active_valid && _active_input_consumed && _active_waits_for_response) {
-    sendFrame(_active.source, encoded, encoded_length);
+    sendFrame(activeFrame().source, encoded, encoded_length);
     completeActive();
   } else {
     broadcastFrame(encoded, encoded_length);
@@ -2081,7 +2130,8 @@ void WifiKissMultiplexer::sendHardware(ClientTarget target, uint8_t subcommand,
 }
 
 void WifiKissMultiplexer::sendLocalReflection() {
-  broadcastFrame(_active.encoded, _active.encoded_length, &_active.source);
+  broadcastFrame(activeFrame().encoded, activeFrame().encoded_length,
+                 &activeFrame().source);
   const uint8_t metadata[] = {
       static_cast<uint8_t>(LOCAL_LOOPBACK_SNR),
       static_cast<uint8_t>(LOCAL_LOOPBACK_RSSI),
@@ -2092,7 +2142,7 @@ void WifiKissMultiplexer::sendLocalReflection() {
       encodeFrame(KISS_CMD_SETHARDWARE, hardware, sizeof(hardware), encoded,
                   sizeof(encoded));
   if (encoded_length > 0) {
-    broadcastFrame(encoded, encoded_length, &_active.source, true);
+    broadcastFrame(encoded, encoded_length, &activeFrame().source, true);
   }
 }
 

@@ -273,7 +273,13 @@ the worker. Native imports only validate/copy bounded values and submit
 existing asynchronous operations.
 
 ESP32 linear memory, interpreter allocations and session storage require
-PSRAM without internal-heap fallback. The host interpreter test measures
+PSRAM without internal-heap fallback. Each command or packet Wasm session
+keeps its module bytes in PSRAM for the loader and interpreter's lifetime;
+it does not execute the saved SPIFFS file in place. Lua compiles source text
+into prototypes and bytecode through its PSRAM allocator. Bundled Lua source
+and the native Lua/WAMR interpreter instructions remain in flash. Installed
+sources stay durable in SPIFFS, while VM data is recreated after restart.
+The host interpreter test measures
 52,176 bytes for one session with the current networking result/request
 structures; target sizes differ with pointer width. The existing
 VM worker's 16 KiB task stack and storage/network workers retain their

@@ -760,7 +760,7 @@ void nativeRestartClearsIncompleteInternalExchange() {
 void journalAllocationAndLifetime() {
   static unsigned errors = 0;
   CompanionSessions sessions(0, 10000, [](const char* message) {
-    if (!strcmp(message, "Companion message journal allocation failed; listener not started"))
+    if (!strcmp(message, "Companion journal/output allocation failed; listener not started"))
       ++errors;
   });
   sessions.resetNativeSession();
@@ -768,7 +768,9 @@ void journalAllocationAndLifetime() {
   failJournalAllocation = true;
   REQUIRE(!sessions.begin());
   REQUIRE(journalAllocations == before + 1 && errors == 1);
-  REQUIRE(journalBytes == (MAX_FRAME_SIZE + sizeof(uint16_t)) * CompanionSessions::JournalDepth);
+  REQUIRE(journalBytes == (MAX_FRAME_SIZE + sizeof(uint16_t)) *
+      (CompanionSessions::JournalDepth +
+       CompanionSessions::MaxClients * CompanionSessions::OutputDepth));
   REQUIRE(!sessions.port() && !sessions.isEnabled());
   failJournalAllocation = false;
   REQUIRE(sessions.begin());

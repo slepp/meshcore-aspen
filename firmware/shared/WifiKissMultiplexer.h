@@ -13,6 +13,13 @@
 #ifndef KISS_STREAM_ENDPOINT
 #define KISS_STREAM_ENDPOINT 0
 #endif
+#ifndef KISS_PSRAM_PAYLOADS
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+#define KISS_PSRAM_PAYLOADS 1
+#else
+#define KISS_PSRAM_PAYLOADS 0
+#endif
+#endif
 
 class KissLocalSource {
 public:
@@ -43,12 +50,17 @@ public:
 };
 
 class WifiKissMultiplexer : public Stream {
+  friend struct KissPayloadTest;
 public:
   static constexpr int8_t LOCAL_LOOPBACK_SNR = INT8_MIN;
   static constexpr int8_t LOCAL_LOOPBACK_RSSI = INT8_MAX;
 
   WifiKissMultiplexer();
+  ~WifiKissMultiplexer();
+  WifiKissMultiplexer(const WifiKissMultiplexer&) = delete;
+  WifiKissMultiplexer& operator=(const WifiKissMultiplexer&) = delete;
 
+  bool begin();
   void poll(WiFiServer& server);
   // Retire only network sources; native roles and a queued UART remain usable.
   void disconnectTcpClients();
@@ -164,10 +176,18 @@ private:
     bool signal_report;
     bool collecting;
     uint16_t input_length;
+#if KISS_PSRAM_PAYLOADS
+    uint8_t* input = nullptr;
+#else
     uint8_t input[MAX_ENCODED_FRAME];
+#endif
     uint16_t output_head;
     uint16_t output_length;
+#if KISS_PSRAM_PAYLOADS
+    uint8_t* output = nullptr;
+#else
     uint8_t output[CLIENT_OUTPUT_CAPACITY];
+#endif
     bool negotiated;
     uint32_t last_job;
     uint32_t configuration_seen;
@@ -207,7 +227,24 @@ private:
   SourceState& sourceState(uint8_t slot);
   const SourceState& sourceState(uint8_t slot) const;
   WireState& wireState(uint8_t slot);
+  static void resetWireState(WireState& state);
+#if KISS_PSRAM_PAYLOADS
+  struct WireBuffers {
+    uint8_t input[MAX_ENCODED_FRAME];
+    uint8_t output[CLIENT_OUTPUT_CAPACITY];
+  };
+  struct PayloadStorage {
+    QueuedFrame queue[KISS_REQUEST_QUEUE_DEPTH];
+    QueuedFrame active;
+    uint8_t output[MAX_ENCODED_FRAME];
+    WireBuffers wires[KISS_MAX_TCP_CLIENTS + queued_tx::SESSION_PORTS - 1 +
+                      KISS_STREAM_ENDPOINT];
+  };
+  PayloadStorage* _payloads = nullptr;
+  QueuedFrame* _queue = nullptr;
+#else
   QueuedFrame _queue[KISS_REQUEST_QUEUE_DEPTH];
+#endif
   uint8_t _queue_head;
   uint8_t _queue_tail;
   uint8_t _queue_count;
@@ -219,7 +256,16 @@ private:
   uint8_t _native_key_count = 0;
   uint8_t _native_keys[MAX_NATIVE_KEYS][queued_tx::ROLE_KEY_SIZE]{};
 
+#if !KISS_PSRAM_PAYLOADS
   QueuedFrame _active;
+#endif
+  QueuedFrame& activeFrame() {
+#if KISS_PSRAM_PAYLOADS
+    return _payloads->active;
+#else
+    return _active;
+#endif
+  }
   bool _active_valid;
   bool _active_waits_for_response;
   bool _active_is_data;
@@ -228,7 +274,11 @@ private:
 
   bool _output_collecting;
   uint16_t _output_length;
+#if KISS_PSRAM_PAYLOADS
+  uint8_t* _output = nullptr;
+#else
   uint8_t _output[MAX_ENCODED_FRAME];
+#endif
 
   struct TxJob {
     bool used;

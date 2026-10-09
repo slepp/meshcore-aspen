@@ -36,7 +36,11 @@ class Observer final : public KissPacketObserver {
   char radio[64] = "unknown";
   bool haveRoles = false, rolesPublished = false;
   RadioDashboard::RoleStatus identity{};
-  ObserverConfig settings{};
+  struct Storage {
+    ObserverConfig settings{};
+    char json[3072]{};
+  };
+  Storage* storage = nullptr;
   RadioDashboard::RoleStatus botSource{};
   QueueHandle_t queue = nullptr, statusQueue = nullptr;
   esp_mqtt_client_handle_t client = nullptr;
@@ -48,7 +52,6 @@ class Observer final : public KissPacketObserver {
   char identityHex[65]{}, eventPrefix[33]{}, baseTopic[192]{}, packetTopic[224]{},
       statusTopic[224]{};
   char username[69]{};
-  char json[3072]{};
   uint32_t tokenIssued = 0, tokenExpires = 0, nextConnect = 0;
   uint32_t lastStatusAt = 0;
   uint32_t lastReadyEpoch = 0;
@@ -63,6 +66,7 @@ class Observer final : public KissPacketObserver {
   uint32_t observationEpoch(uint32_t at, bool current = false) const;
   bool publish(const char *, const char *, int, bool retain, int qos = 0);
   bool fail(const char *);
+  bool start(WifiKissMultiplexer &);
   bool startClient(uint32_t epoch);
   void publishPacket(const Event &);
 

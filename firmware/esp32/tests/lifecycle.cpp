@@ -1255,9 +1255,9 @@ static void role_profile_combinations() {
       for (unsigned i = 0; i < 3; ++i)
         assert(onchip::rolePhase(Role(i)) ==
                (mask & (1u << i) ? RolePhase::Running : RolePhase::Disabled));
+      if (mask & RoleProfile::Observer)
+        onchip::ObserverTest::close(active);
     }
-    if (mask & RoleProfile::Observer)
-      onchip::ObserverTest::close(active);
     assert(onchip::companionSessions().port() == 0);
   }
   filesystem_test::files.erase("/companion/retained-profile");
@@ -1428,8 +1428,8 @@ static void role_profile_pending_and_runtime() {
            !memcmp(stored("observer").data(), observerPending.data() + 69, 64));
     assert(filesystem_test::files.at("/companion/profile-preserved") ==
            (Bytes{7, 8}));
+    onchip::ObserverTest::close(observer);
   }
-  onchip::ObserverTest::close(observer);
   filesystem_test::files.erase("/companion/profile-preserved");
   assert(onchip::saveRoleProfile({RoleProfile::All}));
   puts("PASS disabled pending identities survive boot and activate only on reenable");

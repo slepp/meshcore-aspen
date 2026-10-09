@@ -92,6 +92,7 @@ private:
   };
   struct Journal {
     Frame frames[JournalDepth];
+    Frame output[MaxClients][OutputDepth];
   };
   struct Owner {
     int slot = -1;
@@ -99,7 +100,6 @@ private:
   };
   struct Session {
     Frame command;
-    Frame output[OutputDepth];
     unsigned head = 0, count = 0;
     uint32_t generation = 0;
     uint64_t cursor = 0;

@@ -5,6 +5,7 @@
 #include "Lifecycle.h"
 #include "Runtime.h"
 #include "ObserverWire.h"
+#include "RoleStorage.h"
 #include <cmath>
 #include <ctime>
 #include <esp_system.h>
@@ -110,6 +111,16 @@ bool Observer::fail(const char *message) {
   return false;
 }
 bool Observer::begin(WifiKissMultiplexer &mux) {
+  if (storage) return fail("Observer already initialized");
+  storage = allocateRoleStorage<Storage>("observer settings/JSON");
+  if (!storage) return fail("MQTT settings/JSON PSRAM allocation failed");
+  connectionFault.store(nullptr);
+  if (start(mux)) return true;
+  releaseRoleStorage(storage);
+  return false;
+}
+bool Observer::start(WifiKissMultiplexer &mux) {
+  auto &settings = storage->settings;
   strcpy(identity.role, "observer");
   strcpy(identity.name, ONCHIP_OBSERVER_NAME);
   mesh::LocalIdentity loaded;
@@ -205,6 +216,8 @@ bool Observer::begin(WifiKissMultiplexer &mux) {
   return true;
 }
 bool Observer::startClient(uint32_t epoch) {
+  auto &settings = storage->settings;
+  auto &json = storage->json;
   esp_mqtt_client_config_t config{};
   char *will = json, *password = json + 1024;
   config.uri = settings.uri;
@@ -262,9 +275,9 @@ void Observer::dashboardStatus(RadioDashboard::RoleStatus &status) const {
   if (const auto fault = connectionFault.load())
     snprintf(status.fault, sizeof(status.fault), "%s", fault);
   strcpy(status.state, status.fault[0]     ? "fault"
-                       : !settings.uri[0] ? "disabled"
+                       : !storage || !storage->settings.uri[0] ? "disabled"
                        : status.ready        ? "running"
-                       : settings.format && !observationEpoch(0, true)
+                       : storage->settings.format && !observationEpoch(0, true)
                                              ? "waiting-time"
                                              : "connecting");
 }
@@ -347,6 +360,7 @@ void Observer::packet(const uint8_t *raw, uint16_t length, bool tx,
                       uint8_t state, float rssi, float snr) {
   if (!queue)
     return;
+  const auto &settings = storage->settings;
   if (settings.format && (tx || (rssi == 127 && snr == -32)))
     return;
   if (settings.format && length &&
@@ -372,7 +386,7 @@ void Observer::packet(const uint8_t *raw, uint16_t length, bool tx,
 }
 void Observer::transmitted(const uint8_t *raw, uint16_t length, uint8_t state,
                            uint8_t slot, uint32_t generation, uint32_t job) {
-  if (!queue || settings.format)
+  if (!queue || storage->settings.format)
     return;
   Pending *entry = nullptr, *free = nullptr;
   for (auto &item : pending) {
@@ -459,6 +473,8 @@ bool Observer::mintToken(const char *audience, char *output, size_t capacity,
   return signedToken || reject("Observer identity unavailable/changed or token signing failed");
 }
 void Observer::service() {
+  const auto &settings = storage->settings;
+  auto &json = storage->json;
   Event e;
   const bool received = xQueueReceive(queue, &e, pdMS_TO_TICKS(100)) == pdTRUE;
   Snapshot snapshot;
@@ -548,6 +564,8 @@ void Observer::service() {
   publishPacket(e);
 }
 void Observer::publishPacket(const Event &e) {
+  const auto &settings = storage->settings;
+  auto &json = storage->json;
   if (settings.format) {
     // Local transmissions and modem reflection remain internal observations,
     // never RF receptions on the public packet feed.

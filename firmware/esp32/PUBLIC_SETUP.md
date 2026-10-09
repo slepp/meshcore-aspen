@@ -245,9 +245,9 @@ administrator configures the collector and enables publishing. Use
 [telemetry setup](TELEMETRY.md) through authenticated Management RF to stage
 credentials, then read `telemetry status` and `telemetry counts`.
 Use `help syslog` for independent UDP logging; it needs no HTTPS collector.
-The HTTPS profile reserves one network socket for its worker and accepts up
-to three KISS clients and two companion TCP clients. UDP syslog uses no
-additional socket-table slot.
+The public image reserves sockets for HTTPS and two native room frontends,
+and accepts one external KISS connection with several logical MKISS ports
+and two companion TCP clients. UDP syslog uses no additional socket-table slot.
 
 ## Later updates: application only
 

@@ -16,8 +16,8 @@ requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.10** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.10`,
+New source builds use the **Aspen 0.1.11** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.11`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
@@ -632,7 +632,7 @@ not one interchangeable heap or a larger NVS partition:
 | Tier | Placement and lifetime |
 |---|---|
 | Internal RAM | Radio/DMA buffers, ISR/cache-disabled state, task stacks, synchronization and SDK allocations that require internal memory. Preserve working space for WiFi and radio while HTTPS is active. |
-| PSRAM | Task-owned role tables and packet pools, companion contacts, Lua heaps, dashboard snapshots, source/HTTP buffers and storage scratch space. Reuse large buffers instead of repeatedly allocating them. Copy packets into the mux's internal buffers before physical TX. |
+| PSRAM | Task-owned role tables and packet pools, companion contacts/history/output queues, KISS framing queues and wire buffers, observer settings/JSON, Lua heaps, Wasm modules and interpreter data, dashboard snapshots, source/HTTP buffers and storage scratch space. Copy packets into the mux's internal transmit job before physical TX. |
 | SPIFFS | Bulk durable state: native contacts/preferences, Lua source and telemetry endpoint/certificate data. Publish verified files through the existing recovery mechanisms; a successful RAM update is not a durable commit. |
 | NVS | Small identities, settings, replay/recovery metadata and active-file references. Do not store large certificates or growing application datasets here just because the NVS API is convenient. |
 | Go host | POSIX files and ordinary host RAM implement the same logical identity, scope, transaction and source-lifecycle contracts. ESP32 physical memory limits are not host hardware measurements. |
@@ -646,6 +646,15 @@ and publishes a 40-byte NVS reference; legacy endpoint blobs migrate without
 erasing identities or lowering storage safety reserves. Lua and storage
 workspaces also use PSRAM. These are volatile allocations, not another
 persistence authority.
+
+Aspen allocates KISS software frames and TCP/logical-port payload buffers
+after PSRAM initialization, without shrinking their queue limits. KISS storage
+failure stops radio startup with a diagnostic; it never borrows internal RAM.
+The companion service retains its PSRAM journal and output workspace across
+listener restarts, and clears them when its native session resets. Observer
+settings and its JSON workspace use a separate PSRAM block; allocation failure
+leaves the observer faulted while native radio roles can continue.
+Modem-only builds and the simpler nRF roles retain their existing memory layout.
 
 The combined ESP32 profile now provides **256 companion contacts**, up from
 64, using an additional **36,096 bytes of PSRAM**. Its companion allocation
@@ -764,8 +773,9 @@ Task-only native packets are copied by `LocalRadio::queueTransmit()` into the
 mux-owned job before admission returns; PSRAM pointers do not reach physical
 RF DMA. No ISR or cache-disabled callback accesses this storage.
 
-`LocalRadio` RX/result rings, mux and physical buffers, companion network state
-and its spinlock, observer/FreeRTOS queues, task stacks and SDK/crypto/DMA
+`LocalRadio` RX/result rings, mux transmit jobs and physical buffers, companion
+sockets/session controls and its spinlock, observer atomics/FreeRTOS queues,
+task stacks and SDK/crypto/DMA
 allocations remain internal. Their capacities and ownership are unchanged.
 SPIFFS and NVS operations retain native storage semantics; PSRAM holds only
 the transient working state. The native lifecycle harness checks allocation
@@ -773,6 +783,12 @@ capabilities, exhaustion at boot/restart, partial-start cleanup, scrub-before-fr
 bounded recovery, real wire behaviour and generation fencing under sanitizers.
 Monitor internal and DMA-capable free memory under WiFi, MQTT, companion and
 dashboard load, especially during reconnects.
+
+Run `make -C firmware/esp32 kiss-psram-test observer-public-test` for KISS
+allocation failure, queue/session resets and observer MQTT formatting.
+`make -C test_support/companion_sessions test` checks companion framing,
+bounded output, replay, native-session resets and retained listener history.
+These commands use local fixtures, not a physical radio.
 
 Authenticated native repeater/room `reboot` flushes native preferences and ACL
 state, retires that mux source, destroys the native application and reconstructs

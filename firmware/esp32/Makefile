@@ -112,7 +112,9 @@ esp-field-update-test:
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" rollback-error
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-rollback-error
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v test_esp_field_update tools.hardware.tests.test_esp32_slot
-.PHONY: prepare firmware buildfs provision-fs test local-test arbiter-test packet-bridge-test python-test mast-phy-test lifecycle-test clock-network-test
+.PHONY: prepare firmware buildfs provision-fs test local-test arbiter-test kiss-psram-test packet-bridge-test python-test mast-phy-test lifecycle-test clock-network-test
+kiss-psram-test:
+	$(MAKE) arbiter-test TEST_FLAGS='$(TEST_FLAGS) -DKISS_PSRAM_PAYLOADS=1 -idirafter tests/seams'
 packet-bridge-test:
 	$(MAKE) lifecycle-test PACKET_BRIDGE_ONLY=1
 prepare:
@@ -273,6 +275,7 @@ contact-recovery-board-test:
 runtime-config-admin-test:
 	$(MAKE) lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 ADMIN_CLI_CORE_ONLY=1 \
 		TEST_FLAGS='$(TEST_FLAGS) -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1 -DONCHIP_RUNTIME_CONFIG_ADMIN_TEST=1'
+# Role allocation counts exclude KISS; kiss-psram-test checks its payload storage.
 lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATION),$(if $(or $(ADAPTIVE_ADMIN_ONLY),$(ADMIN_CLI_CORE_ONLY),$(AUTOMATIC_ADVERTS_ONLY)),,$(if $(filter 1,$(ONCHIP_BOT_WASM)),bot-wasm-examples)))
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	@mkdir -p $(TEST_BUILD)
@@ -280,7 +283,7 @@ lifecycle-test: prepare $(if $(BOT_INTEGRATION),bot-lua) $(if $(ADMIN_INTEGRATIO
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/rf_vector.py query $(TEST_BUILD)/python-query.bin
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder $(TEST_FLAGS) \
 		-ffunction-sections -fdata-sections -Wl,--gc-sections -pthread \
-		-DESP32 -DMESHCORE_ONCHIP=1 -DONCHIP_OBSERVER_CONFIG_TEST=1 -DCOMPANION_SESSIONS_HOST -DKISS_LOCAL_SOURCES=$(if $(BOT_INTEGRATION),5,4) -DKISS_MAX_TCP_CLIENTS=4 \
+		-DESP32 -DMESHCORE_ONCHIP=1 -DKISS_PSRAM_PAYLOADS=0 -DONCHIP_OBSERVER_CONFIG_TEST=1 -DCOMPANION_SESSIONS_HOST -DKISS_LOCAL_SOURCES=$(if $(BOT_INTEGRATION),5,4) -DKISS_MAX_TCP_CLIENTS=4 \
 		-DCONFIG_LWIP_MAX_SOCKETS=16 \
 		-DMAX_CONTACTS=256 -DMAX_GROUP_CHANNELS=8 \
 		-DONCHIP_ADMIN_PASSWORD='"$(if $(WIFI_PROVISIONING_ONLY),,test-admin)"' -DONCHIP_ROOM_PASSWORD='"$(if $(WIFI_PROVISIONING_ONLY),,test-room)"' \

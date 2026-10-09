@@ -6,12 +6,12 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | As needed | `aspen-v0.1.10` | `aspen-v0.1.11` |
+| Aspen | As needed | `aspen-v0.1.11` | `aspen-v0.1.12` |
 | Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
 | Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
 | Willow | Experimental series | `willow-v0.0.2` | `willow-v0.0.3` |
 
-Show users **Aspen 0.1.10 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.11 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -21,7 +21,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header, Go constants and Willow version modules share
-this authority. Companion device information reports `aspen-0.1.10`,
+this authority. Companion device information reports `aspen-0.1.11`,
 `birch-0.1.1` or `pine-0.1.0`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
@@ -83,7 +83,7 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The Aspen bundle name is `aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The Aspen bundle name is `aspen-v0.1.11-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Its files include `manifest.json`, checksums, application and separate
 initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -210,6 +210,19 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Aspen 0.1.11
+
+Aspen's configurable image includes native shared-room frontends, saved Lua/Wasm
+packet programs and HTTPS. Bracketed companion mentions use the saved bot aliases.
+Subsystem syslog and telemetry retain their saved configuration.
+
+KISS frame/wire buffers, observer settings/JSON and companion history/output
+queues use PSRAM without internal-memory fallback. Queue capacities and protocol
+contracts are unchanged; radio/DMA buffers, locks and task stacks remain internal.
+Matched full-image builds reclaim 47,480 internal linker RAM bytes from the
+four latest buffer moves. Application-only updates retain identities, settings,
+installed programs and data; first installation still needs private setup.
 
 ## Aspen 0.1.10, Birch 0.1.1 and Willow 0.0.2
 
