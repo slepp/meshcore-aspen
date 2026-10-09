@@ -51,8 +51,12 @@ it requires initialized identities and credential records and preserves its
 QSPI Lua state. Keep USB recovery accessible if using Pine BLE updates:
 an interrupted transfer can require USB. Follow each bundle's installation
 guide.
-ESP32 network calls need the HTTPS profile and approved service configuration.
-The ESP32 and native host bot can compile Wasm alongside Lua; see the
+The generic Aspen source image includes native roles, Lua/Wasm, HTTPS and the
+native shared-room frontend. Select services through saved configuration;
+network calls need approved endpoints and room frontends need private aliases.
+See [generic Aspen setup](firmware/esp32/PUBLIC_SETUP.md) and
+[frontend configuration](services/shared-room/NATIVE.md).
+Custom ESP32 and native host builds can select Wasm alongside Lua; see the
 [Wasm runtime and build flags](firmware/runtime/WASM_RUNTIME.md).
 Aspen source builds also support two saved Lua/Wasm programs on the shared
 modem's packet path. Use the

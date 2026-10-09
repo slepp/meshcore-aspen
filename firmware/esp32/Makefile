@@ -39,6 +39,37 @@ public-update-test:
 	ulimit -c 0; "$(TEST_BUILD)/public-update"
 	ulimit -c 0; "$(TEST_BUILD)/public-update" different-owner
 .PHONY: public-provisioning-test
+.PHONY: cloudroom-preferences-test
+cloudroom-preferences-test:
+	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
+		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
+		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o
+	@mkdir -p "$(TEST_BUILD)"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_MAST_ADMIN=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 \
+		-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/cloudroom_preferences.cpp CloudRoomPreferences.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
+		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
+		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o \
+		-o "$(TEST_BUILD)/cloudroom-preferences"
+	"$(TEST_BUILD)/cloudroom-preferences" boot
+	"$(TEST_BUILD)/cloudroom-preferences" disabled
+	"$(TEST_BUILD)/cloudroom-preferences" install
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_MAST_ADMIN=1 -DMESHCORE_CLOUD_ROOM=1 -DCLOUDROOM_COMPILED_PROVIDER_TEST=1 \
+		-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/cloudroom_preferences.cpp CloudRoomPreferences.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
+		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
+		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o \
+		-o "$(TEST_BUILD)/cloudroom-preferences-legacy"
+	"$(TEST_BUILD)/cloudroom-preferences-legacy" legacy
+	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v tools.hardware.tests.test_cloudroom_config
 public-provisioning-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
 		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o

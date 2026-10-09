@@ -14,8 +14,8 @@ requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.2** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.2`,
+New source builds use the **Aspen 0.1.10** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.10`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
@@ -30,6 +30,22 @@ the ESP32 Lua images below do not run on nRF.
 
 ## Choose an image
 
+Use **`public_aspen`** for a new XIAO ESP32-S3R8 + Wio SX1262 node. This generic
+image includes native roles, observer, Lua/Wasm command bot, two saved packet
+programs, HTTPS and the native shared-room frontend. Configure services at
+runtime; replacements and enable selections survive restart.
+[Build and provision it](PUBLIC_SETUP.md#build-and-offline-checks) with a private
+setup record, then use authenticated Management for changes. Network calls
+need configured HTTPS endpoints; [room frontends](../../services/shared-room/NATIVE.md)
+need a private alias profile. Unconfigured services remain disabled.
+
+Its socket budget leaves one external KISS connection (several logical MKISS
+ports), two companion clients and two live dashboard viewers. No separate
+Lua, Wasm, HTTPS or CloudRoom build is needed.
+
+The following source-build environments remain available for custom
+applications and maintenance of initialized private builds:
+
 | PlatformIO environment | Available behavior | Choose it for |
 | --- | --- | --- |
 | `Xiao_S3_WIO_onchip` | Native repeater, room, companion, observer, KISS and signed next-boot role selection | Native roles without Lua |
@@ -43,7 +59,7 @@ and `ONCHIP_BOT_WASM=0` omits it. Bot builds default to `1`. See the
 [Wasm runtime guide](../runtime/WASM_RUNTIME.md) for the C/Rust SDK, package operations
 and field validation procedures.
 
-The ordinary standalone profile has four external KISS slots, two companion
+The native-only private profile has four external KISS slots, two companion
 clients and two live dashboard viewers. Negotiated MKISS can carry up to four
 logical ports on one TCP session; that includes the controller port. Additional
 roles/clients may need direct sockets. Socket capacity and local role capacity

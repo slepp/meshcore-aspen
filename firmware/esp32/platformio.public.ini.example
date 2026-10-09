@@ -12,6 +12,8 @@ lib_deps =
 build_src_filter = ${Xiao_S3_WIO.build_src_filter}
   +<../examples/kiss_modem/*.cpp>
   +<../examples/kiss_modem/onchip/*.cpp>
+  +<../examples/kiss_modem/onchip/cloudroom/*.cpp>
+  +<../examples/kiss_modem/onchip/cloudroom/third_party/coreJSON/*.c>
 build_flags =
   ${Xiao_S3_WIO.build_flags}
   -I examples/kiss_modem
@@ -24,6 +26,10 @@ build_flags =
   -D MESHCORE_NODE_BACKUP=1
   -D ONCHIP_BOT_HTTPS=1
   -D ONCHIP_BOT_WASM=1
+  -D MESHCORE_CLOUD_ROOM=1
+  -D ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1
+  -D ONCHIP_CLOUD_ROOM_CONNECTIONS=2
+  -D JSON_MAX_DEPTH=8
   -D ONCHIP_COMMAND_BOT_DEFAULT_ENABLED=1
   -D ONCHIP_UPDATE_TARGET='"xiao-esp32s3"'
   -D KISS_HOSTNAME='"aspen"'
@@ -39,8 +45,8 @@ build_flags =
   -D LORA_SF=ONCHIP_RADIO_SF
   -D LORA_CR=ONCHIP_RADIO_CR
   -D LORA_TX_POWER=ONCHIP_RADIO_TX_POWER
-  -D KISS_LOCAL_SOURCES=5
-  -D KISS_MAX_TCP_CLIENTS=3
+  -D KISS_LOCAL_SOURCES=6
+  -D KISS_MAX_TCP_CLIENTS=1
   -D ONCHIP_COMPANION_MAX_CLIENTS=2
   -D KISS_STREAM_ENDPOINT=0
   -D KISS_REQUEST_QUEUE_DEPTH=12

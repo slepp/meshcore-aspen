@@ -1,19 +1,110 @@
 # Direct native Aspen frontend
 
-An Aspen ESP32 can bridge its shared MeshCore radio directly to the Worker over
-Wi-Fi/WSS. The `Xiao_S3_WIO_onchip_cloudroom` profile includes the opaque driver,
-transport and task bridge. Its `cloudRoomConfiguration()` provider returns
-`nullptr` by default, so a public build has no credentials or cloud identities
-and opens no connection. No device has been flashed by this change.
+Aspen's generic `public_aspen` application bridges its shared MeshCore radio
+directly to the Worker over WiFi/WSS. It includes native roles, Lua/Wasm, HTTPS
+and the room frontend in one image. Install the
+[private initial setup](../../firmware/esp32/PUBLIC_SETUP.md), then save one or
+two room aliases through authenticated Management. Unconfigured frontends stay
+disabled. Both aliases use one physical radio source and its TX scheduler;
+the Worker holds their private room keys.
 
-A private build supplies a `CloudRoomConfiguration`: one or two peer endpoint,
-CA, token and alias records, plus matching public keys and names. Both aliases
-use one physical radio source and one existing TX scheduler. Room expanded
-private keys stay in the Worker. Configuration remains immutable for the
-service's lifetime. Follow [private setup](TRUST.md) before enabling a provider.
-The private `ONCHIP_CLOUD_ROOM_CONFIG_HEADER` may define the strong
+## Configure the generic image
+
+Create the frontend token and room aliases using [private service setup](TRUST.md).
+Keep an owner-only JSON file outside the repository:
+
+```json
+{
+  "schema": 1,
+  "enabled": true,
+  "aliases": [{
+    "host": "rooms.example",
+    "address": "",
+    "ca": "-----BEGIN CERTIFICATE-----\nYOUR_CA_PEM\n-----END CERTIFICATE-----\n",
+    "token": "YOUR_FRONTEND_TOKEN",
+    "id": "YOUR_ALIAS_ID",
+    "name": "YOUR_ROOM_NAME",
+    "public_key": "YOUR_ROOM_PUBLIC_KEY_64_HEX_DIGITS"
+  }]
+}
+```
+
+Replace the placeholders, including the complete PEM CA. Every field is
+required. Add a second object for another alias; use a distinct public key
+and endpoint/alias pair. Limits: hostname 127 bytes, optional IPv4 address
+15, PEM CA 4096, token 256, alias ID 64, room name 32. IDs contain letters,
+digits, `_` or `-`. Public keys are lowercase 64-digit hex. The hostname
+has no scheme, port or path: transport is WSS on port 443 with
+`/v1/aliases/ID/socket`. An empty `address` uses DNS; a fixed IPv4 address
+keeps hostname/SNI and certificate verification.
+
+```sh
+chmod 600 "$HOME/.config/aspen-private/cloudroom.json"
+python3 tools/hardware/admin.py \
+  --gateway COMPANION_HOST --target MANAGEMENT_PUBLIC_KEY64 \
+  --seed-file "$HOME/.config/aspen-private/admin-companion.seed" \
+  --password-file "$HOME/.config/aspen-private/mast-password" \
+  cloudroom configure "$HOME/.config/aspen-private/cloudroom.json"
+```
+
+`COMPANION_HOST` is your companion radio's KISS endpoint; use `--port` if it
+does not listen on the tool's default port 8001. Supply its saved companion seed
+and Aspen's Management public key. Credential uploads require encrypted
+Management RF. Web administration can inspect configuration, save enable
+changes or retain an existing private provider. Tokens remain in the private
+file and encrypted upload, not command-line arguments or replies.
+
+The helper validates the profile locally, uploads numbered 48-byte chunks and
+checks its saved hash. A lost chunk reply can repeat that exact chunk. A lost
+commit reply reads the hash without replaying the commit. `cloudroom status`
+reports the current connections; `cloudroom config status` reports the saved
+selection. **Configuration and enable changes apply after restart.** Restart
+with the ordinary authenticated `reboot` command when ready.
+
+For first boot on a blank board, `public_setup.py image --cloudroom-profile PATH`
+includes the same record in the private setup image. On an initialized node,
+use `cloudroom configure`; do not replace its filesystem.
+
+| Management command | Parameters and result |
+| --- | --- |
+| `cloudroom status` | Current alias count, reserved sockets, connected WSS bitmask and pending advert bitmask |
+| `cloudroom error` | Last connection error and minimum network-task stack remaining |
+| `cloudroom advertise ALIAS` | Exact active alias ID; queues one room advert |
+| `cloudroom config status` | Saved/enable/alias state, live alias count and upload state |
+| `cloudroom config hash` | SHA256 of the saved record's content, or `none` |
+| `cloudroom enable on\|off` | Saves the enable state; restart applies it |
+| `cloudroom config api` | Upload ABI, record size, chunk size and application timing |
+| `cloudroom config begin SHA256` | Full 64-digit lowercase content hash; same hash resumes this boot's upload |
+| `cloudroom config chunk ID16 INDEX HEX` | Hash prefix, zero-based index, exactly 48 bytes except the final chunk; identical repeats accepted |
+| `cloudroom config commit ID16` | Validates the complete record/CA, writes the spare file and publishes its selector |
+| `cloudroom config abort` | Discards staging; leaves the saved configuration and live connections intact |
+| `cloudroom config retain` | Saves a private build's running provider for a generic application update |
+
+All these commands require direct authenticated Management RF or Web
+administration; upload begin/chunk/commit additionally require encrypted RF.
+Bot/source invocations are denied. A restart discards an
+unfinished upload; begin it again from the private file. Invalid fields, CA or
+incomplete writes leave the saved selection unchanged. An uncertain selector
+write requires `config hash`/`config status` before retry. Damaged saved records
+disable the frontend at boot and report an error; restore them from the private
+node backup. NVS identities, role files and bot/packet programs are retained.
+Encrypted node backups include the frontend settings and credentials.
+
+## Move a private frontend build to the generic image
+
+Build and application-update the private frontend with current source first,
+keeping its existing configuration provider. Run `cloudroom config retain` and
+`cloudroom config status` alongside the
+[setup migration commands](../../firmware/esp32/PUBLIC_SETUP.md#move-an-initialized-private-build-to-a-generic-application).
+Then application-update to `public_aspen`. The generic image loads the saved
+frontends after restart; it uses the existing authorities, identities and
+filesystem. A private provider still uses its compiled configuration until that
+application update.
+
+Custom applications can supply a `CloudRoomConfiguration` instead of saved
+settings. The private `ONCHIP_CLOUD_ROOM_CONFIG_HEADER` may define the strong
 `onchip::cloudRoomConfiguration()` provider; `CloudRoomConfig.cpp` includes it
-only in the opt-in profile. Keep that header and the resulting image private.
+in the `Xiao_S3_WIO_onchip_cloudroom` profile. Keep that header and the resulting image private.
 The `Xiao_S3_WIO_onchip_cloudroom_probe` profile accepts the existing sealed
 operator header path rather than putting credentials in compiler arguments.
 The offline `https_profile.compile_image()` helper accepts that profile and a
@@ -22,7 +113,7 @@ descriptor with `memory_header()` and close it after compilation. The provider
 contains the frontend token, CA and public alias metadata, not room private
 keys. This build helper does not read or create a node backup.
 
-After an application-only private update, use authenticated Management:
+After restart, inspect the connections and explicitly request an advert:
 
 ```text
 cloudroom status
@@ -32,9 +123,8 @@ cloudroom advertise ALIAS
 
 `aliases` reports configured aliases, `wss-mask` marks connected WSS sockets,
 and `advert-pending` marks explicit requests waiting for the network driver.
-An accepted advertisement request does not confirm RF reception. Check it
-on a companion radio. These controls reject source/bot invocations, and no
-advertisement is requested by startup or status reads.
+The companion receives the room advert over RF. Startup and status reads
+do not request advertisements.
 
 If `wss-mask` stays zero, `cloudroom error` reports the last failed connection
 attempt. TLS errors name the failed phase and report the SDK code and available
@@ -72,10 +162,12 @@ pongs. DNS runs on the network task; a fixed address can retain hostname/SNI
 verification. Blocking DNS can delay that task while RF dispatch continues.
 A pinned internal SDK foundation header is included for the parent adapter.
 
-The profile reserves a sixth local radio source and two persistent alias
-sockets, reducing physical KISS clients to one under the stock 16-socket SDK
-budget. A one-alias profile can reserve one socket and use two KISS clients.
-Other profiles retain their existing limits. The Home/Lua HTTP rate limit
+The generic image reserves a sixth local radio source and two persistent alias
+sockets, leaving one physical KISS connection under the 16-socket SDK budget,
+two companion clients and two live dashboard viewers. This reservation stays
+the same when the frontend is disabled. MKISS carries several logical ports on
+that one KISS connection. Custom one-alias builds can reserve one socket and use
+two KISS clients. The Home/Lua HTTP rate limit
 (two calls per caller/four globally per minute) is bypassed by this dedicated
 persistent transport.
 
@@ -95,13 +187,13 @@ Reset Path/relogin when moving between radios.
 
 ## Focused validation
 
-The profile builds with native MeshCore
+The generic image builds with native MeshCore
 `d92964352441e53b93e8667b802e04f6e072b39e`, espressif32 6.11.0,
-Arduino 2.0.17 and ESP-IDF4.4.7, using public placeholder settings and WAMR off.
-Compile size is not a live TLS/heap or RF measurement.
+Arduino 2.0.17 and ESP-IDF4.4.7, with Lua 5.5.1 and WAMR 2.4.1.
 
 ```sh
 make -C firmware/shared/cloudroom test
+make -C firmware/esp32 cloudroom-preferences-test
 cd services/shared-room
 npm run typecheck
 npm test
@@ -116,7 +208,5 @@ final receipts under RX backpressure, local-reflection rejection and stale
 connection generations. Worker fixtures cover two frontends sharing a room,
 login/catch-up, native ciphertext and ACKs, ordered history, reconnect and
 hibernation, including identical concurrent history from independent backends.
-The Go reference uses pinned native-compatible primitives for
-independent fixture generation. A live two-device RF test remains an operator
-step after private configuration and deployment; there is no host daemon or
-proactive history replica required by the native frontend.
+The Go reference generates native packet fixtures. After deploying a configured
+frontend, check adverts, login, posting and history from a companion radio.

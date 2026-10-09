@@ -169,6 +169,10 @@ esp_err_t execute(httpd_req_t *request) {
     memset(input, 0, sizeof(input));
     return error(request, "403 Forbidden", "WiFi secrets and setters require encrypted Management RF");
   }
+  if (verb("cloudroom config begin") || verb("cloudroom config chunk") || verb("cloudroom config commit")) {
+    memset(input, 0, sizeof(input));
+    return error(request, "403 Forbidden", "Cloud room credential uploads require encrypted Management RF");
+  }
   if (verb("role password")) {
     memset(input, 0, sizeof(input));
     return error(request, "403 Forbidden",

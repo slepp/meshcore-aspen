@@ -221,7 +221,7 @@ constexpr Help topics[] = {
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
-    {"cloudroom", "cloudroom status|error|advertise ALIAS; direct authenticated administration; private profile/configuration required; RF delivery unconfirmed"},
+    {"cloudroom", "cloudroom status|error|advertise ALIAS|config|enable on|off; direct authenticated administration; config changes apply after restart"},
     {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop|flood; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
@@ -322,7 +322,7 @@ void MastAdmin::helpCommand(const char *argument, Reply &reply) {
   static constexpr const char *index[] = {
     "help 1/3: status; roles; stats; ver; board; help bot|channels|companion|repeaters|role|roles|room|stats|threads; next: help 2",
     "help 2/3: help autoadvert|cad|cloudroom|get|mqtt|radio|radio-controls|set|setup|sntp|syslog|tempradio|wifi; next: help 3",
-    "help 3/3: help auth|backup|data|key|password|setperm|source|telemetry|trust; apply|reboot; one page per request"
+    "help 3/3: help auth|backup|data|key|packet|password|setperm|source|telemetry|trust; apply|reboot; one page per request"
   };
   static_assert(textLength(index[0]) <= TextLimit - 17 &&
                 textLength(index[1]) <= TextLimit - 17 &&
@@ -1573,21 +1573,28 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: cloud room controls require direct authenticated Management RF or Web administration");
       return;
     }
-    if (!strcmp(input, "packet") || !strncmp(input, "packet ", 7) || !strcmp(input, "help packet")) {
-      if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
-          !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
-        strcpy(reply.text, "Error: packet programs require direct authenticated Management RF or Web administration");
-        return;
-      }
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
-      packetProgramCommand(!strcmp(input, "help packet") ? "help" : input[6] ? input + 7 : "",
-                           reply.text, std::min(replyCapacity, sizeof(reply.text)));
-#else
-      strcpy(reply.text, "Error: packet program controller unavailable on this target");
-#endif
+    const char *command = input[9] ? input + 10 : "";
+    if (transport != Transport::NativeEncrypted &&
+        (!strncmp(command, "config begin ", 13) || !strncmp(command, "config chunk ", 13) ||
+         !strncmp(command, "config commit ", 14))) {
+      strcpy(reply.text, "Error: cloud room credential uploads require encrypted Management RF; config retain copies existing settings");
       return;
     }
-    cloudRoomCommand(input[9] ? input + 10 : "", reply.text, std::min(replyCapacity, sizeof(reply.text)));
+    cloudRoomCommand(command, reply.text, std::min(replyCapacity, sizeof(reply.text)));
+    return;
+  }
+  if (!strcmp(input, "packet") || !strncmp(input, "packet ", 7) || !strcmp(input, "help packet")) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: packet programs require direct authenticated Management RF or Web administration");
+      return;
+    }
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+    packetProgramCommand(!strcmp(input, "help packet") ? "help" : input[6] ? input + 7 : "",
+                         reply.text, std::min(replyCapacity, sizeof(reply.text)));
+#else
+    strcpy(reply.text, "Error: packet program controller unavailable on this target");
+#endif
     return;
   }
   if (!strcmp(input, "mqtt") || !strncmp(input, "mqtt ", 5) || !strcmp(input, "help mqtt")) {

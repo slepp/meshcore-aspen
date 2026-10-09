@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CloudRoomService.h"
+#include "CloudRoomPreferences.h"
 #include <stdio.h>
 #include <string.h>
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
@@ -221,6 +222,7 @@ bool requestCloudRoomAdvertisement(unsigned alias) {
   service.advertisements.fetch_or(1u<<alias,std::memory_order_relaxed);return true;
 }
 void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
+  if (cloudRoomPreferencesCommand(command, reply, capacity)) return;
   if (!*command || !strcmp(command, "status")) {
     snprintf(reply, capacity, "Cloud room aliases=%u sockets=%u wss-mask=%u advert-pending=%u",
              service.aliases, CLOUD_ROOM_SOCKETS,
@@ -244,14 +246,14 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
     for (unsigned alias = 0; alias < service.aliases; ++alias)
       if (!strcmp(command + 10, service.driver->peer(alias).alias)) {
         const bool queued = requestCloudRoomAdvertisement(alias);
-        snprintf(reply, capacity, queued ? "Queued room advert %s; RF delivery unconfirmed" :
+        snprintf(reply, capacity, queued ? "Queued room advert %s" :
                  "Error: room advert %s unavailable", command + 10);
         return;
       }
-    snprintf(reply, capacity, "Error: cloud room alias is not active; inspect private configuration and cloudroom status");
+    snprintf(reply, capacity, "Error: cloud room alias is not active; inspect cloudroom config status and cloudroom status");
     return;
   }
-  snprintf(reply, capacity, "Error: cloudroom status|error|advertise ALIAS");
+  snprintf(reply, capacity, "Error: cloudroom status|error|advertise ALIAS|config|enable on|off");
 }
 } // namespace onchip
 #else

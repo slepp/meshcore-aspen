@@ -11,12 +11,18 @@ offline checks below. Keep public application files separate from your private
 per-node setup image. See the
 [release guide](../../release/README.md) for source builds.
 
-The application supports repeater, room, companion, Management and Lua/Wasm
-roles on one shared modem. The companion service is TCP port 5000 when WiFi is
+The current source's `public_aspen` image includes repeater, room, companion,
+observer, Management, Lua/Wasm, HTTPS and the native shared-room frontend.
+Select roles, programs and network services through saved configuration.
+The companion service is TCP port 5000 when WiFi is
 enabled; KISS is port 8001. Management uses your initial password and optional
 trusted companion public key. Each on-device identity is generated locally
 after valid setup; no identity seed is in the public application or setup
 profile.
+One external KISS connection on port 8001 supports multiple logical MKISS
+ports; two companion clients and two live dashboard viewers remain available.
+The [shared-room frontend guide](../../services/shared-room/NATIVE.md) covers
+private aliases, CA and token configuration. It stays disabled until configured.
 
 **SPIFFS provisioning is for a blank board only. Replacing SPIFFS on an existing
 node destroys its role preferences, ACLs, contacts, channels, source programs,
@@ -132,6 +138,11 @@ python3 firmware/esp32/public_setup.py image \
 
 For a local source build, set `APP` to the absolute
 `.tmp/public-aspen-setup-validation/.pio/build/public_aspen` directory instead.
+To include configured room frontends on first boot, append
+`--cloudroom-profile "$HOME/.config/aspen-private/cloudroom.json"` using the
+[private JSON format](../../services/shared-room/NATIVE.md#configure-the-generic-image).
+Keep that file mode 0600 in the same owner-only directory. The application
+image remains generic.
 
 `image` accesses no hardware. The output is a private mode-0600 regular file;
 the tool refuses symlinks, public directories and overwriting an existing file.
@@ -258,6 +269,8 @@ setup status
 mqtt commit
 bot https retain home
 bot https commit
+cloudroom config retain
+cloudroom config status
 ```
 
 `setup migrate` adds and reads back only `/public-setup.bin`, using committed
@@ -267,6 +280,9 @@ existing files/NVS remain; a different existing setup record is refused.
 HTTPS endpoint is configured, the last two commands retain and save its
 address, CA, token and allowed operations without printing them. Omit them
 when unused; inspect `bot https status` if already staged or saved.
+For a private build running the native shared-room frontend, the last two
+commands retain its endpoint, alias metadata and frontend credentials for the
+generic application. Omit them when that frontend is unused.
 
 Restart the private application and check setup, MQTT, HTTPS and role keys.
 Then use the same signed [application-only update](ESP_FIELD_UPDATES.md)
@@ -289,6 +305,7 @@ env -i HOME="$HOME" USER="$USER" PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:
   CONFIG="$PWD/firmware/esp32/platformio.public.ini.example" ENV=public_aspen
 make -C firmware/esp32 public-provisioning-test
 make -C firmware/esp32 public-update-test
+make -C firmware/esp32 cloudroom-preferences-test
 ```
 
 The fixed setup record `/public-setup.bin` is 336 bytes: `MCP` plus version 1,

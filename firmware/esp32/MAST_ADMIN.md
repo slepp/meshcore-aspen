@@ -17,8 +17,15 @@ SLOT FILE` installs into slot `0` or `1`. A new slot stays disabled until
 `packet SLOT enable on`; its source, enable state and execution budget are
 saved independently of bot command sources and role identities.
 
-The opt-in `Xiao_S3_WIO_onchip_beta` image adds native MeshCore login/CLI and
-an authenticated `/admin` web editor to the existing **management** identity.
+For a native shared-room frontend, use the
+[configuration and command table](../../services/shared-room/NATIVE.md#configure-the-generic-image).
+`cloudroom config status` shows the saved selection; `cloudroom status` shows
+running WSS connections. Credential uploads require encrypted Management RF;
+`cloudroom config retain` can save an existing private provider over RF or Web
+before moving to the generic image. Restart applies saved frontend changes.
+
+The generic `public_aspen` image provides native MeshCore login/CLI and
+an authenticated `/admin` web editor on the **management** identity.
 It runs on the XIAO ESP32-S3R8/Wio SX1262 shared-radio mast. Repeater, room,
 companion and command-bot roles can all be disabled without disabling mast
 administration. Ordinary KISS connections remain available.

@@ -172,7 +172,24 @@ static void runtime_config_admin() {
   assert(request("/admin/observer-token", "broker.example", token).status == "503 Service Unavailable");
   for (const char *text : {"mqtt ca", "mqtt ca clear", "mqtt username 6162", "mqtt password 736563726574"})
     assert(request("/admin/command", text, token).status == "403 Forbidden");
+  for (const char *text : {"cloudroom config begin 0000000000000000000000000000000000000000000000000000000000000000",
+       "cloudroom config chunk 0000000000000000 0 736563726574", "cloudroom config commit 0000000000000000"}) {
+    const auto denied = request("/admin/command", text, token);
+    assert(denied.status == "403 Forbidden" && denied.response.find("encrypted Management RF") != std::string::npos);
+    assert(denied.response.find("736563726574") == std::string::npos);
+  }
   MastAdmin::Reply reply;
+  f.management.admin().execute("packet api", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "packet program controller unavailable"));
+  f.management.admin().execute("help packet", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "packet program controller unavailable"));
+  f.management.admin().execute("packet api", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "direct authenticated"));
+  f.management.admin().execute("packet api", reply);
+  assert(strstr(reply.text, "direct authenticated"));
+  f.management.admin().execute("cloudroom config chunk 0000000000000000 0 736563726574",
+                               reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "encrypted Management RF"));
   f.management.admin().execute("mqtt uri mqtt://unauthorized", reply);
   assert(strstr(reply.text, "authenticated administration"));
   f.management.admin().execute("mqtt commit", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
@@ -195,6 +212,9 @@ static void runtime_config_admin() {
   assert(rf("0123456789abcdef|mqtt uri") == "0123456789abcdef|mqtt://configured-broker");
   assert(rf("0123456789abcdef|mqtt status").find("secret") == std::string::npos);
   assert(rf("0123456789abcdef|setup status").find("public setup missing") != std::string::npos);
+  assert(rf("0123456789abcdef|packet api").find("packet program controller unavailable") != std::string::npos);
+  assert(rf("0123456789abcdef|cloudroom config begin 0000000000000000000000000000000000000000000000000000000000000000")
+         .find("disabled in this image") != std::string::npos);
   puts("PASS runtime config owner RF/Web boundaries, correlated replies, private credentials and observer token auth/error handling");
 }
 #endif
@@ -619,6 +639,11 @@ static void management_cli_core() {
       assert(strstr(reply.text, "disabled in this image"));
       f.management.admin().execute("cloudroom error", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
       assert(strstr(reply.text, "disabled in this image"));
+      f.management.admin().execute("packet api", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "packet program controller unavailable"));
+      assert(f.action("packet api").find("direct authenticated") != std::string::npos);
+      f.management.admin().execute("packet api", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "direct authenticated"));
       assert(f.action("cloudroom status").find("direct authenticated") != std::string::npos);
       assert(f.action("cloudroom error").find("direct authenticated") != std::string::npos);
       f.management.admin().execute("cloudroom advertise TestA", reply, 1, MastAdmin::Transport::AuthenticatedWeb);

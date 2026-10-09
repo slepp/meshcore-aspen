@@ -187,8 +187,13 @@ def run(command):
         raise ValueError(f"USB/image tool failed (exit {result.returncode}); no credentials printed")
 
 
-def build_image(profile, output, partitions, mkspiffs):
+def build_image(profile, output, partitions, mkspiffs, cloudroom_profile=None):
     record = encode_profile(read_private(profile, MAX_PROFILE))
+    cloudroom = None
+    if cloudroom_profile:
+        sys.path.insert(0, str(ROOT))
+        from tools.hardware.cloudroom_config import LIMIT, encode
+        cloudroom = encode(read_private(cloudroom_profile, LIMIT))
     entries = storage_partitions(Path(partitions).read_bytes())
     output = private_parent(output)
     with tempfile.TemporaryDirectory(prefix="aspen-setup-", dir=output.parent) as temporary:
@@ -197,6 +202,8 @@ def build_image(profile, output, partitions, mkspiffs):
         data.mkdir(mode=0o700)
         create_private(data / "onchip-layout", b"meshcore-onchip-fs-v1\n")
         create_private(data / "public-setup.bin", record)
+        if cloudroom is not None:
+            create_private(data / "cloudroom-0.bin", cloudroom)
         image = directory / "spiffs.bin"
         run([str(mkspiffs), "-c", str(data), "-b", "4096", "-p", "256",
              "-s", str(entries["spiffs"][3]), str(image)])
@@ -269,6 +276,7 @@ def main():
     image.add_argument("--output", required=True)
     image.add_argument("--partitions", required=True)
     image.add_argument("--mkspiffs", required=True)
+    image.add_argument("--cloudroom-profile", help="optional private CloudRoom JSON profile for first boot")
     install = commands.add_parser("install-config", help="USB ONLY: replace SPIFFS, backing up and checking storage first")
     install.add_argument("--image", required=True)
     install.add_argument("--partitions", required=True)
@@ -279,7 +287,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "image":
-            build_image(args.profile, args.output, args.partitions, args.mkspiffs)
+            build_image(args.profile, args.output, args.partitions, args.mkspiffs, args.cloudroom_profile)
         else:
             install_config(args.image, args.partitions, args.backup, args.esptool, args.port,
                            args.confirm_replace_spiffs_with_backup)

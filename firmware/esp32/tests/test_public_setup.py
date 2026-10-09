@@ -145,6 +145,29 @@ class PublicSetup(unittest.TestCase):
             self.assertEqual((extracted / "public-setup.bin").read_bytes(),
                              setup.encode_profile(json.dumps(profile())))
 
+    def test_real_offline_cloudroom_image(self):
+        from tools.hardware.cloudroom_config import encode
+        from tools.hardware.tests.test_cloudroom_config import fixture
+        executable = Path.home() / ".platformio/packages/tool-mkspiffs/mkspiffs_espressif32_arduino"
+        if not executable.is_file():
+            self.skipTest("PlatformIO mkspiffs is not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            table = root / "partitions.bin"
+            table.write_bytes(partitions())
+            source = setup.create_private(root / "profile.json", json.dumps(profile()).encode())
+            frontend = setup.create_private(root / "cloudroom.json", json.dumps(fixture()).encode())
+            output = root / "private-spiffs.bin"
+            setup.build_image(source, output, table, executable, frontend)
+            extracted = root / "extracted"
+            extracted.mkdir(mode=0o700)
+            setup.run([str(executable), "-u", str(extracted), "-b", "4096", "-p", "256",
+                       "-s", str(0x180000), str(output)])
+            self.assertEqual({p.name for p in extracted.iterdir()},
+                             {"onchip-layout", "public-setup.bin", "cloudroom-0.bin"})
+            self.assertEqual((extracted / "cloudroom-0.bin").read_bytes(), encode(frontend.read_bytes()))
+            self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+
     def test_usb_blank_existing_and_backup_confirmation(self):
         class Loader:
             CHIP_NAME = "ESP32-S3"

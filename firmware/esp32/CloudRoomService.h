@@ -26,15 +26,15 @@ public:
   // Return a single next operation; socket loss must not replay it automatically.
   virtual size_t operation(unsigned alias, char *, size_t capacity) = 0;
 };
-// The built-in opaque driver requires a private configuration provider.
+// The built-in opaque driver uses saved settings or a custom configuration provider.
 CloudRoomDriver *createCloudRoomDriver(cloudroom::RadioBridge &);
 struct CloudRoomConfiguration {
   unsigned count = 0;
   CloudRoomPeer peers[cloudroom::AliasLimit];
   cloudroom::OpaqueAlias aliases[cloudroom::AliasLimit];
 };
-// Operator's private build supplies public alias metadata and frontend tokens.
-// The default nullptr keeps both radio identities and connections disabled.
+// The generic image loads a private saved profile at boot. Custom applications
+// may supply their own immutable provider. nullptr disables the service.
 const CloudRoomConfiguration *cloudRoomConfiguration();
 bool beginCloudRoom(WifiKissMultiplexer &,NativeNetworkHost &);
 void loopCloudRoom(); // Dispatch task only, like LocalRadio.

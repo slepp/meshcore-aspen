@@ -242,7 +242,8 @@ dedup records. Choose a removal policy before adding irreversible pruning.
 ## Frontends and checks
 
 [Native Aspen](NATIVE.md) has a direct Wi-Fi/WSS transport and opaque driver.
-Its private configuration provider defaults to disabled. The portable driver
+The generic image saves private alias/endpoint settings through authenticated
+Management and loads enabled frontends after restart. The portable driver
 uses bounded queues, validates ready metadata, and retains final receipts
 before draining best-effort RF reception. Explicit operator requests produce
 advertisements; connecting alone does not.

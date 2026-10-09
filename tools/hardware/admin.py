@@ -620,6 +620,44 @@ def download_packet(client, slot):
     return bytes(source)
 
 
+def configure_cloudroom(client, content, progress=print):
+    from tools.hardware.cloudroom_config import encode
+    connection = client.client if isinstance(client, RuntimeClient) else client
+    if isinstance(connection, (WebClient, UnixClient)):
+        raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
+    record = encode(content)
+    if checked(client, "cloudroom config api") != "Cloud room config ABI=1 bytes=9296 chunk=48 aliases=2 apply=restart":
+        raise ValueError("Endpoint does not support saved CloudRoom configuration ABI v1")
+    digest = record[-32:].hex()
+    identifier = digest[:16]
+    response = checked(client, f"cloudroom config begin {digest}")
+    match = re.fullmatch(r"Cloud room upload ready received=(\d+)", response)
+    received = int(match[1]) if match else -1
+    if not 0 <= received <= len(record) or (received != len(record) and received % CHUNK):
+        raise ValueError("Invalid cloud room upload resume offset")
+    for offset in range(received, len(record), CHUNK):
+        data = record[offset:offset + CHUNK]
+        command = f"cloudroom config chunk {identifier} {offset // CHUNK} {data.hex()}"
+        for attempt in range(3):
+            try:
+                response = checked(client, command)
+                break
+            except (TimeoutError, socket.timeout):
+                if attempt == 2:
+                    raise
+        if response != f"Cloud room chunk saved received={offset + len(data)}":
+            raise ValueError("Cloud room chunk was not acknowledged at the expected offset")
+    try:
+        response = checked(client, f"cloudroom config commit {identifier}")
+    except (TimeoutError, socket.timeout):
+        response = "Cloud room commit reply timed out; reading saved hash without repeating commit"
+    progress(response)
+    if checked(client, "cloudroom config hash") != digest:
+        raise ValueError("Saved cloud room profile differs; inspect config status before retrying")
+    progress("Cloud room profile saved; restart the node to apply")
+    return digest
+
+
 def check_device_compatibility(client, package):
     client = runtime_client(client, package.runtime)
     api = checked(client, "source api")
@@ -930,6 +968,12 @@ def main():
         elif operation == "budget":
             leaf.add_argument("values", type=int, nargs="*", metavar="STAGES_FUEL_US_CAPS",
                               help="omit to read; supply four decimal values to save and apply")
+    room_group = sub.add_parser("cloudroom", help="save frontend settings over encrypted Management RF; restart applies configuration")
+    room_sub = room_group.add_subparsers(dest="cloudroom_action", required=True)
+    room_sub.add_parser("configure").add_argument("profile", type=Path)
+    for operation in ("status", "hash"):
+        room_sub.add_parser(operation)
+    room_sub.add_parser("enable").add_argument("state", choices=("on", "off"))
     data_group = sub.add_parser("data", help="export or restore scoped KV, timers or personal reminders")
     data_sub = data_group.add_subparsers(dest="data_action", required=True)
     for name, action, help_text in (("export", "data-export", "read scoped records to a new private file"),
@@ -1004,6 +1048,8 @@ def main():
         return
     client = None
     try:
+        if args.action == "cloudroom" and args.cloudroom_action == "configure" and (args.web or args.unix_socket):
+            raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
         if args.action == "role-password":
             if args.web or args.unix_socket:
                 raise ValueError("Role administrator password changes require authenticated encrypted Management RF; web/Unix denied")
@@ -1068,6 +1114,14 @@ def main():
                             raise ValueError("Packet budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..7")
                         text += " " + " ".join(map(str, args.values))
                 print(checked(client, text))
+        elif args.action == "cloudroom":
+            if args.cloudroom_action == "configure":
+                from tools.hardware.cloudroom_config import LIMIT
+                configure_cloudroom(client, private_file(args.profile, LIMIT))
+            elif args.cloudroom_action == "enable":
+                print(checked(client, f"cloudroom enable {args.state}"))
+            else:
+                print(checked(client, f"cloudroom config {args.cloudroom_action}"))
         elif args.action in ("source-install", "source-remove", "source-list", "source-export"):
             from tools.hardware import lua_sources
             if args.runtime != "lua":
