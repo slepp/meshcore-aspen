@@ -125,7 +125,9 @@ The native POST offers the batch as one TLS record, rather than fragmenting it
 into 512-byte records. This reduces queued TCP/WiFi allocations while the
 receiver's ACKs are pending. Partial writes and temporarily blocked writes still
 check cancellation and the request deadline; the internal radio reserve remains
-32 KiB.
+32 KiB. The companion's message history resides in PSRAM, leaving internal RAM
+for the radio and transient WiFi/TLS buffers; its task stack and lock stay
+internal. See [memory budgets](resource-budget.md#runtime-diagnostics).
 Remote numeric stats and supported battery voltage use the original RF sample
 timestamp, including when the latest poll fails. Availability, freshness,
 waiting and error fields describe the current monitor state. Peer rotation

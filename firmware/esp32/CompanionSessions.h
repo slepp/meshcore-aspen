@@ -90,6 +90,9 @@ private:
     uint16_t size = 0;
     uint8_t data[MAX_FRAME_SIZE]{};
   };
+  struct Journal {
+    Frame frames[JournalDepth];
+  };
   struct Owner {
     int slot = -1;
     uint32_t generation = 0;
@@ -158,7 +161,7 @@ private:
   bool enabled = false, stopping = false, running = false, networkAvailable = true;
   Session clients[MaxClients];
   Socket sockets[MaxClients];
-  Frame journal[JournalDepth];
+  Journal* journal = nullptr;
   uint64_t sequence = 0;
   unsigned nextClient = 0;
   Operation operation = Operation::None;

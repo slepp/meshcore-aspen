@@ -26,6 +26,17 @@ using Clock = std::chrono::steady_clock;
 static std::atomic<unsigned> sendChunk{0};
 static std::atomic<unsigned> blockedPort{0};
 static std::atomic<unsigned> shortWrites{0};
+static bool failJournalAllocation;
+static unsigned journalAllocations;
+static size_t journalBytes;
+
+extern "C" void* __real__ZnwmRKSt9nothrow_t(size_t, const std::nothrow_t&) noexcept;
+extern "C" void* __wrap__ZnwmRKSt9nothrow_t(size_t size, const std::nothrow_t& tag) noexcept {
+  ++journalAllocations;
+  journalBytes = size;
+  if (failJournalAllocation) return nullptr;
+  return __real__ZnwmRKSt9nothrow_t(size, tag);
+}
 
 extern "C" ssize_t __real_send(int, const void*, size_t, int);
 extern "C" ssize_t __wrap_send(int fd, const void* data, size_t size, int flags) {
@@ -746,8 +757,44 @@ void nativeRestartClearsIncompleteInternalExchange() {
   }
 }
 
+void journalAllocationAndLifetime() {
+  static unsigned errors = 0;
+  CompanionSessions sessions(0, 10000, [](const char* message) {
+    if (!strcmp(message, "Companion message journal allocation failed; listener not started"))
+      ++errors;
+  });
+  sessions.resetNativeSession();
+  const unsigned before = journalAllocations;
+  failJournalAllocation = true;
+  REQUIRE(!sessions.begin());
+  REQUIRE(journalAllocations == before + 1 && errors == 1);
+  REQUIRE(journalBytes == (MAX_FRAME_SIZE + sizeof(uint16_t)) * CompanionSessions::JournalDepth);
+  REQUIRE(!sessions.port() && !sessions.isEnabled());
+  failJournalAllocation = false;
+  REQUIRE(sessions.begin());
+  REQUIRE(journalAllocations == before + 2);
+  {
+    NativeFrames native(sessions);
+    native.receive(message('J'));
+    until([&] { return sessions.stats().collectedMessages == 1; });
+  }
+  sessions.end();
+  failJournalAllocation = true;
+  REQUIRE(sessions.begin());
+  REQUIRE(journalAllocations == before + 2);
+  failJournalAllocation = false;
+  {
+    NativeFrames native(sessions);
+    Client restored(sessions.port());
+    restored.handshake();
+    REQUIRE(restored.sync() == message('J'));
+    REQUIRE(restored.sync() == Bytes{10});
+  }
+}
+
 int main() {
   try {
+    journalAllocationAndLifetime();
     independentReplay();
     contactsOwnershipAndReuse();
     partialIOAndMalformedFrames();
@@ -760,7 +807,7 @@ int main() {
     nativeRestartRetiresClientsAndState();
     nativeRestartClearsIncompleteInternalExchange();
     networkLossPreservesNativeJournal();
-    std::puts("CompanionSessions: twelve TCP/session behaviour scenarios passed");
+    std::puts("CompanionSessions: thirteen TCP/session behaviour scenarios passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

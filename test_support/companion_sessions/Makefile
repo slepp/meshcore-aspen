@@ -12,4 +12,4 @@ test: $(BUILD)/behaviour
 
 $(BUILD)/behaviour: $(SOURCES) $(ROOT)/firmware/esp32/CompanionSessions.h $(ROOT)/test_support/companion_sessions/Arduino.h $(UPSTREAM)/src/helpers/BaseSerialInterface.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SOURCES) -Wl,--wrap=send -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SOURCES) -Wl,--wrap=send,--wrap=_ZnwmRKSt9nothrow_t -o $@

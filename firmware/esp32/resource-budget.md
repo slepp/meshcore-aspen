@@ -61,6 +61,15 @@ consume no BSD socket slots and create no additional task. See
 [remote logs and memory checks](MAST_ADMIN.md#remote-logs-and-memory-checks)
 for commands and counter meanings.
 
+The companion's 64-entry message journal uses PSRAM rather than internal RAM
+(11,392 bytes with the current 176-byte frame limit). It is allocated before
+the companion listener starts, with no internal-memory fallback. Allocation
+failure stops companion startup and reports the affected journal. Stopping and
+starting the listener retains its history; a native-session reset clears it.
+The companion's lock, task stack and socket/session state remain in internal
+RAM. This leaves more internal memory for WiFi/TLS while preserving the
+32 KiB radio reserve.
+
 ## Recorded ESP32 comparison
 
 Every source-size row below comes from the same historical source and

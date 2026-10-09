@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <new>
 #include <string.h>
 #include <unistd.h>
 
@@ -13,6 +14,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #else
+#include "RoleStorage.h"
 #include <lwip/sockets.h>
 #include <lwip/tcp.h>
 #endif
@@ -62,7 +64,14 @@ CompanionSessions::CompanionSessions(uint16_t port, uint32_t ioTimeoutMs,
                                      DiagnosticHandler handler)
     : requestedPort(port), timeoutMs(ioTimeoutMs), diagnostic(handler) {}
 
-CompanionSessions::~CompanionSessions() { end(); }
+CompanionSessions::~CompanionSessions() {
+  end();
+#if defined(COMPANION_SESSIONS_HOST)
+  delete journal;
+#else
+  releaseRoleStorage(journal);
+#endif
+}
 
 void CompanionSessions::lock() const {
 #if defined(COMPANION_SESSIONS_HOST)
@@ -121,7 +130,8 @@ void CompanionSessions::resetNativeSession() {
     client.head = client.count = client.version = 0;
     client.cursor = 0;
   }
-  for (auto& frame : journal) frame = Frame{};
+  if (journal)
+    for (auto& frame : journal->frames) frame = Frame{};
   sequence = 0;
   nextClient = 0;
   operation = Operation::None;
@@ -201,7 +211,7 @@ void CompanionSessions::publish(const uint8_t* data, size_t size) {
       if (clients[i].active && clients[i].cursorStarted && clients[i].cursor <= evicted)
         drop(i, JournalFull);
   }
-  auto& frame = journal[sequence % JournalDepth];
+  auto& frame = journal->frames[sequence % JournalDepth];
   frame.size = size;
   memcpy(frame.data, data, size);
   ++sequence;
@@ -221,7 +231,7 @@ void CompanionSessions::sync(unsigned slot) {
     client.notified = false;
     return;
   }
-  const auto& frame = journal[client.cursor % JournalDepth];
+  const auto& frame = journal->frames[client.cursor % JournalDepth];
   Frame reply = frame;
   if (client.version < 3 && (reply.data[0] == 16 || reply.data[0] == 17)) {
     if (reply.size < 4) { nativeFailure(); return; }
@@ -400,6 +410,19 @@ bool CompanionSessions::begin() {
     if (running) return true;
   }
   if (!timeoutMs || timeoutMs > 60000) return false;
+  // Allocate after PSRAM initialization; end/begin retains the same history.
+  if (!journal) {
+#if defined(COMPANION_SESSIONS_HOST)
+    journal = new (std::nothrow) Journal;
+#else
+    journal = allocateRoleStorage<Journal>("companion message journal");
+#endif
+    if (!journal) {
+      if (diagnostic)
+        diagnostic("Companion message journal allocation failed; listener not started");
+      return false;
+    }
+  }
   const int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return false;
   int yes = 1;
