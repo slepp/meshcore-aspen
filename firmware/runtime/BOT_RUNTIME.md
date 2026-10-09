@@ -87,7 +87,8 @@ bot access 2 list 0
 `bot access dm|SLOT default MASK` sets a context's default. Replace `default`
 with a command name for an override; use `inherit` instead of a mask to remove
 an override. `list OFFSET` returns up to four overrides; follow `next=` until
-no entries remain. Command/action and thread overrides share 64 slots.
+it equals the offset just requested. The terminal value can be nonzero.
+Command/action and thread overrides share 64 slots.
 
 | Mask bit | Permission |
 | --- | --- |
@@ -733,7 +734,10 @@ that does not match. Incoming ordinary path widths 1/2/3 remain interoperable;
 configuration mode 2 represents **three-byte** hashes.
 
 To join `#test` but answer only addressed commands, choose an unused slot
-(`2` here; read all current memberships first):
+(`2` here; read all current memberships first). Disable the bot with
+`bot off`, restart with `apply`, and verify `bot status` reports
+`applied=0 saved=0` before joining: new hashtag/private memberships initially
+allow mask 63. With the bot stopped:
 
 ```text
 bot membership 2 #test
@@ -750,6 +754,7 @@ bare `!ping`, `!trace`, unknown commands, malformed commands, ordinary text and
 messages targeting another bot produce no response or prefix reminder.
 Aliases and public-key targets work identically. Other memberships keep their
 own policies. Channel keys and aliases do not grant administrator access.
+After verifying the intended masks, save `bot on` and restart to resume it.
 
 Untargeted native read queries (`ping`, `help`, `plugins`, `neighbors`, `about`,
 `version`, `uptime`, `status`, `signal`, `path`, `air`, `test`, `mt`, `calc`,
@@ -791,15 +796,19 @@ no automatic migration, erasure or reminder replay occurs. See
 [runtime role configuration](../esp32/MAST_ADMIN.md#runtime-role-names-and-keys) for
 all-role controls, active-role requirements and key-rotation consequences.
 
-### Optional hashtag command channel
+<a id="optional-hashtag-command-channel"></a>
 
-The same authenticated native mast backend supports `bot channel #example1`,
+### Legacy slot-zero channel controls
+
+For slot zero, the authenticated native mast backend supports `bot channel #example1`,
 `bot channel off`, `bot path 1|2|3`, `bot airtime 360..3600`, and `bot policy`.
 These save a separate checked `mc-onchip/bot-radio` record, applied on reboot.
 The installed 40-byte version-1 hashtag record remains readable; a subsequent
 save writes the 57-byte version-2 record, adding an explicit-key flag and
 16-byte key. Both versions occupy four NVS blob entries; existing
-role/identity/replay journals are unchanged. Default policy has no
+role/identity/replay journals are unchanged. The current multi-channel policy
+retains these legacy fields alongside the other seven memberships.
+Default policy has no
 channel, one-byte flood paths and 360 ms estimated TX per minute. A narrowband
 field profile can explicitly select three-byte paths and 1200 ms/minute
 (2% bot airtime), rather than silently losing full-length replies/adverts.
@@ -813,8 +822,9 @@ secret, and explicitly requires reboot. `bot channel #name` clears the
 explicit PSK and selects hashtag derivation; either channel-off control
 disables reception after reboot. Neither path changes the bot identity.
 The native encrypted group-text format includes the `name: message` prefix.
-Only the one configured channel is listened to; other Public traffic does
-not invoke handlers.
+Slot zero is one of the [eight simultaneous memberships](#channels-and-native-command-policy).
+Only joined channels invoke handlers; a Public membership starts with
+commands denied.
 Built-ins and installed named handlers use the same VM. Replies are native
 group messages to that channel, with a reduced context-specific text bound.
 Channel replies originate with the saved bot path width, even if the caller
@@ -852,11 +862,6 @@ failures and notice suppression. Existing saved radio/mesh policy records
 have no command-cooldown field: upgrading the native runtime takes effect
 without resetting role identities, channels, destinations or airtime settings.
 
-Native and sanitizer coverage includes three-byte paths,
-wrong-channel/bad-ciphertext rejection, persistence/failure, channel/DM
-coroutine interleaving, bare `reply()` completion and denied private authority.
-Physical field acceptance is recorded separately; these are not live-RF claims.
-
 | Command | Result |
 | --- | --- |
 | `!ping` | `Pong` |
@@ -873,7 +878,7 @@ Physical field acceptance is recorded separately; these are not live-RF claims.
 
 ### Read-only diagnostics
 
-The six new diagnostics above use copied native metadata at request dispatch,
+The diagnostics above use copied native metadata at request dispatch,
 not Lua-maintained counters or the last packet seen by the radio. Authenticated
 DMs and the configured, verified command channel use the same admission,
 deduplication, rate and airtime limits as other commands. No owner grant is
@@ -904,7 +909,7 @@ current context; `!help NAME` explains that restriction. Long discovery and
 command details have numbered continuation pages within the same RF limit.
 
 **Migration:** `about`, `version`, `uptime`, `status`, `signal` and `air` are
-newly reserved. Rename/reinstall conflicting custom functions or command
+reserved. Rename/reinstall conflicting custom functions or command
 aliases before upgrading. Eight custom exports, the 4,096-byte editable
 source bound, existing VM budgets and saved state formats are unchanged.
 The authenticated mast command `source api diagnostics` reports these
@@ -2238,6 +2243,8 @@ immutable `{id, state='pending', deadline_utc}` only after commit/readback;
 `list` returns one bounded summary of this caller's IDs, states and UTC
 deadlines, or `No personal reminders`, with explicit truncation when necessary.
 The initial command reply acknowledges **scheduling**, never delivery.
+`!cancel ID` reports that reminder's resulting state, for example `#17 cancelled`.
+An uncertain transmission returns `#17 unknown; TX uncertain; inspect !reminders`.
 
 **Compatibility:** `remind`, `reminders` and `cancel` are now protected bundled
 names, alongside the six diagnostics. Custom sets still have eight exports;

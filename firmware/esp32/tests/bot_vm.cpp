@@ -881,6 +881,16 @@ static void personalReminderApi() {
   done = {}; done.token = request.token; done.ok = true; done.revision = UINT32_MAX;
   done.reminderState = BotReminderState::Unknown;
   assert(vm.complete(done) && vm.poll(result) && result.ok && strstr(result.action.text, "unknown"));
+  for (const auto state : {BotReminderState::Cancelled, BotReminderState::Sent, BotReminderState::Unknown}) {
+    assert(vm.start(3, event("!cancel 7"), error, sizeof(error)) && vm.nextIo(request) &&
+           request.kind == BotIoRequest::ReminderCancel);
+    done = {}; done.token = request.token; done.ok = true; done.revision = 7;
+    done.reminderState = state;
+    const char *expected = state == BotReminderState::Cancelled ? "#7 cancelled" :
+                           state == BotReminderState::Sent ? "#7 sent" :
+                           "#7 unknown; TX uncertain; inspect !reminders";
+    assert(vm.complete(done) && vm.poll(result) && result.ok && !strcmp(result.action.text, expected));
+  }
   for (const char *text : {"!remind 0 tea", "!remind 25h tea", "!remind -2s tea", "!remind 1h2m tea",
                            "!cancel 0", "!cancel 4294967296", "!cancel abc"}) {
     input = event(text); input.reminderAccess = true;

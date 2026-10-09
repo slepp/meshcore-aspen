@@ -353,7 +353,7 @@ end
 function reminders() return reminder.list() end
 function cancel(id)
   local r=reminder.cancel(id)
-  local advice=r.state=="unknown" and "; TX uncertain; do not reschedule blindly" or "; sent means TX, not delivery"
+  local advice=r.state=="unknown" and "; TX uncertain; inspect !reminders" or ""
   return "#"..tostring(r.id).." "..r.state..advice
 end
 local function personal()

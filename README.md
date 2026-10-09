@@ -26,7 +26,7 @@ Birch includes Linux binaries; Pine is an initialized-node application update;
 Willow is a source-build release requiring the pinned Hew compiler.
 First-install procedures differ
 from application-only updates that retain an existing node's identities and
-settings. Flash the selected image to update a node's firmware.
+settings. Follow the selected bundle's installation or update procedure.
 
 ## Choose a setup
 
@@ -88,10 +88,15 @@ extra airtime; choose placement deliberately.
 The ESP32 roles share firmware and runtime code, but the documented combined
 image requires PSRAM. A port to another board, including Heltec V3 or V4, must
 select that board's radio wiring, TCXO and memory layout, then enable roles
-within its resources. These boards do not yet have a qualified project image.
+within its resources. These boards do not yet have a supported project image.
 Willow sources are included in `experiments/hew-roles`. Its event-driven
-runtime is experimental; qualify your selected services before replacing an
+runtime is experimental; check your selected services before replacing an
 existing installation. Aspen, Birch and Pine retain their own setup guides.
+
+Use the [command guide](COMMANDS.md) for bot, Management and native role
+syntax, parameters and permissions. The [architecture and sequence diagrams](ARCHITECTURE.md)
+show current service ownership, packet hooks, saved configuration and room
+delivery, with the proposed desktop DM path kept separate.
 
 ### Where the software and radio run
 

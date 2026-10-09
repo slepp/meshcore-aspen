@@ -6,6 +6,8 @@ command source; and back up scoped data. Start with
 [Go native Lua setup](../../HOST_GUIDE.md#host-status).
 For client implementation, use the
 [mast-beta-v1 wire contract](MAST_BETA_PROTOCOL_V1.md).
+Use the [command endpoint guide](../../COMMANDS.md) for bot/Management syntax
+and [native role consoles](ROLE_COMMANDS.md) for Repeater and Room settings.
 For the public Aspen bundle, complete [offline USB setup](PUBLIC_SETUP.md)
 before trying RF, browser administration or signed updates. Its private
 setup record supplies the initial credentials and operator verification key.
@@ -1191,11 +1193,11 @@ packets. The shared scheduler/airtime guards still apply. The authenticated owne
 bot control skips the 15-minute advert interval so a rename can be announced
 immediately after startup or a public advert. Bot flood adverts and public/Lua
 bot adverts retain that interval, including after an owner zero-hop advert.
-A busy, inactive or limited role returns an error. Success means **queued**,
-not received over RF. Adverts
-retain native RTC timestamps: peers may ignore older/equal timestamps, especially
+A busy, inactive or limited role returns an error. Success returns
+`Queued zero-hop advert` or `Queued flood advert`. Adverts
+retain native RTC timestamps: radios may ignore older/equal timestamps, especially
 after a restart without fresh clock synchronization. Confirm actual RF reception
-and radio name readback separately. Plain native `advert` also floods the
+when checking a rename from another radio. Plain native `advert` also floods the
 native role's identity, not the bot's identity.
 
 To keep a node quiet while retaining its existing contacts, use

@@ -25,7 +25,7 @@ not call those hooks or the physical radio.
 | `attachNetworkService(service, budget)` | Dispatch task after initialization | Publish a fully initialized service or return a specific registration result; rejected resources remain caller-owned |
 | `NativeNetworkService::poll(work)` | HTTPS task, after pending HTTP work | Consume at most the supplied work units; no direct shared-radio calls |
 | `NativeNetworkService::close()` | HTTPS task at shutdown, reverse registration order | Invalidate connections and prevent new admission; called once per accepted registration; no automatic replay |
-| `beginCloudRoom(mux, host)` | Dispatch task at startup | Allocate queues/radio, load the private provider and register network hooks |
+| `beginCloudRoom(mux, host)` | Dispatch task at startup | Allocate queues/radio, load saved configuration or the build provider and register network hooks |
 | `loopCloudRoom()` | Dispatch task each iteration | Receive radio packets, consume final TX results and admit bounded queued operations |
 
 The room frontend's sockets, opaque driver and network callbacks live on the
@@ -42,6 +42,9 @@ The frontend owns no room private keys and retains no replacement history.
 build-provider seams; default configuration starts no identities or sockets.
 `cloudroom status`, `cloudroom error` and explicit `cloudroom advertise ALIAS`
 retain their existing command names.
+The generic image loads [saved frontend settings](../../services/shared-room/NATIVE.md#configure-the-generic-image)
+through this same boundary; a private build provider remains available to
+custom applications. Configuration changes apply after restart.
 
 ## Registering a module
 

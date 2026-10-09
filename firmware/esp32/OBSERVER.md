@@ -38,6 +38,8 @@ saved fields; append a value to stage a replacement. Use `-` for an empty URI
 or audience. An empty URI disables the connection. `mqtt discard` drops staged
 changes. A commit takes effect after reboot and never replaces the observer
 identity. The running connection continues using its startup settings until then.
+`mqtt filter` is a decimal 16-bit payload-type mask: bit `N` permits native
+payload type `N`. `65535` includes all types; `0` excludes all packets.
 
 Stage `mqtt username clear|HEX`, `mqtt password clear|HEX` and
 `mqtt ca clear|HEX` through **encrypted Management RF**, not the browser command
