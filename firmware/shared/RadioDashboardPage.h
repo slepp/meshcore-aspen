@@ -14,6 +14,8 @@ static const char RADIO_DASHBOARD_PAGE[] = R"HTML(<!doctype html>
   --bg: #0b1220; --panel: #131e30; --panel-alt: #19263b; --border: #2a3b53;
   --text: #edf4ff; --muted: #a6b7ce; --tx: #5ee0bd; --rx: #aeb3ff;
   --warn: #ffd18a; --bad: #ff9b9b; --focus: #88c6ff;
+  --field-header: #ffd18a; --field-route: #c5a7ff; --field-src: #88c6ff;
+  --field-dst: #ffb38a; --field-mac: #f5a6d6;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
@@ -62,8 +64,23 @@ th, td { padding: 11px 10px; border-bottom: 1px solid var(--border); }
 th:first-child, td:first-child { padding-left: 0; }
 tr:last-child td { border-bottom: 0; }
 code { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
-#events td { vertical-align: top; padding-top: 8px; padding-bottom: 8px; }
-.packet-detail { white-space: pre-line; min-width: 22em; max-width: 42em; line-height: 1.35; }
+#events td { vertical-align: top; padding: 6px 8px; font-variant-numeric: tabular-nums; }
+#events td:first-child { padding-left: 0; }
+.packet-detail { white-space: pre-line; min-width: 32em; max-width: 44em; font-size: 12px; line-height: 1.3; }
+.packet-bytes { display: block; white-space: normal; min-width: 20em; max-width: 30em; line-height: 1.5; }
+.packet-bytes span { display: inline-block; margin-right: .4em; }
+.packet-bytes span:last-child { margin-right: 0; }
+.field-header { color: var(--field-header); }
+.field-route, .rf-rx { color: var(--field-route); }
+.field-src { color: var(--field-src); }
+.field-dst { color: var(--field-dst); }
+.field-mac { color: var(--field-mac); }
+.field-payload { color: var(--muted); }
+.rf-result { white-space: nowrap; font-weight: 600; font-size: 16px; line-height: 1.1; }
+.rf-icon { width: 13px; height: 13px; margin-left: 3px; vertical-align: -1px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.rf-state { font-size: 12px; margin-left: 3px; }
+.packet-source { display: block; font-size: 11px; color: var(--muted); }
+.packet-legend { display: flex; gap: 12px; flex-wrap: wrap; }
 .role-key { white-space: normal; overflow-wrap: anywhere; max-width: 38em; display: block; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
 .wide { margin-bottom: 16px; }
@@ -73,6 +90,7 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
 @media (prefers-color-scheme: light) {
   :root { --bg: #f2f5fa; --panel: #fff; --panel-alt: #edf2f9; --border: #d3ddeb; --text: #18283e;
     --muted: #52657e; --tx: #007b62; --rx: #6350b5; --warn: #926000; --bad: #b33232; --focus: #176eb5; }
+  :root { --field-header: #926000; --field-route: #6841a5; --field-src: #176eb5; --field-dst: #a34215; --field-mac: #9a2973; }
 }
 </style>
 </head>
@@ -156,11 +174,14 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <label class="muted">Show <select id="filter"><option value="all">All events</option><option value="rx">RX only</option><option value="tx">TX only</option></select></label>
     </div>
     <div class="scroll" tabindex="0" aria-label="Recent packet events">
-      <table><thead><tr><th>Age</th><th>Result</th><th>Size / source</th><th>Queue wait</th><th>Airtime</th><th>RSSI / SNR</th><th>Packet / route</th><th>Packet bytes (hex)</th></tr></thead><tbody id="events"></tbody></table>
+      <table><thead><tr><th>Age</th><th>RF</th><th>Bytes / source</th><th>Queue</th><th>Air</th><th title="RSSI (dBm) / SNR (dB)">RSSI / SNR</th><th>Packet / route</th><th>Hex</th></tr></thead><tbody id="events"></tbody></table>
     </div>
     <p id="events-empty" class="empty">No matching events yet.</p>
     <details class="chart-note"><summary>Decode key</summary>
       <p id="contact-detail" class="muted">Companion contacts unavailable.</p>
+      <p class="packet-legend"><span class="field-header">Header / transport</span><span class="field-route">Path / route</span><span class="field-src">Source / key</span><span class="field-dst">Destination / channel</span><span class="field-mac">MAC</span><span class="field-payload">Payload</span></p>
+      <p class="muted">↑ TX · ↓ RX · × failed/rejected · ? unconfirmed · … queued. The radio-wave icon marks RF reception or transmission activity; it is not an ACK.</p>
+      <p class="muted">Air: ~ estimated RX time. RSSI / SNR: dBm / dB. Hover an outcome, source or byte group for details.</p>
       <p class="muted">Names match public-key prefixes, not authenticated senders. ? marks a candidate from an incomplete contact list; [N matches] marks a collision. Path = traversed hops; Route = remaining hops. Hex shows up to 16 bytes; ... marks a truncated preview.</p>
     </details>
   </section>
@@ -229,7 +250,7 @@ function prefixLabel(prefix, identities) {
       (identities.incomplete && prefix.length < 64 ? '?' : '') + ')';
   return prefix;
 }
-function decodePacket(event, identities) {
+function decodePacket(event, identities, fields = []) {
   const hex = event.preview_hex;
   const length = event.length;
   if (typeof hex !== 'string' || hex.length > 32 || !/^(?:[0-9a-f]{2})*$/i.test(hex) ||
@@ -237,10 +258,15 @@ function decodePacket(event, identities) {
     return 'Malformed packet preview';
   if (!hex.length) return length ? 'Packet preview unavailable' : 'No packet bytes';
   const raw = (hex.match(/../g) || []).map(byte => parseInt(byte, 16));
+  const mark = (start, count, kind, label) => {
+    const end = Math.min(start + count, raw.length);
+    if (end > start) fields.push({start, end, kind, label});
+  };
   const asHex = (start, count) => hex.slice(start * 2, (start + count) * 2).toLowerCase();
   const route = raw[0] & 3, type = raw[0] >> 2 & 15, version = raw[0] >> 6;
   const parts = [[packetTypes[type] || (type === 15 ? 'Custom' : 'Unknown type ' + type), packetRoutes[route], 'v' + version].join(' / ')];
   const finish = message => [...parts, message].filter(Boolean).join('\n');
+  mark(0, 1, 'header', parts[0]);
   if (version !== 0) return finish('Unsupported payload version');
   const available = end => end <= raw.length;
   const missing = field => finish((raw.length < length ? 'Preview missing ' : 'Malformed packet: missing ') + field);
@@ -250,13 +276,19 @@ function decodePacket(event, identities) {
   if (offset === 5) {
     const code = at => (raw[at] | raw[at + 1] << 8).toString(16).padStart(4, '0');
     parts[0] += ' / transport 0x' + code(1) + ', 0x' + code(3);
+    mark(1, 2, 'header', 'Transport code 0x' + code(1));
+    mark(3, 2, 'header', 'Transport code 0x' + code(3));
   }
   const packed = raw[offset++], width = (packed >> 6) + 1, count = packed & 63;
   const pathBytes = width * count, payloadAt = offset + pathBytes;
   if (width === 4 || pathBytes > 64) return finish('Malformed packet: invalid path width/count');
   if (payloadAt >= length || length - payloadAt > 184) return finish('Malformed packet: invalid path/payload length');
+  mark(offset - 1, 1, 'route', 'Path header: ' + count + ' × ' + width + ' B');
   const trace = type === 9 && (route === 2 || route === 3);
   const hops = [];
+  if (trace) mark(offset, pathBytes, 'route', 'Trace signal bytes');
+  else for (let i = 0; i < count; i++)
+    mark(offset + i * width, width, 'route', 'Hop ' + (i + 1) + ' prefix');
   for (let i = 0; i < count && available(offset + (i + 1) * width); i++)
     hops.push(trace ? asHex(offset + i * width, width) : prefixLabel(asHex(offset + i * width, width), identities));
   parts.push((trace ? 'Signal ' + pathBytes + ' B' :
@@ -267,30 +299,45 @@ function decodePacket(event, identities) {
   const prefix = at => prefixLabel(asHex(at, 1), identities);
   if ([0, 1, 2, 8].includes(type)) {
     if (payloadLength < 4) return finish('Malformed packet: short private envelope');
+    mark(payloadAt, 1, 'dst', 'Destination ' + prefix(payloadAt));
+    mark(payloadAt + 1, 1, 'src', 'Source ' + prefix(payloadAt + 1));
     if (!available(payloadAt + 2)) return missing('source/destination prefixes');
+    mark(payloadAt + 2, 2, 'mac', 'Message authentication code');
+    mark(payloadAt + 4, payloadLength - 4, 'payload', 'Encrypted payload');
     parts[0] += ' / encrypted';
     parts.push('src ' + prefix(payloadAt + 1) + ' → dst ' + prefix(payloadAt));
   } else if (type === 7) {
     if (payloadLength < 35) return finish('Malformed packet: short anonymous envelope');
     if (!available(payloadAt + 1)) return missing('destination prefix');
+    mark(payloadAt, 1, 'dst', 'Destination ' + prefix(payloadAt));
+    mark(payloadAt + 1, 32, 'src', 'Sender public key');
+    mark(payloadAt + 33, 2, 'mac', 'Message authentication code');
+    mark(payloadAt + 35, payloadLength - 35, 'payload', 'Encrypted payload');
     parts[0] += ' / encrypted';
     parts.push('src anonymous → dst ' + prefix(payloadAt));
   } else if (type === 4) {
     if (payloadLength < 100) return finish('Malformed packet: short advert');
     if (!available(payloadAt + 1)) return missing('advert source prefix');
     const visible = Math.min(32, raw.length - payloadAt);
+    mark(payloadAt, visible, 'src', 'Advert public key');
     parts.push('key ' + prefixLabel(asHex(payloadAt, visible), identities));
   } else if (type === 5 || type === 6) {
     if (payloadLength < 3) return finish('Malformed packet: short group envelope');
     if (!available(payloadAt + 1)) return missing('channel hash');
+    mark(payloadAt, 1, 'dst', 'Channel hash');
+    mark(payloadAt + 1, 2, 'mac', 'Message authentication code');
+    mark(payloadAt + 3, payloadLength - 3, 'payload', 'Encrypted payload');
     parts[0] += ' / encrypted';
     parts.push('channel ' + asHex(payloadAt, 1));
   } else if (type === 3) {
     if (payloadLength !== 4) return finish('Malformed packet: ACK needs 4 bytes');
+    mark(payloadAt, 4, 'payload', 'ACK reference');
     if (!available(payloadAt + 4)) return missing('ACK reference');
     parts.push('ref ' + asHex(payloadAt, 4));
   } else if (type === 9 && payloadLength < 9) {
     return finish('Malformed packet: short trace');
+  } else {
+    mark(payloadAt, payloadLength, 'payload', 'Payload');
   }
   return finish();
 }
@@ -304,6 +351,52 @@ function cell(row, value, className = '') {
 const reasons = ['', 'Invalid request', 'Queue full', 'Stale generation', 'Not owner', 'Busy',
   'Expired', 'RF start failed', 'RF timeout', 'Disconnected', 'Not configured'];
 const states = ['Rejected', 'Queued', 'Sent over RF', 'Failed', 'Unconfirmed'];
+function rfResult(row, event, label) {
+  const rx = event.direction === 'rx', tx = event.direction === 'tx';
+  const td = cell(row, rx ? '↓' : tx ? '↑' : event.direction === 'local' ? '↔' : '?',
+    'rf-result ' + (rx ? 'rf-rx' : tx && event.state === 2 ? 'good' :
+      tx && (event.state === 0 || event.state === 3) ? 'bad' : 'warning'));
+  td.title = label;
+  td.setAttribute('aria-label', label);
+  if (rx || (tx && (event.state === 2 || event.rf_ms > 0))) {
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 16 16');
+    icon.setAttribute('class', 'rf-icon');
+    icon.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M2 6a8.5 8.5 0 0 1 12 0M4.5 8.5a5 5 0 0 1 7 0M7 11a1.5 1.5 0 0 1 2 0M8 13v1');
+    icon.appendChild(path);
+    td.appendChild(icon);
+  }
+  if (tx && event.state !== 2) {
+    const state = document.createElement('span');
+    state.className = 'rf-state';
+    state.textContent = event.state === 0 || event.state === 3 ? '×' : event.state === 1 ? '…' : '?';
+    td.appendChild(state);
+  }
+}
+function packetBytes(event, fields) {
+  const code = document.createElement('code');
+  code.className = 'packet-bytes';
+  const hex = typeof event.preview_hex === 'string' ? event.preview_hex.slice(0, 32) : '';
+  const bytes = hex.match(/.{1,2}/g) || [];
+  for (let at = 0; at < bytes.length;) {
+    const field = fields.find(f => f.start <= at && at < f.end);
+    const end = field ? field.end : at + 1;
+    const span = document.createElement('span');
+    span.className = field ? 'field-' + field.kind : '';
+    span.title = field ? field.label : 'Undecoded byte';
+    span.textContent = bytes.slice(at, end).join(' ') + (end < bytes.length ? ' ' : '');
+    code.appendChild(span);
+    at = end;
+  }
+  if (event.preview_truncated || !bytes.length) {
+    const tail = document.createElement('span');
+    tail.textContent = bytes.length ? ' ...' : '(no packet bytes)';
+    code.appendChild(tail);
+  }
+  return code;
+}
 const roleNames = {repeater: 'Repeater', room: 'Room', companion: 'Companion', observer: 'Observer', bot: 'KISS bot', management: 'Management', 'command-bot': 'Command bot'};
 function sourceLabel(data, slot, generation) {
   const role = (data.roles || []).find(r => r.source_slot === slot &&
@@ -387,19 +480,25 @@ function renderEvents(data) {
     const label = e.direction === 'rx' ? 'Received over RF' : e.direction === 'local' ? 'Local reflection' :
       e.direction !== 'tx' ? 'Unknown direction' : (states[e.state] || 'Other') +
       (e.reason ? ' / ' + (reasons[e.reason] || 'reason ' + e.reason) : '');
-    cell(row, label, e.direction === 'rx' ? '' : e.state === 2 ? 'good' : 'warning');
-    cell(row, e.length + ' B' + (e.direction === 'tx' ? ' / ' + sourceLabel(data, e.source_slot, e.source_generation) + ' #' + e.source_generation : ''));
+    rfResult(row, e, label);
+    const size = cell(row, e.length + ' B');
+    if (e.direction === 'tx') {
+      const source = document.createElement('span');
+      source.className = 'packet-source';
+      source.textContent = sourceLabel(data, e.source_slot, e.source_generation);
+      source.title = 'Source ' + e.source_slot + ' / session ' + e.source_generation + ' / job ' + e.job_id;
+      size.appendChild(source);
+    }
     cell(row, e.direction === 'rx' ? '-' : duration(e.queue_ms));
-    cell(row, e.direction === 'rx' ? 'est. ' + duration(e.estimated_ms) : duration(e.rf_ms));
+    const airtime = cell(row, e.direction === 'rx' ? '~' + duration(e.estimated_ms) : duration(e.rf_ms));
+    airtime.title = e.direction === 'rx' ? 'Estimated RX airtime' : 'Observed TX airtime';
     const signal = e.direction === 'rx' && Number.isFinite(e.rssi_dbm) && Number.isFinite(e.snr_db) &&
       !(e.rssi_dbm === 127 && e.snr_db === -32);
-    cell(row, signal ? number(e.rssi_dbm) + ' dBm / ' + number(e.snr_db) + ' dB' : '-');
-    cell(row, decodePacket(e, identities), 'packet-detail');
-    const preview = document.createElement('code');
-    const hex = typeof e.preview_hex === 'string' ? e.preview_hex.slice(0, 32) : '';
-    preview.textContent = (hex.match(/.{1,2}/g) || []).join(' ') +
-      (e.preview_truncated ? ' ...' : '') || '(no packet bytes)';
-    const td = document.createElement('td'); td.appendChild(preview); row.appendChild(td);
+    const rssi = cell(row, signal ? number(e.rssi_dbm) + ' / ' + number(e.snr_db) : '-');
+    rssi.title = 'RSSI (dBm) / SNR (dB)';
+    const fields = [];
+    cell(row, decodePacket(e, identities, fields), 'packet-detail');
+    const td = document.createElement('td'); td.appendChild(packetBytes(e, fields)); row.appendChild(td);
     rows.push(row);
   }
   byId('events').replaceChildren(...rows);

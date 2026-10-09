@@ -8,9 +8,11 @@ const elements = new Map();
 class Element {
   constructor() { this.children = []; this.style = {}; this.clientWidth = 0; this.value = 'all'; this.replacements = 0; }
   addEventListener() {}
-  setAttribute() {}
+  setAttribute(name, value) { this[name] = value; }
   appendChild(child) { this.children.push(child); }
   replaceChildren(...children) { this.children = children; this.replacements++; }
+  set textContent(value) { this.content = String(value); this.children = []; }
+  get textContent() { return (this.content || '') + this.children.map(c => c.textContent).join(''); }
   set innerHTML(value) { assert.fail('Radio data interpreted as HTML: ' + value); }
 }
 const element = id => {
@@ -18,7 +20,7 @@ const element = id => {
   return elements.get(id);
 };
 const context = vm.createContext({
-  document: {getElementById: element, createElement: () => new Element(), addEventListener() {}, hidden: false},
+  document: {getElementById: element, createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}, hidden: false},
   window: {addEventListener() {}}, location: {protocol: 'http:', host: 'radio.local'},
   WebSocket: class { close() {} }, Intl, Date, Math, console, setTimeout() {}, clearTimeout() {},
 });
@@ -116,8 +118,14 @@ snapshot.history.events = [{sequence: 1, at_ms: 0, direction: 'rx', state: 0, le
 call('renderEvents', snapshot);
 const row = element('events').children[0], age = row.children[0];
 assert.equal(age.textContent, '59s');
-assert.equal(row.children[1].textContent, 'Received over RF');
-assert.equal(row.children[5].textContent, '-70 dBm / 4.25 dB');
+assert.equal(row.children[1].textContent, '↓');
+assert.equal(row.children[1].title, 'Received over RF');
+assert.equal(row.children[1]['aria-label'], 'Received over RF');
+assert.match(row.children[1].className, /rf-rx/);
+assert.equal(row.children[1].children[0].class, 'rf-icon');
+assert.equal(row.children[5].textContent, '-70 / 4.25');
+assert.equal(row.children[5].title, 'RSSI (dBm) / SNR (dB)');
+assert.equal(row.children[4].textContent, '~20 ms');
 assert.match(row.children[6].textContent, /<img src=x onerror=alert\(1\)>/);
 const replacements = element('events').replacements;
 snapshot.uptime_ms = 60000;
@@ -137,10 +145,24 @@ for (const direction of ['tx', 'local', 'other']) {
 assert.equal(call('decodePacket', {preview_hex: null, length: 3}, identities), 'Malformed packet preview');
 snapshot.history.events[0].direction = 'tx';
 call('renderEvents', snapshot);
-assert.equal(element('events').children[0].children[1].textContent, 'Unconfirmed');
+assert.equal(element('events').children[0].children[1].textContent, '↑?');
+assert.equal(element('events').children[0].children[1].title, 'Unconfirmed');
 snapshot.history.events[0].state = 2;
 call('renderEvents', snapshot);
-assert.equal(element('events').children[0].children[1].textContent, 'Sent over RF');
+assert.equal(element('events').children[0].children[1].textContent, '↑');
+assert.equal(element('events').children[0].children[1].title, 'Sent over RF');
+assert.match(element('events').children[0].children[1].className, /good/);
+for (const [state, suffix, reason, expected] of [
+  [0, '×', 2, 'Rejected / Queue full'], [1, '…', 0, 'Queued'],
+  [3, '×', 7, 'Failed / RF start failed'], [4, '?', 8, 'Unconfirmed / RF timeout'],
+]) {
+  Object.assign(snapshot.history.events[0], {state, reason, rf_ms: 0});
+  call('renderEvents', snapshot);
+  const result = element('events').children[0].children[1];
+  assert.equal(result.textContent, '↑' + suffix);
+  assert.equal(result['aria-label'], expected);
+  assert.ok(!result.children.some(c => c.class === 'rf-icon'), 'pre-RF outcome has no RF icon');
+}
 element('filter').value = 'rx';
 call('renderEvents', snapshot);
 assert.equal(element('events').children.length, 0);
@@ -200,8 +222,47 @@ assert.ok(compact.length < 130, 'four-hop screenshot packet stays compact');
 assert.doesNotMatch(compact, /incomplete|candidate|prefix match|preview|Repeater/);
 const page = fs.readFileSync(process.argv[2], 'utf8');
 assert.match(page, /\.packet-detail \{ white-space: pre-line;/);
-assert.match(page, /#events td \{ vertical-align: top; padding-top: 8px; padding-bottom: 8px;/);
+assert.match(page, /#events td \{ vertical-align: top; padding: 6px 8px;/);
 assert.equal((page.match(/Names match public-key prefixes/g) || []).length, 1);
+const ranges = (hex, length = hex.length / 2) => {
+  const fields = [];
+  assert.equal(typeof call('decodePacket', {preview_hex: hex, length}, identities, fields), 'string');
+  return fields.map(({start, end, kind}) => [start, end, kind]);
+};
+assert.deepEqual(ranges('014456000700d726b726559aed2005', 30), [
+  [0, 1, 'header'], [1, 2, 'route'], [2, 4, 'route'], [4, 6, 'route'],
+  [6, 8, 'route'], [8, 10, 'route'], [10, 11, 'dst'], [11, 12, 'src'], [12, 14, 'mac'], [14, 15, 'payload'],
+]);
+assert.deepEqual(ranges('0900bbaa0000010203'), [
+  [0, 1, 'header'], [1, 2, 'route'], [2, 3, 'dst'], [3, 4, 'src'],
+  [4, 6, 'mac'], [6, 9, 'payload'],
+]);
+assert.deepEqual(ranges('083412cdab00bbaa0000'), [
+  [0, 1, 'header'], [1, 3, 'header'], [3, 5, 'header'], [5, 6, 'route'],
+  [6, 7, 'dst'], [7, 8, 'src'], [8, 10, 'mac'],
+]);
+assert.deepEqual(ranges('1500bb00000102'), [
+  [0, 1, 'header'], [1, 2, 'route'], [2, 3, 'dst'], [3, 5, 'mac'], [5, 7, 'payload'],
+]);
+assert.deepEqual(ranges('1d00bb' + 'aa'.repeat(13), 37), [
+  [0, 1, 'header'], [1, 2, 'route'], [2, 3, 'dst'], [3, 16, 'src'],
+]);
+assert.deepEqual(ranges('1100' + 'bb'.repeat(14), 102), [[0, 1, 'header'], [1, 2, 'route'], [2, 16, 'src']]);
+assert.deepEqual(ranges('2601bb' + '00'.repeat(9)), [
+  [0, 1, 'header'], [1, 2, 'route'], [2, 3, 'route'], [3, 12, 'payload'],
+]);
+assert.deepEqual(ranges('0d0012345678'), [[0, 1, 'header'], [1, 2, 'route'], [2, 6, 'payload']]);
+assert.deepEqual(ranges('4900bbaa0000'), [[0, 1, 'header']], 'unsupported version must not invent field offsets');
+assert.deepEqual(ranges('zz', 1), [], 'malformed preview must not have field colors');
+const byteFields = [];
+const byteEvent = {preview_hex: '014456000700d726b726559aed2005', length: 30, preview_truncated: true};
+call('decodePacket', byteEvent, identities, byteFields);
+const byteCode = call('packetBytes', byteEvent, byteFields);
+assert.equal(byteCode.textContent, '01 44 56 00 07 00 d7 26 b7 26 55 9a ed 20 05 ...');
+assert.deepEqual(byteCode.children.map(c => c.className || ''), [
+  'field-header', 'field-route', 'field-route', 'field-route', 'field-route',
+  'field-route', 'field-dst', 'field-src', 'field-mac', 'field-payload', '',
+]);
 snapshot.contacts = meshContacts;
 snapshot.history.events = [{...snapshot.history.events[0], preview_hex: '0a82d11122d13344bbd10000', length: 12}];
 call('renderEvents', snapshot);

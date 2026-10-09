@@ -40,6 +40,18 @@ packet rows. The expandable **Decode key** contains the notation and exported
 contact count. Packet hex uses `...` for a truncated preview; the decode names
 any field whose bytes are missing instead of repeating a generic preview warning.
 
+The RF column uses a green up arrow for completed TX and a purple down arrow
+for RX, with a radio-wave icon for RF activity. Failed/rejected, queued and
+unconfirmed TX retain distinct `×`, `…` and `?` markers; the full result and
+failure reason remain in the tooltip and accessible label. Source session/job
+details move to the source tooltip. `~` marks estimated RX airtime; signal
+values are RSSI in dBm and SNR in dB.
+
+Hex groups use separate colours for header/transport, path, source/key,
+destination/channel, MAC and payload. Hover a group for its field name.
+Groups come from the same bounded decoder as the packet text; unsupported
+versions and undecoded bytes are not assigned guessed field meanings.
+
 Contacts are omitted when the companion is unavailable or restarting. Older
 firmware falls back to on-device role names; standalone shared modems show hex
 prefixes without names. Enumeration runs on the existing radio dispatch task;

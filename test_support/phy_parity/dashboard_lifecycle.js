@@ -20,6 +20,7 @@ const document = {
     return elements.get(id);
   },
   createElement: () => new Element(),
+  createElementNS: () => new Element(),
   addEventListener(name, callback) { this.handlers[name] = callback; },
 };
 class Socket {

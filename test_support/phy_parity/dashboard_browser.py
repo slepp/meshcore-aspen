@@ -17,6 +17,14 @@ import threading
 build = pathlib.Path(sys.argv[1]).resolve()
 source = pathlib.Path(sys.argv[2]).read_text()
 page = source.split('R"HTML(', 1)[1].rsplit(')HTML"', 1)[0].encode()
+page = page.replace(b"</script>", b"""
+const measuredRenderEvents = renderEvents;
+renderEvents = data => {
+  measuredRenderEvents(data);
+  const row = document.getElementById('events').firstElementChild;
+  if (row) row.setAttribute('data-row-height', row.getBoundingClientRect().height.toFixed(1));
+};
+</script>""")
 expected = json.loads((build / "dashboard.json").read_bytes())
 expected["contacts"] = {
     "capacity": 32, "total": 40, "truncated": True,
@@ -91,13 +99,15 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
 thread = threading.Thread(target=server.serve_forever)
 thread.start()
 try:
-    for name, dimensions in (("desktop", "1280,1600"), ("mobile", "390,1900"), ("stale", "1280,1000")):
+    for name, dimensions in (("desktop", "1280,2200"), ("dark", "1280,2200"),
+                             ("mobile", "390,1900"), ("stale", "1280,1000")):
         server.api_calls = 0
         server.stream_calls = 0
         server.fail_after_first = name == "stale"
         with tempfile.TemporaryDirectory(prefix="dashboard-browser-", dir=build) as profile:
             result = subprocess.run([
                 chrome, "--headless=new", "--disable-gpu", "--disable-background-networking",
+                *(["--force-dark-mode"] if name == "dark" else []),
                 "--disable-component-update", "--disable-sync", "--no-first-run",
                 "--no-default-browser-check", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
                 "--user-data-dir=" + profile, "--window-size=" + dimensions,
@@ -116,7 +126,9 @@ try:
             else:
                 assert 'id="connection" class="pill good">Live</span>' in dom
             assert "912.525 MHz" in dom and "250 kHz / SF7 / CR 4/5 / 2 dBm" in dom
-            assert "Unconfirmed / RF timeout" in dom and '>Sent over RF</td>' in dom
+            assert 'aria-label="Unconfirmed / RF timeout"' in dom
+            assert 'aria-label="Sent over RF"' in dom
+            assert 'class="rf-result rf-rx"' in dom and 'class="rf-icon"' in dom
             decode = re.search(r'<td class="packet-detail">(.*?)</td>', dom, re.S)
             assert decode and html.unescape(decode[1]) == (
                 "Request / Flood / v0 / encrypted\n"
@@ -125,11 +137,15 @@ try:
             )
             assert "Companion contacts: 1 of 40 (incomplete)." in dom
             assert "contact list incomplete" not in decode[1]
+            for field in ("header", "route", "src", "dst", "mac", "payload"):
+                assert f'class="field-{field}"' in dom
+            height = re.search(r'<tbody id="events"><tr data-row-height="([0-9.]+)"', dom)
+            assert height and float(height[1]) <= 64, "four-hop row must fit within 64 CSS pixels"
             assert dom.count("<script>") == 1
             assert len(re.findall(r'<tbody id="events">.*?</tbody>', dom, re.S)) == 1
             assert server.stream_calls >= 1
             assert server.api_calls == 0, "browser must not poll the diagnostics endpoint"
-            print("Dashboard " + name + " rendered data safely" +
+            print("Dashboard " + name + " rendered data safely (" + height[1] + " px packet row)" +
                   (" and retained an explicitly stale snapshot" if name == "stale" else ""))
 finally:
     server.shutdown()
