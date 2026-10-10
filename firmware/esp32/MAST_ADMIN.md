@@ -1025,6 +1025,12 @@ cmd mast "bot status"
 wmt8
 ```
 
+For a guided console session and a complete named Lua file upload over LoRa,
+follow [Manage Aspen over RF](../../tools/hardware/RF_ADMIN.md) or the
+[website radio-admin tutorial](https://ve6slp.ca/projects/meshcore/operate/radio-admin/).
+The file uploader needs a separate KISS gateway; ordinary console commands
+use your native companion.
+
 For an already trusted full companion key, use `login mast ""` instead.
 `cmd` does not request a delivery ACK; read the native encrypted CLI reply
 with `wmt8`. If the reply is already queued, retrieve it with `sync_msgs`.
@@ -1078,7 +1084,7 @@ Do not expose this beta HTTP service to the Internet. The editor computes
 SHA-256 locally without depending on browser `crypto.subtle` or a CDN.
 
 The supplied reference client supports raw-KISS RF and authenticated web
-access; it is not required for ordinary stock-companion administration:
+access; it is not required for ordinary companion-radio administration:
 
 ```sh
 make -C firmware/esp32 mast-cli ARGS='--gateway GATEWAY --target MANAGEMENT_PUBLIC_KEY --seed-file /private/companion.seed --password-file /private/mast-password command status'

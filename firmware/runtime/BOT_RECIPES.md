@@ -49,6 +49,11 @@ python3 tools/hardware/admin.py \
   status
 ```
 
+For the same named installation over LoRa, follow the
+[RF upload walkthrough](../../tools/hardware/RF_ADMIN.md#add-one-lua-file-through-a-kiss-gateway).
+It includes companion-console login, a separate KISS upload connection and
+durable chunk/activation replies. A bot DM is not a bulk upload endpoint.
+
 `NODE` and the password-file path are placeholders. This updates only
 `greeting`, preserving other named source files. The complete Lua set must still
 fit its aggregate source and command limits; duplicate exports reject it.
