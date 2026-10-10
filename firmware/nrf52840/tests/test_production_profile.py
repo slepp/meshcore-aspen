@@ -14,6 +14,17 @@ class ProductionProfileTest(unittest.TestCase):
                 self.assertIn("-D " + flag, config[name]["build_flags"])
             self.assertIn("+<../examples/nrfmast/room/*.cpp>", config[name]["build_src_filter"])
 
+    def test_lua_companion_restore_waits_for_selected_source(self):
+        main = (Path(__file__).resolve().parents[1] / "main.cpp").read_text()
+        setup = main.split("void setup() {", 1)[1].split("void loop() {", 1)[0]
+        lua_setup = setup.split("} else if (!nrfmast::roomSelected()", 1)[1]
+        self.assertNotIn("companionStore.begin", lua_setup)
+        loop = main.split("void loop() {", 1)[1]
+        restore = loop.index("companionStore.begin")
+        self.assertLess(loop.index("commandBotService().sourceReady()"), restore)
+        self.assertIn("companionRestoreDone || !companionRestoreDeadline", loop[restore:])
+        self.assertIn("millis() + 5000", setup)
+
     def test_companion_channels_only_in_production_profiles(self):
         config = configparser.ConfigParser(interpolation=None)
         config.read(Path(__file__).resolve().parents[1] / "platformio.ini")

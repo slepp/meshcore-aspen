@@ -42,6 +42,15 @@ std::unique_ptr<CompanionStore::Record> CompanionStore::allocateSnapshot() {
   if (!result) error_ = "companion snapshot allocation failed";
   return result;
 }
+bool CompanionStore::writeHeadroom() {
+#ifdef NRF52_PLATFORM
+  if (dbgHeapFree() < 8192 + 512) {
+    error_ = "companion journal needs 512 bytes above the 8KiB heap reserve";
+    return false;
+  }
+#endif
+  return true;
+}
 bool CompanionStore::validate(const Record &record) const {
   uint8_t hash[32]; digest(record, hash);
   if (memcmp(record.magic, "PCS\1", 4) || memcmp(record.owner, bot_.self_id.pub_key, 32) ||
@@ -151,39 +160,42 @@ void CompanionStore::changed(uint32_t now) {
 }
 void CompanionStore::loop(uint32_t now) {
   if (!ready_ || !dirty_ || uint32_t(now - dirtyAt_) < FlushMs) return;
-  auto next = allocateSnapshot();
-  if (next) { capture(*next); if (save(*next, now)) return; }
+  if (writeHeadroom()) {
+    // The radio loop's stack holds the replacement; keep the heap available
+    // for Lua jobs and the journal's short-lived filesystem handles.
+    Record next;
+    capture(next);
+    if (save(next, now)) return;
+  }
   dirtyAt_ = now;
   Serial.printf("Companion storage: %s\n", error_);
 }
 bool CompanionStore::contact(const ContactInfo &contact, bool remove, uint32_t now) {
-  if (!ready_) return false;
-  auto next = allocateSnapshot();
-  if (!next) return false;
-  capture(*next);
+  if (!ready_ || !writeHeadroom()) return false;
+  Record next;
+  capture(next);
   unsigned i = 0;
-  while (i < next->count && memcmp(next->contacts[i].key, contact.id.pub_key, 32)) ++i;
+  while (i < next.count && memcmp(next.contacts[i].key, contact.id.pub_key, 32)) ++i;
   if (remove) {
-    if (i == next->count) return false;
-    for (unsigned j = i + 1; j < next->count; ++j) next->contacts[j - 1] = next->contacts[j];
-    next->contacts[--next->count] = Contact{};
+    if (i == next.count) return false;
+    for (unsigned j = i + 1; j < next.count; ++j) next.contacts[j - 1] = next.contacts[j];
+    next.contacts[--next.count] = Contact{};
   } else {
-    if (i == next->count) {
+    if (i == next.count) {
       if (i == Contacts) { error_ = "companion contact table full"; return false; }
-      ++next->count;
+      ++next.count;
     }
-    encode(next->contacts[i], contact);
+    encode(next.contacts[i], contact);
   }
-  return save(*next, now);
+  return save(next, now);
 }
 bool CompanionStore::channel(unsigned slot, const ChannelDetails &channel, uint32_t now) {
-  if (!ready_ || slot >= Channels) return false;
-  auto next = allocateSnapshot();
-  if (!next) return false;
-  capture(*next);
-  memcpy(next->channels[slot].name, channel.name, 32);
-  memcpy(next->channels[slot].secret, channel.channel.secret, 16);
-  return save(*next, now);
+  if (!ready_ || slot >= Channels || !writeHeadroom()) return false;
+  Record next;
+  capture(next);
+  memcpy(next.channels[slot].name, channel.name, 32);
+  memcpy(next.channels[slot].secret, channel.channel.secret, 16);
+  return save(next, now);
 }
 bool CompanionStore::putAdvert(const uint8_t *key, const uint8_t *bytes, int size, uint32_t now) {
   if (!ready_ || size <= 0 || size > MAX_TRANS_UNIT) return false;

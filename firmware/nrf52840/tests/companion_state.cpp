@@ -239,7 +239,11 @@ void adverts() {
 void failures() {
   CompanionFlash flash; assert(nrfmast::botFilesystem.begin(flash, true));
   {
-    CompanionHarness h; assert(h.store.begin(h.clock.now));
+    CompanionHarness h;
+    failCompanionAllocation = true;
+    assert(!h.store.begin(h.clock.now) && !h.store.ready());
+    failCompanionAllocation = false;
+    assert(h.store.begin(h.clock.now));
     for (unsigned i = 1; i <= 8; ++i)
       assert(h.command(channelFrame(0, "saved", i)) == std::vector<uint8_t>{RESP_CODE_OK});
     assert(h.command(channelFrame(0, "limited", 9)) ==
@@ -247,8 +251,7 @@ void failures() {
     assert(h.command({CMD_GET_CHANNEL, 0})[34] == 8);
     h.clock.now += nrfmast::CompanionStore::RefillMs;
     failCompanionAllocation = true;
-    assert(h.command(channelFrame(0, "no memory", 9)) ==
-           (std::vector<uint8_t>{RESP_CODE_ERR, ERR_CODE_FILE_IO_ERROR}));
+    assert(h.command(channelFrame(0, "stack snapshot", 8)) == std::vector<uint8_t>{RESP_CODE_OK});
     failCompanionAllocation = false;
     assert(h.command({CMD_GET_CHANNEL, 0})[34] == 8);
     h.clock.now += nrfmast::CompanionStore::RefillMs;

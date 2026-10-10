@@ -153,6 +153,8 @@ static void storageRead(uint32_t& used, uint32_t& total) {
 static nrfmast::CompanionInterface companion(bot, runtimeConfig, ble, radioInfo, batteryRead, storageRead);
 #if NRFMAST_PRODUCTION_LUA
 static nrfmast::CompanionStore companionStore(bot);
+static bool companionRestoreDone;
+static uint32_t companionRestoreDeadline;
 #endif
 static int heapLow = INT32_MAX;
 static char command[160];
@@ -649,6 +651,7 @@ void setup() {
       releaseOriginalNotes();
       if (bleStarted && !companionStore.begin(millis()))
         Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
+      companionRestoreDone = true;
 #if MESHCORE_NODE_BACKUP
       if (!nrfmast::beginNodeBackup(true))
         Serial.println("Room: backup task allocation failed; restart in Lua mode before maintenance");
@@ -658,13 +661,12 @@ void setup() {
     }
   } else if (!nrfmast::roomSelected() && prepareLuaFilesystem() && preserveLuaBotName()) {
     releaseOriginalNotes();
-    if (bleStarted && !companionStore.begin(millis()))
-      Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
     nrfmast::setLuaIdentity(bot.self_id);
     const auto &profile = repeater.activeProfile;
     const RadioConfig configuration{uint32_t(profile.frequency * 1000000), uint32_t(profile.bandwidth * 1000),
                                     profile.sf, profile.cr, uint8_t(prefs->tx_power_dbm)};
     luaStarted = onchip::commandBotService().begin(sharedRadio.lua, configuration);
+    companionRestoreDeadline = millis() + 5000;
 #if MESHCORE_NODE_BACKUP
     if (luaStarted) nrfmast::beginNodeBackup();
 #endif
@@ -714,13 +716,25 @@ void loop() {
   }
   if (!nrfmast::fieldUpdatePending()) onchip::MastAdmin::service()->loop();
   if (!nrfmast::fieldUpdatePending() && sharedRadio.roomCanLoop()) nrfmast::roomLoop();
+  // Restore after the selected Lua source loads, so its idle job buffers can
+  // use the larger contiguous blocks before the companion snapshot is kept.
+  if (bleStarted && companionRestoreDeadline && !companionRestoreDone && !nrfmast::fieldUpdatePending() &&
+      (onchip::commandBotService().sourceReady() || int32_t(millis() - companionRestoreDeadline) >= 0)) {
+    companionRestoreDone = true;
+    if (!companionStore.begin(millis()))
+      Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
+  }
 #endif
   static bool botFirst;
   if (!nrfmast::fieldUpdatePending() && botFirst && sharedRadio.botCanLoop()) bot.loop();
   if (sharedRadio.repeaterCanLoop()) repeater.loop();
   if (!nrfmast::fieldUpdatePending() && !botFirst && sharedRadio.botCanLoop()) bot.loop();
   botFirst = !botFirst;
-  if (bleStarted && sharedRadio.idle() && !nrfmast::fieldUpdatePending()) companion.loop();
+  if (bleStarted && sharedRadio.idle() && !nrfmast::fieldUpdatePending()
+#if NRFMAST_PRODUCTION_LUA
+      && (companionRestoreDone || !companionRestoreDeadline)
+#endif
+  ) companion.loop();
   sensors.loop();
   rtc_clock.tick();
   int free = dbgHeapFree();

@@ -394,10 +394,13 @@ pending ACKs, uptime deadlines, shared-secret caches and inbox messages are
 not restored.
 
 Only an enabled production companion allocates its 2,888-byte retained
-snapshot; a save temporarily needs a second snapshot plus filesystem buffers.
-The channel table is four entries. Lua keeps its existing 48 KiB quota and
-8 KiB physical-heap reserve; allocation or storage pressure can reject a
-companion edit. Neither contact table is enlarged.
+snapshot. In Lua mode, restoration waits for the selected source to load, or
+five seconds if it cannot load, before companion commands are accepted.
+A save holds its 2,888-byte replacement on the radio loop's stack and requires
+512 bytes of free heap above the 8 KiB reserve for filesystem handles.
+The channel table is four entries. Lua keeps its existing 48 KiB quota;
+allocation or storage pressure can reject a companion edit. Neither contact
+table is enlarged.
 
 **Destructive `bot lua provision erase-lua confirm` also erases this companion
 state.** Ordinary source install/rollback, application-only updates and device

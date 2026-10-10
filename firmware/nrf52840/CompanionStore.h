@@ -37,6 +37,7 @@ private:
   bool ready_ = false, dirty_ = false;
   const char *error_ = "not started";
   std::unique_ptr<Record> allocateSnapshot();
+  bool writeHeadroom();
   void capture(Record &) const;
   bool save(Record &, uint32_t now);
   bool validate(const Record &) const;
