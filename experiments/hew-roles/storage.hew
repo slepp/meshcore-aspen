@@ -14,6 +14,7 @@ extern "C" {
     fn mc_append_private(path: bytes, data: bytes, limit: i64) -> i32;
     #[offload]
     fn mc_erase_private(path: bytes) -> i32;
+    fn mc_remove_private_directory(path: bytes) -> i32;
 }
 
 pub fn usage(path: string) -> bytes {
@@ -64,4 +65,8 @@ pub fn append_private(path: string, data: bytes, limit: i64) -> i64 {
 
 pub fn erase_private(path: string) -> i64 {
     unsafe { mc_erase_private(path.to_bytes()) as i64 }
+}
+
+pub fn remove_private_directory(path: string) -> i64 {
+    unsafe { mc_remove_private_directory(path.to_bytes()) as i64 }
 }

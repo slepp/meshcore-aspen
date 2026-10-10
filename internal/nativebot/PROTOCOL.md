@@ -8,7 +8,8 @@ user, mode `0700`, with no symlink components. It must contain pre-existing
 `nvs/` and `spiffs/` child directories, each mode `0700` and owned by the
 process user. Each storage adapter locks its own directory exclusively. No
 hardware, WifiKissMultiplexer, test peer or RF scheduler runs in this process.
-Go alone owns the radio and sends its authoritative identity and PHY data.
+The host (Go Birch or Willow) owns the radio and sends its authoritative
+identity and PHY data.
 All native `Serial` diagnostics go to stderr; stdout carries binary frames
 only. EOF ends the worker; a malformed frame, I/O fault or storage fault is
 fatal. HELLO supplies the identity for this worker lifetime: its volatile

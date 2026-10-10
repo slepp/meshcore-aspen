@@ -1,6 +1,9 @@
 """Actual Willow role/modem supervisor replacement and committed-state tests."""
 import os
 from pathlib import Path
+import signal
+import shutil
+import subprocess
 import struct
 import time
 import unittest
@@ -10,6 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 os.environ.setdefault("MESHCORE_HEW_HOST",str(ROOT/"build/hew-host-supervision"))
 from service_demo import RunningService, advert, text, body, login, packet, parse
 from service_demo import addressed, public, seal, secret
+from service_demo import Emulator, PROFILE
 from reconcile_go import snapshot
 from willow import owner_rpc
 from source_policy import RoleClient
@@ -220,6 +224,61 @@ class Supervision(unittest.TestCase):
             modem.send(2,0,text(2,5,1700001601,"!recall supervision"))
             reply=modem.receive(lambda item:item["port"]==2 and parse(item["raw"])[0]==2)
             self.assertIn(b"preserved",body(reply["raw"],2,5))
+            self.assertEqual(modem.epoch,1)
+
+    def test_initialized_state_starts_with_native_worker(self):
+        service = RunningService.__new__(RunningService)
+        service.root = ROOT.parents[1]/f".i-{os.getpid()}"
+        service.emulator = Emulator()
+        service.emulator.identity_root = service.root
+        service.logs, service.errors = [], []
+        try:
+            completed = subprocess.run([os.environ["MESHCORE_HEW_HOST"],"init",str(service.root),"--address","127.0.0.1",
+                                        "--port",str(service.emulator.port),"--profile",PROFILE.hex()],
+                                       capture_output=True,text=True,timeout=10)
+            self.assertEqual(completed.returncode,0,completed.stderr)
+            service.start_process(True)
+        finally:
+            if hasattr(service,"proc"):
+                service.close()
+            else:
+                service.emulator.close()
+                shutil.rmtree(service.root,ignore_errors=True)
+
+    def test_init_failure_after_creation_removes_partial_state(self):
+        root = ROOT/"build"/f"init-cleanup-{os.getpid()}"
+        root.mkdir(mode=0o700)
+        try:
+            (root/"state.init-fail.inject").write_bytes(b"1")
+            completed = subprocess.run([os.environ["MESHCORE_HEW_HOST"],"init",str(root/"state"),"--address","127.0.0.1",
+                                        "--port","5000","--profile","c806643690d003000705020000803f010000"],
+                                       capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(completed.returncode,0)
+            self.assertIn("no state was kept",completed.stdout+completed.stderr)
+            self.assertEqual(sorted(path.name for path in root.iterdir()),["state.init-fail.inject"])
+        finally:
+            shutil.rmtree(root)
+
+    def test_worker_verification_failure_on_relaunch_keeps_relay_and_room(self):
+        with RunningService() as service:
+            modem=service.emulator
+            self.healthy(service,50)
+            pid=int(service.wait("BOT_PROCESS pid=").split("pid=")[1])
+            marker=len(service.logs)
+            inject=service.root/"native-verify.inject"
+            write_private(inject,b"\1")
+            os.kill(pid,signal.SIGKILL)
+            service.wait("BOT_OFFLINE native worker verification failed",after=marker)
+            service.wait("BOT_OFFLINE native worker launch failed retry_ms=500",after=marker)
+            service.wait("BOT_OFFLINE native worker launch failed retry_ms=1000",timeout=5,after=marker)
+            modem.send(0,0,packet(5,b"verify-refused",route=1,width=3))
+            modem.send(1,0,login(stamp=1200))
+            modem.receive(lambda item:item["port"]==0 and parse(item["raw"])[4]==b"verify-refused")
+            modem.receive(lambda item:item["port"]==1 and parse(item["raw"])[0]==1)
+            self.assertFalse(any("BOT_PROCESS pid=" in line for line in service.logs[marker:]))
+            inject.unlink()
+            service.wait("BOT_READY",timeout=15,after=marker)
+            self.healthy(service,51)
             self.assertEqual(modem.epoch,1)
 
     def test_normal_binary_cannot_arm_test_file_panics(self):

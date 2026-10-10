@@ -35,6 +35,8 @@ import std.encoding.utf8;
 
 import std.string;
 
+import std.fs;
+
 fn control_write(fd: ChildRef<duplex.Endpoint>, packet: bytes, stage: string, epoch: i64) -> bool {
     match duplex.write(fd, packet) {
         .Ok(_) => true,
@@ -94,9 +96,24 @@ type TelemetryCache {
     reported: bool;
 }
 
+fn config_int(number: i64, key: string, value: string) -> i64 {
+    match string.to_int(value) {
+        .Ok(parsed) => parsed,
+        _ => panic(f"configuration line {number}: {key} must be an integer"),
+    }
+}
+
+fn config_require(valid: bool, problem: string) {
+    if !valid {
+        panic(f"invalid configuration: {problem}");
+    }
+}
+
 fn config(root: string) -> Config {
     let data = storage.read(root + "/config");
-    assert(!data.is_empty());
+    if data.is_empty() {
+        panic(f"configuration file {root}/config is missing or empty");
+    }
     var address = "";
     var port: i64 = 0;
     var profile = bytes.new();
@@ -117,11 +134,16 @@ fn config(root: string) -> Config {
     var native_preserve = false;
     var imported = false;
     var observer_options = "";
-    for line in utf8.decode(data).expect("UTF8 configuration").split("\n") {
+    var number: i64 = 0;
+    for line in utf8.decode(data).expect("configuration file must be UTF-8").split("\n") {
+        number = number + 1;
         if line.is_empty() {
             continue;
         }
-        let at = line.find("=").expect("configuration requires key=value");
+        let at = match line.find("=") {
+            .Some(position) => position,
+            _ => panic(f"configuration line {number}: expected key=value"),
+        };
         let key = line.slice(0, at);
         let value = line.slice(at + 1, line.len());
         if key.starts_with("observer.") {
@@ -141,7 +163,7 @@ fn config(root: string) -> Config {
                 address = value;
             }
             "port" => {
-                port = string.to_int(value).expect("port");
+                port = config_int(number, key, value);
             }
             "profile" => {
                 profile = hex.decode(value);
@@ -153,14 +175,14 @@ fn config(root: string) -> Config {
                 password = value;
             }
             "room_public" => {
-                assert(value == "0" || value == "1");
+                config_require(value == "0" || value == "1", f"line {number}: room_public must be 0 or 1");
                 room_options = room_options + "public=" + value + "\n";
             }
             "admin" => {
                 admin = value;
             }
             "width" => {
-                width = string.to_int(value).expect("width");
+                width = config_int(number, key, value);
             }
             "region" => {
                 region = hex.decode(value);
@@ -169,10 +191,10 @@ fn config(root: string) -> Config {
                 channel = hex.decode(value);
             }
             "run_ms" => {
-                run_ms = string.to_int(value).expect("run_ms");
+                run_ms = config_int(number, key, value);
             }
             "native_airtime" => {
-                native_airtime = string.to_int(value).expect("native_airtime");
+                native_airtime = config_int(number, key, value);
             }
             "bot_home" => {
                 bot_home = hex.decode(value);
@@ -187,28 +209,35 @@ fn config(root: string) -> Config {
                 channel_name = value;
             }
             "native_setup" => {
-                assert(value == "configure" || value == "preserve");
+                config_require(value == "configure" || value == "preserve", f"line {number}: native_setup must be configure or preserve");
                 native_preserve = value == "preserve";
             }
             "imported" => {
-                assert(value == "0" || value == "1");
+                config_require(value == "0" || value == "1", f"line {number}: imported must be 0 or 1");
                 imported = value == "1";
             }
             _ => {
-                panic("unknown configuration field");
+                panic(f"configuration line {number}: unknown key {key}");
             }
         }
     }
-    assert(!address.is_empty() && port > 0 && port <= 65535 && profile.len() == 18);
-    assert(width >= 1 && width <= 3 && password.len() <= 63 && admin.len() <= 63);
-    assert((region.is_empty() || region.len() == 16) && (channel.is_empty() || channel.len() == 16));
-    assert(native_airtime >= 360 && native_airtime <= 3600);
-    assert(run_ms >= 0);
-    assert(!bot_name.is_empty() && bot_name.len() <= 31 && !channel_name.is_empty() && channel_name.len() <= 32);
+    config_require(!address.is_empty(), "address is required");
+    config_require(port > 0 && port <= 65535, "port must be 1..65535");
+    config_require(profile.len() == 18, "profile must be 18 bytes of hex");
+    config_require(width >= 1 && width <= 3, "width must be 1..3");
+    config_require(password.len() <= 63, "password must be at most 63 bytes");
+    config_require(admin.len() <= 63, "admin must be at most 63 bytes");
+    config_require(region.is_empty() || region.len() == 16, "region must be 16 bytes of hex");
+    config_require(channel.is_empty() || channel.len() == 16, "channel must be 16 bytes of hex");
+    config_require(native_airtime >= 360 && native_airtime <= 3600, "native_airtime must be 360..3600");
+    config_require(run_ms >= 0, "run_ms must not be negative");
+    config_require(!bot_name.is_empty() && bot_name.len() <= 31, "bot_name must be 1..31 bytes");
+    config_require(!channel_name.is_empty() && channel_name.len() <= 32, "channel_name must be 1..32 bytes");
     for c in (bot_name + channel_name).to_bytes() {
-        assert(c >= 32 && c <= 126);
+        config_require(c >= 32 && c <= 126, "bot_name and channel_name must be printable ASCII");
     }
-    assert((bot_home.is_empty() || bot_home.len() == 16) && (bot_default.is_empty() || bot_default.len() == 16));
+    config_require(bot_home.is_empty() || bot_home.len() == 16, "bot_home must be 16 bytes of hex");
+    config_require(bot_default.is_empty() || bot_default.len() == 16, "bot_default must be 16 bytes of hex");
     if worker == "-" && (!bot_home.is_empty() || !bot_default.is_empty()) {
         panic("bot_home and bot_default require the verified native worker");
     }
@@ -233,7 +262,11 @@ fn launch_worker(executable: string, root: string) -> Option<process.Child> {
 }
 
 fn launch_native(owner: ChildRef<process.WorkerOwner>, executable: string, root: string) -> Option<ChildRef<process.WorkerOwner>> {
-    verify_native(executable);
+    let injected = transport.supervision_testing() && !storage.absent(root + "-verify.inject");
+    if injected || executable != worker_identity.path() || !transport.verify_worker(worker_identity.inputs(), worker_identity.digest()) {
+        println("BOT_OFFLINE native worker verification failed; relay and room remain online; run make native-worker and rebuild hew-host");
+        return .None;
+    }
     var arguments: Vec<string> = Vec.new();
     arguments.push(root);
     arguments.push("--willow-contacts");
@@ -257,6 +290,179 @@ fn identity(path: string) -> bytes {
     let seed = storage.read(path);
     assert(seed.len() == 32);
     seed
+}
+
+fn init_usage(problem: string) {
+    panic(f"init: {problem}; usage: hew-host init STATE --address HOST --port PORT --profile HEX36 [--admin-file FILE] [--room-password-file FILE]");
+}
+
+fn init_credential(path: string, label: string) -> string {
+    var data = storage.read(path);
+    if data.is_empty() {
+        panic(f"init: {label} file {path} must be a non-empty regular file owned by this user with mode 0600");
+    }
+    if data[data.len() - 1] == 10 {
+        data = wire.cut(data, 0, data.len() - 1);
+    }
+    if data.is_empty() || data.len() > 15 {
+        panic(f"init: {label} file {path} must hold 1..15 bytes, the MeshCore login password limit");
+    }
+    for c in data {
+        if c < 32 || c > 126 {
+            panic(f"init: {label} file {path} must hold printable ASCII on one line");
+        }
+    }
+    utf8.decode(data).expect("printable ASCII credential")
+}
+
+fn init_generated() -> string {
+    let alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
+    let entropy = crypto.random_bytes(15).expect("credential entropy");
+    var out = "";
+    for b in entropy {
+        let at = (b & 31) as i64;
+        out = out + alphabet.slice(at, at + 1);
+    }
+    out
+}
+
+fn init_cleanup(staging: string) -> bool {
+    var clean = true;
+    for name in ["config", "relay.seed", "room.seed", "bot.seed"] {
+        clean = storage.erase_private(staging + "/" + name + ".pending") == 0 && clean;
+        clean = storage.erase_private(staging + "/" + name) == 0 && clean;
+    }
+    for name in ["/native/spiffs", "/native/nvs", "/native", ""] {
+        clean = storage.remove_private_directory(staging + name) == 0 && clean;
+    }
+    clean
+}
+
+/// Creates a new private Willow state directory without opening the modem.
+pub fn initialize(args: Vec<string>) {
+    if args.is_empty() {
+        init_usage("STATE is required");
+    }
+    let root = args[0];
+    if !root.starts_with("/") || root.ends_with("/") || root.contains("\n") {
+        init_usage("STATE must be an absolute path without a trailing slash");
+    }
+    var address = "";
+    var port_text = "";
+    var profile_text = "";
+    var admin_file = "";
+    var room_file = "";
+    var i: i64 = 1;
+    while i < args.len() {
+        if i + 1 >= args.len() {
+            init_usage(f"{args[i]} needs a value");
+        }
+        let value = args[i + 1];
+        match args[i] {
+            "--address" => { address = value; }
+            "--port" => { port_text = value; }
+            "--profile" => { profile_text = value; }
+            "--admin-file" => { admin_file = value; }
+            "--room-password-file" => { room_file = value; }
+            _ => { init_usage(f"unknown option {args[i]}"); }
+        }
+        i = i + 2;
+    }
+    if address.is_empty() || address.len() > 253 {
+        init_usage("--address is required (1..253 bytes)");
+    }
+    for c in address.to_bytes() {
+        if c <= 32 || c > 126 {
+            init_usage("--address must be printable ASCII without spaces");
+        }
+    }
+    if port_text.is_empty() || port_text.len() > 5 {
+        init_usage("--port must be 1..65535");
+    }
+    for c in port_text.to_bytes() {
+        if c < 48 || c > 57 {
+            init_usage("--port must be 1..65535");
+        }
+    }
+    let port = config_int(0, "port", port_text);
+    if port < 1 || port > 65535 {
+        init_usage("--port must be 1..65535");
+    }
+    if profile_text.len() != 36 {
+        init_usage("--profile must be the modem's 18-byte configuration readback as 36 hex digits");
+    }
+    for c in profile_text.to_bytes() {
+        if !((c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)) {
+            init_usage("--profile must be the modem's 18-byte configuration readback as 36 hex digits");
+        }
+    }
+    let profile = hex.decode(profile_text);
+    if let .Err(error) = radio.validate_profile(profile) {
+        panic(f"init: invalid shared modem profile: {error}");
+    }
+    if !storage.absent(root) {
+        panic(f"init: {root} already exists; init creates new state only (use MIGRATION.md to keep Birch identities)");
+    }
+    let staging = root + ".init";
+    if !storage.absent(staging) {
+        panic(f"init: {staging} remains from an interrupted init; inspect and remove it, then retry");
+    }
+    var admin_source = "generated";
+    var admin = "";
+    if admin_file.is_empty() {
+        admin = init_generated();
+    } else {
+        admin_source = "imported";
+        admin = init_credential(admin_file, "admin password");
+    }
+    var room_source = "generated";
+    var room_password = "";
+    if room_file.is_empty() {
+        room_password = init_generated();
+    } else {
+        room_source = "imported";
+        room_password = init_credential(room_file, "room password");
+    }
+    if admin == room_password {
+        panic("init: the admin and room passwords must differ");
+    }
+    let worker = worker_identity.path();
+    verify_native(worker);
+    let relay_seed = crypto.random_bytes(32).expect("role identity entropy");
+    let room_seed = crypto.random_bytes(32).expect("role identity entropy");
+    let bot_seed = crypto.random_bytes(32).expect("role identity entropy");
+    let settings = f"address={address}\nport={port}\nprofile={hex.encode(profile)}\nworker={worker}\nadmin={admin}\nroom.password={room_password}\n";
+    if !transport.directory(staging) {
+        storage.remove_private_directory(staging);
+        panic(f"init: cannot create private directory {staging}");
+    }
+    var created = storage.commit(staging + "/config", settings.to_bytes()) == 0
+        && storage.commit(staging + "/relay.seed", relay_seed) == 0
+        && storage.commit(staging + "/room.seed", room_seed) == 0
+        && storage.commit(staging + "/bot.seed", bot_seed) == 0
+        && transport.directory(staging + "/native")
+        && transport.directory(staging + "/native/nvs")
+        && transport.directory(staging + "/native/spiffs");
+    if created && transport.supervision_testing() && !storage.absent(root + ".init-fail.inject") {
+        created = false;
+    }
+    if created && storage.absent(root) {
+        created = fs.rename(staging, root).is_ok();
+    } else {
+        created = false;
+    }
+    if !created {
+        if init_cleanup(staging) {
+            panic(f"init: could not create {root}; no state was kept");
+        }
+        panic(f"init: could not create {root}; remove the partial private directory {staging}");
+    }
+    println(f"INIT_OK state={root}");
+    println(f"config={root}/config admin={admin_source} room_password={room_source}");
+    println(f"relay={hex.encode(wire.public_key(relay_seed))}");
+    println(f"room={hex.encode(wire.public_key(room_seed))}");
+    println(f"bot={hex.encode(wire.public_key(bot_seed))}");
+    println(f"next: python3 -B willow.py check --state {root}");
 }
 
 fn expanded(seed: bytes) -> bytes {
@@ -1210,11 +1416,7 @@ fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay
             }
         }
     }
-    let queued = if packets.is_empty() {
-        [0, 0, 0]
-    } else {
-        link.queued().expect("per-role queue depth")
-    };
+    let queued = link.queued().expect("per-role queue depth");
     let relay_task = fork relay.batch(relay_rx, transport.now(), queued[0]);
     let room_task = fork room.batch(room_rx, transport.now(), queued[1]);
     var hew_bot_rx: Vec<session.Reception> = Vec.new();
@@ -1715,8 +1917,6 @@ pub fn run(root: string) {
                                 .Ok(valid) => { native_ok = native_ok && valid; }
                                 .Err(_) => {}
                             }
-                        } else if tag == 132 {
-                            native_ok = false;
                         } else {
                             native_ok = false;
                         }

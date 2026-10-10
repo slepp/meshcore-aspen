@@ -19,7 +19,8 @@ NATIVE = BUILD/"native"
 WORKER = BUILD/"native-worker"
 SPEC = BUILD/"native-worker.json"
 INPUTS = BUILD/"native-worker.inputs"
-PIN = "d92964352441e53b93e8667b802e04f6e072b39e"
+UPSTREAM = json.loads((ROOT/"release/products.json").read_text())["upstream"]
+PIN = UPSTREAM["commit"]
 SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".inc", ".py", ".mk", ".cmake", ".S", ".patch"}
 
 def source_identity(root=ROOT):
@@ -117,6 +118,9 @@ def ensure():
             cached_link_input = path.is_relative_to(NATIVE) and path.suffix in (".o", ".a")
             if (cached_link_input or any(path.is_relative_to(parent) for parent in pinned)) and (not path.is_file() or digest(path) != expected):
                 raise ValueError("pinned dependency input changed; restore it before rebuilding: "+name)
+        # The build legitimately rewrites cached WAMR and object outputs. Retire
+        # the old binding now so a failed build restarts like a first build.
+        SPEC.unlink()
     NATIVE.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(TMPDIR=str(BUILD), PYTHONDONTWRITEBYTECODE="1", CMAKE_EXPORT_COMPILE_COMMANDS="ON")
@@ -126,7 +130,7 @@ def ensure():
     log_path.write_text("")
     with log_path.open("a") as log:
         if not upstream.exists():
-            run(["git", "clone", "--quiet", "--depth", "1", "--branch", "companion-v1.17.1",
+            run(["git", "clone", "--quiet", "--depth", "1", "--branch", UPSTREAM["tag"],
                  "https://github.com/meshcore-dev/MeshCore.git", upstream], log, env)
         revision = subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True).strip()
         if revision != PIN or subprocess.check_output(["git", "-C", str(upstream), "status", "--porcelain"]):
@@ -248,7 +252,9 @@ def ensure():
                 "wamr_revision": wasm.REVISION, "wamr_archive_sha256": wasm.SHA256,
                 "compiler": compiler, "compiler_commands": str(compiler_log),
                 "inputs_sha256": digest(INPUTS), "inputs": inputs, "local_inputs": local}
-        SPEC.write_text(json.dumps(spec, indent=2, sort_keys=True)+"\n")
+        pending = SPEC.with_suffix(".json.pending")
+        pending.write_text(json.dumps(spec, indent=2, sort_keys=True)+"\n")
+        os.replace(pending, SPEC)
         write_identity(spec)
     verify()
     print("Built verified native worker", spec["worker_sha256"], "inputs", len(inputs))

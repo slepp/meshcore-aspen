@@ -35,19 +35,23 @@ def unique_fields(value, where):
         fail(f"{where}: ambiguous field casing")
 
 
-def settings(raw):
+def settings(raw, strict=False):
     result = {}
-    for line in raw.decode("utf-8").splitlines():
+    for number, line in enumerate(raw.decode("utf-8").splitlines(), 1):
         if not line:
             continue
         key, sep, value = line.partition("=")
-        if not sep or key in result or "\0" in line:
-            fail("Willow config: malformed or duplicate setting")
+        if not sep:
+            fail(f"Willow config line {number}: expected key=value")
+        if strict and key in result:
+            fail(f"Willow config line {number}: duplicate key {key}")
+        if "\0" in line:
+            fail(f"Willow config line {number}: {key} contains a NUL byte")
         prefix, _, suffix = key.partition(".")
         if key not in BASE_FIELDS and not (prefix in ("relay", "room") and suffix in ROLE_OPTIONS) and not (prefix == "observer" and suffix in OBSERVER_FIELDS):
-            fail("Willow config: unsupported setting "+key)
+            fail(f"Willow config line {number}: unknown key {key}")
         if suffix == "preference_profile" and value not in ("native-preferences", "durable-host-preferences"):
-            fail("Willow config: invalid preference profile "+key)
+            fail(f"Willow config line {number}: {key} must be native-preferences or durable-host-preferences")
         result[key] = value
     return result
 
@@ -406,7 +410,7 @@ def reconcile(source, destination, go_source=None):
         base = {name[12:]: raw for name, raw in files.items() if name.startswith("rollback-go/")}
         if hashes(base) != record.get("source_files"):
             fail("rollback-go differs from the preserved migration source")
-        cfg = settings(files.get("config", b""))
+        cfg = settings(files.get("config", b""), strict=True)
         if cfg.get("imported") != "1" or cfg.get("worker", "-") == "-":
             fail("reconciliation requires imported state and the native bot")
         output = dict(base)

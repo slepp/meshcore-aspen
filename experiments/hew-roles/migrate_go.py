@@ -187,13 +187,14 @@ def raw_bytes(value, size, where):
 def config_file(path):
     private(path)
     values = {}
-    for line in Path(path).read_text().splitlines():
+    for number, line in enumerate(Path(path).read_text().splitlines(), 1):
         if not line: continue
         key,sep,value = line.partition("=")
-        if not sep or key in values: fail(f"configuration: malformed/duplicate setting {key}")
+        if not sep: fail(f"configuration line {number}: expected key=value")
+        if key in values: fail(f"configuration line {number}: duplicate key {key}")
         if key not in BASE_FIELDS and not (key.startswith("observer.") and key[9:] in OBSERVER_FIELDS) and not any(
                 key.startswith(role+".") and key[len(role)+1:] in ROLE_OPTIONS for role in ("relay","room")):
-            fail(f"configuration: unsupported setting {key}")
+            fail(f"configuration line {number}: unknown key {key}")
         values[key] = value
     for field in ("address","port","profile","bot_home","bot_default"):
         if field not in values: fail(f"configuration: explicitly supply {field}, empty when intentionally disabled")

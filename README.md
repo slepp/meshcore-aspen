@@ -96,7 +96,14 @@ not flashing a lab radio. A full Aspen port or a V4 image still needs its own
 wiring, TCXO, memory layout and feature selection.
 Willow sources are included in `experiments/hew-roles`. Its event-driven
 runtime is experimental; check your selected services before replacing an
-existing installation. Aspen, Birch and Pine retain their own setup guides.
+existing installation. For a fresh host, the native Hew `hew-host init`
+command creates private role identities and generated or imported admin and
+room credentials, with the native worker enabled. Initialization stays
+offline; it neither connects to nor retunes the modem. Follow the
+[Willow service guide](experiments/hew-roles/SERVICE.md) for its required radio
+profile and startup commands. Use the migration procedure instead to retain
+an existing Birch installation's identities. Aspen, Birch and Pine retain
+their own setup guides.
 
 Use the [command guide](COMMANDS.md) for bot, Management and native role
 syntax, parameters and permissions. The [architecture and sequence diagrams](ARCHITECTURE.md)

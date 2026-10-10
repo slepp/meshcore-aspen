@@ -4,6 +4,14 @@ import std.os;
 
 fn main() {
     let args = os.args();
+    if args.len() >= 2 && args[1] == "init" {
+        var rest: Vec<string> = Vec.new();
+        for i in 2..args.len() {
+            rest.push(args[i]);
+        }
+        service.initialize(rest);
+        return;
+    }
     assert(args.len() == 2);
     service.run(args[1]);
 }

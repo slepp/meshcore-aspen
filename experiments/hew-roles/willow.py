@@ -14,6 +14,7 @@ from pathlib import Path
 
 from build_worker import HERE, verify
 from migrate_go import private, write_private, observer_config, identity_public
+from reconcile_go import settings
 from release_identity import VERSION
 
 OWNER_PHASES = ("pending-admission", "admitted", "queued", "local-tx-confirmed",
@@ -110,7 +111,7 @@ def packet_log(root, role):
 def check(root, verify_worker=True):
     private(root,True)
     private(root/"config")
-    config=dict(line.split("=",1) for line in (root/"config").read_text().splitlines() if line)
+    config=settings((root/"config").read_bytes())
     observing = observer_config(config)
     if observing:
         observer_path = root/("observer.expanded" if (root/"observer.expanded").exists() else "observer.seed")
@@ -161,7 +162,7 @@ def check(root, verify_worker=True):
 
 def rebind(source, destination):
     from migrate_go import document, hashes, inventory, owner_ledger, admin_clock
-    from reconcile_go import frozen, settings
+    from reconcile_go import frozen
 
     worker = verify()
     with frozen(source, "service.lock") as source:
@@ -169,7 +170,7 @@ def rebind(source, destination):
         files = inventory(source, retained=("rollback-go",))
         if any(name.endswith(".pending") for name in files):
             raise ValueError("frozen state contains an unfinished transaction; recover with its owning version first")
-        config = settings(files["config"])
+        config = settings(files["config"], strict=True)
         if config.get("imported") != "1" or config.get("worker", "-") == "-":
             raise ValueError("rebind requires imported native-worker state")
         record = document(files["migration.json"], "migration record")

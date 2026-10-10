@@ -209,6 +209,16 @@ int32_t mc_append_private(const Bytes *path, const Bytes *data, int64_t limit) {
     return result;
 }
 
+/* Removes an empty directory this user owns with no group/other access. */
+int32_t mc_remove_private_directory(const Bytes *path) {
+    char name[4096];
+    struct stat st;
+    if (!path_string(path, name)) return -1;
+    if (lstat(name, &st)) return errno == ENOENT ? 0 : -1;
+    if (!S_ISDIR(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 077)) return -1;
+    return rmdir(name) ? -1 : 0;
+}
+
 int32_t mc_erase_private(const Bytes *path) {
     char leaf[4096];
     int directory = private_parent(path, leaf);

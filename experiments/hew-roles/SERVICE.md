@@ -2,6 +2,7 @@
 
 For an existing Birch node, use [the offline migration procedure](MIGRATION.md).
 It keeps the relay, room, bot and observer identities and their supported saved state.
+For a new node, create state with [`hew-host init`](#start-with-new-identities).
 Then run:
 
 ```sh
@@ -329,24 +330,42 @@ queued protocol v1, signal reporting, configuration readback and source policy.
 All modes negotiate the complete 1–255-byte airtime table for forwarding delays.
 Keep the modem's configuration owner separate; Willow only reads the PHY.
 
-Create a **new** private directory and config, then supply its absolute path:
+`hew-host init` creates a **new** private state directory. It does not open
+the modem, start the worker or send anything; it verifies the pinned native
+worker offline and refuses an existing path. It creates new relay, room and bot
+identities, so do not use it to move a Birch node (see [MIGRATION.md](MIGRATION.md)).
 
 ```sh
-mkdir build/lab-service
-chmod 700 build/lab-service
-umask 077
-cat > build/lab-service/config <<'EOF'
-address=127.0.0.1
-port=5000
-profile=c806643690d003000705020000803f010000
-worker=-
-password=room
-admin=admin
-width=3
-native_airtime=360
-EOF
-./build/hew-host "$PWD/build/lab-service"
+make native-worker build/hew-host
+./build/hew-host init /path/to/private/willow \
+  --address 127.0.0.1 --port 5000 \
+  --profile c806643690d003000705020000803f010000
+python3 -B willow.py check --state /path/to/private/willow
+python3 -B willow.py run --state /path/to/private/willow
 ```
+
+Init writes `config`, `relay.seed`, `room.seed` and `bot.seed` (mode 0600), and
+`native/nvs` and `native/spiffs` (mode 0700). It stages them in `STATE.init`
+and renames that directory into place; if an earlier attempt was interrupted,
+inspect and remove `STATE.init` before retrying. The config enables the native
+worker at `build/native-worker` and keeps every other setting at its default.
+
+Credentials:
+
+- `admin` is the relay and room admin password. Init generates a random
+  15-character password unless you pass `--admin-file FILE`.
+- `room.password` is the room's guest password. Init generates a separate one
+  unless you pass `--room-password-file FILE`. The relay guest password stays
+  at its existing empty default.
+- An imported file must be owned by you, mode 0600, and hold 1–15 printable
+  ASCII bytes on one line (the MeshCore login limit). The two must differ.
+- Neither password is printed. Read them from `STATE/config` (keys `admin`
+  and `room.password`). Init prints the state path, the three public keys and
+  the next command.
+
+To write the config by hand instead, use the same keys, for example
+`worker=-` to run without the native bot. Keep the directory 0700 and the
+config 0600.
 
 Set `port` to the lab modem's TCP listener. The sample profile encodes
 912.525 MHz, BW 250 kHz, SF7, CR5, TX 2 dBm, aggregate factor 1, CAD enabled,

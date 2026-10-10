@@ -209,8 +209,9 @@ native records are errors, not silent resets.
 Willow supports [RF status, telemetry, discovery and role administration](MANAGEMENT.md).
 RF changes to supported settings persist in HEW6. The helper refuses invalid
 or unrepresented data rather than replacing it with defaults.
-Base companion continues outside Willow in Go. The observer's MQTT output is
-native Hew when enabled.
+Base companion runs outside Willow, either in Go or as the separate
+[Hew Base companion](BASE.md). The observer's MQTT output is native Hew when
+enabled.
 
 ## Upgrade a frozen Willow state
 
