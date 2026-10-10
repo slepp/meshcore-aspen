@@ -324,6 +324,10 @@ implementation of its existing commands, not a separate phone protocol.
 The upstream BLE DFU service is omitted so pairing does not grant firmware
 replacement or reset access.
 
+The table below describes the smaller native-note images. Production Lua adds
+the persistent companion operations in the following section; it retains the
+same secured BLE connection and shared-radio authority.
+
 | Supported native operations | Bounds/consequences |
 | --- | --- |
 | Device query, self-info, clock read/sync, battery/storage | Self-info follows actual repeater-driven PHY changes, including timed temporary tuning. Clock sync cannot move time backwards. |
@@ -344,6 +348,67 @@ and `tempradio` there. Both RF roles follow the single modem; BLE has no second
 radio preference record and cannot silently retune it. Repeater names,
 passwords, permissions and forwarding policy retain their existing native
 storage. No Lua, WiFi, HTTP or host process is needed for notes or BLE.
+
+### Production Lua companion persistence
+
+On `nrfmast_fleet_lua` and `nrfmast_solar_lua`, enable and pair the companion
+using the PIN procedure above. The existing bot/carrier identity now retains:
+
+- Eight contacts, their outgoing routes, favourite flags and epoch-based
+  advert/message-sync metadata. The separate 16-entry Lua contact cache is
+  still volatile; this does not merge the two tables.
+- The most recent cached signed advert for each retained contact. Native
+  contact export and zero-hop share use that advert after restart. Received
+  route bytes are removed from the cached advert without changing its signed
+  payload. Manually entered contacts have no signed advert until one arrives.
+- Four named 128-bit companion channels, initially empty. The normal app's
+  channel get/set and channel-text send/receive commands work. A channel change
+  does not join or grant access to a Lua bot membership. Group-data commands
+  remain disabled.
+
+The app still sees companion protocol v13. No new identity, administrator
+secret, BLE permission or radio-tuning authority is introduced. Paired users
+can read/change **companion** channel keys, as in the native companion protocol;
+they cannot obtain private identity keys or administer the repeater/Lua source
+merely by pairing. Channel send success means queued, not RF reception.
+DM and channel messages share the existing four-message volatile inbox.
+
+Explicit app contact/channel edits, removals and path resets are saved before
+success is returned. Storage failure leaves the old live selection; an
+uncertain commit blocks further mutations until restart. Learned RF contacts,
+adverts and route changes are grouped into a save no earlier than 30 seconds
+after the first change, including while the phone is disconnected. Those
+unsaved updates can be lost to a power cut. Writes share eight initial attempt
+credits and replenish one every 15 seconds of monotonic uptime; rejected
+mutations do not silently queue. Reconnect/read back after a failure instead of
+assuming an edit took effect.
+
+The 2,888-byte versioned, identity-bound record lives at
+`/metadata/pine-companion/state`. It uses the existing checked metadata staging
+and atomic rename and is included in encrypted node backups. Corrupt or
+unreadable records are retained and disable durable edits rather than being
+replaced with empty state. `get custom variables` in the companion protocol
+reports the storage condition; USB startup also reports load failures.
+Saved epoch timestamps are not used to grant fresh clock trust. Connections,
+pending ACKs, uptime deadlines, shared-secret caches and inbox messages are
+not restored.
+
+Only an enabled production companion allocates its 2,888-byte retained
+snapshot; a save temporarily needs a second snapshot plus filesystem buffers.
+The channel table is four entries. Lua keeps its existing 48 KiB quota and
+8 KiB physical-heap reserve; allocation or storage pressure can reject a
+companion edit. Neither contact table is enlarged.
+
+**Destructive `bot lua provision erase-lua confirm` also erases this companion
+state.** Ordinary source install/rollback, application-only updates and device
+restarts do not.
+
+Run the focused protocol and QSPI lifecycle checks without hardware:
+
+```sh
+make -C firmware/nrf52840 companion-state-test
+python3 -m unittest discover -s firmware/nrf52840/tests -p test_production_profile.py
+```
 
 ## Check a configured node
 

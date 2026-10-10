@@ -1,5 +1,6 @@
 #include "CompanionInterface.h"
 #include "CompanionProtocol.h"
+#include "CompanionStore.h"
 #include "FirmwareIdentity.h"
 #if NRFMAST_PRODUCTION_LUA
 #include "PineRuntimePlatform.h"
@@ -53,6 +54,7 @@ void CompanionInterface::contactFrame(uint8_t code, const ContactInfo& contact) 
 }
 
 void CompanionInterface::loop() {
+  if (store_) store_->loop(bot.uptimeMillis());
   transport.loop();
   // SerialBLEInterface becomes connected only after the secured callback.
   if (!transport.isConnected()) {
@@ -94,7 +96,7 @@ void CompanionInterface::handle(size_t length) {
     output[0] = RESP_CODE_DEVICE_INFO;
     output[1] = 13;
     output[2] = MAX_CONTACTS / 2;
-    output[3] = 0;  // This two-role image has no channel service.
+    output[3] = store_ ? CompanionStore::Channels : 0;
     put32(output + 4, config.ble.getPin());
     memcpy(output + 8, __DATE__, 11);
     memcpy(output + 20, "Seeed Xiao-nrf52", 15);
@@ -135,8 +137,21 @@ void CompanionInterface::handle(size_t length) {
     auto* contact = uniqueContact(input + 1, PUB_KEY_SIZE);
     if (!contact) { error(ERR_CODE_NOT_FOUND); return; }
     if (code == CMD_GET_CONTACT_BY_KEY) contactFrame(RESP_CODE_CONTACT, *contact);
-    else if (code == CMD_RESET_PATH) { bot.resetPathTo(*contact); respond(RESP_CODE_OK); }
+    else if (code == CMD_RESET_PATH) {
+      ContactInfo candidate = *contact;
+      candidate.out_path_len = OUT_PATH_UNKNOWN;
+      candidate.lastmod = bot.getRTCClock()->getCurrentTime();
+      if (store_ && !store_->contact(candidate, false, bot.uptimeMillis())) {
+        error(ERR_CODE_FILE_IO_ERROR); return;
+      }
+      bot.resetPathTo(*contact);
+      if (store_) contact->lastmod = candidate.lastmod;
+      respond(RESP_CODE_OK);
+    }
     else if (code == CMD_REMOVE_CONTACT) {
+      if (store_ && !store_->contact(*contact, true, bot.uptimeMillis())) {
+        error(ERR_CODE_FILE_IO_ERROR); return;
+      }
       respond(bot.removeContact(*contact) ? RESP_CODE_OK : RESP_CODE_DISABLED);
     } else respond(bot.shareContactZeroHop(*contact) ? RESP_CODE_OK : RESP_CODE_DISABLED);
   } else if (code == CMD_ADD_UPDATE_CONTACT) {
@@ -155,6 +170,12 @@ void CompanionInterface::handle(size_t length) {
     candidate.gps_lon = length >= 144 ? read32(input + 140) : 0;
     candidate.lastmod = bot.getRTCClock()->getCurrentTime();
     auto* existing = bot.lookupContactByPubKey(candidate.id.pub_key, PUB_KEY_SIZE);
+    if (!existing && bot.getNumContacts() >= int(CompanionStore::Contacts)) {
+      error(ERR_CODE_TABLE_FULL); return;
+    }
+    if (store_ && !store_->contact(candidate, false, bot.uptimeMillis())) {
+      error(ERR_CODE_FILE_IO_ERROR); return;
+    }
     if (existing) { *existing = candidate; respond(RESP_CODE_OK); }
     else if (bot.addContact(candidate)) respond(RESP_CODE_OK);
     else error(ERR_CODE_TABLE_FULL);
@@ -182,8 +203,12 @@ void CompanionInterface::handle(size_t length) {
   } else if (code == CMD_EXPORT_CONTACT) {
     if (length != 1 && length != 33) { illegal(); return; }
     if (length == 33) {
-      // Received-advert blobs are not retained by this bounded bot.
-      respond(RESP_CODE_DISABLED);
+      auto *contact = uniqueContact(input + 1, PUB_KEY_SIZE);
+      if (!contact) { error(ERR_CODE_NOT_FOUND); return; }
+      const uint8_t size = bot.exportContact(*contact, output + 1);
+      if (!size) { respond(RESP_CODE_DISABLED); return; }
+      output[0] = RESP_CODE_EXPORT_CONTACT;
+      transport.writeFrame(output, size + 1);
       return;
     }
     auto* packet = bot.createSelfAdvert(bot.getName());
@@ -242,8 +267,39 @@ void CompanionInterface::handle(size_t length) {
     put32(output + 7, total);
     transport.writeFrame(output, 11);
   } else if (code == CMD_GET_CHANNEL) {
-    if (length != 2) illegal();
-    else error(ERR_CODE_NOT_FOUND);
+    if (length != 2) { illegal(); return; }
+    ChannelDetails channel{};
+    if (!store_ || !store_->ready() || input[1] >= CompanionStore::Channels ||
+        !bot.getChannel(input[1], channel)) { error(ERR_CODE_NOT_FOUND); return; }
+    output[0] = RESP_CODE_CHANNEL_INFO; output[1] = input[1];
+    memcpy(output + 2, channel.name, 32); memcpy(output + 34, channel.channel.secret, 16);
+    transport.writeFrame(output, 50);
+  } else if (code == CMD_SET_CHANNEL) {
+    if (!store_) { respond(RESP_CODE_DISABLED); return; }
+    if (length == 66) { error(ERR_CODE_UNSUPPORTED_CMD); return; }
+    if (length != 50 || !memchr(input + 2, 0, 32)) { illegal(); return; }
+    if (input[1] >= CompanionStore::Channels) { error(ERR_CODE_NOT_FOUND); return; }
+    ChannelDetails channel{};
+    memcpy(channel.name, input + 2, strnlen(reinterpret_cast<char *>(input + 2), 31));
+    memcpy(channel.channel.secret, input + 34, 16);
+    if (!store_->channel(input[1], channel, bot.uptimeMillis())) {
+      error(ERR_CODE_FILE_IO_ERROR); return;
+    }
+    respond(bot.setChannel(input[1], channel) ? RESP_CODE_OK : RESP_CODE_DISABLED);
+  } else if (code == CMD_SEND_CHANNEL_TXT_MSG) {
+    if (!store_) { respond(RESP_CODE_DISABLED); return; }
+    if (length < 8 || length - 7 > MAX_TEXT_LEN || memchr(input + 7, 0, length - 7)) {
+      illegal(); return;
+    }
+    if (input[1] != TXT_TYPE_PLAIN) { error(ERR_CODE_UNSUPPORTED_CMD); return; }
+    ChannelDetails channel{};
+    if (!store_->ready() || input[2] >= CompanionStore::Channels ||
+        !bot.getChannel(input[2], channel) || !channel.name[0]) { error(ERR_CODE_NOT_FOUND); return; }
+    if (!bot.companionChannelSend(read32(input + 3), channel,
+                                 reinterpret_cast<char *>(input + 7), length - 7)) {
+      error(ERR_CODE_TABLE_FULL); return;
+    }
+    respond(RESP_CODE_OK);
   } else if (code == CMD_GET_AUTOADD_CONFIG) {
     if (length != 1) { illegal(); return; }
     const uint8_t frame[] = {RESP_CODE_AUTOADD_CONFIG, 15, 0};  // replace oldest, chat/repeater/room
@@ -252,7 +308,8 @@ void CompanionInterface::handle(size_t length) {
     if (length != 1) { illegal(); return; }
     output[0] = RESP_CODE_CUSTOM_VARS;
     const int size = snprintf(reinterpret_cast<char*>(output + 1), sizeof(output) - 1,
-                              "radio_authority:repeater,notes:DM-only,notes_limit:16,principals_limit:8,BLE_PIN_apply:reboot,contacts:volatile");
+                              "radio_authority:repeater,notes:DM-only,BLE_PIN_apply:reboot,contacts:%s,companion_store:%s",
+                              store_ ? "QSPI" : "volatile", store_ ? store_->error() : "unavailable");
     transport.writeFrame(output, size + 1);
   } else if (code == CMD_GET_TUNING_PARAMS) {
     if (length != 1) { illegal(); return; }
@@ -319,7 +376,6 @@ void CompanionInterface::handle(size_t length) {
              code == CMD_SET_TUNING_PARAMS || code == CMD_SET_PATH_HASH_MODE ||
              code == CMD_SET_OTHER_PARAMS || code == CMD_EXPORT_PRIVATE_KEY ||
              code == CMD_IMPORT_PRIVATE_KEY || code == CMD_FACTORY_RESET ||
-             code == CMD_SET_CHANNEL || code == CMD_SEND_CHANNEL_TXT_MSG ||
              code == CMD_SEND_CHANNEL_DATA || code == CMD_REBOOT || code == CMD_SIGN_START ||
              code == CMD_SIGN_DATA || code == CMD_SIGN_FINISH || code == CMD_SET_AUTOADD_CONFIG) {
     respond(RESP_CODE_DISABLED);
@@ -327,6 +383,7 @@ void CompanionInterface::handle(size_t length) {
 }
 
 void CompanionInterface::discovered(const ContactInfo& contact, bool isNew) {
+  if (store_) store_->changed(bot.uptimeMillis());
   if (!transport.isConnected() || transport.isWriteBusy()) return;
   if (isNew) contactFrame(PUSH_CODE_NEW_ADVERT, contact);
   else {
@@ -337,6 +394,7 @@ void CompanionInterface::discovered(const ContactInfo& contact, bool isNew) {
 }
 
 void CompanionInterface::pathUpdated(const ContactInfo& contact) {
+  if (store_) store_->changed(bot.uptimeMillis());
   if (!transport.isConnected() || transport.isWriteBusy()) return;
   output[0] = PUSH_CODE_PATH_UPDATED;
   memcpy(output + 1, contact.id.pub_key, PUB_KEY_SIZE);
@@ -345,6 +403,7 @@ void CompanionInterface::pathUpdated(const ContactInfo& contact) {
 
 void CompanionInterface::received(const ContactInfo& contact, const mesh::Packet& packet,
                                   uint32_t timestamp, uint8_t type, const char* text) {
+  if (store_) store_->changed(bot.uptimeMillis());
   if (inboxCount == 4) {
     ++inboxDrops;
     Serial.println("BLE: ordinary DM inbox full; message not retained");
@@ -365,6 +424,28 @@ void CompanionInterface::received(const ContactInfo& contact, const mesh::Packet
   const size_t textLength = strnlen(text, MAX_FRAME_SIZE - i);
   memcpy(frame.bytes + i, text, textLength);
   frame.length = i + textLength;
+  if (transport.isConnected()) respond(PUSH_CODE_MSG_WAITING);
+}
+
+void CompanionInterface::channelReceived(int slot, const mesh::Packet &packet,
+                                         uint32_t timestamp, const char *text) {
+  if (!store_ || !store_->ready() || slot < 0 || slot >= int(CompanionStore::Channels)) return;
+  ChannelDetails channel{};
+  if (!bot.getChannel(slot, channel) || !channel.name[0]) return;
+  if (inboxCount == 4) { ++inboxDrops; return; }
+  auto &frame = inbox[inboxCount++];
+  unsigned i = 0;
+  if (version >= 3) {
+    frame.bytes[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+    frame.bytes[i++] = packet._snr;
+    frame.bytes[i++] = 0; frame.bytes[i++] = 0;
+  } else frame.bytes[i++] = RESP_CODE_CHANNEL_MSG_RECV;
+  frame.bytes[i++] = slot;
+  frame.bytes[i++] = packet.isRouteFlood() ? packet.path_len : 0xFF;
+  frame.bytes[i++] = TXT_TYPE_PLAIN;
+  put32(frame.bytes + i, timestamp); i += 4;
+  const size_t size = strnlen(text, MAX_FRAME_SIZE - i);
+  memcpy(frame.bytes + i, text, size); frame.length = i + size;
   if (transport.isConnected()) respond(PUSH_CODE_MSG_WAITING);
 }
 

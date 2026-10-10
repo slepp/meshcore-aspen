@@ -14,6 +14,7 @@
 #include <helpers/nrf52/SerialBLEInterface.h>
 #if NRFMAST_PRODUCTION_LUA
 #include "PineAdmin.h"
+#include "CompanionStore.h"
 #include "onchip/CommandBot.h"
 #include "PineFilesystem.h"
 #include "PineNotesMigration.h"
@@ -146,6 +147,9 @@ static void storageRead(uint32_t& used, uint32_t& total) {
   total = (filesystem->cfg->block_count * filesystem->cfg->block_size) / 1024;
 }
 static nrfmast::CompanionInterface companion(bot, runtimeConfig, ble, radioInfo, batteryRead, storageRead);
+#if NRFMAST_PRODUCTION_LUA
+static nrfmast::CompanionStore companionStore(bot);
+#endif
 static int heapLow = INT32_MAX;
 static char command[160];
 static size_t commandLength;
@@ -315,6 +319,7 @@ static bool luaAdminCommand(const char* text, char* reply, size_t capacity) {
     onchip::MastAdmin::service()->stop();
     onchip::commandBotService().stop();
     luaStarted = false;
+    companionStore.stop();
     if (!loadOriginalNotes()) {
       strcpy(reply, "Error: original notes reload failed; Lua files and identities retained"); return true;
     }
@@ -327,11 +332,11 @@ static bool luaAdminCommand(const char* text, char* reply, size_t capacity) {
       strcpy(reply, "Error: Lua notes migration/marker failed; original notes/identities retained"); return true;
     }
     releaseOriginalNotes();
-    strcpy(reply, "Lua source/KV/timers/grants erased; original notes restored; identities retained; reboot to start Lua");
+    strcpy(reply, "Lua data and companion contacts/channels erased; original notes restored; identities retained; reboot required");
     return true;
   }
   if (strcmp(text, "bot lua provision") == 0) {
-    strcpy(reply, "WARNING: bot lua provision erase-lua confirm erases Lua source/KV/timers/grants only; identities and original note journal retained");
+    strcpy(reply, "WARNING: bot lua provision erase-lua confirm erases Lua data and companion contacts/channels; identities/original notes retained");
     return true;
   }
   if (!strncmp(text, "bot ", 4) || !strncmp(text, "source ", 7) ||
@@ -625,6 +630,9 @@ void setup() {
     ble.enable();
     bot.setCompanion(companion);
     bleStarted = true;
+#if NRFMAST_PRODUCTION_LUA
+    companion.setStore(companionStore);
+#endif
     Serial.println("BLE: bot identity companion enabled; pair with configured PIN; shared radio read-only");
   }
   if (!sharedRadio.setAirtimeFactor(prefs->airtime_factor))
@@ -632,6 +640,8 @@ void setup() {
 #if NRFMAST_PRODUCTION_LUA
   if (prepareLuaFilesystem() && preserveLuaBotName()) {
     releaseOriginalNotes();
+    if (bleStarted && !companionStore.begin(millis()))
+      Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
     nrfmast::setLuaIdentity(bot.self_id);
     const auto &profile = repeater.activeProfile;
     const RadioConfig configuration{uint32_t(profile.frequency * 1000000), uint32_t(profile.bandwidth * 1000),

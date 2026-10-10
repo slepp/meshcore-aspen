@@ -5,6 +5,15 @@ import unittest
 
 
 class ProductionProfileTest(unittest.TestCase):
+    def test_companion_channels_only_in_production_profiles(self):
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(Path(__file__).resolve().parents[1] / "platformio.ini")
+        for name in ("env:nrfmast_fleet_lua", "env:nrfmast_solar_lua"):
+            self.assertIn("-D MAX_GROUP_CHANNELS=4", config[name]["build_flags"])
+            self.assertIn("densaugeo/base64 @ ~1.4.0", config[name]["lib_deps"])
+        for name in ("env:nrfmast_rx", "env:nrfmast", "env:nrfmast_fleet"):
+            self.assertNotIn("MAX_GROUP_CHANNELS", config[name]["build_flags"])
+
     def test_lua_uses_full_c_and_software_crypto_without_changing_native(self):
         config = configparser.ConfigParser(interpolation=None)
         config.read(Path(__file__).resolve().parents[1] / "platformio.ini")

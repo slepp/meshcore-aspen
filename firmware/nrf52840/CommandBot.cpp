@@ -5,6 +5,7 @@
 #endif
 #include "NoteStore.h"
 #include "CompanionInterface.h"
+#include "CompanionStore.h"
 #include "SharedRadio.h"
 #include <cmath>
 #include <cstdio>
@@ -323,6 +324,18 @@ void CommandBot::onContactPathUpdated(const ContactInfo& contact) {
 void CommandBot::onCommandDataRecv(const ContactInfo& contact, mesh::Packet* packet,
                                    uint32_t timestamp, const char* text) {
   if (companion) companion->received(contact, *packet, timestamp, TXT_TYPE_CLI_DATA, text);
+}
+
+int CommandBot::getBlobByKey(const uint8_t *key, int length, uint8_t *out) {
+  return companionStore && length == PUB_KEY_SIZE ? companionStore->getAdvert(key, out) : 0;
+}
+bool CommandBot::putBlobByKey(const uint8_t *key, int length, const uint8_t *bytes, int size) {
+  return companionStore && length == PUB_KEY_SIZE &&
+      companionStore->putAdvert(key, bytes, size, uptimeMillis());
+}
+void CommandBot::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *packet,
+                                      uint32_t timestamp, const char *text) {
+  if (companion) companion->channelReceived(findChannelIdx(channel), *packet, timestamp, text);
 }
 
 void CommandBot::onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t length) {

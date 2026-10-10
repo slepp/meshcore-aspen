@@ -120,6 +120,7 @@ enable HTTPS or create extra job/heap capacity.
 | Concurrent Lua jobs | 2 total; at most 1 custom/event job, keeping a slot for native commands |
 | Lua bot contact/route cache | 16 contacts; volatile |
 | BLE companion contact cache | 8 contacts |
+| BLE companion channels | 4, separate from Lua bot memberships; no channel joined by default |
 | Bot radio packet capacity | 4; incoming and outgoing packets share the pool |
 | Lua allocator quota | 48 KiB; allocations also preserve 8 KiB physical free heap |
 | VM wall time | Installed-source load 330 ms; default firmware-owned bundled recovery load 1 s; initialization 50 ms; active invocation/cleanup 20 ms; suspended I/O time excluded |
@@ -236,8 +237,11 @@ of masquerading as absent metadata. KV publication retains its shared checked
 file banks, authority journal and uncertain-outcome handling.
 
 After restart, source selection, KV/notes, timers/reminders, grants, mesh policy,
-owner and identities persist. Lua globals, jobs, contacts, routes and live
-counter state restart. Rollback changes code, not already committed data.
+owner and identities persist. Lua globals, jobs, Lua contacts/routes and live
+counters restart. The enabled BLE companion retains its own eight contacts,
+routes, cached signed adverts and four channels in QSPI; see
+[companion persistence](STATE-BLE.md#production-lua-companion-persistence).
+Rollback changes code, not already committed data.
 
 Pine cannot synchronize time through NTP. An authenticated administrator must
 send `bot time UNIX_SECONDS` after each restart and refresh it at least hourly.
@@ -257,7 +261,8 @@ cannot repair the Lua filesystem, send:
 bot lua provision erase-lua confirm
 ```
 
-**This erases Lua source, KV, timers/reminders, grants and the Lua owner record.**
+**This erases Lua source, KV, timers/reminders, grants, the Lua owner record and
+the companion's saved contacts, routes, adverts and channels.**
 It stops Lua workers, unmounts/reinitializes only their QSPI partition and
 restores the original journal's notes. It preserves both identities, native
 settings/ACL/BLE and the original note journal. Reboot to restart Lua, then

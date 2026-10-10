@@ -18,6 +18,7 @@ class CompanionInterface {
   CommandBot& bot;
   RuntimeConfig& config;
   BaseSerialInterface& transport;
+  CompanionStore* store_ = nullptr;
   void (*radioInfo)(CompanionRadioInfo&);
   uint16_t (*battery)();
   void (*storage)(uint32_t&, uint32_t&);
@@ -47,9 +48,11 @@ public:
       : bot(commandBot), config(runtime), transport(interface), radioInfo(profile),
         battery(batteryRead), storage(storageRead) {}
   void loop();
+  void setStore(CompanionStore& store) { store_ = &store; bot.setCompanionStore(store); }
   void discovered(const ContactInfo&, bool isNew);
   void pathUpdated(const ContactInfo&);
   void received(const ContactInfo&, const mesh::Packet&, uint32_t timestamp, uint8_t type, const char* text);
+  void channelReceived(int slot, const mesh::Packet&, uint32_t timestamp, const char* text);
   void confirmed(uint32_t ack, uint32_t elapsed);
   void response(const ContactInfo&, const uint8_t*, size_t);
 };

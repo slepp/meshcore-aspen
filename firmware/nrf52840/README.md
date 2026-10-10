@@ -55,6 +55,9 @@ The default `nrfmast_rx` cannot transmit. Optional secured BLE connects a
 MeshCore companion client using the existing bot identity while the repeater
 continues forwarding. The [native notes and BLE guide](STATE-BLE.md) covers
 those images, USB PIN provisioning and companion operations.
+The [BLE radio bridge reference](BLE-PEER.md) describes the bounded peer link
+for two independently configured radios; device pairing and repeater integration
+are not yet enabled in these images.
 If Pine reports an occupied retired external volume, its USB owner can use
 [explicit lab note provisioning](STATE-BLE.md#explicit-lab-provisioning-of-an-occupied-external-volume).
 That operation can destroy old external files; it preserves CURRENT InternalFS
@@ -246,10 +249,11 @@ the other role's active or saved identity is refused. No private key is returned
 in CLI replies, and remote imports are refused even through the encrypted CLI;
 signed-only plaintext packets never form a private-key provisioning interface.
 
-The combined nRF image contains a repeater and a **DM-only** bot. BLE can expose
+The native-note nRF image contains a repeater and a **DM-only** bot. BLE can expose
 the existing bot/chat identity as a bounded native companion interface; it does
-not create a third RF identity or change the repeater identity. Channel-key
-management and channel commands remain unsupported. The [focused guide](STATE-BLE.md)
+not create a third RF identity or change the repeater identity. The production
+Lua image additionally retains eight companion contacts/routes and supports
+four saved BLE companion channels, separately from Lua memberships. The [focused guide](STATE-BLE.md)
 lists the companion operations and the repeater's exclusive shared-radio authority.
 
 ### Identity storage and update prerequisites

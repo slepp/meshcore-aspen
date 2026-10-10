@@ -56,6 +56,7 @@ test: prepare
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests -p 'test_*.py'
 	$(MAKE) native-test
 	$(MAKE) backend-test
+	$(MAKE) peer-link-test
 
 .PHONY: backend-test
 backend-test:
@@ -77,6 +78,13 @@ NATIVE_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-
 	-Itests/seams -I. -I../esp32 -I../runtime -I../shared -I$(UPSTREAM)/examples/nrfmast -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO)
 NATIVE_FLAGS += -I$(FRAMEWORK)/libraries/Adafruit_LittleFS/src
 SANITIZE ?= -fsanitize=address,undefined -fno-omit-frame-pointer
+.PHONY: peer-link-test
+peer-link-test:
+	@mkdir -p "$(NATIVE)"
+	TMPDIR="$(NATIVE)" $(CXX) -std=c++11 -O1 -g -Wall -Wextra -Werror $(SANITIZE) \
+		-I. -I../shared tests/peer_link.cpp PinePeerLink.cpp -o "$(NATIVE)/peer-link"
+	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$(NATIVE)/peer-link"
+
 CRYPTO_UNITS := AES128 AESCommon BlockCipher Crypto Hash SHA256 SHA512 Ed25519 Curve25519 BigNumberUtil
 ED_UNITS := add_scalar fe ge key_exchange keypair sc sha512 sign verify
 CORE_UNITS := Dispatcher Mesh Packet Identity Utils
@@ -110,11 +118,28 @@ $(NATIVE)/note-lfs.o: $(FRAMEWORK)/libraries/Adafruit_LittleFS/src/littlefs/lfs.
 $(NATIVE)/note-lfs-util.o: $(FRAMEWORK)/libraries/Adafruit_LittleFS/src/littlefs/lfs_util.c
 	@mkdir -p "$(@D)"
 	$(CC) -O1 -g $(SANITIZE) -c "$<" -o "$@"
-$(NATIVE)/test: tests/native.cpp tests/note_journal.cpp ../runtime/AdaptiveAdmission.h CommandBot.cpp CommandBot.h RuntimeConfig.cpp RuntimeConfig.h SharedRadio.cpp SharedRadio.h NoteStore.cpp NoteStore.h NoteJournal.cpp NoteJournal.h NotePartition.cpp NotePartition.h NoteDiagnostics.h BleConfig.cpp BleConfig.h CompanionInterface.cpp CompanionInterface.h $(NATIVE_OBJECTS)
+$(NATIVE)/test: tests/native.cpp tests/note_journal.cpp ../runtime/AdaptiveAdmission.h CommandBot.cpp CommandBot.h RuntimeConfig.cpp RuntimeConfig.h SharedRadio.cpp SharedRadio.h NoteStore.cpp NoteStore.h NoteJournal.cpp NoteJournal.h NotePartition.cpp NotePartition.h NoteDiagnostics.h BleConfig.cpp BleConfig.h CompanionInterface.cpp CompanionInterface.h CompanionStore.cpp CompanionStore.h $(NATIVE_OBJECTS)
 	$(CXX) $(NATIVE_FLAGS) $(SANITIZE) -Wl,--gc-sections \
-		tests/native.cpp tests/note_journal.cpp CommandBot.cpp RuntimeConfig.cpp SharedRadio.cpp NoteStore.cpp NoteJournal.cpp NotePartition.cpp BleConfig.cpp CompanionInterface.cpp $(NATIVE_OBJECTS) -o "$@"
+		tests/native.cpp tests/note_journal.cpp CommandBot.cpp RuntimeConfig.cpp SharedRadio.cpp NoteStore.cpp NoteJournal.cpp NotePartition.cpp BleConfig.cpp CompanionInterface.cpp CompanionStore.cpp $(NATIVE_OBJECTS) -o "$@"
 
 -include $(wildcard $(NATIVE)/*/*.d)
+
+.PHONY: companion-state-test
+COMPANION_FLAGS = -Itests/lua-seams -I$(ROOT)/.tmp/native-test-deps/base64/src $(NATIVE_FLAGS) $(SANITIZE) -DMAX_GROUP_CHANNELS=4 -pthread
+$(NATIVE)/companion/%.o: %.cpp CompanionStore.h
+	@mkdir -p "$(@D)"
+	TMPDIR="$(NATIVE)" $(CXX) $(COMPANION_FLAGS) -DNRFMAST_PRODUCTION_LUA=1 -c "$<" -o "$@"
+$(NATIVE)/companion/BaseChatMesh.o: $(UPSTREAM)/src/helpers/BaseChatMesh.cpp
+	@mkdir -p "$(@D)"
+	TMPDIR="$(NATIVE)" $(CXX) $(COMPANION_FLAGS) -c "$<" -o "$@"
+companion-state-test: $(NATIVE_OBJECTS) $(NATIVE)/companion/CompanionStore.o \
+		$(NATIVE)/companion/PineFilesystem.o $(NATIVE)/companion/PineMetadata.o $(NATIVE)/companion/BaseChatMesh.o
+	TMPDIR="$(NATIVE)" $(CXX) $(COMPANION_FLAGS) -Wl,--gc-sections \
+		tests/companion_state.cpp CommandBot.cpp RuntimeConfig.cpp SharedRadio.cpp NoteStore.cpp \
+		NoteJournal.cpp NotePartition.cpp BleConfig.cpp CompanionInterface.cpp \
+		$(filter-out $(NATIVE)/helpers/BaseChatMesh.o,$(NATIVE_OBJECTS)) \
+		$(NATIVE)/companion/*.o -o "$(NATIVE)/companion-state"
+	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$(NATIVE)/companion-state"
 
 .PHONY: production-lua-test production-lua-radio-test production-lua-source-parser-test
 LUA_NATIVE := $(UPSTREAM)/lib/OnchipLua

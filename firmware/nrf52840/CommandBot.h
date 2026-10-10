@@ -18,6 +18,7 @@ namespace nrfmast {
 class NoteStore;
 class CompanionInterface;
 class SharedRadio;
+class CompanionStore;
 
 class CommandBot : public BaseChatMesh {
   char name[32] = NRFMAST_BOT_NAME;
@@ -30,6 +31,7 @@ class CommandBot : public BaseChatMesh {
   bool startupAdvertPending = false;
   NoteStore* notes = nullptr;
   CompanionInterface* companion = nullptr;
+  CompanionStore* companionStore = nullptr;
   uint8_t timeProvider[32]{};
   bool providerEnabled = false, timeResponseDirect = false;
   uint32_t nextTimeRequest = 0, lastTimeRequest = 0;
@@ -49,6 +51,8 @@ class CommandBot : public BaseChatMesh {
 #endif
 
 protected:
+  int getBlobByKey(const uint8_t*, int, uint8_t*) override;
+  bool putBlobByKey(const uint8_t*, int, const uint8_t*, int) override;
   void onPeerDataRecv(mesh::Packet*, uint8_t, int, const uint8_t*, uint8_t*, size_t) override;
 #if NRFMAST_PRODUCTION_LUA
   bool shouldAckMessage(const char* text) const override;
@@ -78,7 +82,7 @@ protected:
     return 3000 + airtime * 4 * ((path & 63) + 1);
   }
   void onSendTimeout() override;
-  void onChannelMessageRecv(const mesh::GroupChannel&, mesh::Packet*, uint32_t, const char*) override {}
+  void onChannelMessageRecv(const mesh::GroupChannel&, mesh::Packet*, uint32_t, const char*) override;
   uint8_t onContactRequest(const ContactInfo&, uint32_t, const uint8_t*, uint8_t, uint8_t*) override { return 0; }
   void onContactResponse(const ContactInfo&, const uint8_t*, uint8_t) override;
   void logTxFail(mesh::Packet*, int) override;
@@ -102,6 +106,10 @@ public:
   void setNotes(NoteStore& store) { notes = &store; }
   void clearNotes() { notes = nullptr; }
   void setCompanion(CompanionInterface& interface) { companion = &interface; }
+  void setCompanionStore(CompanionStore& store) { companionStore = &store; }
+  bool companionChannelSend(uint32_t timestamp, ChannelDetails &channel, const char *text, int length) {
+    return transmitEnabled && sendGroupMessage(timestamp, channel.channel, name, text, length);
+  }
 #if !NRFMAST_PRODUCTION_LUA
   void bindAdaptiveRadio(SharedRadio& radio) { adaptiveRadio = &radio; }
   // Boot configuration only: resetting a live controller would discard TX reservations.
