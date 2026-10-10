@@ -128,3 +128,28 @@ class PineUpdateTests(unittest.TestCase):
                 pine_update.flash_snapshot(self.data, args)
             handover.assert_not_called()
             connect.assert_called_once_with(str(args.port))
+
+    def test_upload_timeout_is_uncertain_and_not_retried(self):
+        import hardware
+        args = SimpleNamespace(board=self.board, port=self.directory / "device",
+                               current_sha="0" * 64, zip=self.package)
+        def query(link, command, prefix):
+            if command == "get application":
+                return "application sha256=" + args.current_sha
+            if command == "get update":
+                return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+            return prefix + "saved"
+        endpoint = SimpleNamespace(vid=0x2886, serial_number="PINE", pid=0x44,
+                                   device="selected-bootloader")
+        with patch.object(hardware, "connection", return_value=MagicMock()), \
+             patch.object(hardware, "bootloader"), \
+             patch.object(hardware, "usb_serial", return_value="PINE"), \
+             patch.object(hardware, "require_bootloader"), \
+             patch("serial.tools.list_ports.comports", return_value=[endpoint]), \
+             patch.object(pine_update, "read_command", side_effect=query), \
+             patch.object(pine_update.time, "sleep"), \
+             patch.object(pine_update.subprocess, "run",
+                          side_effect=subprocess.TimeoutExpired("uploader", 240)) as upload:
+            with self.assertRaisesRegex(RuntimeError, "completion uncertain"):
+                pine_update.flash_snapshot(self.data, args)
+            self.assertEqual(upload.call_count, 1)
