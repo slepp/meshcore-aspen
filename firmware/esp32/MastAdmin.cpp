@@ -210,9 +210,10 @@ bool wifiPassword(const char *text) {
 struct Help { const char *topic, *syntax; unsigned page = 1; };
 constexpr Help topics[] = {
     {"wifi", "wifi status|ssid TEXT|password TEXT|-|apply|forget; explicit bytes: ssid|password hex HEX; set wifi.enabled 0|1; encrypted RF only"},
-    {"wifi", "wifi 2/4: literal ASCII, including spaces and hex-looking text; SSID 1..32 bytes; password 8..63 bytes or 64 hex digits; '-' opens network", 2},
-    {"wifi", "wifi 3/4: wifi ssid hex HEX; wifi password hex HEX; UTF-8/control SSID: hex; combined legacy wifi HEX HEX: use separate forms", 3},
-    {"wifi", "wifi 4/4: tagged content max 145 bytes; 64-byte PSK: wifi password TEXT or set wifi.pwd TEXT; set wifi.ssid|pwd preserves literal hex prefix", 4},
+    {"wifi", "wifi 2/5: literal ASCII, including spaces and hex-looking text; SSID 1..32 bytes; password 8..63 bytes or 64 hex digits; '-' opens network", 2},
+    {"wifi", "wifi 3/5: wifi ssid hex HEX; wifi password hex HEX; UTF-8/control SSID: hex; combined legacy wifi HEX HEX: use separate forms", 3},
+    {"wifi", "wifi 4/5: tagged content max 145 bytes; 64-byte PSK: wifi password TEXT or set wifi.pwd TEXT; set wifi.ssid|pwd preserves literal hex prefix", 4},
+    {"wifi", "wifi 5/5: status shows usable IPv4 and retry timer; retries back off 30/60/120s; station restarts after 3 attempts; no settings erased", 5},
     {"radio", "radio FREQ_HZ BW_HZ SF CR TX_DBM; read: get radio|get freq|get tx; shared PHY changes after reply"},
     {"tempradio", "tempradio SECONDS FREQ_HZ BW_HZ SF CR TX_DBM; duration 1..3600; restores saved PHY"},
     {"cad", "get cad; set cad on|off; hardware channel activity detection before shared-radio TX; saved after reply"},
@@ -2065,8 +2066,14 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       strcpy(reply.text, "Error: saved WiFi state unavailable"); return;
     }
 #ifdef ARDUINO_ARCH_ESP32
-    snprintf(reply.text, sizeof(reply.text), "wifi saved=%u ssid-bytes=%u connected=%u",
-             saved, saved ? unsigned(strlen(credentials.ssid)) : 0, WiFi.status() == WL_CONNECTED);
+    const auto &recovery = radio_network::wifiRecovery();
+    const auto bits = WiFi.getStatusBits();
+    const bool connected = recovery.enabled() && (bits & STA_CONNECTED_BIT) &&
+                           (bits & STA_HAS_IP_BIT) && uint32_t(WiFi.localIP());
+    snprintf(reply.text, sizeof(reply.text),
+             "wifi saved=%u ssid-bytes=%u connected=%u enabled=%u attempts=%u retry-ms=%u",
+             saved, saved ? unsigned(strlen(credentials.ssid)) : 0, connected,
+             recovery.enabled(), recovery.attempts(), unsigned(recovery.retryIn(millis())));
 #else
     snprintf(reply.text, sizeof(reply.text), "wifi saved=%u ssid-bytes=%u connectivity=unavailable",
              saved, saved ? unsigned(strlen(credentials.ssid)) : 0);

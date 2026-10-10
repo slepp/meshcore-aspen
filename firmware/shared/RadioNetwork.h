@@ -26,40 +26,60 @@ bool startStation();
 // including across its wrap; event callbacks only supply a loss generation.
 class WifiRecovery {
 public:
-  static constexpr uint32_t RetryMs = 30000, DhcpMs = 120000;
+  static constexpr uint32_t RetryMs = 30000, DhcpMs = 120000, MaxRetryMs = 120000;
   struct Actions {
-    bool down = false, up = false, retry = false;
+    bool down = false, up = false, retry = false, restart = false;
   };
 
   void begin(uint32_t now, bool enabled) {
     enabled_ = enabled;
     next_ = now + RetryMs;
+    attempts_ = 0;
+    dhcp_waited_ = false;
   }
   Actions update(uint32_t now, bool associated, bool hasIP, uint32_t ip,
                  uint32_t loss) {
     Actions result;
-    const bool usable = associated && hasIP && ip;
+    const bool usable = enabled_ && associated && hasIP && ip;
     const bool changed = loss != loss_ || (ready_ && ip != ip_);
     result.down = ready_ && (!usable || changed);
     result.up = usable && (!ready_ || changed);
-    if (associated && (!associated_ || (ready_ && !usable)))
-      next_ = now + DhcpMs;
-    else if (!associated && associated_)
+    if (usable || ready_) {
       next_ = now + RetryMs;
-    associated_ = associated;
+      attempts_ = 0;
+      dhcp_waited_ = false;
+    }
+    // Grant DHCP one interval per attempt, never a fresh deadline for every
+    // association flap. An overdue dispatch must not postpone recovery.
+    if (!usable && associated && !dhcp_waited_) {
+      if (int32_t(now - next_) < 0) next_ = now + DhcpMs;
+      dhcp_waited_ = true;
+    }
     ready_ = usable;
     ip_ = ip;
     loss_ = loss;
     if (enabled_ && !usable && int32_t(now - next_) >= 0) {
       result.retry = true;
-      next_ = now + RetryMs;
+      if (attempts_ < 3) ++attempts_;
+      result.restart = attempts_ >= 3;
+      next_ = now + retryDelay();
+      dhcp_waited_ = false;
     }
     return result;
   }
   bool ready() const { return ready_; }
+  bool enabled() const { return enabled_; }
+  unsigned attempts() const { return attempts_; }
+  uint32_t retryIn(uint32_t now) const {
+    return !enabled_ || ready_ || int32_t(now - next_) >= 0 ? 0 : next_ - now;
+  }
 private:
+  uint32_t retryDelay() const {
+    return attempts_ <= 1 ? RetryMs : attempts_ == 2 ? RetryMs * 2 : MaxRetryMs;
+  }
   uint32_t next_ = 0, ip_ = 0, loss_ = 0;
-  bool enabled_ = false, associated_ = false, ready_ = false;
+  unsigned attempts_ = 0;
+  bool enabled_ = false, dhcp_waited_ = false, ready_ = false;
 };
 
 inline WifiRecovery& wifiRecovery() {

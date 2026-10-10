@@ -164,6 +164,14 @@ class BuildIsolation(unittest.TestCase):
             self.assertIn(f'#define ONCHIP_NATIVE_REVISION "{revision}"',
                           (build / "examples/kiss_modem/onchip/BuildClock.h").read_text())
             native = build / "examples/kiss_modem/onchip"
+            network_headers = (build / "examples/kiss_modem/RadioNetwork.h",
+                               native / "RadioNetwork.h")
+            for header in network_headers:
+                header.write_text("stale WiFi recovery interface\n")
+            prepare.stage_field_network(build)
+            for header in network_headers:
+                self.assertEqual(header.read_bytes(),
+                                 (ROOT / "firmware/shared/RadioNetwork.h").read_bytes())
             self.assertEqual((native / "NativeServices.h").read_bytes(),
                              (ROOT / "firmware/runtime/NativeServices.h").read_bytes())
             for unit in ("BotVm", "BotWorker", "CommandBot", "MastSource"):

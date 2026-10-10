@@ -5,6 +5,11 @@
 #include <string>
 
 constexpr unsigned STA_CONNECTED_BIT = 1, STA_HAS_IP_BIT = 2;
+using esp_err_t = int;
+constexpr esp_err_t ESP_OK = 0, ESP_FAIL = -1;
+static unsigned stops, starts;
+static esp_err_t stopResult = ESP_OK, startResult = ESP_OK, disconnectResult = ESP_OK;
+const char* esp_err_to_name(esp_err_t result) { return result == ESP_OK ? "ESP_OK" : "ESP_FAIL"; }
 static uint32_t clock_ms;
 unsigned long millis() { return clock_ms; }
 struct {
@@ -28,8 +33,11 @@ struct {
   IP localIP() { return {address}; }
   int RSSI() { return -50; }
   int status() { return 3; }
-  bool reconnect() { ++retries; return retryResult; }
 } WiFi;
+esp_err_t esp_wifi_disconnect() { return disconnectResult; }
+esp_err_t esp_wifi_connect() { ++WiFi.retries; return WiFi.retryResult ? ESP_OK : ESP_FAIL; }
+esp_err_t esp_wifi_stop() { ++stops; return stopResult; }
+esp_err_t esp_wifi_start() { ++starts; return startResult; }
 struct {
   unsigned starts = 0, stops = 0;
   bool listening = false, failStart = false;
@@ -54,6 +62,8 @@ struct Dashboard {
 } dashboard;
 Dashboard& getDashboard() { return dashboard; }
 namespace onchip {
+enum class DiagnosticSubsystem { Wifi };
+void diagnosticEvent(const char*, DiagnosticSubsystem) {}
 struct Sessions {
   bool available = false;
   unsigned retired = 0;
@@ -139,5 +149,48 @@ int main() {
   WiFi.address = 3;
   serviceWifi();
   assert(kiss_stream.retired == 3 && kiss_server && discovery_ready);
+  // AP outage and failed SDK calls: independent connect, bounded restart,
+  // preserved HTTP worker, then normal listener recovery.
+  WiFi.bits = 0;
+  WiFi.address = 0;
+  ++wifi_loss_generation;
+  serviceWifi();
+  const unsigned before = WiFi.retries;
+  disconnectResult = ESP_FAIL;
+  WiFi.retryResult = false;
+  clock_ms += 30000;
+  serviceWifi();
+  assert(WiFi.retries == before + 1 && stops == 0);
+  clock_ms += 30000;
+  serviceWifi();
+  assert(WiFi.retries == before + 2 && stops == 0);
+  clock_ms += 59999;
+  serviceWifi();
+  assert(WiFi.retries == before + 2);
+  clock_ms++;
+  stopResult = startResult = ESP_FAIL;
+  serviceWifi();
+  assert(stops == 1 && starts == 1 && WiFi.retries == before + 2);
+  clock_ms += 120000;
+  startResult = ESP_OK;
+  serviceWifi();
+  assert(stops == 2 && starts == 2 && WiFi.retries == before + 3);
+  clock_ms += 120000;
+  WiFi.retryResult = true;
+  stopResult = ESP_OK;
+  serviceWifi();
+  assert(stops == 3 && starts == 3 && WiFi.retries == before + 4);
+  assert(!wifi_was_connected && !onchip::companionSessions().available);
+  WiFi.bits = STA_CONNECTED_BIT | STA_HAS_IP_BIT;
+  WiFi.address = 4;
+  serviceWifi();
+  assert(wifi_was_connected && kiss_server && discovery_ready && dashboard.starts == 2);
+  assert(wifi_recovery.attempts() == 0);
+  wifi_recovery.begin(clock_ms, false);
+  serviceWifi(); // Disable must retire sockets even before SDK bits clear.
+  assert(!wifi_was_connected && !kiss_server);
+  clock_ms += 1000000;
+  serviceWifi();
+  assert(WiFi.retries == before + 4 && stops == 3);
   std::puts("Production WiFi SDK seam: DHCP/lost-IP, failed retries/listeners/discovery and same-IP rejoin passed");
 }

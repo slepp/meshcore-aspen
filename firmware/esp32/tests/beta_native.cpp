@@ -576,7 +576,7 @@ static void management_cli_core() {
       assert(readOnly((command + " 1").c_str()) == content);
     }
     for (const char *command : {"help 0", "help 4", "help 4294967296", "help 2 extra",
-                               "help missing", "help wifi 0", "help wifi 5", "help wifi -1",
+                               "help missing", "help wifi 0", "help wifi 6", "help wifi -1",
                                "help role 2", "help wifi two", "help wifi 2 extra"}) {
       assert(readOnly(command).find("Error:") == 0);
       assert(rf(tag + command).find(tag + "Error:") == 0);
@@ -585,10 +585,10 @@ static void management_cli_core() {
     assert(readOnly("wifi help") == readOnly("help wifi"));
     assert(readOnly("bot help") == readOnly("help bot"));
     assert(readOnly("source help") == readOnly("help source"));
-    for (unsigned page = 2; page <= 4; ++page) {
+    for (unsigned page = 2; page <= 5; ++page) {
       const std::string suffix = std::to_string(page);
       const auto content = readOnly(("help wifi " + suffix).c_str());
-      assert(content.find("wifi " + suffix + "/4:") == 0);
+      assert(content.find("wifi " + suffix + "/5:") == 0);
       assert(readOnly(("wifi help " + suffix).c_str()) == content);
       assert(rf(tag + "help wifi " + suffix) == tag + content);
     }
@@ -603,6 +603,7 @@ static void management_cli_core() {
     assert(readOnly("help channels 2").find("16/32 thread read/write") != std::string::npos);
     assert(readOnly("help wifi 3").find("use separate forms") != std::string::npos);
     assert(readOnly("help wifi 4").find("max 145 bytes") != std::string::npos);
+    assert(readOnly("help wifi 5").find("no settings erased") != std::string::npos);
     assert(readOnly("help wifi 2").size() <= 145);
     assert(rf(tag + "help wifi 2").size() <= 162);
     assert(rf("a2|help wifi 2") == "a2|" + readOnly("help wifi 2"));

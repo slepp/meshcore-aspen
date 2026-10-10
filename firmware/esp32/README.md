@@ -359,12 +359,27 @@ Make targets, current hardware evidence and remaining limits.
 
 ### WiFi loss and recovery
 
-The radio retries association every 30 seconds while disconnected. Association
-without an IPv4 address gets a 120-second DHCP interval before another attempt.
-There is one retry owner; Arduino automatic reconnect is disabled. An invalid
+The radio monitors association and IPv4 from its existing dispatch loop. After
+AP loss it retries in 30 seconds. Repeated attempts back off at 30, 60 and then
+120 seconds; the third and later attempts stop/start the WiFi station driver
+with its retained configuration. Association without an IPv4 address gets one
+120-second DHCP interval per attempt. Repeated association changes cannot keep
+extending that interval. A late dispatch issues one attempt, not a retry burst.
+There is one application retry owner; Arduino automatic reconnect is disabled. An invalid
 saved credential record disables automatic joining until native `wifi apply`
 supplies valid saved credentials. Retrying never formats storage, erases
 credentials, creates an identity or changes the LoRa profile.
+
+Use authenticated Management `wifi status` to read `connected` (usable IPv4),
+`enabled` (runtime join policy), `attempts` (capped at 3) and `retry-ms` (time
+until the next retry; zero when connected, disabled or due). `get wifi.status`
+retains the numeric Arduino status. For an outage, check the AP and DHCP service
+and read `get diagnostics` / `stats system` for dropped logs and dispatch delays.
+USB diagnostics show SDK request failures; WiFi transition logs distinguish a
+requested connection or station restart from a received IPv4 address. If saved
+credentials need repair, use encrypted Management RF `help wifi`; `wifi apply`
+rearms recovery after applying saved settings. Do not erase identities or
+reboot the LoRa roles merely to retry WiFi.
 
 After AP or IP loss, old KISS and companion TCP sessions are retired. A restored
 address starts the KISS listener and republishes mDNS. Failed listener,

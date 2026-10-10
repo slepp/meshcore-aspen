@@ -1,6 +1,7 @@
 #include "RadioNetwork.h"
 #include <cassert>
 #include <cstdio>
+#include <initializer_list>
 
 using Recovery = radio_network::WifiRecovery;
 
@@ -44,5 +45,46 @@ int main() {
   assert(!wrapped.update(14998, false, false, 0, 0).retry);
   assert(wrapped.update(14999, false, false, 0, 0).retry);
   assert(!wrapped.update(15000, false, false, 0, 0).retry);
-  std::puts("WiFi recovery: AP/IP loss, DHCP, rapid rejoin, retry rearm and millis wrap passed");
+  Recovery flapping;
+  flapping.begin(0, true);
+  flapping.update(1000, true, false, 0, 0);
+  for (uint32_t now = 2000; now < 121000; now += 1000)
+    assert(!flapping.update(now, (now / 1000) % 2, false, 0, now).retry);
+  assert(flapping.update(121000, true, false, 0, 121).retry);
+  Recovery failed;
+  failed.begin(0, true);
+  assert(failed.update(30000, false, false, 0, 1).retry);
+  assert(failed.retryIn(30000) == 30000 && failed.attempts() == 1);
+  assert(failed.update(60000, false, false, 0, 2).retry);
+  assert(failed.retryIn(60000) == 60000 && failed.attempts() == 2);
+  assert(!failed.update(119999, false, false, 0, 3).retry);
+  auto restart = failed.update(120000, false, false, 0, 4);
+  assert(restart.retry && restart.restart && failed.retryIn(120000) == 120000);
+  assert(failed.update(240000, false, false, 0, 5).restart);
+  assert(failed.update(240001, true, true, 123, 5).up);
+  assert(failed.attempts() == 0 && failed.retryIn(240001) == 0);
+  assert(failed.update(240002, false, false, 0, 6).down);
+  assert(!failed.update(270001, false, false, 0, 6).retry);
+  assert(!failed.update(270002, false, false, 0, 6).restart);
+  Recovery overdue;
+  overdue.begin(0, true);
+  // A late main-loop pass still performs recovery, even if association
+  // appeared in the meantime. Only one attempt is issued, not a catch-up burst.
+  assert(overdue.update(1000000, true, false, 0, 0).retry);
+  assert(!overdue.update(1000000, true, false, 0, 0).retry);
+  Recovery disabled;
+  disabled.begin(0, true);
+  assert(disabled.update(1, true, true, 123, 0).up);
+  disabled.begin(2, false);
+  assert(disabled.update(2, true, true, 123, 0).down);
+  assert(!disabled.ready() && !disabled.enabled());
+  assert(!disabled.update(1000000, true, true, 123, 0).retry);
+  Recovery backoffWrap;
+  const uint32_t boot = UINT32_MAX - 15000;
+  backoffWrap.begin(boot, true);
+  for (uint32_t elapsed : {30000u, 60000u, 120000u, 240000u}) {
+    auto action = backoffWrap.update(boot + elapsed, false, false, 0, 0);
+    assert(action.retry && action.restart == (elapsed >= 120000));
+  }
+  std::puts("WiFi recovery: loss, DHCP/flapping, backoff/station restart, late dispatch, disable/rearm and wrap passed");
 }

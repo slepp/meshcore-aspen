@@ -75,7 +75,7 @@ wifi-recovery-test:
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -Werror -I$(ROOT)/firmware/shared $(ROOT)/test_support/phy_parity/wifi_recovery.cpp -o $(BUILD)/wifi-recovery
 	$(BUILD)/wifi-recovery
-	sed -n '/^void serviceWifi() {/,/^void setup(/p' $(ROOT)/firmware/esp32/wifi_kiss_main.cpp | sed '$$d' > $(BUILD)/wifi-service.inc
+	sed -n '/^void retryWifiStation(bool restart) {/,/^void setup(/p' $(ROOT)/firmware/esp32/wifi_kiss_main.cpp | sed '$$d' > $(BUILD)/wifi-service.inc
 	$(CXX) $(CXXFLAGS) -Werror -DMESHCORE_ONCHIP=1 -I$(ROOT)/firmware/shared -I$(BUILD) $(ROOT)/test_support/phy_parity/wifi_service.cpp -o $(BUILD)/wifi-service
 	$(BUILD)/wifi-service
 prepare:

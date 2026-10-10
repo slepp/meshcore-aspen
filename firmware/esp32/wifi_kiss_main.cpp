@@ -100,11 +100,12 @@ static bool http_ready;
 static bool discovery_ready;
 static uint32_t next_network_service_ms;
 static uint32_t last_dashboard_publish_ms;
-static bool wifi_join_enabled = true;
 static bool wifi_initialized;
 static bool roles_ready;
 static bool dispatch_watched;
 static bool wifi_configuration_valid = true;
+
+void retryWifiStation(bool restart);
 
 void publishDashboard() {
   RadioDashboard::RadioStatus status;
@@ -135,15 +136,16 @@ void halt() {
   // when startup failed; missing/corrupt configuration needs operator repair.
   while (true) {
     if (dispatch_watched) esp_task_wdt_reset();
-    static uint32_t nextRetry;
-    if (wifi_initialized && wifi_join_enabled && WiFi.status() != WL_CONNECTED &&
-        int32_t(millis() - nextRetry) >= 0) {
-      WiFi.reconnect();
-      nextRetry = millis() + 30000;
+    if (wifi_initialized) {
+      const auto bits = WiFi.getStatusBits();
+      const auto actions = wifi_recovery.update(
+          millis(), bits & STA_CONNECTED_BIT, bits & STA_HAS_IP_BIT,
+          uint32_t(WiFi.localIP()), wifi_loss_generation.load(std::memory_order_relaxed));
+      if (actions.retry) retryWifiStation(actions.restart);
     }
-    if (wifi_initialized && WiFi.status() == WL_CONNECTED && dashboard_storage && !http_ready)
+    if (wifi_initialized && wifi_recovery.ready() && dashboard_storage && !http_ready)
       http_ready = getDashboard().beginHTTP();
-    onchip::serviceEspUpdate(false, false, wifi_join_enabled);
+    onchip::serviceEspUpdate(false, false, wifi_recovery.enabled());
     delay(100);
   }
 #else
@@ -229,6 +231,11 @@ void connectWifi() {
 #ifdef MESHCORE_ONCHIP
       onchip::diagnosticEvent("WiFi lost IP address", onchip::DiagnosticSubsystem::Wifi);
 #endif
+    } else if (event == ARDUINO_EVENT_WIFI_STA_STOP) {
+      wifi_loss_generation.fetch_add(1, std::memory_order_relaxed);
+#ifdef MESHCORE_ONCHIP
+      onchip::diagnosticEvent("WiFi station stopped", onchip::DiagnosticSubsystem::Wifi);
+#endif
     } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
 #ifdef MESHCORE_ONCHIP
       snprintf(message, sizeof(message), "WiFi associated: channel %u, AP auth mode %u",
@@ -279,7 +286,6 @@ void connectWifi() {
   WiFi.begin(WIFI_SSID, WIFI_PWD);
 #endif
   wifi_recovery.begin(millis(), join_enabled);
-  wifi_join_enabled = join_enabled;
 }
 
 bool startDiscovery(bool http_ready) {
@@ -296,6 +302,33 @@ bool startDiscovery(bool http_ready) {
     Serial.printf("Dashboard: http://%s.local:%u/\n",
                   radio_network::hostname, KISS_HTTP_PORT);
   return true;
+}
+
+void retryWifiStation(bool restart) {
+  if (restart) {
+    // Stop/start retains the current station configuration; do not turn WiFi
+    // off, erase credentials or reconstruct any native service.
+    const esp_err_t stopped = esp_wifi_stop();
+    if (stopped != ESP_OK)
+      Serial.printf("WiFi station stop failed: %s; retrying start\n", esp_err_to_name(stopped));
+    const esp_err_t started = esp_wifi_start();
+    if (started != ESP_OK) {
+      Serial.printf("WiFi station start failed: %s; automatic retry remains active\n",
+                    esp_err_to_name(started));
+      return;
+    }
+  } else {
+    const esp_err_t disconnected = esp_wifi_disconnect();
+    if (disconnected != ESP_OK)
+      Serial.printf("WiFi station disconnect failed: %s; attempting connection\n",
+                    esp_err_to_name(disconnected));
+  }
+  // Arduino reconnect skips connect if disconnect fails. Still attempt it:
+  // a disconnected/stopped station must not remain stuck in that branch.
+  const esp_err_t connected = esp_wifi_connect();
+  if (connected != ESP_OK)
+    Serial.printf("WiFi connection request failed: %s; automatic retry remains active\n",
+                  esp_err_to_name(connected));
 }
 
 void serviceWifi() {
@@ -326,9 +359,16 @@ void serviceWifi() {
   }
 
   if (actions.retry) {
-    Serial.printf("WiFi reconnecting (status %d, free heap %u, minimum %u)\n",
-                  WiFi.status(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
-    if (!WiFi.reconnect()) Serial.println("WiFi reconnect request failed");
+    Serial.printf("WiFi %s requested (status %d, next retry %u ms, free heap %u, minimum %u)\n",
+                  actions.restart ? "station restart" : "connection",
+                  WiFi.status(), unsigned(wifi_recovery.retryIn(now)),
+                  ESP.getFreeHeap(), ESP.getMinFreeHeap());
+#ifdef MESHCORE_ONCHIP
+    onchip::diagnosticEvent(actions.restart ? "WiFi station restart requested; waiting for IPv4" :
+                            "WiFi connection requested; waiting for IPv4",
+                            onchip::DiagnosticSubsystem::Wifi);
+#endif
+    retryWifiStation(actions.restart);
   }
 
   if (wifi_was_connected && int32_t(now - next_network_service_ms) >= 0) {
@@ -581,14 +621,14 @@ void loop() {
   }
   const auto *admin = onchip::MastAdmin::service();
   nativeRolesReady = nativeRolesReady && admin && admin->ready() && wifi_configuration_valid;
-  nativeRolesReady = nativeRolesReady && (!wifi_join_enabled || WiFi.getMode() != WIFI_OFF) &&
+  nativeRolesReady = nativeRolesReady && (!wifi_recovery.enabled() || WiFi.getMode() != WIFI_OFF) &&
     (!wifi_was_connected || http_ready);
   nativeRolesReady = nativeRolesReady && !onchip::companionSessions().stats().nativeFault;
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   nativeRolesReady = nativeRolesReady && onchip::commandBotService().bootReady();
 #endif
   onchip::serviceEspUpdate(nativeRolesReady, wifi_was_connected && http_ready,
-                          wifi_join_enabled);
+                          wifi_recovery.enabled());
   esp_task_wdt_reset();
 #endif
   if ((uint32_t)(millis() - last_dashboard_publish_ms) >= 500) {

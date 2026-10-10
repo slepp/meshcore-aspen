@@ -147,7 +147,7 @@ def stage_field_network(target):
                  target / "examples/kiss_modem/main.cpp")
     shutil.copy2(source.parent / "shared/RadioFirmwareIdentity.h",
                  target / "examples/kiss_modem/RadioFirmwareIdentity.h")
-    for name in ("SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
+    for name in ("RadioNetwork.h", "SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
         shutil.copy2(source.parent / "shared" / name,
                      target / "examples/kiss_modem" / name)
         role_headers = target / "examples/kiss_modem/onchip"
