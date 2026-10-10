@@ -193,11 +193,19 @@ async function accountsFlow(desktop, mobile) {
     assert.equal(response.status, 200);
     assert.equal((await response.json()).accepted, true);
   };
-  await rf(fixture.authorLogin);
   await desktop.call("Page.bringToFront");
-  await desktop.wait(`Array.from(document.querySelectorAll('.message')).some(row =>
-    row.querySelector('.message-text').textContent === 'Desktop keys stay on each desktop.' &&
-    row.textContent.includes('RF ACK 0/1') && row.textContent.includes('paused'))`, "five-second RF status refresh");
+  await desktop.wait(`!document.hidden`, "visible account conversation");
+  await desktop.evaluate(`Array.from(document.querySelectorAll('.message')).find(row =>
+    row.querySelector('.message-text').textContent === 'Desktop keys stay on each desktop.')
+    .querySelector('.message-details').click()`);
+  await desktop.wait(`document.getElementById('message-dialog').open &&
+    document.getElementById('message-detail-rf').textContent === 'No recorded radio delivery or waiting radio session'`,
+    "account message details before radio login");
+  assert.equal(await desktop.evaluate(`__rfIntervals.size`), 1);
+  await rf(fixture.authorLogin);
+  await desktop.wait(`document.getElementById('message-detail-rf').textContent.startsWith('Radio ACK 0/1 sessions') &&
+    document.getElementById('message-detail-rf').textContent.includes('1 paused')`, "five-second RF status refresh");
+  await key(desktop, "Escape", "Escape");
   await rf(fixture.post);
   await desktop.sees("hello");
   assert.equal(await desktop.evaluate(`Array.from(document.querySelectorAll('.message')).find(p=>p.querySelector('.message-text').textContent==='hello').querySelector('.message-name').textContent`),
