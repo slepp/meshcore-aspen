@@ -1,5 +1,8 @@
 # Write, run locally and install a Lua command
 
+For worked flows covering private data, rollback-compatible schemas, timers,
+channel targeting and C/Rust commands, start with [bot recipes](BOT_RECIPES.md).
+
 Run your command on your computer before uploading it to a MeshCore radio.
 `bot-local` builds and selects the project's native runner directly: the retained
 Lua 5.5.1 VM, `BotWorker`, command registry, verified storage, async jobs and

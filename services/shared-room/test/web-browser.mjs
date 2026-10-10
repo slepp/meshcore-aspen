@@ -528,6 +528,8 @@ try {
   await mobile.evaluate(`document.getElementById('mobile-menu').focus()`);
   await key(mobile, "Enter", "Enter");
   assert.equal(await mobile.evaluate(`document.getElementById('main-content').inert && document.getElementById('sidebar').getAttribute('aria-modal') === 'true'`), true);
+  await mobile.wait(`new DOMMatrixReadOnly(getComputedStyle(document.getElementById('sidebar')).transform).m41 === 0`,
+    "channel drawer transition finished");
   await accessibility(mobile, "mobile channel drawer");
   await mobile.evaluate(`document.getElementById('edit-profile').focus()`);
   await key(mobile, "Tab", "Tab");

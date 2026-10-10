@@ -301,6 +301,7 @@ own targets, use `make -C DIRECTORY` as shown in its guide.
 | --- | --- |
 | [`firmware/esp32`](firmware/esp32/README.md), [`firmware/nrf52840`](firmware/nrf52840/README.md) | Aspen and Pine board integration, preparation and builds |
 | [`firmware/runtime`](firmware/runtime/BOT_DEVELOPMENT.md) | Shared bot engine, Lua examples in `examples/`, package examples in `plugins/`, and Wasm SDK |
+| [Bot recipes](firmware/runtime/BOT_RECIPES.md) | Guided Lua/Wasm command installation, private data, timers and channel conversations |
 | [`firmware/shared`](firmware/shared/QUEUED_TX_PROTOCOL.md), [`firmware/remote-radio/esp32`](firmware/shared/RemoteKissRadio.md) | Shared modem contracts and the ESP32 remote-radio adapter |
 | [`cmd`](cmd), [`internal`](internal) | Host commands and libraries; Python chat in [`cmd/meshcore-chat`](cmd/meshcore-chat/README.md) |
 | [Willow: `experiments/hew-roles`](experiments/hew-roles/README.md) | Experimental Hew host services, migration and native runtime contracts |

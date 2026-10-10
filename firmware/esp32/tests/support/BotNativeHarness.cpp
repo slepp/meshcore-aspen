@@ -15,6 +15,18 @@ namespace bot_native_test {
 
 BotNativeHarness::BotNativeHarness() : BotNativeHarness(Options{}) {}
 
+BotNativeHarness::AllocationCheck::AllocationCheck() {
+  for (const auto &entry : psram_test::allocations)
+    retained.push_back(entry);
+}
+
+BotNativeHarness::AllocationCheck::~AllocationCheck() {
+  assert(psram_test::allocations.size() == retained.size());
+  for (const auto &entry : retained)
+    assert(psram_test::allocations.count(entry.first) &&
+           psram_test::allocations.at(entry.first) == entry.second);
+}
+
 int Radio::recvRaw(uint8_t *data, int capacity) {
   if (input.empty())
     return 0;
@@ -45,8 +57,6 @@ BotNativeHarness::BotNativeHarness(Options options)
     installStorageDriverForTest(options_.storage.get());
     installedStorageDriver_ = true;
   }
-  for (const auto &entry : psram_test::allocations)
-    retainedAllocations_.push_back(entry);
   radio.setStarted(radioStarted, this);
   mux.attachRadio(
       radio, rng, [](float, float, uint8_t, uint8_t) {}, [](uint8_t) {});
@@ -71,10 +81,6 @@ BotNativeHarness::~BotNativeHarness() {
 #endif
   for (auto &source : existing)
     source.detach();
-  assert(psram_test::allocations.size() == retainedAllocations_.size());
-  for (const auto &entry : retainedAllocations_)
-    assert(psram_test::allocations.count(entry.first) &&
-           psram_test::allocations.at(entry.first) == entry.second);
   if (installedStorageDriver_)
     resetStorageDriverForTest();
 }

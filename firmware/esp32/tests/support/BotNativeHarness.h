@@ -3,6 +3,7 @@
 
 #include "CommandBot.h"
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include <atomic>
 #include <cassert>
 #include <deque>
@@ -113,6 +114,13 @@ private:
 };
 
 class BotNativeHarness {
+  struct AllocationCheck {
+    std::vector<std::pair<void *, size_t>> retained;
+    AllocationCheck();
+    ~AllocationCheck();
+  };
+  // Destroy after the mux: its PSRAM wire buffers live until its destructor.
+  AllocationCheck allocations_;
 public:
   struct Options {
     bool captureTxForTest = false;
@@ -195,7 +203,6 @@ private:
   bool activeTxTokenValid_ = false;
   std::optional<uint32_t> simulatedAirtimeMs_;
   bool installedStorageDriver_ = false;
-  std::vector<std::pair<void *, size_t>> retainedAllocations_;
 #ifdef BOT_HOST_RUNNER
   std::unique_ptr<onchip::Management> management_;
 #endif
