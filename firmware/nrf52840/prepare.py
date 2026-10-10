@@ -91,7 +91,8 @@ def prepare(source, output, lua_archive=None):
     shared = dest / "onchip"
     shared.mkdir(exist_ok=True)
     units = ("BotVm LuaRuntime BotWorker BotTypes BotRegistry BotStore BotTimers BotReminders BotUtilities "
-             "BotSettings BotHttps BotNetworkConfig BotHttpsProbe MastSource CommandBot NodeBackup FirmwareNodeBackup").split()
+             "BotSettings BotHttps BotNetworkConfig BotHttpsProbe MastSource CommandBot NodeBackup FirmwareNodeBackup "
+             "PacketLua PacketPrograms").split()
     for directory in ("esp32", "runtime"):
         for path in (HERE.parent / directory).glob("*.h"):
             shutil.copyfile(path, shared / path.name)
@@ -99,6 +100,8 @@ def prepare(source, output, lua_archive=None):
         shutil.copyfile(HERE.parent / "runtime" / (unit + ".cpp"), shared / (unit + ".cpp"))
     sys.path.insert(0, str(HERE.parent / "esp32"))
     from prepare import stage_packet_pool, bound_owner_info_replies
+    from packet_bridge import stage as stage_packet_engines
+    stage_packet_engines(output)
     stage_packet_pool(output, shared)
     for name in ("RadioDashboard.h", "QueuedTxProtocol.h", "RadioTimeProtocol.h",
                  "PacketPipeline.h", "PacketServices.h"):
@@ -165,6 +168,10 @@ def prepare(source, output, lua_archive=None):
     elif battery_guard not in content:
         raise ValueError("Pinned Pine battery telemetry hook changed")
     content = bound_owner_info_replies(content)
+    packet_capacity = "*new StaticPoolPacketManager(32)"
+    if packet_capacity in content:
+        content = "#ifndef PINE_REPEATER_PACKETS\n#define PINE_REPEATER_PACKETS 32\n#endif\n" + content
+        content = content.replace(packet_capacity, "*new StaticPoolPacketManager(PINE_REPEATER_PACKETS)")
     for parameters in ("_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr",
                        "pending_freq, pending_bw, pending_sf, pending_cr"):
         call = f"radio_driver.setParams({parameters});"

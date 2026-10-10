@@ -96,7 +96,7 @@ ROOM_FLAGS = -std=c++17 -O1 -g $(SANITIZE) -ffunction-sections -fdata-sections \
 	-include Arduino.h -include tests/room-seams/InternalFileSystem.h
 room-test: $(NATIVE_OBJECTS)
 	@mkdir -p "$(NATIVE)"
-	TMPDIR="$(NATIVE)" $(CXX) $(ROOM_FLAGS) tests/room.cpp PineRoom.cpp SharedRadio.cpp \
+	TMPDIR="$(NATIVE)" $(CXX) $(ROOM_FLAGS) tests/room.cpp tests/packet_hooks.cpp PineRoom.cpp SharedRadio.cpp \
 		$(UPSTREAM)/examples/nrfmast/room/*.cpp \
 		$(addprefix $(UPSTREAM)/src/,$(addsuffix .cpp,$(CORE_UNITS))) \
 		$(UPSTREAM)/src/helpers/ConfigSerializer.cpp $(UPSTREAM)/src/helpers/TransportKeyStore.cpp \
@@ -148,7 +148,7 @@ $(NATIVE)/test: tests/native.cpp tests/note_journal.cpp ../runtime/AdaptiveAdmis
 -include $(wildcard $(NATIVE)/*/*.d)
 
 .PHONY: companion-state-test
-COMPANION_FLAGS = -Itests/lua-seams -I$(ROOT)/.tmp/native-test-deps/base64/src $(NATIVE_FLAGS) $(SANITIZE) -DMAX_GROUP_CHANNELS=4 -pthread
+COMPANION_FLAGS = -Itests/lua-seams -I$(ROOT)/.tmp/native-test-deps/base64/src $(NATIVE_FLAGS) $(SANITIZE) -DMAX_GROUP_CHANNELS=4 -pthread -MMD -MP
 $(NATIVE)/companion/%.o: %.cpp CompanionStore.h
 	@mkdir -p "$(@D)"
 	TMPDIR="$(NATIVE)" $(CXX) $(COMPANION_FLAGS) -DNRFMAST_PRODUCTION_LUA=1 -c "$<" -o "$@"
@@ -195,10 +195,16 @@ production-lua-radio-test: $(NATIVE)/crypto/SHA256.o $(NATIVE)/crypto/Hash.o $(N
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 -O1 -g $(SANITIZE) -ffunction-sections -fdata-sections -DNRFMAST_PRODUCTION_LUA=1 -DNRFMAST_RF_ENABLED=1 \
 		-Itests/seams -I. -I$(UPSTREAM)/src -I$(UPSTREAM)/examples/nrfmast -I$(UPSTREAM)/examples/kiss_modem \
 		-I$(LPP) -I$(CRYPTO) \
-		tests/lua_radio.cpp SharedRadio.cpp $(UPSTREAM)/src/Dispatcher.cpp $(UPSTREAM)/src/helpers/StaticPoolPacketManager.cpp $(UPSTREAM)/src/Packet.cpp \
+		tests/lua_radio.cpp tests/packet_hooks.cpp SharedRadio.cpp PinePeerLink.cpp $(UPSTREAM)/src/Dispatcher.cpp $(UPSTREAM)/src/helpers/StaticPoolPacketManager.cpp $(UPSTREAM)/src/Packet.cpp \
 		$(NATIVE)/crypto/SHA256.o $(NATIVE)/crypto/Hash.o $(NATIVE)/crypto/Crypto.o \
 		-Wl,--gc-sections -o "$(NATIVE)/lua-radio"
 	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$(NATIVE)/lua-radio"
+.PHONY: packet-lua-test
+packet-lua-test: $(LUA_TEST_OBJECTS)
+	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DONCHIP_BOT_VM_TEST=1 \
+		-I../esp32/tests tests/packet_lua.cpp ../runtime/PacketLua.cpp ../runtime/LuaRuntime.cpp \
+		$(LUA_TEST_OBJECTS) -Wl,--gc-sections -lm -pthread -o "$(NATIVE)/packet-lua"
+	"$(NATIVE)/packet-lua"
 production-lua-source-parser-test:
 	$(MAKE) -C ../esp32 lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 ONCHIP_BOT_WASM=0 \
 		UPSTREAM="$(SOURCE)" BOT_LUA="$(BUILD)/lua-5.5.1" BOT_LUA_NATIVE="$(LUA_NATIVE)" \

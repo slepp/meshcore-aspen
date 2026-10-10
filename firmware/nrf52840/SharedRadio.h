@@ -1,6 +1,10 @@
 #pragma once
 
 #include <Dispatcher.h>
+#if __has_include(<PacketEngineBridge.h>)
+#include <PacketEngineBridge.h>
+#define NRFMAST_PACKET_HOOKS 1
+#endif
 
 namespace nrfmast {
 
@@ -19,6 +23,9 @@ class RadioPort : public mesh::Radio {
   uint8_t head = 0, count = 0;
   float lastRssi = 0, lastSnr = 0;
   bool failedSend = false;
+#ifdef NRFMAST_PACKET_HOOKS
+  mesh::PacketOrigin receiveOrigin;
+#endif
   void finishSend();
 
 public:
@@ -43,6 +50,10 @@ public:
   void abortSend();
   bool transmissionFailed() const { return failedSend; }
   uint32_t receivedAirtimeMs() const;
+#ifdef NRFMAST_PACKET_HOOKS
+  bool processPacketEngine(const mesh::PacketEngineInfo &, uint8_t *, uint16_t &, uint16_t) override;
+  mesh::PacketOrigin lastReceiveOrigin() const override { return receiveOrigin; }
+#endif
 #if NRFMAST_PRODUCTION_LUA
   void aggregateStats(mesh::QueuedRadioStats& value) const;
 #endif
@@ -68,6 +79,8 @@ public:
   RadioPort repeater, bot;
 #if NRFMAST_PRODUCTION_LUA
   RadioPort lua;
+  RadioPort* program = nullptr;
+  RadioPort* peer = nullptr;
   RadioPort* room = nullptr;
 #endif
   uint32_t txStarted = 0, txRejected = 0;

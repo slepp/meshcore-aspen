@@ -22,6 +22,8 @@
 #include "PineRuntimePlatform.h"
 #include "PineNodeBackup.h"
 #include "PineRoom.h"
+#include "PinePacketPrograms.h"
+#include "PinePeerDevice.h"
 #include "platform/nvs.h"
 static bool luaAdminCommand(const char*, char*, size_t capacity = 160);
 #endif
@@ -73,6 +75,8 @@ public:
     if (runtimeConfig && !strcmp(body, "bot time.fetch") &&
         runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
 #if NRFMAST_PRODUCTION_LUA
+    if (nrfmast::peerDeviceCommand(body, output, MAX_TEXT_LEN + 1 - size_t(output - reply))) return;
+    if (nrfmast::packetProgramCommand(body, output, MAX_TEXT_LEN + 1 - size_t(output - reply))) return;
     if (nrfmast::roomCommand(senderTimestamp, body, output)) return;
     if (luaAdminCommand(body, output, MAX_TEXT_LEN + 1 - size_t(output - reply))) return;
 #endif
@@ -166,11 +170,19 @@ static bool updatePreparing, cancelUpdate;
 static uint32_t cancelAt;
 bool fieldUpdatePending() { return updatePreparing || cancelUpdate || fieldWindow.active(millis()); }
 bool fieldUpdateCommand(uint32_t, const char* text, char* reply) {
+#if NRFMAST_PRODUCTION_LUA
+  const bool peerMode = peerDeviceSelected();
+#else
+  const bool peerMode = false;
+#endif
   if (!strcmp(text, "get update") || !strcmp(text, "help ota")) {
     snprintf(reply, 160, "BLE-DFU=%u legacy app-only arm-ms=120000 boot=0x%06lx boot-timeout=none; start ota confirm; stop ota",
-             unsigned(NRFMAST_BLE_DFU), (unsigned long)bootloaderVersion); return true;
+             unsigned(NRFMAST_BLE_DFU && !peerMode), (unsigned long)bootloaderVersion); return true;
   }
   if (!strncmp(text, "start ota", 9)) {
+    if (peerMode) {
+      strcpy(reply, "Error: peer mode has no BLE DFU service; use the signed USB application update"); return true;
+    }
 #if NRFMAST_BLE_DFU
     if (strcmp(text, "start ota confirm")) {
       strcpy(reply, "WARNING: app-only BLE DFU has no rollback/bootloader timeout; start ota confirm"); return true;
@@ -485,6 +497,11 @@ static void reportMemory() {
 
 static void runCommand() {
   char updateReply[160]{};
+#if NRFMAST_PRODUCTION_LUA
+  if (nrfmast::peerDeviceCommand(command, updateReply, sizeof(updateReply), true)) {
+    Serial.println(updateReply); return;
+  }
+#endif
   if (nrfmast::fieldUpdateCommand(0, command, updateReply)) {
     Serial.println(updateReply); return;
   }
@@ -593,6 +610,10 @@ void setup() {
 #endif
   };
 #endif
+#if NRFMAST_PRODUCTION_LUA
+  const bool peerSelected = nrfmast::peerDeviceSelected();
+  const bool peerStarted = peerSelected && nrfmast::beginPeerDevice(sharedRadio, repeater.self_id);
+#endif
   repeater.begin(&InternalFS);
 #if ENV_INCLUDE_GPS
   repeater.getNodePrefs()->gps_enabled = 1;
@@ -626,7 +647,10 @@ void setup() {
   Serial.printf("notes QSPI JEDEC=%06lx region=0x180000..0x200000 ready=%u\n",
                 static_cast<unsigned long>(noteFlash.jedecId()), notesReady);
   if (notes) bot.setNotes(*notes);
-  if (runtimeConfig.ble.isEnabled()) {
+#if !NRFMAST_PRODUCTION_LUA
+  const bool peerSelected = false;
+#endif
+  if (!peerSelected && runtimeConfig.ble.isEnabled()) {
     char name[32];
     strcpy(name, bot.getName());
     ble.begin("MeshCore-", name, runtimeConfig.ble.getPin());
@@ -644,8 +668,19 @@ void setup() {
   if (!sharedRadio.setAirtimeFactor(prefs->airtime_factor))
     Serial.println("radio: invalid saved airtime factor; retaining 1.0 until corrected");
 #if NRFMAST_PRODUCTION_LUA
-  const bool roomStarted = nrfmast::beginRoom(sharedRadio, clockMillis, rng, rtc_clock);
-  if (roomStarted) {
+  const bool packetSelected = nrfmast::packetProgramsSelected();
+  const bool roomStarted = !peerSelected && nrfmast::beginRoom(sharedRadio, clockMillis, rng, rtc_clock);
+  if (peerSelected) {
+    if (prepareLuaFilesystem()) {
+      releaseOriginalNotes();
+      if (!peerStarted)
+        Serial.println("Peer startup failed; inspect peer status; physical identity and PHY retained");
+#if MESHCORE_NODE_BACKUP
+      nrfmast::beginNodeBackup(true);
+#endif
+      onchip::MastAdmin::service()->begin();
+    }
+  } else if (roomStarted) {
     Serial.println("Room: running; Lua worker paused; saved source and QSPI data retained");
     if (InternalFS.exists("/pine-lua-v1") && prepareLuaFilesystem()) {
       releaseOriginalNotes();
@@ -659,7 +694,18 @@ void setup() {
       if (!onchip::MastAdmin::service()->begin())
         Serial.println("Room: source/owner journal requires recovery; backup and repeater administration remain available");
     }
-  } else if (!nrfmast::roomSelected() && prepareLuaFilesystem() && preserveLuaBotName()) {
+  } else if (packetSelected && !nrfmast::roomSelected() && prepareLuaFilesystem()) {
+    releaseOriginalNotes();
+    if (!nrfmast::beginPacketPrograms(sharedRadio))
+      Serial.println("Packet role startup failed; inspect packet api; saved Lua source retained");
+    if (bleStarted && !companionStore.begin(millis()))
+      Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
+    companionRestoreDone = true;
+#if MESHCORE_NODE_BACKUP
+    nrfmast::beginNodeBackup(true);
+#endif
+    onchip::MastAdmin::service()->begin();
+  } else if (!packetSelected && !nrfmast::roomSelected() && prepareLuaFilesystem() && preserveLuaBotName()) {
     releaseOriginalNotes();
     nrfmast::setLuaIdentity(bot.self_id);
     const auto &profile = repeater.activeProfile;
@@ -715,6 +761,8 @@ void loop() {
     onchip::commandBotService().loop();
   }
   if (!nrfmast::fieldUpdatePending()) onchip::MastAdmin::service()->loop();
+  nrfmast::servicePacketPrograms(nrfmast::fieldUpdatePending());
+  if (!nrfmast::fieldUpdatePending()) nrfmast::peerDeviceLoop();
   if (!nrfmast::fieldUpdatePending() && sharedRadio.roomCanLoop()) nrfmast::roomLoop();
   // Restore after the selected Lua source loads, so its idle job buffers can
   // use the larger contiguous blocks before the companion snapshot is kept.

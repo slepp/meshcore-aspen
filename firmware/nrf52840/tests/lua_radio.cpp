@@ -9,6 +9,64 @@ inline unsigned long millis() { return now; }
 #include <deque>
 #include <vector>
 #include <cstdio>
+#include "PacketPipeline.h"
+#include "PinePeerEgress.h"
+namespace nrfmast { void packetHooksTestAttach(packet_engine::Pipeline *); }
+
+template<class Clock, class Physical>
+static void packetHooks() {
+  struct Host : packet_engine::Host {
+    uint32_t time = 0, faults = 0, admitted = 0;
+    uint32_t microsNow() override { return time++; }
+    void fault(const char *, const packet_engine::Metadata &, packet_engine::Fault) override { ++faults; }
+    bool admit(const packet_engine::Metadata &, const packet_engine::Emission *, uint8_t count) override {
+      admitted += count; return true;
+    }
+  } host;
+  struct Engine : packet_engine::Engine {
+    bool invalid = false;
+    unsigned stages = 0;
+    packet_engine::Decision process(const packet_engine::Metadata &metadata, packet_engine::Call &call) override {
+      stages |= packet_engine::stageMask(metadata.stage);
+      if (invalid) {
+        const uint8_t malformed[]{0xff, 0, 1};
+        call.emit(malformed, sizeof(malformed));
+      } else if (metadata.stage == packet_engine::Stage::Receive) {
+        const uint8_t value = 9;
+        call.write(2, &value, 1);
+      } else if (metadata.stage == packet_engine::Stage::LocalDelivery && metadata.destination == 1) {
+        return packet_engine::Decision::Drop;
+      }
+      return packet_engine::Decision::Continue;
+    }
+  } engine;
+  packet_engine::Pipeline pipeline(host);
+  assert(pipeline.attach(engine, {"test", 255, 1000, 2000}) == packet_engine::Registration::Attached);
+  nrfmast::packetHooksTestAttach(&pipeline);
+  now = 1000;
+  Clock clock;
+  Physical physical;
+  nrfmast::SharedRadio shared(physical, clock, true);
+  shared.begin();
+  physical.incoming.push_back({ROUTE_TYPE_FLOOD, 0, 7});
+  shared.poll();
+  uint8_t bytes[255]{};
+  assert(shared.repeater.recvRaw(bytes, sizeof(bytes)) == 3 && bytes[2] == 9);
+  assert(shared.bot.recvRaw(bytes, sizeof(bytes)) == 0);
+  assert(shared.lua.recvRaw(bytes, sizeof(bytes)) == 3 && bytes[2] == 9);
+  mesh::PacketEngineInfo info;
+  info.stage = mesh::PacketEngineStage::Relay;
+  uint16_t length = 3;
+  assert(shared.repeater.processPacketEngine(info, bytes, length, sizeof(bytes)));
+  engine.invalid = true;
+  const auto before = std::vector<uint8_t>(bytes, bytes + length);
+  assert(shared.repeater.processPacketEngine(info, bytes, length, sizeof(bytes)));
+  assert(host.faults == 1 && host.admitted == 0 && !pipeline.enabled(0));
+  assert(std::vector<uint8_t>(bytes, bytes + length) == before);
+  assert(engine.stages & packet_engine::stageMask(packet_engine::Stage::Relay));
+  nrfmast::packetHooksTestAttach(nullptr);
+  puts("Pine packet hooks: physical RX edits, per-role drop, native relay validation and fault rollback");
+}
 
 struct Clock : mesh::MillisecondClock {
   unsigned long getMillis() override { return now; }
@@ -19,6 +77,7 @@ struct Physical : mesh::Radio {
   bool completionReported = false;
   uint32_t airtime = 40;
   unsigned finished = 0, completionQueries = 0;
+  std::vector<uint8_t> lastSent;
   int recvRaw(uint8_t* bytes, int capacity) override {
     assert(!sending);
     if (incoming.empty()) return 0;
@@ -28,9 +87,10 @@ struct Physical : mesh::Radio {
   }
   uint32_t getEstAirtimeFor(int) override { return airtime; }
   float packetScore(float, int) override { return 1; }
-  bool startSendRaw(const uint8_t*, int) override {
+  bool startSendRaw(const uint8_t* bytes, int length) override {
     assert(!sending);
     if (failStart) return false;
+    lastSent.assign(bytes, bytes + length);
     sending = true; completionReported = false; return true;
   }
   bool isSendComplete() override {
@@ -44,6 +104,75 @@ struct Physical : mesh::Radio {
   float getLastRSSI() const override { return -87; }
   float getLastSNR() const override { return -2; }
 };
+static void peerEgress() {
+  now = UINT32_MAX - 10000;
+  Clock clock;
+  Physical leftPhysical, rightPhysical;
+  rightPhysical.airtime = 90;
+  nrfmast::SharedRadio leftRadio(leftPhysical, clock, true), rightRadio(rightPhysical, clock, true);
+  nrfmast::RadioPort leftPort(leftRadio, 5), rightPort(rightRadio, 5);
+  leftRadio.peer = &leftPort; rightRadio.peer = &rightPort;
+  leftRadio.begin(); rightRadio.begin();
+  leftRadio.setAirtimeFactor(0); rightRadio.setAirtimeFactor(0);
+  struct Endpoint : nrfmast::peer::Host {
+    std::deque<std::vector<uint8_t>> output;
+    nrfmast::PeerEgress *egress = nullptr;
+    bool write(const uint8_t *bytes, uint16_t length) override {
+      output.emplace_back(bytes, bytes + length); return true;
+    }
+    uint8_t transmit(const uint8_t *bytes, uint16_t length, uint8_t origin,
+                     uint32_t delay, uint32_t lifetime, uint32_t &job) override {
+      return egress->admit(bytes, length, origin, delay, lifetime, now, job);
+    }
+    void closed(const char *) override { egress->disconnect(); }
+  } left, right;
+  nrfmast::peer::Link leftLink(left), rightLink(right);
+  nrfmast::PeerEgress leftEgress(leftRadio, leftPort, leftLink), rightEgress(rightRadio, rightPort, rightLink);
+  left.egress = &leftEgress; right.egress = &rightEgress;
+  uint8_t identity[32]{42};
+  assert(leftLink.begin(11, identity, now) && rightLink.begin(22, identity, now));
+  auto exchange = [&] {
+    for (unsigned pass = 0; pass < 8; ++pass) {
+      leftLink.poll(now); rightLink.poll(now);
+      for (auto pair : {std::make_pair(&left, &rightLink), std::make_pair(&right, &leftLink)}) {
+        while (!pair.first->output.empty()) {
+          const auto bytes = pair.first->output.front(); pair.first->output.pop_front();
+          for (const auto byte : bytes) pair.second->feed(&byte, 1, now);
+        }
+      }
+    }
+  };
+  exchange();
+  assert(leftLink.ready() && rightLink.ready());
+  const uint8_t routed[]{ROUTE_TYPE_FLOOD, 1, 42, 7};
+  uint32_t job;
+  assert(leftLink.submit(routed, sizeof(routed), 0, 0, 5000, now, job));
+  exchange(); rightEgress.poll(now);
+  assert(rightPhysical.sending && !leftPhysical.sending &&
+         rightPhysical.lastSent == std::vector<uint8_t>(routed, routed + sizeof(routed)));
+  now += 90; rightEgress.poll(now); exchange();
+  nrfmast::peer::Result result;
+  assert(leftLink.result(result) && result.state == queued_tx::ACCEPTED);
+  assert(leftLink.result(result) && result.state == queued_tx::SUCCEEDED && result.rfKnown && result.rfMs == 90);
+  mesh::PacketEngineInfo info;
+  info.stage = mesh::PacketEngineStage::Relay;
+  assert(nrfmast::PeerEgress::relayAllowed(info));
+  info.origin.engine = true; assert(!nrfmast::PeerEgress::relayAllowed(info));
+  info.origin = {false, true}; assert(!nrfmast::PeerEgress::relayAllowed(info));
+  info.origin = {}; info.local = true; assert(!nrfmast::PeerEgress::relayAllowed(info));
+  info.local = false; info.stage = mesh::PacketEngineStage::PlainCompose;
+  assert(!nrfmast::PeerEgress::relayAllowed(info));
+  assert(leftLink.submit(routed, sizeof(routed), 0, 0, 5000, now, job));
+  exchange(); rightPhysical.complete = false; rightEgress.poll(now);
+  now += 2181; rightRadio.poll(); rightEgress.poll(now); exchange();
+  assert(leftLink.result(result) && result.state == queued_tx::ACCEPTED);
+  assert(leftLink.result(result) && result.state == queued_tx::UNKNOWN && !result.rfKnown);
+  const unsigned finished = rightPhysical.finished;
+  assert(leftLink.submit(routed, sizeof(routed), 0, 100, 5000, now, job));
+  exchange(); rightLink.disconnect(); rightEgress.poll(now + 1000);
+  assert(!rightPhysical.sending && rightPhysical.finished == finished);
+  puts("Pine peer device egress: two radios, routed bytes unchanged, 1-byte BLE fragments, confirmed/uncertain RF, origin exclusion and disconnect cancellation");
+}
 struct NativeDispatcher : mesh::Dispatcher {
   unsigned logged = 0, failed = 0;
   NativeDispatcher(mesh::Radio& radio, Clock& clock, mesh::PacketManager& packets)
@@ -395,6 +524,8 @@ static void detachedLuaRecovery() {
          shared.aggregateActiveMs() == 50 && shared.txSucceeded == 1 && shared.txFailed == 1);
 }
 int main() {
+  packetHooks<Clock, Physical>();
+  peerEgress();
   for (uint8_t role : {uint8_t(0), uint8_t(1), uint8_t(3)}) {
     stalledNativeDispatcher(false, role);
     stalledNativeDispatcher(true, role);

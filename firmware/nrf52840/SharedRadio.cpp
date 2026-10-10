@@ -1,5 +1,15 @@
 #include "SharedRadio.h"
 #include <cmath>
+#if NRFMAST_PRODUCTION_LUA && defined(NRFMAST_PACKET_HOOKS)
+#include "PinePacketPrograms.h"
+#include "PinePeerDevice.h"
+#include "onchip/NativePacketContracts.h"
+namespace {
+packet_engine::Fault validateRaw(const packet_engine::Metadata &, const uint8_t *bytes, uint16_t length, bool) {
+  return onchip::validNativeWire(bytes, length) ? packet_engine::Fault::None : packet_engine::Fault::InvalidPacket;
+}
+}
+#endif
 
 namespace nrfmast {
 
@@ -21,7 +31,7 @@ void SharedRadio::poll() {
   physical.loop();
 #if NRFMAST_PRODUCTION_LUA
   if (owner >= 0 && int32_t(clock.getMillis() - timeoutAt) >= 0) {
-    RadioPort* ports[] = {&repeater, &bot, &lua, room};
+    RadioPort* ports[] = {&repeater, &bot, &lua, room, program, peer};
     auto* port = ports[owner];
     if (!port->isSendComplete()) port->abortSend();
   }
@@ -49,12 +59,24 @@ void SharedRadio::poll() {
   frame.length = length;
   frame.rssi = physical.getLastRSSI();
   frame.snr = physical.getLastSNR();
+#if NRFMAST_PRODUCTION_LUA && defined(NRFMAST_PACKET_HOOKS)
+  packet_engine::Metadata metadata;
+  metadata.stage = packet_engine::Stage::Receive;
+  metadata.rssi = frame.rssi; metadata.snrQuarterDb = frame.snr * 4;
+  if (!packetProgramHook(repeater, metadata, frame.bytes, frame.length, sizeof(frame.bytes), validateRaw)) return;
+#endif
   for (auto* port : ports) {
     if (!port) continue;
     if (port->count == 2) {
       ++port->rxDrops;
     } else {
       port->frames[(port->head + port->count) % 2] = frame;
+#if NRFMAST_PRODUCTION_LUA && defined(NRFMAST_PACKET_HOOKS)
+      auto &copy = port->frames[(port->head + port->count) % 2];
+      metadata.stage = packet_engine::Stage::LocalDelivery;
+      metadata.destination = port->index;
+      if (!packetProgramHook(*port, metadata, copy.bytes, copy.length, sizeof(copy.bytes), validateRaw)) continue;
+#endif
       ++port->count;
     }
   }
@@ -94,6 +116,19 @@ bool RadioPort::startSendRaw(const uint8_t* bytes, int length) {
     ++shared.txRejected;
     return false;
   }
+#if NRFMAST_PRODUCTION_LUA && defined(NRFMAST_PACKET_HOOKS)
+  uint8_t copy[MAX_TRANS_UNIT];
+  memcpy(copy, bytes, length);
+  uint16_t size = length;
+  packet_engine::Metadata metadata;
+  metadata.source = index;
+  metadata.engineOrigin = index == 4;
+  metadata.stage = packet_engine::Stage::Admission;
+  if (!packetProgramHook(*this, metadata, copy, size, sizeof(copy), validateRaw)) { ++shared.txRejected; return false; }
+  metadata.stage = packet_engine::Stage::Transmit;
+  if (!packetProgramHook(*this, metadata, copy, size, sizeof(copy), validateRaw)) { ++shared.txRejected; return false; }
+  bytes = copy; length = size;
+#endif
   if (!shared.physical.startSendRaw(bytes, length)) {
     ++shared.txRejected;
     return false;
@@ -107,6 +142,26 @@ bool RadioPort::startSendRaw(const uint8_t* bytes, int length) {
   ++transmissionsStarted;
   return true;
 }
+#ifdef NRFMAST_PACKET_HOOKS
+bool RadioPort::processPacketEngine(const mesh::PacketEngineInfo &info, uint8_t *bytes,
+                                   uint16_t &length, uint16_t capacity) {
+#if NRFMAST_PRODUCTION_LUA
+  packet_engine::Metadata metadata;
+  metadata.stage = static_cast<packet_engine::Stage>(info.stage);
+  metadata.source = index; metadata.payloadType = info.type;
+  metadata.local = info.local; metadata.authenticated = metadata.stage == packet_engine::Stage::PlainReceive;
+  metadata.engineOrigin = info.origin.engine;
+  metadata.reflectionOrigin = info.origin.reflection;
+  metadata.rssi = info.rssi; metadata.snrQuarterDb = info.snr * 4;
+  if (info.identity) memcpy(metadata.identity, info.identity, 32);
+  const bool accepted = packetProgramHook(*this, metadata, bytes, length, capacity, onchip::validateNativePacket);
+  if (accepted && index == 0) peerDeviceRelay(info, bytes, length);
+  return accepted;
+#else
+  return true;
+#endif
+}
+#endif
 bool RadioPort::isSendComplete() {
   // Native Dispatcher interprets true as success; only Lua checks the failure flag.
   if (failedSend) {

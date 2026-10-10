@@ -10,6 +10,11 @@ Start with [production Lua setup, limits and recovery](PRODUCTION-LUA.md).
 Current source profiles also offer a [bounded native Room](ROOM.md): choose
 Room instead of the Lua command worker, retaining Lua source/data and the
 existing repeater and companion identities.
+Choose [packet programs](PACKET-PROGRAMS.md) for bounded Lua modem hooks, or
+[BLE peer mode](BLE-PEER.md) to join two radios as one virtual repeater across
+independently configured LoRa zones. These are alternative roles, not additional
+Lua/Room workers. [Host-verified updates](HOST-UPDATES.md) verify signed app-only
+packages without replacing the installed bootloader or saved node state.
 Current Lua source builds also provide `backup help` through authenticated
 repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
 to download InternalFS identities/settings and QSPI source/data without USB
@@ -58,9 +63,8 @@ The default `nrfmast_rx` cannot transmit. Optional secured BLE connects a
 MeshCore companion client using the existing bot identity while the repeater
 continues forwarding. The [native notes and BLE guide](STATE-BLE.md) covers
 those images, USB PIN provisioning and companion operations.
-The [BLE radio bridge reference](BLE-PEER.md) describes the bounded peer link
-for two independently configured radios; device pairing and repeater integration
-are not yet enabled in these images.
+The [BLE radio bridge reference](BLE-PEER.md) gives the central/peripheral setup
+for production Lua profiles, virtual identity, pinned pairing and modem limits.
 If Pine reports an occupied retired external volume, its USB owner can use
 [explicit lab note provisioning](STATE-BLE.md#explicit-lab-provisioning-of-an-occupied-external-volume).
 That operation can destroy old external files; it preserves CURRENT InternalFS
@@ -353,7 +357,8 @@ region policies still apply; a scope-only region can reject that unscoped
 fallback. The repeater retains its separate native region support.
 
 The bot uses upstream `BaseChatMesh` encryption, ACK/path discovery and packet
-creation. Its pool has eight packets; the unmodified repeater has 32. Each radio
+creation. Its pool has eight packets; the repeater has 32 in native-note profiles
+and 28 in production Lua profiles. Each radio
 port has two bounded RX snapshots and its own duplicate table. One small
 `mesh::Radio` adapter serializes access to the single upstream RadioLib driver:
 only the transmit owner polls completion, no physical receive occurs during

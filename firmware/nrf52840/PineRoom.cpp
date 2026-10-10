@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #if NRFMAST_PRODUCTION_LUA
 #include "PineRoom.h"
+#include "PinePacketPrograms.h"
+#include "PinePeerDevice.h"
 #include "SharedRadio.h"
 #include "room/PineRoomMesh.h"
 #include "NoteDiagnostics.h"
@@ -54,7 +56,12 @@ bool saveSelection(bool enabled) {
 }
 }
 
-bool roomSelected() { return selected; }
+bool roomSelected() {
+  if (!InternalFS.exists(Selection)) return false;
+  File file = InternalFS.open(Selection);
+  uint8_t value = 2;
+  return !file || file.size() != 1 || file.read(&value, 1) != 1 || value != 0;
+}
 bool roomRunning() { return instance != nullptr; }
 
 bool roomUnsafeCommand(const char* command) {
@@ -171,7 +178,8 @@ bool roomCommand(uint32_t timestamp, const char* text, char* reply) {
   } else if (!strcmp(command, "enable on") || !strcmp(command, "enable off")) {
     const bool enabled = !strcmp(command, "enable on");
     mesh::LocalIdentity identity;
-    if (enabled && !readIdentity(identity)) strcpy(reply, "Error: Room identity unavailable; use local room init");
+    if (enabled && (packetProgramsSelected() || peerDeviceSelected())) strcpy(reply, "Error: disable packet/peer role and restart before enabling Room");
+    else if (enabled && !readIdentity(identity)) strcpy(reply, "Error: Room identity unavailable; use local room init");
     else if (!saveSelection(enabled)) strcpy(reply, "Error: Room selection save failed; previous selection retained");
     else strcpy(reply, enabled ? "OK: Room selected; reboot to pause Lua and start Room; Lua source retained"
                              : "OK: Lua selected; reboot to stop Room and resume saved Lua source");

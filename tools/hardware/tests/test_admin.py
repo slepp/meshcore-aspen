@@ -26,6 +26,16 @@ from test_support.operator_inventory import configure_inventory
 class PacketProgramClientTests(unittest.TestCase):
     api = "Packet ABI=1 slots=2 source=16384 chunk=48 runtimes=lua,wasm stages=255 caps=7"
 
+    def test_pine_limits_preserve_bounded_upload_contract(self):
+        api = "Packet ABI=1 slots=2 source=4096 chunk=48 runtimes=lua stages=255 caps=0 heap=12288 role=1 live=1"
+        with patch.object(self, "api", api):
+            self.test_resume_and_commit_timeout_are_bounded()
+        for source, error in ((b"x" * 4097, "4096-byte limit"), (b"\0asm\1\0\0\0", "wasm runtime")):
+            client = MagicMock(command=MagicMock(return_value=api))
+            with self.assertRaisesRegex(ValueError, error):
+                mast_cli.install_packet(client, 0, source)
+            client.command.assert_called_once_with("packet api")
+
     def test_resume_and_commit_timeout_are_bounded(self):
         source = b"return function() return packet.CONTINUE end\n" * 3
         digest = hashlib.sha256(source).hexdigest()

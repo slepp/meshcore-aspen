@@ -17,7 +17,7 @@ class ProductionProfileTest(unittest.TestCase):
     def test_lua_companion_restore_waits_for_selected_source(self):
         main = (Path(__file__).resolve().parents[1] / "main.cpp").read_text()
         setup = main.split("void setup() {", 1)[1].split("void loop() {", 1)[0]
-        lua_setup = setup.split("} else if (!nrfmast::roomSelected()", 1)[1]
+        lua_setup = setup.split("} else if (!packetSelected && !nrfmast::roomSelected()", 1)[1]
         self.assertNotIn("companionStore.begin", lua_setup)
         loop = main.split("void loop() {", 1)[1]
         restore = loop.index("companionStore.begin")

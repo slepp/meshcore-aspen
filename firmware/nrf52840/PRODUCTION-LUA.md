@@ -92,6 +92,9 @@ users and BLE pairing do not grant repeater or source administration.
 
 Nearby BLE uses the same bot identity and the existing secured companion
 protocol. Provision its PIN locally using the [BLE guide](STATE-BLE.md).
+For a two-radio virtual repeater, select the exclusive [BLE peer role](BLE-PEER.md)
+instead. [Packet programs](PACKET-PROGRAMS.md) similarly pause the command Lua
+worker and preserve its saved source. Neither role runs by default.
 There is no separate phone application to install. BLE is optional; RF
 administration and repeater forwarding do not require it. Changing `bot name`
 or the established `set bot.name` alias saves the Lua and companion label.
