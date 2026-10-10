@@ -104,7 +104,7 @@ def flash_snapshot(data, args):
         raise ValueError("Serial deployment currently supports the inventoried XIAO; Solar verification is offline")
     queries = {"ids": "ids ", "get radio": "> ", "get tx": "> ", "get repeat": "> ",
                "get path.hash.mode": "> ", "source hash": "SHA256 ", "get bot.ble": "BLE "}
-    with connection(args.port) as link:
+    with connection(str(args.port)) as link:
         time.sleep(.2)
         link.reset_input_buffer()
         running = read_command(link, "get application", "application ")
@@ -114,7 +114,7 @@ def flash_snapshot(data, args):
         if " boot=0x000601 " not in update:
             raise ValueError("Pine bootloader differs from supported Legacy 0.6.1; no update attempted")
         before = {command: read_command(link, command, prefix) for command, prefix in queries.items()}
-    bootloader(args.port)
+    bootloader(str(args.port))
     entries = [entry for entry in comports() if entry.vid == 0x2886 and
                entry.serial_number == usb_serial() and entry.pid in (0x44, 0x45)]
     if len(entries) != 1:
@@ -135,7 +135,7 @@ def flash_snapshot(data, args):
     while not args.port.exists() and time.monotonic() < deadline:
         time.sleep(.2)
     time.sleep(8)
-    with connection(args.port) as link:
+    with connection(str(args.port)) as link:
         link.reset_input_buffer()
         read_command(link, "ver", "vpine-" + data["version"] + " ")
         running = read_command(link, "get application", "application ")

@@ -120,10 +120,11 @@ class PineUpdateTests(unittest.TestCase):
             if command == "get update":
                 return "BLE-DFU=1 boot=0x000700 boot-timeout=none"
             raise AssertionError(command)
-        with patch.object(hardware, "connection", return_value=MagicMock()), \
+        with patch.object(hardware, "connection", return_value=MagicMock()) as connect, \
              patch.object(hardware, "bootloader") as handover, \
              patch.object(pine_update, "read_command", side_effect=query), \
              patch.object(pine_update.time, "sleep"):
             with self.assertRaisesRegex(ValueError, "bootloader"):
                 pine_update.flash_snapshot(self.data, args)
             handover.assert_not_called()
+            connect.assert_called_once_with(str(args.port))
