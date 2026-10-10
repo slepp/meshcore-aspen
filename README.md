@@ -89,9 +89,11 @@ role runs at most once. A second repeater can duplicate forwarding and consume
 extra airtime; choose placement deliberately.
 
 The ESP32 roles share firmware and runtime code, but the documented combined
-image requires PSRAM. A port to another board, including Heltec V3 or V4, must
-select that board's radio wiring, TCXO and memory layout, then enable roles
-within its resources. These boards do not yet have a supported project image.
+image requires PSRAM. The regular Heltec WiFi LoRa 32 V3 has no PSRAM:
+start with the [build-only shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.md)
+and keep the roles on a host. Its credential-free image is for build checks,
+not flashing a lab radio. A full Aspen port or a V4 image still needs its own
+wiring, TCXO, memory layout and feature selection.
 Willow sources are included in `experiments/hew-roles`. Its event-driven
 runtime is experimental; check your selected services before replacing an
 existing installation. Aspen, Birch and Pine retain their own setup guides.

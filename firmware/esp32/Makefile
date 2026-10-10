@@ -6,6 +6,23 @@ ENV ?= Xiao_S3_WIO_onchip
 include $(ROOT)/release/versions.mk
 PIN := $(MESHCORE_RELEASE_SHA)
 .DEFAULT_GOAL := test
+HELTEC_BUILD := $(ROOT)/.tmp/heltec-v3-modem
+.PHONY: heltec-modem-build
+heltec-modem-build:
+	$(MAKE) -C $(ROOT) onchip-upstream
+	@test "$$(git -C "$(UPSTREAM)" rev-parse HEAD)" = "$(PIN)"
+	@mkdir -p "$(HELTEC_BUILD)"
+	git -C "$(UPSTREAM)" archive "$(PIN)" | tar -x -C "$(HELTEC_BUILD)"
+	git -C "$(HELTEC_BUILD)" apply "$(ROOT)/firmware/shared/radio-reconfigure.patch"
+	cp wifi_kiss_main.cpp "$(HELTEC_BUILD)/examples/kiss_modem/main.cpp"
+	cp ../shared/WifiKissMultiplexer.* ../shared/PacketPipeline.h ../shared/PacketServices.h ../shared/QueuedTxProtocol.h \
+		../shared/RadioDashboard.* ../shared/RadioDashboardPage.h ../shared/RadioNetwork.h \
+		../shared/RadioFirmwareIdentity.h ../shared/SntpConfig.h ../shared/EspSntpClock.h FirmwareIdentity.h \
+		"$(HELTEC_BUILD)/examples/kiss_modem/"
+	cp platformio.heltec-modem.ini "$(HELTEC_BUILD)/platformio.local.ini"
+	TMPDIR="$(HELTEC_BUILD)" PLATFORMIO_CACHE_DIR="$(HELTEC_BUILD)/.cache" \
+		pio run -d "$(HELTEC_BUILD)" -e Heltec_v3_kiss_wifi_build
+
 .PHONY: node-backup-test
 .PHONY: observer-config-test
 observer-config-test: prepare
