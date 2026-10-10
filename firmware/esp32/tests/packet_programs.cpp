@@ -220,6 +220,20 @@ static void fault_and_journal_recovery() {
     assert(h.command("0 remove") == "packet selection removed");
     assert(store.records[0].version == 1);
   }
+  for (uint8_t active : {uint8_t(4), uint8_t(UINT8_MAX)}) {
+    store.records[0].active = active;
+    Harness h(store);
+    const auto status = h.command("0 status");
+    assert(status.find("runtime=none") != std::string::npos);
+    assert(status.find("sealed=1 bytes=0") != std::string::npos);
+    assert(status.find("packet journal invalid") != std::string::npos);
+    assert(h.command("0 remove") == "packet selection removed");
+    assert(store.records[0].active == PacketProgramEmpty);
+    assert(store.records[0].previous == PacketProgramEmpty);
+    assert(h.command("0 status").find("sealed=0 bytes=0") != std::string::npos);
+    h.install(0, "A");
+    assert(h.command("0 enable on") == "saved program enabled" && h.run() == 'A');
+  }
 }
 static void bad_upload_and_durable_copy() {
   Store store; Harness h(store);

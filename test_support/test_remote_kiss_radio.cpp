@@ -38,6 +38,23 @@ public:
 };
 
 int main() {
+  {
+    FakeStream power_link;
+    RemoteKissRadio power_radio(power_link, RemoteKissRadio::Mode::Legacy);
+    const std::vector<uint8_t> metadata = {0xC0, 0x06, 0x19, 1, 0xC0};
+    power_radio.onLinkConnected();
+    assert(power_link.output == metadata);
+    for (int8_t power : {int8_t(0), int8_t(20), int8_t(0)}) {
+      power_radio.setTxPower(power);
+      power_link.output.clear();
+      power_radio.onLinkDisconnected();
+      power_radio.onLinkConnected();
+      auto expected_power = metadata;
+      const uint8_t command[] = {0xC0, 0x06, 0x0A, uint8_t(power), 0xC0};
+      expected_power.insert(expected_power.end(), command, command + sizeof(command));
+      assert(power_link.output == expected_power);
+    }
+  }
   FakeStream link;
   RemoteKissRadio radio(link, RemoteKissRadio::Mode::Legacy);
   radio.setParams(910.525f, 62.5f, 7, 5);

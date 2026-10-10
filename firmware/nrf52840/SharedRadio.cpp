@@ -32,25 +32,23 @@ void SharedRadio::poll() {
   int length = physical.recvRaw(frame.bytes, sizeof(frame.bytes));
   if (length <= 0) return;
   receivedMs += physical.getEstAirtimeFor(length);
-  if (length < 2 || length > int(sizeof(frame.bytes))) {
-    ++repeater.rxDrops;
-    ++bot.rxDrops;
-    return;
-  }
-  const uint8_t route = frame.bytes[0] & PH_ROUTE_MASK;
-  if ((route == ROUTE_TYPE_TRANSPORT_FLOOD || route == ROUTE_TYPE_TRANSPORT_DIRECT) && length < 6) {
-    ++repeater.rxDrops;
-    ++bot.rxDrops;
-    return;
-  }
-  frame.length = length;
-  frame.rssi = physical.getLastRSSI();
-  frame.snr = physical.getLastSNR();
   RadioPort* ports[] = {&repeater, &bot
 #if NRFMAST_PRODUCTION_LUA
       , &lua
 #endif
   };
+  if (length < 2 || length > int(sizeof(frame.bytes))) {
+    for (auto* port : ports) ++port->rxDrops;
+    return;
+  }
+  const uint8_t route = frame.bytes[0] & PH_ROUTE_MASK;
+  if ((route == ROUTE_TYPE_TRANSPORT_FLOOD || route == ROUTE_TYPE_TRANSPORT_DIRECT) && length < 6) {
+    for (auto* port : ports) ++port->rxDrops;
+    return;
+  }
+  frame.length = length;
+  frame.rssi = physical.getLastRSSI();
+  frame.snr = physical.getLastSNR();
   for (auto* port : ports) {
     if (port->count == 2) {
       ++port->rxDrops;

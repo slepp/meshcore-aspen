@@ -148,8 +148,12 @@ static void receiveObservability() {
   assert(radio.receivedAirtimeMs() == 120);
   physical.incoming.push_back({ROUTE_TYPE_DIRECT});
   shared.poll();
+  assert(shared.repeater.rxDrops == 2 && shared.bot.rxDrops == 3 &&
+         shared.lua.rxDrops == 2 && radio.getPacketsRecvErrors() == 2);
   physical.incoming.push_back({ROUTE_TYPE_TRANSPORT_DIRECT, 0});
   shared.poll();
+  assert(shared.repeater.rxDrops == 3 && shared.bot.rxDrops == 4 &&
+         shared.lua.rxDrops == 3 && radio.getPacketsRecvErrors() == 3);
   assert(radio.receivedAirtimeMs() == 200 && shared.lua.recvRaw(bytes, sizeof(bytes)) == 0);
   const uint8_t packet[]{ROUTE_TYPE_DIRECT, 0};
   assert(shared.repeater.startSendRaw(packet, sizeof(packet)));

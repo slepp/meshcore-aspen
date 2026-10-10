@@ -156,6 +156,37 @@ void adaptiveSettings(Nor &flash) {
   assert(loadBotAdaptiveAdmission(enabled) && !enabled);
   puts("Pine adaptive setting: default off, shared metadata persistence/readback, explicit corrupt/write failure and recovery");
 }
+void repeaterSettings(Nor &flash) {
+  BotRepeaterPolicy policy, actual;
+  assert(loadBotRepeaterPolicy(policy) && !policy.enabled);
+  policy.enabled = true;
+  auto &target = policy.targets[0];
+  target.used = true;
+  strcpy(target.alias, "relay");
+  target.key[0] = 7;
+  target.frequencyHz = 912525000;
+  char error[128]{};
+  assert(saveBotRepeaterPolicy(policy, error, sizeof(error)));
+  assert(nrfmast::botFilesystem.exists("/command-bot/repeaters-a.bin"));
+  assert(nrfmast::botFilesystem.end() && nrfmast::botFilesystem.begin(flash, false));
+  assert(loadBotRepeaterPolicy(actual) && actual.enabled);
+  assert(actual.targets[0].used && !strcmp(actual.targets[0].alias, "relay") &&
+         actual.targets[0].key[0] == 7 && actual.targets[0].frequencyHz == 912525000);
+  policy.intervalSeconds = 120;
+  assert(saveBotRepeaterPolicy(policy, error, sizeof(error)));
+  assert(nrfmast::botFilesystem.exists("/command-bot/repeaters-b.bin"));
+  assert(nrfmast::botFilesystem.end() && nrfmast::botFilesystem.begin(flash, false));
+  assert(loadBotRepeaterPolicy(actual) && actual.intervalSeconds == 120);
+  unsigned files = 0;
+  assert(nrfmast::botFilesystem.visit("/command-bot", [](const char *path, void *context) {
+    if (!strcmp(path, "/command-bot/repeaters-a.bin") ||
+        !strcmp(path, "/command-bot/repeaters-b.bin")) ++*static_cast<unsigned *>(context);
+    return true;
+  }, &files));
+  assert(files == 2);
+  assert(!nrfmast::botFilesystem.open("/repeaters-a.bin", "w"));
+  puts("Pine repeater policy: both QSPI banks, remount/readback and backup-directory traversal");
+}
 void workerSources() {
   uint8_t key[32]{1};
   BotWorker worker;
@@ -469,6 +500,7 @@ int main() {
   assert(nrfmast::botFilesystem.usedBytes() < nrfmast::botFilesystem.totalBytes());
   metadataCuts(flash);
   adaptiveSettings(flash);
+  repeaterSettings(flash);
   workerSources();
   bundledSourceRecovery();
   failedSourceRecovery();

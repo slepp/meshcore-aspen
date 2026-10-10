@@ -54,7 +54,7 @@ void RemoteKissRadio::onLinkConnected() {
     radio[9] = _cr;
     writeHardware(0x09, radio, sizeof(radio));
   }
-  if (_tx_power != 0) {
+  if (_power_set) {
     const uint8_t power = static_cast<uint8_t>(_tx_power);
     writeHardware(0x0A, &power, 1);
   }

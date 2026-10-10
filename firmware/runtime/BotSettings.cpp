@@ -144,7 +144,11 @@ bool BotRepeaterPolicy::valid() const {
   return true;
 }
 namespace {
+#if defined(NRFMAST_PRODUCTION_LUA) && NRFMAST_PRODUCTION_LUA
+constexpr const char *RepeaterSlots[] = {"/command-bot/repeaters-a.bin", "/command-bot/repeaters-b.bin"};
+#else
 constexpr const char *RepeaterSlots[] = {"/repeaters-a.bin", "/repeaters-b.bin"};
+#endif
 struct RepeaterReference {
   uint8_t magic[4]{'B', 'R', 'F', 1}, slot = 0, digest[32]{};
   bool valid() const { return !memcmp(magic, "BRF\1", 4) && slot < 2; }

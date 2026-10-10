@@ -109,7 +109,7 @@ Operator-installed source can also
 [replace or wrap a builtin](../runtime/BOT_DEVELOPMENT.md#replace-or-wrap-a-builtin-without-rebuilding-firmware)
 using `override_command` and `call_original`. It retains the builtin's schema,
 policy and native caller context. Source replacement, retry, rollback and
-removal use the existing InternalFS journal without changing Pine's identities
+removal use the QSPI metadata journal without changing Pine's identities
 or scoped data. Overrides share the same constrained Lua session; they do not
 enable HTTPS or create extra job/heap capacity.
 

@@ -238,11 +238,12 @@ void PacketPrograms::command(const char *input, char *reply, size_t capacity) {
   const uint8_t slot = uint8_t(index);
   auto &s = slots_[slot]; const char *op = args[1];
   if (!strcmp(op, "status") && count == 2) {
+    const bool hasSource = s.saved.active < PacketProgramEmpty;
     snprintf(reply, capacity, "slot=%u runtime=%s saved=%u live=%u sealed=%u bytes=%u; %.80s",
-             slot, s.saved.active == PacketProgramEmpty ? "none" :
+             slot, !hasSource ? "none" :
              s.saved.sources[s.saved.active].runtime == PacketProgramRuntime::Lua ? "lua" : "wasm",
              s.saved.enabled, pipeline_.enabled(slot), s.sealed,
-             s.saved.active == PacketProgramEmpty ? 0 : s.saved.sources[s.saved.active].size, s.outcome);
+             hasSource ? s.saved.sources[s.saved.active].size : 0, s.outcome);
     return;
   }
   if (!strcmp(op, "hash") && count == 2) {

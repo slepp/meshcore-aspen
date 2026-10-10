@@ -5,6 +5,7 @@
 #include "Clock.h"
 #include "LocalRadio.h"
 #include "RoleIdentity.h"
+#include "PacketPipeline.h"
 #include "PacketServices.h"
 #include <helpers/ArduinoHelpers.h>
 
