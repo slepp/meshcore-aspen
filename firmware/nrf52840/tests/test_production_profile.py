@@ -5,6 +5,15 @@ import unittest
 
 
 class ProductionProfileTest(unittest.TestCase):
+    def test_room_budgets_and_sources_in_production_profiles(self):
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(Path(__file__).resolve().parents[1] / "platformio.ini")
+        for name in ("env:nrfmast_fleet_lua", "env:nrfmast_solar_lua"):
+            for flag in ("PINE_ROOM_CLIENTS=4", "PINE_ROOM_POSTS=8",
+                         "PINE_ROOM_REGIONS=8", "PINE_ROOM_PACKETS=6"):
+                self.assertIn("-D " + flag, config[name]["build_flags"])
+            self.assertIn("+<../examples/nrfmast/room/*.cpp>", config[name]["build_src_filter"])
+
     def test_companion_channels_only_in_production_profiles(self):
         config = configparser.ConfigParser(interpolation=None)
         config.read(Path(__file__).resolve().parents[1] / "platformio.ini")

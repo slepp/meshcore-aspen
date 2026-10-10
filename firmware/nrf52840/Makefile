@@ -57,6 +57,7 @@ test: prepare
 	$(MAKE) native-test
 	$(MAKE) backend-test
 	$(MAKE) peer-link-test
+	$(MAKE) room-test
 
 .PHONY: backend-test
 backend-test:
@@ -84,6 +85,28 @@ peer-link-test:
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++11 -O1 -g -Wall -Wextra -Werror $(SANITIZE) \
 		-I. -I../shared tests/peer_link.cpp PinePeerLink.cpp -o "$(NATIVE)/peer-link"
 	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$(NATIVE)/peer-link"
+
+.PHONY: room-test
+ROOM_LPP = $(if $(wildcard $(LPP)/CayenneLPP.h),$(LPP),$(UPSTREAM)/.pio/libdeps/nrfmast_baseline/CayenneLPP/src)
+ROOM_FLAGS = -std=c++17 -O1 -g $(SANITIZE) -ffunction-sections -fdata-sections \
+	-DNRF52_PLATFORM=1 -DNRFMAST_PRODUCTION_LUA=1 -DNRFMAST_RF_ENABLED=1 \
+	-DPINE_ROOM_CLIENTS=4 -DPINE_ROOM_POSTS=8 -DPINE_ROOM_REGIONS=8 -DPINE_ROOM_PACKETS=6 \
+	-Itests/room-seams -I../esp32/tests/seams -I. -I$(UPSTREAM)/examples/nrfmast \
+	-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) -I$(ROOM_LPP) \
+	-include Arduino.h -include tests/room-seams/InternalFileSystem.h
+room-test: $(NATIVE_OBJECTS)
+	@mkdir -p "$(NATIVE)"
+	TMPDIR="$(NATIVE)" $(CXX) $(ROOM_FLAGS) tests/room.cpp PineRoom.cpp SharedRadio.cpp \
+		$(UPSTREAM)/examples/nrfmast/room/*.cpp \
+		$(addprefix $(UPSTREAM)/src/,$(addsuffix .cpp,$(CORE_UNITS))) \
+		$(UPSTREAM)/src/helpers/ConfigSerializer.cpp $(UPSTREAM)/src/helpers/TransportKeyStore.cpp \
+		$(UPSTREAM)/src/helpers/IdentityStore.cpp $(ROOM_LPP)/CayenneLPP.cpp \
+		$(if $(wildcard $(ROOM_LPP)/CayenneLPPPolyline.cpp),$(ROOM_LPP)/CayenneLPPPolyline.cpp) \
+		$(UPSTREAM)/src/helpers/AdvertDataHelpers.cpp $(UPSTREAM)/src/helpers/TxtDataHelpers.cpp \
+		$(addprefix $(NATIVE)/crypto/,$(addsuffix .o,$(CRYPTO_UNITS))) \
+		$(addprefix $(NATIVE)/ed/,$(addsuffix .o,$(ED_UNITS))) \
+		-Wl,--gc-sections -pthread -o "$(NATIVE)/room"
+	ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$(NATIVE)/room"
 
 CRYPTO_UNITS := AES128 AESCommon BlockCipher Crypto Hash SHA256 SHA512 Ed25519 Curve25519 BigNumberUtil
 ED_UNITS := add_scalar fe ge key_exchange keypair sc sha512 sign verify

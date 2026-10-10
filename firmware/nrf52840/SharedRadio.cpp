@@ -21,7 +21,7 @@ void SharedRadio::poll() {
   physical.loop();
 #if NRFMAST_PRODUCTION_LUA
   if (owner >= 0 && int32_t(clock.getMillis() - timeoutAt) >= 0) {
-    RadioPort* ports[] = {&repeater, &bot, &lua};
+    RadioPort* ports[] = {&repeater, &bot, &lua, room};
     auto* port = ports[owner];
     if (!port->isSendComplete()) port->abortSend();
   }
@@ -34,22 +34,23 @@ void SharedRadio::poll() {
   receivedMs += physical.getEstAirtimeFor(length);
   RadioPort* ports[] = {&repeater, &bot
 #if NRFMAST_PRODUCTION_LUA
-      , &lua
+      , &lua, room
 #endif
   };
   if (length < 2 || length > int(sizeof(frame.bytes))) {
-    for (auto* port : ports) ++port->rxDrops;
+    for (auto* port : ports) if (port) ++port->rxDrops;
     return;
   }
   const uint8_t route = frame.bytes[0] & PH_ROUTE_MASK;
   if ((route == ROUTE_TYPE_TRANSPORT_FLOOD || route == ROUTE_TYPE_TRANSPORT_DIRECT) && length < 6) {
-    for (auto* port : ports) ++port->rxDrops;
+    for (auto* port : ports) if (port) ++port->rxDrops;
     return;
   }
   frame.length = length;
   frame.rssi = physical.getLastRSSI();
   frame.snr = physical.getLastSNR();
   for (auto* port : ports) {
+    if (!port) continue;
     if (port->count == 2) {
       ++port->rxDrops;
     } else {
@@ -87,7 +88,7 @@ float RadioPort::packetScore(float snr, int bytes) {
   return shared.physical.packetScore(snr, bytes);
 }
 bool RadioPort::startSendRaw(const uint8_t* bytes, int length) {
-  if ((index < 2 && failedSend) || !shared.transmitEnabled || shared.owner >= 0 ||
+  if ((index != 2 && failedSend) || !shared.transmitEnabled || shared.owner >= 0 ||
       int32_t(uint32_t(shared.clock.getMillis()) - shared.quietUntil) < 0 ||
       length <= 0 || length > MAX_TRANS_UNIT) {
     ++shared.txRejected;

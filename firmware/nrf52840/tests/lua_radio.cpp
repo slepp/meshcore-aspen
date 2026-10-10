@@ -60,16 +60,20 @@ struct NativeDispatcher : mesh::Dispatcher {
     sendPacket(packet, 0);
   }
 };
-static void stalledNativeDispatcher(bool interleave, bool botRole) {
+static void stalledNativeDispatcher(bool interleave, uint8_t role) {
   for (uint32_t start : {uint32_t(1000), UINT32_MAX - 10000}) {
     for (uint8_t route : {ROUTE_TYPE_DIRECT, ROUTE_TYPE_FLOOD}) {
       now = start;
       Clock clock;
       Physical physical;
       nrfmast::SharedRadio shared(physical, clock, true);
-      auto& port = botRole ? shared.bot : shared.repeater;
-      auto& other = botRole ? shared.repeater : shared.bot;
-      auto canLoop = [&]() { return botRole ? shared.botCanLoop() : shared.repeaterCanLoop(); };
+      nrfmast::RadioPort room(shared, 3);
+      shared.room = &room;
+      auto& port = role == 3 ? room : role == 1 ? shared.bot : shared.repeater;
+      auto& other = role == 1 ? shared.repeater : shared.bot;
+      auto canLoop = [&]() {
+        return role == 3 ? shared.roomCanLoop() : role == 1 ? shared.botCanLoop() : shared.repeaterCanLoop();
+      };
       assert(shared.setAirtimeFactor(0));
       StaticPoolPacketManager packets(2);
       NativeDispatcher dispatcher(port, clock, packets);
@@ -88,12 +92,13 @@ static void stalledNativeDispatcher(bool interleave, bool botRole) {
         assert(!port.startSendRaw(bytes, sizeof(bytes)));
         // Another role can transmit before the expired Dispatcher acknowledges its failure.
         assert(other.startSendRaw(bytes, sizeof(bytes)));
-        assert(shared.repeaterCanLoop() && shared.botCanLoop());
+        assert(role == 3 ? shared.roomCanLoop() && shared.botCanLoop()
+                         : shared.repeaterCanLoop() && shared.botCanLoop());
       }
       assert(canLoop());
       dispatcher.loop();
       printf("Pine stalled Dispatcher: role=%s start=%u route=%u confirmed=%u failed=%u logTx=%u logTxFail=%u sentDirect=%u sentFlood=%u airtime=%lu\n",
-             botRole ? "bot" : "repeater", start, route, shared.txSucceeded, shared.txFailed, dispatcher.logged, dispatcher.failed,
+             role == 3 ? "room" : role == 1 ? "bot" : "repeater", start, route, shared.txSucceeded, shared.txFailed, dispatcher.logged, dispatcher.failed,
              dispatcher.getNumSentDirect(), dispatcher.getNumSentFlood(), dispatcher.getTotalAirTime());
       fflush(stdout);
       assert(dispatcher.logged == 0 && dispatcher.failed == 1 &&
@@ -390,9 +395,9 @@ static void detachedLuaRecovery() {
          shared.aggregateActiveMs() == 50 && shared.txSucceeded == 1 && shared.txFailed == 1);
 }
 int main() {
-  for (bool botRole : {false, true}) {
-    stalledNativeDispatcher(false, botRole);
-    stalledNativeDispatcher(true, botRole);
+  for (uint8_t role : {uint8_t(0), uint8_t(1), uint8_t(3)}) {
+    stalledNativeDispatcher(false, role);
+    stalledNativeDispatcher(true, role);
   }
   detachedLuaRecovery();
   consumptiveCompletions();

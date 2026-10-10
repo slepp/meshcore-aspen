@@ -6,6 +6,7 @@
 #include "onchip/FirmwareNodeBackup.h"
 #include "onchip/CommandBot.h"
 #include <InternalFileSystem.h>
+#include <utility/debug.h>
 
 namespace nrfmast {
 namespace {
@@ -132,6 +133,20 @@ public:
 };
 PineBackup platform;
 }
-void beginNodeBackup() { onchip::nodeBackup().begin(platform); }
+bool beginNodeBackup(bool standalone) {
+  if (standalone) {
+    if (dbgHeapFree() < 8192 + 6144 + 1024) return false;
+    const auto work = [](void*) {
+      while (true) {
+        onchip::nodeBackup().work();
+        vTaskDelay(pdMS_TO_TICKS(25));
+      }
+    };
+    if (xTaskCreate(work, "room-backup", 1536, nullptr, TASK_PRIO_LOW, nullptr) != pdPASS)
+      return false;
+  }
+  onchip::nodeBackup().begin(platform);
+  return true;
+}
 }
 #endif

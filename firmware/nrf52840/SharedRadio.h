@@ -68,6 +68,7 @@ public:
   RadioPort repeater, bot;
 #if NRFMAST_PRODUCTION_LUA
   RadioPort lua;
+  RadioPort* room = nullptr;
 #endif
   uint32_t txStarted = 0, txRejected = 0;
   uint32_t rfMs = 0, txSucceeded = 0, txFailed = 0;
@@ -84,6 +85,9 @@ public:
   bool idle() const { return owner < 0; }
   bool repeaterCanLoop() const { return owner < 0 || owner == 0 || repeater.transmissionFailed(); }
   bool botCanLoop() const { return owner < 0 || owner == 1 || bot.transmissionFailed(); }
+#if NRFMAST_PRODUCTION_LUA
+  bool roomCanLoop() const { return owner < 0 || owner == 3 || (room && room->transmissionFailed()); }
+#endif
   bool setAirtimeFactor(float factor);
   float getAirtimeFactor() const { return airtimeFactor; }
   uint32_t receivedAirtimeMs() const { return receivedMs; }

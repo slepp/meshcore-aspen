@@ -10,6 +10,7 @@
 #include "NoteDiagnostics.h"
 #include "CompanionInterface.h"
 #include "PineFieldUpdate.h"
+#include "PineApplication.h"
 #include <helpers/sensors/GpsTime.h>
 #include <helpers/nrf52/SerialBLEInterface.h>
 #if NRFMAST_PRODUCTION_LUA
@@ -20,6 +21,7 @@
 #include "PineNotesMigration.h"
 #include "PineRuntimePlatform.h"
 #include "PineNodeBackup.h"
+#include "PineRoom.h"
 #include "platform/nvs.h"
 static bool luaAdminCommand(const char*, char*, size_t capacity = 160);
 #endif
@@ -59,6 +61,7 @@ public:
       body += 3;
     }
     if (nrfmast::fieldUpdateCommand(senderTimestamp, body, output)) return;
+    if (nrfmast::applicationCommand(body, output)) return;
     if (nrfmast::fieldUpdatePending()) {
       strcpy(output, "Error: BLE firmware update armed; use stop ota or wait for restart"); return;
     }
@@ -70,6 +73,7 @@ public:
     if (runtimeConfig && !strcmp(body, "bot time.fetch") &&
         runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
 #if NRFMAST_PRODUCTION_LUA
+    if (nrfmast::roomCommand(senderTimestamp, body, output)) return;
     if (luaAdminCommand(body, output, MAX_TEXT_LEN + 1 - size_t(output - reply))) return;
 #endif
     if (runtimeConfig && runtimeConfig->handleCommand(senderTimestamp, body, output)) return;
@@ -638,7 +642,21 @@ void setup() {
   if (!sharedRadio.setAirtimeFactor(prefs->airtime_factor))
     Serial.println("radio: invalid saved airtime factor; retaining 1.0 until corrected");
 #if NRFMAST_PRODUCTION_LUA
-  if (prepareLuaFilesystem() && preserveLuaBotName()) {
+  const bool roomStarted = nrfmast::beginRoom(sharedRadio, clockMillis, rng, rtc_clock);
+  if (roomStarted) {
+    Serial.println("Room: running; Lua worker paused; saved source and QSPI data retained");
+    if (InternalFS.exists("/pine-lua-v1") && prepareLuaFilesystem()) {
+      releaseOriginalNotes();
+      if (bleStarted && !companionStore.begin(millis()))
+        Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
+#if MESHCORE_NODE_BACKUP
+      if (!nrfmast::beginNodeBackup(true))
+        Serial.println("Room: backup task allocation failed; restart in Lua mode before maintenance");
+#endif
+      if (!onchip::MastAdmin::service()->begin())
+        Serial.println("Room: source/owner journal requires recovery; backup and repeater administration remain available");
+    }
+  } else if (!nrfmast::roomSelected() && prepareLuaFilesystem() && preserveLuaBotName()) {
     releaseOriginalNotes();
     if (bleStarted && !companionStore.begin(millis()))
       Serial.printf("Companion storage: %s; saved state retained\n", companionStore.error());
@@ -652,7 +670,7 @@ void setup() {
 #endif
     if (!onchip::MastAdmin::service()->begin())
       Serial.println("Lua administration: source/owner journal requires recovery; native repeater administration remains available");
-  } else Serial.println("Lua startup: original notes or saved Lua name unavailable; inspect bot state and Lua filesystem; native repeater remains available");
+  } else Serial.println("Lua startup paused or unavailable; room status; inspect bot state; native repeater remains available");
 #endif
   Serial.printf("nrfmast: RF %s; native repeater + separate command bot\n",
                 NRFMAST_RF_ENABLED ? "enabled" : "DISABLED");
@@ -695,6 +713,7 @@ void loop() {
     onchip::commandBotService().loop();
   }
   if (!nrfmast::fieldUpdatePending()) onchip::MastAdmin::service()->loop();
+  if (!nrfmast::fieldUpdatePending() && sharedRadio.roomCanLoop()) nrfmast::roomLoop();
 #endif
   static bool botFirst;
   if (!nrfmast::fieldUpdatePending() && botFirst && sharedRadio.botCanLoop()) bot.loop();

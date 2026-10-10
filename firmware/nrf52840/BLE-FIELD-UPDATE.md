@@ -65,6 +65,10 @@ start ota confirm
 
 `get update` reports declared BLE DFU capability, the bootloader version
 captured by the Arduino core (`0xMMmmpp`), and the bootloader timeout limitation.
+New source builds also provide `get application`: compare its application byte
+count and SHA256 with the app-only BIN after restart. This reads the running
+flash image, without exporting settings or private keys. It is an integrity
+readback, not bootloader signature enforcement.
 `start ota` only returns the warning. `start ota confirm` pauses bot work and
 source administration, then opens a 120-second DFU-entry window. Repeating
 it does not extend the deadline. BLE pairing alone never arms an update.

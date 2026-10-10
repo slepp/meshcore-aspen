@@ -204,6 +204,8 @@ def prepare(source, output, lua_archive=None):
                                   block + "\n\n  bleuart.setPermission(", 1)
         ble_source.write_text(content)
     stage_field_dfu(output)
+    from room_profile import stage_room
+    stage_room(output)
     board_source = output / "src/helpers/NRF52Board.cpp"
     content = board_source.read_text()
     ota = "bool NRF52Board::startOTAUpdate(const char *id, char reply[]) {"
