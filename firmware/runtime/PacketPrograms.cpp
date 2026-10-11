@@ -200,6 +200,7 @@ void PacketPrograms::service() {
       loader_.release(result.program); return;
     }
     auto *retired = s.program; s.program = result.program;
+    pipeline_.clearReport(pendingSlot_);
     s.saved = candidate_; s.upload = {}; s.sealed = false;
     if (!pipeline_.enable(pendingSlot_, s.saved.enabled != 0))
       fail(pendingSlot_, "packet activation failed; slot disabled; use retry", true);
@@ -301,7 +302,7 @@ void PacketPrograms::command(const char *input, char *reply, size_t capacity) {
     auto next = s.saved;
     if (!number(args[2], next.stages) || !number(args[3], next.fuel) ||
         !number(args[4], next.microseconds) || !number(args[5], next.capabilities) || !valid(next)) {
-      respond("Error: budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..7"); return;
+      respond("Error: budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..15"); return;
     }
     if (!save(slot, next)) { respond(s.outcome); return; }
     if (!pipeline_.configure(slot, budget(slot, next))) { fail(slot, "packet budget publication failed", true); respond(s.outcome); return; }

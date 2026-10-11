@@ -35,6 +35,9 @@ expected["companion"] = {
                  "app_name": "<meshcore-link>" if i == 0 else "MeshCore iOS"}
                 for i in range(2)],
 }
+expected["packet_reports"] = [{"slot": 0, "name": "repeater_snr",
+    "fields": ["samples", "heard_total", "mean_db", "p95_db", "rssi_mean_dbm", "last_seen_ms", "window", "last_seen_utc"],
+    "rows": [{"label": "D12600", "values": [256, 400, -2.25, 4.5, -91.5, 100, 256, 1791500000]}]}]
 expected["contacts"] = {
     "capacity": 32, "total": 40, "truncated": True,
     "items": [{"public_key": "b726" + "00" * 30, "name": "SLP AR1", "type": 2}],
@@ -148,6 +151,8 @@ try:
             assert 'id="companion-count" class="number warning">2 / 2</p>' in dom
             assert "Full: new connections are rejected." in dom
             assert "10.16.1.95:34922" in dom and "&lt;meshcore-link&gt;" in dom
+            assert "Nearby repeater SNR" in dom and "D12600" in dom
+            assert "-2.25 dB" in dom and "4.5 dB" in dom and "256 / 256" in dom
             assert "No connected KISS clients." in dom
             assert "contact list incomplete" not in decode[1]
             for field in ("header", "route", "src", "dst", "mac", "payload"):

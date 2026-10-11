@@ -204,7 +204,7 @@ static void service_transactions() {
   first.decision = Decision::Drop;
   assert(run(pipeline, bytes, length) == Decision::Drop && bytes[0] == 1 &&
          host.controls == 1 && host.changed.generation == 21);
-  assert(pipeline.attach(second, {"bad-capabilities", 1, 100, 100, 8}) == Registration::Invalid);
+  assert(pipeline.attach(second, {"bad-capabilities", 1, 100, 100, 16}) == Registration::Invalid);
 }
 int main() {
   registration_and_stages();

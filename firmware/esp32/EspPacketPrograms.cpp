@@ -83,11 +83,12 @@ void fault(const char *engine, const packet_engine::Metadata &m, packet_engine::
 }
 struct Service {
   Store store;
+  packet_engine::Reports reports;
   NativePacketHost host;
   PacketProgramWorker loader;
   PacketPrograms programs;
   explicit Service(WifiKissMultiplexer &mux)
-      : host(mux, clock, fault, packetSystemSnapshot, packetComposeOwned),
+      : host(mux, clock, fault, packetSystemSnapshot, packetComposeOwned, &reports),
         loader(store, makePacketVmProgram), programs(host.pipeline(), store, loader) {}
   ~Service() { host.stop(); }
 };
@@ -97,7 +98,7 @@ bool beginPacketPrograms(WifiKissMultiplexer &mux) {
   if (service) return false;
   service = new (std::nothrow) Service(mux);
   if (!service) { Serial.println("Packet controller allocation failed"); return false; }
-  if (!service->programs.begin() || !service->host.begin()) {
+  if (!service->reports.begin() || !service->programs.begin() || !service->host.begin()) {
     delete service; service = nullptr; return false;
   }
   return true;
@@ -105,10 +106,13 @@ bool beginPacketPrograms(WifiKissMultiplexer &mux) {
 void servicePacketPrograms() {
   if (service) { service->programs.service(); service->host.service(); }
 }
+bool packetProgramReport(unsigned slot, mp_report &report) {
+  return service && slot < packet_engine::EngineLimit && service->reports.read(uint8_t(slot), report);
+}
 void packetProgramCommand(const char *input, char *reply, size_t capacity) {
   if (!service) { snprintf(reply, capacity, "Error: packet controller unavailable"); return; }
   if (!strcmp(input, "api")) {
-    snprintf(reply, capacity, "Packet ABI=1 slots=2 source=16384 chunk=48 runtimes=%s stages=255 caps=7",
+    snprintf(reply, capacity, "Packet ABI=1 report=1 slots=2 source=16384 chunk=48 runtimes=%s stages=255 caps=15",
 #if ONCHIP_BOT_WASM
              "lua,wasm");
 #else

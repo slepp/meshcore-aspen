@@ -1254,6 +1254,13 @@ struct CommandBot::Core : mesh::Mesh {
         startRepeater(job); continue;
       }
       if (request.kind == BotIoRequest::Inspect) {
+#if !ONCHIP_BOT_COMPACT_PROFILE
+        if (!strcmp(request.key, "packet_report") && request.revision < packet_engine::EngineLimit) {
+          job.result.found = owner.packetReport_ && owner.packetReport_(request.revision, job.result.packetReport);
+          finishRadio(job);
+          continue;
+        }
+#endif
         if (strcmp(request.key, "neighbors") || request.revision < 1 || request.revision > 16)
           finishRadio(job, "Invalid native inspection");
         else {

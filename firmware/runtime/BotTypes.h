@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "PacketReport.h"
 #if __has_include("WasmConfig.h")
 #include "WasmConfig.h"
 #endif
@@ -241,7 +242,10 @@ struct BotIoResult {
 #if ONCHIP_BOT_COMPACT_PROFILE
   char json[1]{};
 #else
-  char json[BotNetworkResponseLimit + 1]{};
+  union {
+    char json[BotNetworkResponseLimit + 1]{};
+    mp_report packetReport;
+  };
 #endif
   uint16_t httpStatus = 0;
   bool networkSubmitted = false;

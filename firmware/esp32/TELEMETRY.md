@@ -119,7 +119,7 @@ is unknown. Inspect the setting again after repairing storage.
 
 The publisher uses the existing in-process RadioDashboard totals and native
 hardware/role/Lua statistics, not HTTP scraping or a second packet observer.
-It emits one bounded batch (at most 6144 bytes) per period. Up to three configured remote peers rotate
+It emits one bounded batch (at most 8192 bytes) per period. Up to three configured remote peers rotate
 through each batch as `meshcore_repeater` lines, alongside local metrics.
 The native POST offers the batch as one TLS record, rather than fragmenting it
 into 512-byte records. This reduces queued TCP/WiFi allocations while the
@@ -444,3 +444,8 @@ Use only a receiver you administer and expect to receive test data.
 References:
 [VictoriaMetrics Influx ingestion and mapping](https://docs.victoriametrics.com/victoriametrics/integrations/influxdb/),
 [Influx line protocol](https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/).
+
+Packet reports add one rotating `meshcore_packet` row to each successful upload.
+Tags are `device`, `slot`, `report` and `label`; the report's numeric field names
+become metric suffixes. See [Nearby repeater SNR](../runtime/REPEATER_SNR.md) for
+the sample-window semantics, field names and expected refresh interval.

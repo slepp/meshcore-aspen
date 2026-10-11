@@ -104,7 +104,7 @@ def prepare(source, output, lua_archive=None):
     stage_packet_engines(output)
     stage_packet_pool(output, shared)
     for name in ("RadioDashboard.h", "QueuedTxProtocol.h", "RadioTimeProtocol.h",
-                 "PacketPipeline.h", "PacketServices.h"):
+                 "PacketPipeline.h", "PacketServices.h", "PacketReport.h", "PacketReports.h"):
         shutil.copyfile(HERE.parent / "shared" / name, dest / name)
     (shared / "BuildClock.h").write_text(
         f"#pragma once\n#define ONCHIP_CLOCK_BUILD_EPOCH {int(time.time())}u\n"

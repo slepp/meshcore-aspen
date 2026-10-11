@@ -25,6 +25,11 @@ not verified identities. The rejected-connection count covers the time since
 boot. These fields are also available under `companion` in `/api/status` and
 live snapshots. Older firmware and standalone modems omit this section.
 
+On Aspen, installed packet programs can publish numeric `packet_reports`.
+The [nearby repeater SNR sampler](../runtime/REPEATER_SNR.md) adds a table of
+last-hop averages, P95, RSSI, sample counts and age. Samples live in PSRAM and
+reset when the packet program reloads or the radio restarts.
+
 Recent activity decodes that preview into compact lines: packet type, routing
 mode, payload version and encryption; path prefixes; and visible envelope
 fields. Transport codes appear in the header when present. `Path` shows

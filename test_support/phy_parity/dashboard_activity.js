@@ -283,3 +283,10 @@ delete snapshot.contacts;
 call('renderEvents', snapshot);
 assert.match(element('contact-detail').textContent, /unavailable/);
 console.log('Dashboard activity: v0 bounds, routing widths, prefix ambiguity, text escaping, RF-only signal and age updates passed');
+
+call('renderPacketReports', {uptime_ms: 3123, packet_reports: [{slot: 0, name: 'repeater_snr',
+  fields: ['samples','heard_total','mean_db','p95_db','rssi_mean_dbm','last_seen_ms','window','last_seen_utc'],
+  rows: [{label: 'D12600<img>', values: [256,400,-2.25,4.5,-91.5,123,256,1791500000]}]}]});
+assert.match(element('packet-reports').textContent, /D12600<img>/);
+assert.match(element('packet-reports').textContent, /-2.25 dB/);
+assert.match(element('packet-reports').textContent, /4.5 dB/);

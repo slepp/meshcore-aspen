@@ -128,6 +128,12 @@ struct PacketWasm::Impl {
     if (!s->call->compose(request, bytes, uint16_t(length), result, size)) return -1;
     memcpy(out, result, size); return size;
   }
+  static int32_t report(wasm_exec_env_t env, uint32_t input, uint32_t length) {
+    auto *s = self(env); if (!s || !s->native()) return -1;
+    if (length != sizeof(mp_report)) return s->fail("Packet report size is invalid", Fault::Bounds);
+    const void *bytes = s->range(input, length); if (!bytes) return -1;
+    return s->call->report(bytes, length) ? int32_t(length) : -1;
+  }
 };
 PacketWasm::~PacketWasm() { clear(); }
 void PacketWasm::clear() {
@@ -156,8 +162,8 @@ bool PacketWasm::load(const uint8_t *bytes, size_t length, char *error, size_t c
   };
   if (!bytes || length > PacketWasmSourceLimit || !fuel || fuel > 100000 ||
       !initUs || initUs > 20000) return failed("Invalid packet Wasm source or initialization budget");
-  static const char *const imports[] = {"info", "read", "write", "replace", "emit", "system", "set_phy", "compose"};
-  if (!wamr::profile(bytes, length, "meshcore_packet_v1", imports, 8, error, capacity)) {
+  static const char *const imports[] = {"info", "read", "write", "replace", "emit", "system", "set_phy", "compose", "report"};
+  if (!wamr::profile(bytes, length, "meshcore_packet_v1", imports, 9, error, capacity)) {
     snprintf(stats_.error, sizeof(stats_.error), "%s", error); return false;
   }
   static NativeSymbol symbols[] = {
@@ -168,9 +174,10 @@ bool PacketWasm::load(const uint8_t *bytes, size_t length, char *error, size_t c
     {"emit", reinterpret_cast<void *>(Impl::emit), "(iiiii)i", nullptr},
     {"system", reinterpret_cast<void *>(Impl::system), "(ii)i", nullptr},
     {"set_phy", reinterpret_cast<void *>(Impl::setPhy), "(ii)i", nullptr},
-    {"compose", reinterpret_cast<void *>(Impl::compose), "(iiiiii)i", nullptr}
+    {"compose", reinterpret_cast<void *>(Impl::compose), "(iiiiii)i", nullptr},
+    {"report", reinterpret_cast<void *>(Impl::report), "(ii)i", nullptr}
   };
-  if (!wamr::ensure("meshcore_packet_v1", symbols, 8, error, capacity)) {
+  if (!wamr::ensure("meshcore_packet_v1", symbols, 9, error, capacity)) {
     snprintf(stats_.error, sizeof(stats_.error), "%s", error); return false;
   }
 #ifdef ARDUINO_ARCH_ESP32

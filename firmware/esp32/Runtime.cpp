@@ -550,6 +550,7 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
 #if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
   if (!beginPacketPrograms(mux))
     Serial.println("Packet program controller unavailable; inspect boot diagnostics");
+  commandBot.setPacketReportReader(packetProgramReport);
 #endif
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
   static_assert(KISS_LOCAL_SOURCES >= 6, "Cloud room needs one source beside the five native services");
@@ -615,6 +616,10 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   tcp.connected = companionStats.connectedClients;
   tcp.capacity = CompanionSessions::MaxClients;
   tcp.rejected = companionStats.rejectedClients;
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+  for (unsigned i = 0; i < packet_engine::EngineLimit; ++i)
+    status.packet_report_available[i] = packetProgramReport(i, status.packet_reports[i]);
+#endif
   for (unsigned i = 0; i < tcp.capacity; ++i) {
     const auto &source = companionStats.clients[i];
     auto &client = tcp.clients[i];

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "PacketLua.h"
+#include "PacketReport.h"
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -49,6 +50,7 @@ struct PacketLua::Impl : VmHeap {
   bool running = true;
   const Metadata *metadata = nullptr;
   Call *call = nullptr;
+  mp_report reportScratch{};
   explicit Impl(PacketLuaStats &s) : stats(s) { parserStep = compileStep; }
   static void compileStep(lua_State *state, VmHeap &heap) {
     auto &s = static_cast<Impl &>(heap);
@@ -219,6 +221,53 @@ struct PacketLua::Impl : VmHeap {
       return s.fail(state, "Packet composition failed; inspect identity, channel, envelope and capability");
     lua_pushlstring(state, reinterpret_cast<const char *>(result), size); return 1;
   }
+  static void reportName(lua_State *state, int table, const char *key, char *out) {
+    lua_getfield(state, table, key);
+    size_t length;
+    const char *text = luaL_checklstring(state, -1, &length);
+    if (!length || length >= MP_REPORT_NAME || memchr(text, 0, length))
+      luaL_error(state, "Packet report name must contain 1..23 bytes without NUL");
+    memcpy(out, text, length);
+    lua_pop(state, 1);
+  }
+  static int report(lua_State *state) {
+    auto &s = self(state); s.native(state);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    auto &r = s.reportScratch; r = {}; r.version = MP_REPORT_VERSION;
+    reportName(state, 1, "name", r.name);
+    lua_getfield(state, 1, "fields"); luaL_checktype(state, -1, LUA_TTABLE);
+    r.field_count = lua_rawlen(state, -1);
+    if (!r.field_count || r.field_count > MP_REPORT_FIELDS)
+      return s.fail(state, "Packet report requires 1..8 numeric fields", Fault::Bounds);
+    for (unsigned i = 0; i < r.field_count; ++i) {
+      lua_rawgeti(state, -1, i + 1);
+      size_t length;
+      const char *text = luaL_checklstring(state, -1, &length);
+      if (!length || length >= MP_REPORT_NAME || memchr(text, 0, length))
+        return s.fail(state, "Packet report field name is invalid", Fault::Bounds);
+      memcpy(r.fields[i], text, length); lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    lua_getfield(state, 1, "rows"); luaL_checktype(state, -1, LUA_TTABLE);
+    r.row_count = lua_rawlen(state, -1);
+    if (r.row_count > MP_REPORT_ROWS)
+      return s.fail(state, "Packet report permits at most 16 rows", Fault::Bounds);
+    for (unsigned i = 0; i < r.row_count; ++i) {
+      lua_rawgeti(state, -1, i + 1); luaL_checktype(state, -1, LUA_TTABLE);
+      reportName(state, lua_gettop(state), "label", r.rows[i].label);
+      lua_getfield(state, -1, "values"); luaL_checktype(state, -1, LUA_TTABLE);
+      if (lua_rawlen(state, -1) != r.field_count)
+        return s.fail(state, "Packet report row values must match its fields", Fault::Bounds);
+      for (unsigned f = 0; f < r.field_count; ++f) {
+        lua_rawgeti(state, -1, f + 1);
+        luaL_checktype(state, -1, LUA_TNUMBER);
+        r.rows[i].values[f] = lua_tonumber(state, -1); lua_pop(state, 1);
+      }
+      lua_pop(state, 2);
+    }
+    if (!s.call->report(&r, sizeof(r))) return s.fail(state, "Packet report rejected");
+    return 0;
+  }
   static int assertValue(lua_State *state) {
     if (!lua_toboolean(state, 1)) return luaL_error(state, "Packet assertion failed");
     return lua_gettop(state);
@@ -229,7 +278,7 @@ struct PacketLua::Impl : VmHeap {
     lua_newtable(state);
     for (const auto &function : {luaL_Reg{"info", info}, {"read", read}, {"write", write},
                                 {"replace", replace}, {"emit", emit}, {"system", system},
-                                {"set_phy", setPhy}, {"compose", compose}}) {
+                                {"set_phy", setPhy}, {"compose", compose}, {"report", report}}) {
       lua_pushcfunction(state, function.func); lua_setfield(state, -2, function.name);
     }
     field(state, "CONTINUE", 0); field(state, "DROP", 1); field(state, "ABI_VERSION", 1);

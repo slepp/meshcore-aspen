@@ -95,6 +95,16 @@ int main() {
   assert(dashboard.publish(1500, status) && dashboard.snapshot(snapshot));
   assert(RadioDashboard::formatJSON(snapshot, "Test", json, sizeof(json)));
   assert(strstr(json, "\"total\":256,\"truncated\":true"));
+  for (unsigned slot = 0; slot < 2; ++slot) {
+    snapshot.radio.packet_report_available[slot] = true;
+    auto &r = snapshot.radio.packet_reports[slot]; r.version = MP_REPORT_VERSION; r.row_count = MP_REPORT_ROWS; r.field_count = MP_REPORT_FIELDS;
+    memset(r.name, 'a', MP_REPORT_NAME - 1);
+    for (unsigned f = 0; f < MP_REPORT_FIELDS; ++f) { memset(r.fields[f], 'b', MP_REPORT_NAME - 1); r.fields[f][0] = 'a' + f; }
+    for (unsigned i = 0; i < MP_REPORT_ROWS; ++i) {
+      memset(r.rows[i].label, '"', MP_REPORT_NAME - 1); r.rows[i].label[0] = 'A' + i;
+      for (auto &v : r.rows[i].values) v = -std::numeric_limits<double>::max();
+    }
+  }
   snapshot.event_count = RadioDashboard::HISTORY;
   snapshot.event_next = 0;
   snapshot.radio.role_count = RadioDashboard::ROLE_CAPACITY;

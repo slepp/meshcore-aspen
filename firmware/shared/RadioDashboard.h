@@ -4,6 +4,9 @@
 #include <atomic>
 #include <stddef.h>
 #include <stdint.h>
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+#include "PacketReport.h"
+#endif
 
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_http_server.h>
@@ -17,7 +20,7 @@ public:
   static constexpr size_t TRAFFIC_SECONDS = 60;
   static constexpr size_t PREVIEW_BYTES = 16;
 #if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
-  static constexpr size_t JSON_CAPACITY = 40960;
+  static constexpr size_t JSON_CAPACITY = 49152;
   static constexpr size_t CONTACT_CAPACITY = 32;
   static constexpr size_t COMPANION_CLIENT_CAPACITY = 4;
   struct CompanionClient {
@@ -110,6 +113,8 @@ public:
       uint32_t rejected = 0;
       CompanionClient clients[COMPANION_CLIENT_CAPACITY]{};
     } companion;
+    bool packet_report_available[2]{};
+    mp_report packet_reports[2]{};
     bool contacts_available = false;
     uint16_t contact_count = 0, contact_total = 0;
     ContactStatus contacts[CONTACT_CAPACITY]{};

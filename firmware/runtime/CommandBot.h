@@ -31,6 +31,7 @@ class CommandBot
   uint32_t previousMillis_ = 0;
   bool (*diagnosticSink_)(const char *) = nullptr;
   bool (*contactLookup_)(const uint8_t *, unsigned &, uint8_t *, uint8_t *, uint8_t &) = nullptr;
+  bool (*packetReport_)(unsigned, mp_report &) = nullptr;
   uint32_t diagnosticsQueued_ = 0, diagnosticsDropped_ = 0;
   void diagnostic(const char *format, ...) __attribute__((format(printf, 2, 3)));
   void fault(const char *message);
@@ -58,6 +59,7 @@ public:
   using ContactLookup = bool (*)(const uint8_t *hash, unsigned &cursor,
                                 uint8_t *key, uint8_t *advert, uint8_t &size);
   void setContactLookup(ContactLookup lookup) { contactLookup_ = lookup; }
+  void setPacketReportReader(bool (*reader)(unsigned, mp_report &)) { packetReport_ = reader; }
   void contactStatus(char *text, size_t capacity) const;
   void targetAliasesCommand(const char *arguments, char *reply, size_t capacity);
   void diagnosticStatus(char *text, size_t capacity) const;

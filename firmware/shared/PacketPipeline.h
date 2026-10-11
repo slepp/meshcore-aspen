@@ -81,6 +81,10 @@ public:
   // retain an engine-origin tag and use the normal scheduler/airtime budgets.
   virtual bool admit(const Metadata &, const Emission *, uint8_t count) = 0;
   virtual bool system(SystemInfo &) { return false; }
+  virtual void beginReports() {}
+  virtual bool report(uint8_t, const void *, size_t) { return false; }
+  virtual void commitReports() {}
+  virtual void clearReport(uint8_t) {}
   // Pure construction: no transmit, packet-hook dispatch or persistent mutation.
   virtual Fault compose(const ComposeRequest &, const uint8_t *, uint16_t,
                         uint8_t *, uint16_t &) { return Fault::Unavailable; }
@@ -100,19 +104,25 @@ class Call {
   uint8_t &emissionCount_;
   uint32_t fuel_, started_, limit_;
   uint32_t capabilities_;
+  uint8_t slot_;
   PhyChange &phy_;
   bool &hasPhy_;
   bool allowEmit_, allowEmpty_;
   Fault fault_ = Fault::None;
   Call(Host &host, uint8_t *bytes, uint16_t length, uint16_t capacity,
        Emission *emissions, uint8_t &count, const Budget &budget, bool allowEmit, bool allowEmpty,
-       PhyChange &phy, bool &hasPhy)
+       PhyChange &phy, bool &hasPhy, uint8_t slot)
       : host_(host), bytes_(bytes), length_(length), capacity_(capacity),
         emissions_(emissions), emissionCount_(count), fuel_(budget.fuel),
         started_(host.microsNow()), limit_(budget.microseconds),
-        capabilities_(budget.capabilities), phy_(phy), hasPhy_(hasPhy),
+        capabilities_(budget.capabilities), slot_(slot), phy_(phy), hasPhy_(hasPhy),
         allowEmit_(allowEmit), allowEmpty_(allowEmpty) {}
 public:
+  bool report(const void *bytes, size_t size) {
+    if (!permission(PublishReport)) return false;
+    if (!host_.report(slot_, bytes, size)) { fail(Fault::Bounds); return false; }
+    return consume(0);
+  }
   bool permission(uint32_t capability) {
     if (!consume()) return false;
     if (!(capabilities_ & capability)) { fail(Fault::Permission); return false; }
@@ -271,8 +281,10 @@ public:
   bool enable(uint8_t slot, bool enabled) {
     if (running_ || slot >= count_) return false;
     entries_[slot].enabled = enabled;
+    if (!enabled) host_.clearReport(slot);
     return true;
   }
+  void clearReport(uint8_t slot) { if (!running_ && slot < count_) host_.clearReport(slot); }
   bool configure(uint8_t slot, const Budget &budget) {
     if (running_ || slot >= count_ || !validBudget(budget) ||
         strcmp(entries_[slot].budget.name, budget.name)) return false;
@@ -297,6 +309,7 @@ public:
     }
     running_ = true;
     recursion_ = false;
+    host_.beginReports();
     memcpy(candidate_, bytes, length);
     uint16_t candidateLength = length;
     uint8_t emissionCount = 0;
@@ -308,7 +321,7 @@ public:
       ++entry.calls;
       Call call(host_, candidate_, candidateLength, capacity, emissions_, emissionCount,
                 entry.budget, !metadata.engineOrigin && !metadata.reflectionOrigin &&
-                !metadata.local, plaintext, phy_, hasPhy);
+                !metadata.local, plaintext, phy_, hasPhy, i);
       result = entry.engine->process(metadata, call);
       if (validate && result == Decision::Continue &&
           (call.length_ != length || memcmp(candidate_, bytes, length)))
@@ -323,6 +336,7 @@ public:
         call.fail(Fault::InvalidDecision);
       if (call.fault_ != Fault::None) {
         entry.enabled = false;
+        host_.clearReport(i);
         ++entry.faults;
         host_.fault(entry.budget.name, metadata, call.fault_);
         running_ = false;
@@ -340,6 +354,7 @@ public:
       }
     }
     // No effects are published until all engines and scheduler admission pass.
+    host_.commitReports();
     if (result == Decision::Continue) {
       memcpy(bytes, candidate_, candidateLength);
       length = candidateLength;

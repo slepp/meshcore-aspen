@@ -47,6 +47,9 @@ public:
     if (!ok_ && capacity_) out_[0] = 0;
     return ok_ ? length_ : 0;
   }
+  size_t checkpoint() const { return length_; }
+  bool good() const { return ok_; }
+  void rewind(size_t length) { length_ = length; ok_ = true; out_[length] = 0; }
 };
 }
 size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char *name,
@@ -156,6 +159,29 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
       out.append(" %" PRIu64 "\n", uint64_t(peer.sampledUtc) * 1000000000);
     }
   }
+#if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+  unsigned rows = 0;
+  for (unsigned slot = 0; slot < 2; ++slot)
+    if (r.packet_report_available[slot]) rows += r.packet_reports[slot].row_count;
+  for (unsigned offset = 0; offset < std::min(rows, 1u); ++offset) {
+    unsigned index = (s.packetReportCursor + offset) % rows;
+    for (unsigned slot = 0; slot < 2; ++slot) {
+      if (!r.packet_report_available[slot]) continue;
+      const auto &report = r.packet_reports[slot];
+      if (index >= report.row_count) { index -= report.row_count; continue; }
+      const size_t start = out.checkpoint();
+      if (!out.good()) return 0;
+      out.measurement("meshcore_packet", device);
+      out.append(",slot=%u,report=", slot); out.tag(report.name, MP_REPORT_NAME - 1);
+      out.append(",label="); out.tag(report.rows[index].label, MP_REPORT_NAME - 1);
+      for (unsigned f = 0; f < report.field_count; ++f)
+        out.append("%s%s=%.17g", f ? "," : " ", report.fields[f], report.rows[index].values[f]);
+      out.append("\n");
+      if (!out.good()) { out.rewind(start); return out.finish(); }
+      break;
+    }
+  }
+#endif
   return out.finish();
 }
 void TelemetryPublisher::configure(const TelemetryConfig &config, uint64_t now) {

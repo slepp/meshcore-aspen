@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "PacketWasm.h"
+#include "PacketReports.h"
+#include <algorithm>
+#include <cmath>
 #include "BotWasm.h"
 #include "WamrRuntime.h"
 #include "support/PacketServiceHost.h"
@@ -20,7 +23,14 @@ uint64_t onchipBotVmTestClock() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-struct TestHost final : PacketServiceHost {};
+struct TestHost final : PacketServiceHost {
+  Reports reports;
+  TestHost() { assert(reports.begin()); }
+  void beginReports() override { reports.start(); }
+  bool report(uint8_t slot, const void *data, size_t size) override { return reports.stage(slot, data, size); }
+  void commitReports() override { reports.commit(); }
+  void clearReport(uint8_t slot) override { reports.clear(slot); }
+};
 static std::string directory;
 static void poolStats(const char *phase) {
   mem_alloc_info_t info{};
@@ -276,10 +286,79 @@ static void concurrent_loaders() {
   poolStats("concurrent loaders done");
   puts("PASS shared WAMR concurrent first registration, reload/unload and independent guest execution");
 }
+static void repeater_snr() {
+  PacketWasm engine; const auto guest = source("repeater-snr"); char error[128]{};
+  assert(engine.load(guest.data(), guest.size(), error, sizeof(error)));
+  TestHost host; Pipeline pipeline(host);
+  assert(pipeline.attach(engine, {"snr", 1, 100000, 20000, ReadSystem | PublishReport}) == Registration::Attached);
+  uint32_t maxFuel = 0;
+  const auto receive = [&](unsigned hop, int snr, unsigned width = 3, unsigned route = 1,
+                           unsigned flags = 0) {
+    uint8_t bytes[Capacity]{};
+    bytes[0] = route; const unsigned offset = route == 0 ? 5 : 1;
+    bytes[offset] = ((width - 1) << 6) | 2;
+    for (unsigned i = 0; i < width; ++i) {
+      bytes[offset + 1 + i] = 0xa5;
+      bytes[offset + 1 + width + i] = uint8_t(hop >> (8 * (width - i - 1)));
+    }
+    uint16_t length = offset + 2 + 2 * width; bytes[length - 1] = 0x42;
+    const std::vector<uint8_t> original(bytes, bytes + length);
+    auto m = metadata(); m.snrQuarterDb = snr; m.rssi = -100 + snr;
+    m.local = flags == 1; m.reflectionOrigin = flags == 2; m.engineOrigin = flags == 3;
+    const auto result = pipeline.process(m, bytes, length, Capacity);
+    if (!pipeline.enabled(0)) fprintf(stderr, "SNR fault=%u fuel=%u error=%s\n",
+      unsigned(host.errors.back()), engine.stats().instructions, engine.stats().error);
+    assert(result == Decision::Continue && pipeline.enabled(0));
+    assert(length == original.size() && !memcmp(bytes, original.data(), length) && host.sent.empty());
+    maxFuel = std::max(maxFuel, engine.stats().instructions);
+  };
+  mp_report report{};
+  for (unsigned flags = 0; flags < 4; ++flags) receive(0xd12600, 4, 3, flags ? 1 : 2, flags);
+  assert(!host.reports.read(0, report));
+  std::vector<int> samples;
+  for (int value : {-12, 4, 20, 36}) { receive(0xd12600, value); samples.push_back(value); }
+  assert(host.reports.read(0, report) && report.row_count == 1 && !strcmp(report.rows[0].label, "D12600"));
+  assert(report.rows[0].values[0] == 4 && report.rows[0].values[2] == 3 && report.rows[0].values[3] == 9);
+  for (unsigned i = 0; i < 300; ++i) { int value = int(i % 80) - 40; samples.push_back(value); receive(0xd12600, value); }
+  samples.erase(samples.begin(), samples.end() - 256);
+  double sum = 0; for (int value : samples) sum += value;
+  std::sort(samples.begin(), samples.end());
+  assert(host.reports.read(0, report) && report.rows[0].values[0] == 256 && report.rows[0].values[1] == 304);
+  assert(report.rows[0].values[2] == sum / 1024 && report.rows[0].values[3] == samples[(256 * 95 + 99) / 100 - 1] / 4.0);
+  receive(0xd1, 8, 1); receive(0xd126, 12, 2, 0);
+  for (unsigned i = 0; i < 24; ++i) for (unsigned j = 0; j < 256 + i; ++j) receive(0x100000 + i, int(j % 80) - 40);
+  assert(host.reports.read(0, report) && report.row_count == 16 && !strcmp(report.rows[0].label, "D12600"));
+  for (unsigned i = 1; i < report.row_count; ++i) assert(report.rows[i-1].values[1] >= report.rows[i].values[1]);
+  std::ifstream input("../runtime/plugins/examples/snr.lua"); assert(input);
+  const std::string plugin{std::istreambuf_iterator<char>(input), {}};
+  BotSession bot; BotVmStats stats;
+  assert(bot.load(plugin.data(), plugin.size(), 1, stats, error, sizeof(error)));
+  unsigned id = 0;
+  for (const char *command : {"!snr", "!snr D12600", "!snr FFFFFF"}) {
+    BotEvent e{}; assert(parseBotCommand(command, strlen(command), e, error, sizeof(error)));
+    e.authenticated = true; e.node.uptimeMs = 2123;
+    assert(bot.start(++id, e, error, sizeof(error)));
+    BotIoRequest request; assert(bot.nextIo(request) && request.kind == BotIoRequest::Inspect && !strcmp(request.key, "packet_report"));
+    BotIoResult completion{}; completion.token = request.token; completion.ok = completion.found = true; completion.packetReport = report;
+    assert(bot.complete(completion)); BotSession::Result result;
+    assert(bot.poll(result));
+    if (!result.ok) fprintf(stderr, "snr bot: %s\n", result.error);
+    assert(result.ok && strstr(result.action.text, id == 1 ? "SNR avg/P95" : id == 2 ? "256/256 samples" : "No SNR samples"));
+  }
+  struct Failing : Engine { Decision process(const Metadata &, Call &) override { return Decision::Failed; } } failing;
+  assert(pipeline.attach(failing, {"failure", 1, 1000, 20000}) == Registration::Attached);
+  const auto before = report;
+  uint8_t packet[Capacity] = {1, 0x81, 0xd1, 0x26, 0, 0x42}; uint16_t length = 6;
+  pipeline.process(metadata(), packet, length, Capacity);
+  assert(host.reports.read(0, report) && !memcmp(&before, &report, sizeof(report)) && !pipeline.enabled(1));
+  assert(pipeline.enable(1, false));
+  assert(pipeline.enable(0, false) && !host.reports.read(0, report));
+  printf("PASS repeater SNR real Wasm ring/P95/final-hop widths/24 peers, shared bot report/!snr, max fuel=%u\n", maxFuel);
+}
 int main(int argc, char **argv) {
   setvbuf(stdout, nullptr, _IONBF, 0);
   assert(argc == 3); directory = argv[1];
   if (!strcmp(argv[2], "concurrent")) { concurrent_loaders(); return 0; }
   coexistence(!strcmp(argv[2], "packet-first"));
-  realloc_accounting(); stages_and_operations(); faults(); initialization_and_profile(); services();
+  repeater_snr(); realloc_accounting(); stages_and_operations(); faults(); initialization_and_profile(); services();
 }

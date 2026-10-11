@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "PacketLua.h"
+#include "PacketReports.h"
 #include "PacketWasm.h"
 #include "support/PacketServiceHost.h"
 #include <cassert>
@@ -258,7 +259,32 @@ static void comparison(const char *wasmPath) {
          lua.stats().peakBytes, lua.stats().heapLimit, wasm.stats().instructions, lua.stats().instructions);
   puts("PASS mixed Wasm/Lua invocation rollback and bounded repeated packet processing");
 }
+static void reports() {
+  struct ReportHost : PacketServiceHost {
+    Reports reports;
+    ReportHost() { assert(reports.begin()); }
+    void beginReports() override { reports.start(); }
+    bool report(uint8_t slot, const void *data, size_t size) override { return reports.stage(slot, data, size); }
+    void commitReports() override { reports.commit(); }
+    void clearReport(uint8_t slot) override { reports.clear(slot); }
+  };
+  for (unsigned mode = 0; mode < 5; ++mode) {
+    std::string values = mode == 1 ? "0/0" : "-2.25";
+    std::string source = "return function() packet.report({name='links',fields={'snr'},rows={{label='D12600',values={" + values + "}}}}) ";
+    if (mode == 2) source += "error('after report') ";
+    source += mode == 4 ? "return packet.DROP end" : "return packet.CONTINUE end";
+    PacketLua engine; load(engine, source.c_str()); ReportHost host; Pipeline pipeline(host);
+    assert(pipeline.attach(engine, {"report", 1, 10000, 20000, mode == 3 ? 0u : uint32_t(PublishReport)}) == Registration::Attached);
+    uint8_t bytes[Capacity]; uint16_t length;
+    run(pipeline, bytes, length);
+    mp_report report{};
+    assert(host.reports.read(0, report) == (mode == 0 || mode == 4));
+    if (mode == 0 || mode == 4) assert(report.rows[0].values[0] == -2.25 && pipeline.enabled(0));
+    else assert(!pipeline.enabled(0));
+  }
+  puts("PASS Lua numeric report, NaN/capability validation, fault rollback and successful drop publication");
+}
 int main(int argc, char **argv) {
   assert(argc == 2); setvbuf(stdout, nullptr, _IONBF, 0);
-  stages_and_operations(); faults(); initialization(); services(); comparison(argv[1]);
+  reports(); stages_and_operations(); faults(); initialization(); services(); comparison(argv[1]);
 }

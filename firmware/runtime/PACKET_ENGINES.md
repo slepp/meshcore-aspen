@@ -80,7 +80,7 @@ programs through the Management backend.
 | `packet phy` | Shared PHY controller state and accepted/applied request counts |
 | `packet phy cancel` | Cancels the currently pending program-requested PHY change before it applies |
 | `packet SLOT status\|hash\|stats\|memory\|timing` | Slot `0` or `1`; saved/live enable state, fault text, selected SHA256, budgets/counters or runtime measurements |
-| `packet SLOT budget [STAGES FUEL US CAPS]` | Omit all four values to read. Decimal stage mask `1..255`, fuel `1..100000`, per-call microseconds `1..20000`, capabilities `0..7`; saved and applied immediately |
+| `packet SLOT budget [STAGES FUEL US CAPS]` | Omit all four values to read. Decimal stage mask `1..255`, fuel `1..100000`, per-call microseconds `1..20000`, capabilities `0..15`; saved and applied immediately |
 | `packet SLOT enable on\|off` | Saves and applies enable state; `on` requires a loaded program |
 | `packet SLOT begin ID16 lua\|wasm SIZE SHA256` | Starts an upload of `1..16384` bytes; ID is 16 lowercase hex characters, SHA256 is 64 |
 | `packet SLOT chunk ID16 INDEX HEX` | Zero-based 48-byte chunk index; lowercase hex encodes exactly 48 bytes except the final chunk; repeating identical bytes is safe |
@@ -93,7 +93,8 @@ programs through the Management backend.
 
 Stage bits are receive `1`, local delivery `2`, admission `4`, transmit `8`,
 reflection `16`, relay `32`, plaintext receive `64` and plaintext compose `128`.
-Capability bits are system read `1`, PHY write `2` and owned composition `4`.
+Capability bits are system read `1`, PHY write `2`, owned composition `4`
+and numeric report publication `8`.
 For example, `budget 65 3000 800 5` runs on raw receive and plaintext receive,
 allows 3000 fuel units/800 microseconds per hook, and grants system read and
 owned composition. **Granting PHY write lets a program retune the shared modem
@@ -480,3 +481,34 @@ These commands do not change a connected radio.
 coexistence, and exercises script mutation, drops, staged emissions, faults,
 memory bounds, fuel, deadlines and mixed-engine rollback. It prints the host
 resource comparison above.
+
+## Numeric reports shared with commands
+
+A packet program with capability `8` can publish one numeric report per hook.
+Wasm calls `mp_publish_report(&report, sizeof(report))` with the fixed ABI in
+`firmware/shared/PacketReport.h`. Lua calls:
+
+```lua
+packet.report({name="links", fields={"snr_db"},
+               rows={{label="D12600", values={3.25}}}})
+```
+
+Reports permit 16 rows, eight numeric fields and 23-byte names/labels. Report
+and field names use lowercase letters, digits and underscores, starting with
+a letter. Labels use printable ASCII. Names and labels must be unique within
+their collection; values must be finite. A second publication in the same hook
+fails. The report becomes visible only when all packet engines and scheduler
+admission succeed; a successful drop may publish. Disabling, faulting or
+replacing a program clears its report. A failed replacement retains the prior
+report. Reports and guest globals are volatile and reset on restart/reload.
+
+Command Lua reads `node.packet_report(slot)` through its normal cooperative
+worker I/O. It returns `nil` before publication, otherwise a read-only
+`{name, row_count, rows}` snapshot. Iterate `1..report.row_count`; each row has
+`label` and `values`, indexed by field name. This API is available on Aspen's
+ESP32 profile. The dashboard exports the same data as `packet_reports` with
+`slot`, `name`, `fields` and `rows` (`label` and numeric `values` arrays).
+Telemetry exports one rotating row per accepted upload as `meshcore_packet`.
+
+See [Nearby repeater SNR](REPEATER_SNR.md) for a complete Wasm sampler and Lua
+command using this shared report.

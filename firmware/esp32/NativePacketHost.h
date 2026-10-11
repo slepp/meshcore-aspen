@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "WifiKissMultiplexer.h"
+#include "PacketReports.h"
 
 namespace onchip {
 class NativePacketHost final : public packet_engine::Host {
@@ -37,6 +38,7 @@ private:
   Report report_;
   Snapshot snapshot_;
   Compose compose_;
+  packet_engine::Reports *reports_;
   packet_engine::Pipeline pipeline_;
   Status status_;
   bool running_ = false;
@@ -45,9 +47,10 @@ private:
   uint32_t phyStarted_ = 0;
 public:
   NativePacketHost(WifiKissMultiplexer &mux, Clock clock, Report report,
-                   Snapshot snapshot = nullptr, Compose compose = nullptr)
+                   Snapshot snapshot = nullptr, Compose compose = nullptr,
+                   packet_engine::Reports *reports = nullptr)
       : mux_(mux), clock_(clock), report_(report), snapshot_(snapshot),
-        compose_(compose), pipeline_(*this) {}
+        compose_(compose), reports_(reports), pipeline_(*this) {}
   ~NativePacketHost() override { stop(); }
   bool begin(float airtimeFactor = 1) {
     if (running_ || !clock_ || !report_) {
@@ -99,6 +102,12 @@ public:
     fault("PHY controller", phyPacket_, packet_engine::Fault::ControlRejected);
   }
   uint32_t microsNow() override { return clock_ ? clock_() : 0; }
+  void beginReports() override { if (reports_) reports_->start(); }
+  bool report(uint8_t slot, const void *bytes, size_t size) override {
+    return reports_ && reports_->stage(slot, bytes, size);
+  }
+  void commitReports() override { if (reports_) reports_->commit(); }
+  void clearReport(uint8_t slot) override { if (reports_) reports_->clear(slot); }
   void fault(const char *engine, const packet_engine::Metadata &metadata,
              packet_engine::Fault fault) override {
     ++status_.faults;

@@ -23,7 +23,7 @@ def main():
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
         parser.error("A certificate-verified HTTPS write URL without credentials or fragment is required")
     body = args.body.read_bytes()
-    if not 0 < len(body) <= 6144 or b"device=host-protocol-fixture" not in body:
+    if not 0 < len(body) <= 8192 or b"device=host-protocol-fixture" not in body:
         parser.error("Expected the bounded telemetry encoder host fixture")
     request = urllib.request.Request(args.url, body, {"Content-Type": "text/plain"}, method="POST")
     opener = urllib.request.build_opener(

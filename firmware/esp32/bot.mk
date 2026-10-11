@@ -261,7 +261,7 @@ packet-lua-test: packet-wasm-test
 packet-wasm-guests: bot-wasm-examples
 	@test "$(ONCHIP_BOT_WASM)" = 1 || { echo "packet-wasm-test requires ONCHIP_BOT_WASM=1" >&2; exit 1; }
 	@for init in 0 1 2 3 4; do \
-		clang --target=wasm32 -Oz -nostdlib -fno-builtin \
+		clang --target=wasm32 -Oz -nostdlib -fno-builtin -I../shared \
 			-mno-bulk-memory -mno-reference-types -mno-multivalue \
 			-Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
 			-Wl,--max-memory=65536 -Wl,-z,stack-size=4096 -DINIT_CASE=$$init \

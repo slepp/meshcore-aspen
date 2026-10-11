@@ -9,7 +9,7 @@ struct HasContacts<T, std::void_t<decltype(std::declval<T>().contacts)>> : std::
 
 #if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
 static_assert(HasContacts<RadioDashboard::RadioStatus>::value, "ESP32 contact projection missing");
-static_assert(RadioDashboard::JSON_CAPACITY == 40960, "ESP32 JSON budget changed");
+static_assert(RadioDashboard::JSON_CAPACITY == 49152, "ESP32 JSON budget changed");
 #else
 static_assert(!HasContacts<RadioDashboard::RadioStatus>::value, "Contacts increased a non-ESP32 snapshot");
 static_assert(RadioDashboard::JSON_CAPACITY == 24576, "Non-ESP32 JSON budget changed");

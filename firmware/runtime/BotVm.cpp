@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "BotVm.h"
+#include "PacketReports.h"
 #include "BotBuiltinManifest.h"
 #if ONCHIP_BOT_WASM
 #include "BotWasm.h"
@@ -859,6 +860,25 @@ int finishIo(lua_State *s, int, lua_KContext) {
   }
   if (!call.completion || !call.completion->ok)
     return luaL_error(s, "%s", call.completion ? call.completion->error : "Missing I/O completion");
+#if !ONCHIP_BOT_COMPACT_PROFILE
+  if (call.io->kind == onchip::BotIoRequest::Inspect && !strcmp(call.io->key, "packet_report")) {
+    const auto &result = *call.completion;
+    if (!result.found) { lua_pushnil(s); return 1; }
+    const auto &r = result.packetReport;
+    if (!packet_engine::Reports::valid(r))
+      return luaL_error(s, "Invalid packet report snapshot");
+    lua_newtable(s); text(s, "name", r.name); integer(s, "row_count", r.row_count);
+    lua_createtable(s, r.row_count, 0);
+    for (unsigned i = 0; i < r.row_count; ++i) {
+      lua_newtable(s); text(s, "label", r.rows[i].label);
+      lua_newtable(s);
+      for (unsigned f = 0; f < r.field_count; ++f) number(s, r.fields[f], r.rows[i].values[f]);
+      freeze(s); lua_setfield(s, -2, "values");
+      freeze(s); lua_rawseti(s, -2, i + 1);
+    }
+    freeze(s); lua_setfield(s, -2, "rows"); freeze(s); return 1;
+  }
+#endif
   if (call.io->reply) call.replyCompleted = true;
   if (call.io->reminder()) {
     const auto &result = *call.completion;
@@ -2084,6 +2104,17 @@ int pluginInfo(lua_State *s) {
   if (strlen(output) > call.event->replyLimit) return luaL_error(s, "Plugin info exceeds RF capacity");
   lua_pushstring(s, output); return 1;
 }
+int nodePacketReport(lua_State *s) {
+#if ONCHIP_BOT_COMPACT_PROFILE
+  return luaL_error(s, "Packet reports are unavailable in this compact profile");
+#else
+  const auto slot = lua_isnoneornil(s, 1) ? 0 : luaL_checkinteger(s, 1);
+  if (slot < 0 || slot > 1 || lua_gettop(s) > 1) return luaL_error(s, "Packet report slot requires 0 or 1");
+  auto &request = prepareIo(s, onchip::BotIoRequest::Inspect);
+  strcpy(request.key, "packet_report"); request.revision = uint32_t(slot); request.delayMs = 5000;
+  return lua_yieldk(s, 0, 0, finishIo);
+#endif
+}
 int nodeNeighbors(lua_State *s) {
   const lua_Integer page = lua_isnoneornil(s, 1) ? 1 : luaL_checkinteger(s, 1);
   if (page < 1 || page > 16) return luaL_error(s, "Neighbors page requires 1..16");
@@ -2172,6 +2203,7 @@ int nodeReport(lua_State *s) {
 void nodeApi(lua_State *s) {
   lua_newtable(s);
   lua_pushcfunction(s, nodeReport); lua_setfield(s, -2, "report");
+  lua_pushcfunction(s, nodePacketReport); lua_setfield(s, -2, "packet_report");
   lua_pushcfunction(s, pluginInfo); lua_setfield(s, -2, "plugins");
   lua_pushcfunction(s, nodeNeighbors); lua_setfield(s, -2, "neighbors");
   lua_pushcfunction(s, nodeAdmin); lua_setfield(s, -2, "admin");

@@ -341,6 +341,28 @@ static void administration() {
   }
   puts("PASS native administration persisted on/off/interval, restart, cancellation, failure-safe state");
 }
+static void packetReports() {
+#if defined(ESP32)
+  auto s = sample();
+  auto &report = s.radio.packet_reports[0];
+  s.radio.packet_report_available[0] = true;
+  report.version = MP_REPORT_VERSION; report.row_count = 3; report.field_count = 2;
+  strcpy(report.name, "repeater_snr"); strcpy(report.fields[0], "mean_db"); strcpy(report.fields[1], "p95_db");
+  for (unsigned i = 0; i < 3; ++i) { snprintf(report.rows[i].label, MP_REPORT_NAME, "D126%02u", i); report.rows[i].values[0] = -2.25; report.rows[i].values[1] = 4.5; }
+  char body[TelemetryBodyLimit + 1];
+  for (unsigned i = 0; i < 6; ++i) {
+    s.packetReportCursor = i;
+    assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+    char expected[80]; snprintf(expected, sizeof(expected), "label=D126%02u mean_db=-2.25,p95_db=4.5", i % 3);
+    assert(strstr(body, expected));
+  }
+  s.radio.packet_report_available[0] = false;
+  const size_t base = encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body));
+  s.radio.packet_report_available[0] = true;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, base + 2) == base && body[base-1] == '\n' && !strstr(body, "meshcore_packet"));
+  puts("PASS packet report telemetry rotates all rows and preserves base metrics on capacity exhaustion");
+#endif
+}
 int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--fixture")) {
     char body[TelemetryBodyLimit + 1];
@@ -349,5 +371,5 @@ int main(int argc, char **argv) {
     fwrite(body, 1, size, stdout);
     return 0;
   }
-  encoding(); settings(); rotation(); publisher(); counters(); administration();
+  packetReports(); encoding(); settings(); rotation(); publisher(); counters(); administration();
 }

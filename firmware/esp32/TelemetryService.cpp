@@ -139,12 +139,14 @@ void telemetryLoop(RadioDashboard &dashboard, const RadioDashboard::RadioStatus 
   if (!identityReady) { publisher.drop(now, TelemetryError::Snapshot); return; }
   if (!workspace) workspace = allocateRoleStorage<Workspace>("telemetry");
   if (!workspace) { publisher.drop(now, TelemetryError::Encoding); return; }
-  workspace->sample = TelemetrySample{};
+  workspace->sample.~TelemetrySample();
+  new (&workspace->sample) TelemetrySample;
   if (!dashboard.totals(workspace->sample.totals)) { publisher.drop(now, TelemetryError::Snapshot); return; }
   char name[32]{};
   if (!kissName(name)) { publisher.drop(now, TelemetryError::Snapshot); return; }
   collect(workspace->sample, radio, mux, board);
   const unsigned peers = commandBotService().repeaterSnapshots(workspace->repeaters, BotRepeaterLimit);
+  workspace->sample.packetReportCursor = uint32_t(publisher.status().successes);
   const unsigned cursor = repeaterCursor.select(peers, publisher.status().successes);
   for (unsigned i = 0; i < std::min(peers, TelemetryRepeaterLimit); ++i)
     workspace->sample.repeaters[i] = workspace->repeaters[(cursor + i) % peers];

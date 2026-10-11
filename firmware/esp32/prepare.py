@@ -147,7 +147,7 @@ def stage_field_network(target):
                  target / "examples/kiss_modem/main.cpp")
     shutil.copy2(source.parent / "shared/RadioFirmwareIdentity.h",
                  target / "examples/kiss_modem/RadioFirmwareIdentity.h")
-    for name in ("RadioNetwork.h", "SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
+    for name in ("RadioNetwork.h", "SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h", "PacketReport.h", "PacketReports.h"):
         shutil.copy2(source.parent / "shared" / name,
                      target / "examples/kiss_modem" / name)
         role_headers = target / "examples/kiss_modem/onchip"
@@ -171,7 +171,7 @@ def generate(upstream, target):
     source = Path(__file__).resolve().parent
     dest = target / "examples/kiss_modem/onchip"
     dest.mkdir(parents=True, exist_ok=True)
-    for name in ("SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h"):
+    for name in ("SntpConfig.h", "EspSntpClock.h", "RadioTimeProtocol.h", "PacketReport.h", "PacketReports.h"):
         shutil.copy2(source.parent / "shared" / name, dest / name)
     data = target / "onchip-data"
     data.mkdir(exist_ok=True)
@@ -184,6 +184,7 @@ def generate(upstream, target):
             if path.suffix in (".h", ".cpp") and path.name != "wifi_kiss_main.cpp":
                 shutil.copy2(path, dest / path.name)
     shutil.copytree(source.parent / "runtime/wasm/sdk", dest / "wasm/sdk", dirs_exist_ok=True)
+    shutil.copy2(source.parent / "shared/PacketReport.h", dest / "wasm/sdk/PacketReport.h")
     shutil.copytree(source.parent / "shared/cloudroom", dest / "cloudroom", dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("tests", "Makefile"))
     sys.path.insert(0, str(source))

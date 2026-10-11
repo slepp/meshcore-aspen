@@ -5,7 +5,7 @@
 #include "RepeaterMetrics.h"
 
 namespace onchip {
-constexpr size_t TelemetryBodyLimit = 6144;
+constexpr size_t TelemetryBodyLimit = 8192;
 constexpr unsigned TelemetryRepeaterLimit = 3;
 class TelemetryRepeaterCursor {
 public:
@@ -56,6 +56,7 @@ struct TelemetrySample {
     uint64_t loadUs = 0, initUs = 0, invokeUs = 0, cleanupUs = 0;
   } lua;
   BotRepeaterSnapshot repeaters[TelemetryRepeaterLimit]{};
+  uint32_t packetReportCursor = 0;
   TelemetrySample();
 };
 

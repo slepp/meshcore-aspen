@@ -322,6 +322,28 @@ size_t RadioDashboard::formatJSON(const Snapshot &s, const char *name,
     clientComma = true;
   }
   j.append("]}");
+  j.append(",\"packet_reports\":[");
+  bool reportComma = false;
+  for (unsigned slot = 0; slot < 2; ++slot) {
+    if (!r.packet_report_available[slot]) continue;
+    const auto &report = r.packet_reports[slot];
+    j.append("%s{\"slot\":%u,\"name\":", reportComma ? "," : "", slot);
+    j.string(report.name);
+    j.append(",\"fields\":[");
+    for (unsigned f = 0; f < report.field_count; ++f) {
+      j.append("%s", f ? "," : ""); j.string(report.fields[f]);
+    }
+    j.append("],\"rows\":[");
+    for (unsigned i = 0; i < report.row_count; ++i) {
+      j.append("%s{\"label\":", i ? "," : ""); j.string(report.rows[i].label);
+      j.append(",\"values\":[");
+      for (unsigned f = 0; f < report.field_count; ++f)
+        j.append("%s%.17g", f ? "," : "", report.rows[i].values[f]);
+      j.append("]}");
+    }
+    j.append("]}"); reportComma = true;
+  }
+  j.append("]");
   if (r.contacts_available) {
     const unsigned count = std::min<size_t>(r.contact_count, CONTACT_CAPACITY);
     j.append(",\"contacts\":{\"capacity\":%u,\"total\":%u,\"truncated\":%s,\"items\":[",

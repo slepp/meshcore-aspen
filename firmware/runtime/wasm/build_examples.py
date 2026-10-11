@@ -16,6 +16,8 @@ def build():
               "-Wl,--no-entry", "-Wl,--strip-all", "-Wl,--initial-memory=65536",
               "-Wl,--max-memory=65536", "-Wl,-z,stack-size=4096"]
     commands = []
+    commands.append(["clang"] + common + ["-I" + str(ROOT / "firmware/shared"),
+                    str(HERE / "examples/repeater_snr.c"), "-o", str(OUT / "repeater-snr.wasm")])
     for name in ("arithmetic", "notes", "rpc"):
         commands.append(["clang"] + common + [str(HERE / f"examples/{name}.c"), "-o", str(OUT / f"c-{name}.wasm")])
         commands.append(["rustc", "+1.96.0", "--edition=2024", "--target=wasm32-unknown-unknown",

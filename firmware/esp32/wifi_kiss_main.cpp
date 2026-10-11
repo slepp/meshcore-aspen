@@ -84,6 +84,7 @@ WiFiServer kiss_server(KISS_TCP_PORT);
 WifiKissMultiplexer kiss_stream;
 #ifdef MESHCORE_ONCHIP
 static RadioDashboard* dashboard_storage;
+static RadioDashboard::RadioStatus* dashboard_status_storage;
 RadioDashboard& getDashboard() { return *dashboard_storage; }
 #else
 RadioDashboard dashboard;
@@ -108,7 +109,13 @@ static bool wifi_configuration_valid = true;
 void retryWifiStation(bool restart);
 
 void publishDashboard() {
+#ifdef MESHCORE_ONCHIP
+  auto &status = *dashboard_status_storage;
+  status.~RadioStatus();
+  new (&status) RadioDashboard::RadioStatus;
+#else
   RadioDashboard::RadioStatus status;
+#endif
   kiss_stream.dashboardStatus(status);
   status.wifi_connected = wifi_was_connected;
   if (status.wifi_connected) status.wifi_rssi = WiFi.RSSI();
@@ -414,6 +421,12 @@ void setup() {
     halt();
   }
   dashboard_storage = new (memory) RadioDashboard();
+  memory = heap_caps_malloc(sizeof(RadioDashboard::RadioStatus), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!memory) {
+    Serial.println("Combined firmware requires PSRAM for the dashboard status workspace");
+    halt();
+  }
+  dashboard_status_storage = new (memory) RadioDashboard::RadioStatus();
 #endif
 #ifdef MESHCORE_ONCHIP
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN

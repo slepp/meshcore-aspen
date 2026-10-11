@@ -4,7 +4,8 @@
 
 namespace packet_engine {
 enum Capability : uint32_t { ReadSystem = 1, WritePhy = 2, ComposeOwned = 4 };
-constexpr uint32_t AllCapabilities = ReadSystem | WritePhy | ComposeOwned;
+constexpr uint32_t PublishReport = 8;
+constexpr uint32_t AllCapabilities = ReadSystem | WritePhy | ComposeOwned | PublishReport;
 struct Phy {
   uint32_t frequencyHz = 0, bandwidthHz = 0, spreadingFactor = 0,
            codingRate = 0, txPower = 0;

@@ -163,6 +163,10 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <table><thead><tr><th>Role</th><th>Name</th><th>Status</th><th>Identity</th><th>Radio session</th></tr></thead><tbody id="roles"></tbody></table>
     </div>
   </section>
+  <section id="packet-report-panel" class="card wide" hidden>
+    <div class="section-head"><h2>Packet reports</h2></div>
+    <div id="packet-reports"></div>
+  </section>
   <section id="companion-panel" class="card wide" hidden>
     <div class="section-head"><h2>Connected companions</h2><span id="companion-endpoint" class="muted"></span></div>
     <p id="companion-detail" class="muted"></p>
@@ -515,6 +519,49 @@ function renderEvents(data) {
   eventSignature = signature;
 }
 
+function renderPacketReports(data) {
+  const sections = (data.packet_reports || []).map(report => {
+    const section = document.createElement('section');
+    const snr = report.name === 'repeater_snr';
+    const title = document.createElement('h3');
+    title.textContent = snr ? 'Nearby repeater SNR' : report.name;
+    section.appendChild(title);
+    const detail = document.createElement('p'); detail.className = 'muted';
+    detail.textContent = snr ?
+      'Received flood packets grouped by their last repeater hop. Average and P95 use the last ' +
+      (report.rows.length ? report.rows[0].values[report.fields.indexOf('window')] : 256) +
+      ' samples per hop. Samples reset when the program reloads or Aspen restarts.' : 'Packet slot ' + report.slot;
+    section.appendChild(detail);
+    const scroll = document.createElement('div'); scroll.className = 'scroll'; scroll.setAttribute('tabindex', '0');
+    const table = document.createElement('table');
+    const head = document.createElement('thead'), heading = document.createElement('tr');
+    const columns = snr ? ['Repeater hop', 'Samples', 'Heard', 'Average SNR', 'P95 SNR', 'Average RSSI', 'Last heard'] : ['Label', ...report.fields];
+    for (const name of columns) { const th = document.createElement('th'); th.textContent = name; heading.appendChild(th); }
+    head.appendChild(heading); table.appendChild(head);
+    const body = document.createElement('tbody');
+    for (const item of report.rows) {
+      const row = document.createElement('tr'); cell(row, item.label);
+      if (snr) {
+        const v = Object.fromEntries(report.fields.map((name, i) => [name, item.values[i]]));
+        cell(row, number(v.samples) + ' / ' + number(v.window)); cell(row, number(v.heard_total));
+        cell(row, number(v.mean_db) + ' dB'); cell(row, number(v.p95_db) + ' dB');
+        cell(row, number(v.rssi_mean_dbm) + ' dBm');
+        cell(row, activityAge(((data.uptime_ms % 4294967296) - v.last_seen_ms + 4294967296) % 4294967296));
+      } else for (const value of item.values) cell(row, number(value));
+      body.appendChild(row);
+    }
+    table.appendChild(body); scroll.appendChild(table); section.appendChild(scroll);
+    if (snr) {
+      const note = document.createElement('p'); note.className = 'muted chart-note';
+      note.textContent = 'Most frequently heard retained hops appear first. Direct-route packets are excluded. Hop prefixes can collide.';
+      section.appendChild(note);
+    }
+    return section;
+  });
+  byId('packet-reports').replaceChildren(...sections);
+  byId('packet-report-panel').hidden = sections.length === 0;
+}
+
 function render(data) {
   const p = data.profile, s = data.scheduler, t = data.totals;
   text('device-name', data.device_name); document.title = data.device_name + ' | Radio stats';
@@ -525,6 +572,7 @@ function render(data) {
   text('uptime', duration(data.uptime_ms));
   text('wifi', data.wifi.connected ? 'WiFi ' + data.wifi.rssi_dbm + ' dBm / up ' + duration(data.wifi.uptime_ms) : 'WiFi disconnected');
   text('client-count', data.kiss.connected + ' / ' + data.kiss.capacity);
+  renderPacketReports(data);
   const companion = data.companion;
   byId('companion-overview').hidden = byId('companion-panel').hidden = !companion;
   const companionRows = [];
