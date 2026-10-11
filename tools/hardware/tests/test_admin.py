@@ -24,7 +24,7 @@ from test_support.operator_inventory import configure_inventory
 
 
 class PacketProgramClientTests(unittest.TestCase):
-    api = "Packet ABI=1 slots=2 source=16384 chunk=48 runtimes=lua,wasm stages=255 caps=7"
+    api = "Packet ABI=1 report=1 slots=2 source=16384 chunk=48 runtimes=lua,wasm stages=255 caps=15"
 
     def test_pine_limits_preserve_bounded_upload_contract(self):
         api = "Packet ABI=1 slots=2 source=4096 chunk=48 runtimes=lua stages=255 caps=0 heap=12288 role=1 live=1"

@@ -550,9 +550,9 @@ def install_packet(client, slot, source, progress=print):
     if runtime == "lua" and (b"\0" in source or source.startswith(b"\x1b")):
         raise ValueError("Packet Lua requires source text, not binary bytecode")
     api = checked(client, "packet api")
-    match = re.fullmatch(r"Packet ABI=1 slots=2 source=(\d+) chunk=48 runtimes=(lua(?:,wasm)?) stages=(\d+) caps=(\d+)"
+    match = re.fullmatch(r"Packet ABI=1(?: report=1)? slots=2 source=(\d+) chunk=48 runtimes=(lua(?:,wasm)?) stages=(\d+) caps=(\d+)"
                          r"(?: heap=\d+ role=[01] live=[01])?", api)
-    if not match or not 1 <= int(match[1]) <= PACKET_SOURCE_LIMIT or not 1 <= int(match[3]) <= 255 or not 0 <= int(match[4]) <= 7:
+    if not match or not 1 <= int(match[1]) <= PACKET_SOURCE_LIMIT or not 1 <= int(match[3]) <= 255 or not 0 <= int(match[4]) <= 15:
         raise ValueError("Endpoint does not support packet program ABI v1")
     if len(source) > int(match[1]):
         raise ValueError(f"Packet source exceeds this endpoint's {match[1]}-byte limit")
