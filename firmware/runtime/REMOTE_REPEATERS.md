@@ -42,6 +42,25 @@ path when unknown; the first eligible request uses bounded flood discovery.
 Frequency `0` explicitly permits polling on the modem's current frequency.
 `add` updates an existing alias; duplicate target keys and the bot's own key
 are rejected. Normal capacity is 12 targets; compact Pine capacity is four.
+An updated path replaces that target's cached outbound route. Other targets'
+routes, pending requests and next-poll times remain unchanged.
+
+Pause one target without losing its key, route, cooldown or last-good sample:
+
+```text
+bot repeaters enable ridge off
+bot repeaters status ridge
+bot repeaters enable ridge on
+bot repeaters remove ridge
+```
+
+`enable` is saved and applies immediately. A disabled target sends no requests
+and reports `enabled=0`, `error=disabled` and `wait=disabled`; retained voltage
+stays at its original sample time. Re-enabling respects the existing poll and
+discovery cooldowns. Updating a disabled alias with `add` keeps it disabled.
+`remove` deletes the saved target; a new alias added to that slot starts enabled.
+Disabling or editing one target cancels only its pending request and cannot
+undo a request already transmitted. Use `bot repeaters off` to stop all targets.
 
 Install the example **additively**, retaining the current command program:
 
@@ -184,7 +203,7 @@ The owner interval is 60..86400 seconds per target, default **300**.
 60..86400 seconds, default **900**. Both settings are saved. Existing monitor
 records retain all targets and last-discovery times when read by this firmware,
 and use the new 900-second default until explicitly changed. A subsequent save
-uses the new record format; older firmware cannot read it without restoring or
+uses version 3, which also stores per-target enable settings; older firmware cannot read it without restoring or
 reprovisioning the monitor policy.
 Targets are initially staggered by 30 seconds, and there is at most one
 monitor request per 30 seconds globally and one pending monitor RF request.
@@ -245,7 +264,7 @@ Stats include remote uptime, queue length, RX/TX packet and airtime counters,
 direct/flood counts, duplicates, error flags/RX errors, noise, RSSI and SNR.
 Zero battery millivolts means unsupported and omits `battery_volts`;
 there is no battery charge percentage field. No keys, passwords or messages
-are metrics. Three remote peers rotate through each existing 6,144-byte
+are metrics. Three remote peers rotate through each existing 8,192-byte
 publication alongside local metrics; 12 targets appear within four successful
 batches. Rotation advances only after receiver acceptance. A failed publication
 keeps that peer group for the next period's current snapshot; it does not replay

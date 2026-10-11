@@ -757,7 +757,7 @@ struct CommandBot::Core : mesh::Mesh {
       snapshot.nextPollSeconds = std::max(snapshot.nextPollSeconds, snapshot.nextDiscoverySeconds);
       snapshot.wait = BotRepeaterWait::Discovery;
     }
-    if (!repeaterPolicy.enabled) {
+    if (!repeaterPolicy.enabled || !repeaterPolicy.targetEnabled(index)) {
       snapshot.error = BotRepeaterError::Disabled; snapshot.fresh = false;
       snapshot.wait = BotRepeaterWait::Disabled;
     }
@@ -775,7 +775,8 @@ struct CommandBot::Core : mesh::Mesh {
     return !target.path.known;
   }
   bool repeaterAuthority(const Invocation &job) const {
-    return repeaterPolicy.enabled &&
+    return repeaterPolicy.enabled && (job.repeaterIndex < 0 ||
+        repeaterPolicy.targetEnabled(unsigned(job.repeaterIndex))) &&
         ((job.event.kind == BotEvent::Scheduled && (owner.worker_.eventAccess() & 16) &&
           job.io.eventEpoch == owner.worker_.eventEpoch()) ||
          ownerKey(job.event));
@@ -800,7 +801,7 @@ struct CommandBot::Core : mesh::Mesh {
   bool repeaterReady(unsigned index) const {
     const auto &target = repeaterPolicy.targets[index];
     const auto &state = repeaters[index];
-    return target.used && (!target.frequencyHz || target.frequencyHz == owner.radio_.configuration().freq_hz) &&
+    return repeaterPolicy.targetEnabled(index) && (!target.frequencyHz || target.frequencyHz == owner.radio_.configuration().freq_hz) &&
         int32_t(millis() - state.due) >= 0;
   }
   Contact *repeaterContact(unsigned index) {
@@ -851,6 +852,9 @@ struct CommandBot::Core : mesh::Mesh {
         index = int(i);
     if (index < 0) { failRepeater(job, BotRepeaterError::Unavailable, "Repeater alias is not configured by the owner"); return; }
     job.result.repeater = repeaterSnapshot(unsigned(index));
+    if (!repeaterPolicy.targetEnabled(unsigned(index))) {
+      finishRadio(job, "Repeater target disabled; enable it with bot repeaters enable ALIAS on"); return;
+    }
     if (!repeaterReady(unsigned(index))) {
       failRepeater(job, job.result.repeater.error == BotRepeaterError::Frequency ?
                    BotRepeaterError::Frequency : BotRepeaterError::NotDue,
@@ -3055,10 +3059,13 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     const char *alias = action ? strtok_r(nullptr, " ", &cursor) : nullptr;
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters status [ALIAS]"); return; }
     if (!alias) {
-      unsigned count = 0;
-      for (const auto &target : core_->repeaterPolicy.targets) count += target.used;
-      snprintf(reply, capacity, "Repeaters on=%u peers=%u/%u interval=%us discovery=%us grant=%u; bot events 16 enables recurring Lua",
-               core_->repeaterPolicy.enabled, count, BotRepeaterLimit,
+      unsigned count = 0, enabled = 0;
+      for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
+        count += core_->repeaterPolicy.targets[i].used;
+        enabled += core_->repeaterPolicy.targetEnabled(i);
+      }
+      snprintf(reply, capacity, "Repeaters on=%u peers=%u/%u enabled=%u interval=%us discovery=%us grant=%u; bot events 16 enables recurring Lua",
+               core_->repeaterPolicy.enabled, count, BotRepeaterLimit, enabled,
                core_->repeaterPolicy.intervalSeconds, core_->repeaterPolicy.discoverySeconds,
                core_->repeaterGrant);
     } else {
@@ -3068,8 +3075,8 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
           char battery[24] = "unavailable";
           if (s.available && s.stats.batteryMv)
             snprintf(battery, sizeof(battery), "%.3fV", double(s.stats.batteryMv) / 1000);
-          snprintf(reply, capacity, "%s available=%u fresh=%u age=%us error=%s battery=%s uptime=%us attempts=%u failed=%u",
-                   s.alias, s.available, s.fresh, s.ageSeconds, botRepeaterErrorName(s.error),
+          snprintf(reply, capacity, "%s enabled=%u available=%u fresh=%u age=%us error=%s battery=%s uptime=%us attempts=%u failed=%u",
+                   s.alias, core_->repeaterPolicy.targetEnabled(i), s.available, s.fresh, s.ageSeconds, botRepeaterErrorName(s.error),
                    battery, s.stats.uptimeSeconds, s.attempts, s.failures);
           return;
         }
@@ -3133,10 +3140,40 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "bot repeaters on|off|interval SEC|discovery SEC|status [ALIAS]|timing ALIAS|config ALIAS|route ALIAS|storage|remove ALIAS|add ALIAS KEY FREQ [W:HEX]");
+    snprintf(reply, capacity, "on|off|enable ALIAS on|off; status [ALIAS]|timing ALIAS|config ALIAS|route ALIAS|storage; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; interval|discovery SEC");
     return;
   }
   auto candidate = core_->repeaterPolicy;
+  int changedTarget = -1;
+  if (!strcmp(action, "enable")) {
+    const char *alias = strtok_r(nullptr, " ", &cursor);
+    const char *mode = strtok_r(nullptr, " ", &cursor);
+    if (!alias || !mode || (strcmp(mode, "on") && strcmp(mode, "off")) ||
+        strtok_r(nullptr, " ", &cursor)) {
+      error("bot repeaters enable ALIAS on|off"); return;
+    }
+    unsigned index = 0;
+    while (index < BotRepeaterLimit && (!candidate.targets[index].used ||
+           strcmp(candidate.targets[index].alias, alias))) ++index;
+    if (index == BotRepeaterLimit) { error("repeater alias is not configured"); return; }
+    if (!strcmp(mode, "on")) candidate.disabledTargets &= ~(1u << index);
+    else candidate.disabledTargets |= 1u << index;
+    if (candidate.disabledTargets == core_->repeaterPolicy.disabledTargets) {
+      snprintf(reply, capacity, "Repeater %s already %s", alias, !strcmp(mode, "on") ? "enabled" : "disabled"); return;
+    }
+    char storageError[128]{};
+    if (!saveBotRepeaterPolicy(candidate, storageError, sizeof(storageError))) {
+      core_->repeaterPolicy.enabled = false;
+      fault(storageError); snprintf(reply, capacity, "Error: %s; live monitor disabled", storageError); return;
+    }
+    core_->repeaterPolicy = candidate;
+    for (auto &job : core_->invocations)
+      if (job.used && job.ioPending && core_->repeaterIo(job) && job.repeaterIndex == int(index))
+        core_->failRepeater(job, BotRepeaterError::Cancelled, "Repeater target enable policy changed; request may already have transmitted");
+    snprintf(reply, capacity, "Saved/applied repeater %s %s; configuration and cached sample retained",
+             alias, !strcmp(mode, "on") ? "enabled" : "disabled");
+    return;
+  }
   if (!strcmp(action, "on") || !strcmp(action, "off")) candidate.enabled = !strcmp(action, "on");
   else if (!strcmp(action, "interval") || !strcmp(action, "discovery")) {
     const char *text = strtok_r(nullptr, " ", &cursor);
@@ -3156,6 +3193,8 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       if (entry.used && !strcmp(entry.alias, alias)) { target = &entry; break; }
     if (!strcmp(action, "remove")) {
       if (!target) { error("repeater alias is not configured"); return; }
+      changedTarget = int(target - candidate.targets);
+      candidate.disabledTargets &= ~(1u << unsigned(target - candidate.targets));
       *target = {};
     } else {
       const char *key = strtok_r(nullptr, " ", &cursor);
@@ -3163,6 +3202,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       const char *path = strtok_r(nullptr, " ", &cursor);
       if (!target) for (auto &entry : candidate.targets) if (!entry.used) { target = &entry; break; }
       if (!target) { error("repeater target table is full"); return; }
+      changedTarget = int(target - candidate.targets);
       BotRepeaterPolicy::Target value{};
       if (!key || strlen(key) != 64 || !mesh::Utils::fromHex(value.key, 32, key) ||
           core_->self_id.matches(value.key)) {
@@ -3196,25 +3236,44 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
   if (strtok_r(nullptr, " ", &cursor) || !candidate.valid()) {
     error("invalid repeater settings, duplicate alias/key or extra arguments; policy unchanged"); return;
   }
-  if (core_->repeaterGrant == UINT32_MAX) {
+  if (changedTarget < 0 && core_->repeaterGrant == UINT32_MAX) {
     core_->repeaterPolicy.enabled = false;
     error("repeater grant epoch exhausted; reboot required"); return;
   }
-  core_->repeaterPolicy.enabled = false;
-  ++core_->repeaterGrant;
-  for (auto &job : core_->invocations) if (job.used && job.ioPending && core_->repeaterIo(job))
+  if (changedTarget < 0) {
+    core_->repeaterPolicy.enabled = false;
+    ++core_->repeaterGrant;
+  }
+  for (auto &job : core_->invocations)
+    if (job.used && job.ioPending && core_->repeaterIo(job) &&
+        (changedTarget < 0 || job.repeaterIndex == changedTarget))
     core_->failRepeater(job, BotRepeaterError::Cancelled, "Repeater policy changed; admitted request outcome may be unknown");
   char storageError[128]{};
   if (!saveBotRepeaterPolicy(candidate, storageError, sizeof(storageError))) {
+    core_->repeaterPolicy.enabled = false;
     fault(storageError);
     snprintf(reply, capacity, "Error: %s; live monitor disabled", storageError);
     return;
   }
   for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
+    if (changedTarget >= 0 && unsigned(changedTarget) != i) continue;
     const auto &old = core_->repeaterPolicy.targets[i], &next = candidate.targets[i];
-    if (old.used != next.used || strcmp(old.alias, next.alias) || memcmp(old.key, next.key, 32) ||
-        old.frequencyHz != next.frequencyHz) core_->repeaters[i] = {};
-    core_->repeaters[i].due = millis() + i * 30000;
+    const bool identityChanged = old.used != next.used || strcmp(old.alias, next.alias) ||
+        memcmp(old.key, next.key, 32) || old.frequencyHz != next.frequencyHz;
+    const bool pathChanged = memcmp(&old.path, &next.path, sizeof(next.path));
+    if (identityChanged) core_->repeaters[i] = {};
+    if (changedTarget >= 0 && next.used && !memcmp(old.key, next.key, 32) &&
+        pathChanged) {
+      for (auto &contact : core_->contacts) if (contact.used && contact.id.matches(next.key)) {
+        contact.route = PeerRoute{};
+        if (next.path.known)
+          contact.route.learn(next.path.bytes, uint8_t((next.path.width - 1) << 6 | next.path.count));
+        contact.routeAt = millis();
+      }
+      core_->repeaters[i].failures = 0;
+    }
+    if (changedTarget < 0 || identityChanged || pathChanged)
+      core_->repeaters[i].due = millis() + i * 30000;
   }
   core_->repeaterPolicy = candidate;
   snprintf(reply, capacity, "Saved/applied repeater policy; interval=%us discovery=%us; modem frequency unchanged",

@@ -165,18 +165,20 @@ void repeaterSettings(Nor &flash) {
   strcpy(target.alias, "relay");
   target.key[0] = 7;
   target.frequencyHz = 912525000;
+  policy.disabledTargets = 1;
   char error[128]{};
   assert(saveBotRepeaterPolicy(policy, error, sizeof(error)));
   assert(nrfmast::botFilesystem.exists("/command-bot/repeaters-a.bin"));
   assert(nrfmast::botFilesystem.end() && nrfmast::botFilesystem.begin(flash, false));
-  assert(loadBotRepeaterPolicy(actual) && actual.enabled);
+  assert(loadBotRepeaterPolicy(actual) && actual.enabled && actual.disabledTargets == 1 && !actual.targetEnabled(0));
   assert(actual.targets[0].used && !strcmp(actual.targets[0].alias, "relay") &&
          actual.targets[0].key[0] == 7 && actual.targets[0].frequencyHz == 912525000);
   policy.intervalSeconds = 120;
+  policy.disabledTargets = 0;
   assert(saveBotRepeaterPolicy(policy, error, sizeof(error)));
   assert(nrfmast::botFilesystem.exists("/command-bot/repeaters-b.bin"));
   assert(nrfmast::botFilesystem.end() && nrfmast::botFilesystem.begin(flash, false));
-  assert(loadBotRepeaterPolicy(actual) && actual.intervalSeconds == 120);
+  assert(loadBotRepeaterPolicy(actual) && actual.intervalSeconds == 120 && actual.targetEnabled(0));
   unsigned files = 0;
   assert(nrfmast::botFilesystem.visit("/command-bot", [](const char *path, void *context) {
     if (!strcmp(path, "/command-bot/repeaters-a.bin") ||

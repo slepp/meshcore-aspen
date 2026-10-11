@@ -34,6 +34,10 @@ struct BotRepeaterPolicy {
   uint32_t intervalSeconds = 300;
   bool enabled = false;
   uint32_t discoverySeconds = 900;
+  uint16_t disabledTargets = 0;
+  bool targetEnabled(unsigned index) const {
+    return index < BotRepeaterLimit && targets[index].used && !(disabledTargets & (1u << index));
+  }
   bool valid() const;
 };
 bool loadBotRepeaterPolicy(BotRepeaterPolicy &policy);

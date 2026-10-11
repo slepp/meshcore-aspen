@@ -2620,11 +2620,41 @@ static void native_repeater_monitor() {
   f.bot.repeaterCommand("timing pilot", reply, sizeof(reply));
   assert(strlen(reply) <= 162 && strstr(reply, "wait=interval") && strstr(reply, "sampled-utc="));
   assert(f.bot.counters().eventsCompleted && !f.bot.jobsInUse());
+  const auto retainedSample = snapshots[0];
+  const auto retainedPoll = snapshots[0].nextPollSeconds;
+  char otherKey[65]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(otherKey + 2 * i, 3, "%02x", stranger.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "add other %s 912525000 3:", otherKey);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 2 &&
+         snapshots[0].nextPollSeconds == retainedPoll && snapshots[0].sampledUtc == retainedSample.sampledUtc);
+  f.bot.repeaterCommand("enable other off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  f.bot.repeaterCommand("enable pilot off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 2 &&
+         snapshots[0].available && !snapshots[0].fresh && snapshots[0].error == BotRepeaterError::Disabled &&
+         snapshots[0].wait == BotRepeaterWait::Disabled && snapshots[0].stats.batteryMv == 3811 &&
+         snapshots[0].sampledUtc == retainedSample.sampledUtc && snapshots[0].nextPollSeconds == retainedPoll);
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  BotRepeaterPolicy paused;
+  assert(loadBotRepeaterPolicy(paused) && !paused.targetEnabled(0) && !paused.targetEnabled(1));
+  const auto pausedSent = f.radio.sent.size();
+  timeMs += 16000;f.step();assert(f.radio.sent.size() == pausedSent && !f.bot.jobsInUse());
+  f.bot.repeaterCommand("remove other", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  assert(loadBotRepeaterPolicy(paused) && paused.disabledTargets == 1);
+  f.bot.repeaterCommand("enable pilot on", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 && snapshots[0].fresh &&
+         snapshots[0].sampledUtc == retainedSample.sampledUtc && snapshots[0].stats.batteryMv == 3811);
+  puts("PASS per-target pause retains configuration, cached sample and unrelated due times; add preserves pause and removal clears its slot bit");
   const auto before = f.radio.sent.size();
   timeMs += 16000; f.step();
   assert(f.radio.sent.size() == before);
   timeMs += 310000; receiveNetworkTime(1800000400); f.step();
   assert(f.bot.jobsInUse());
+  snprintf(command, sizeof(command), "add other %s 912525000 3:", otherKey);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13) && f.bot.jobsInUse());
+  f.bot.repeaterCommand("enable other off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13) && f.bot.jobsInUse());
+  f.bot.repeaterCommand("remove other", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13) && f.bot.jobsInUse());
   timeMs += 31000; f.step();
   assert(!f.bot.jobsInUse());
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
@@ -2652,11 +2682,17 @@ static void native_repeater_monitor() {
     return latestTag;
   };
   const auto revokedTag = latestTag();
-  assert(f.bot.setEventAccess(0)); f.step();
+  f.bot.repeaterCommand("enable pilot off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  f.step();assert(!f.bot.jobsInUse());
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].error == BotRepeaterError::Disabled && snapshots[0].sampledUtc == retainedSample.sampledUtc);
   f.deliver(response(peer, revokedTag, false)); f.step();
   assert(!f.bot.jobsInUse());
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
-         !snapshots[0].fresh && snapshots[0].attempts > activeAttempts);
+         !snapshots[0].fresh && snapshots[0].attempts > activeAttempts &&
+         snapshots[0].sampledUtc == retainedSample.sampledUtc);
+  assert(f.bot.setEventAccess(0)); f.step();
+  f.bot.repeaterCommand("enable pilot on", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
   assert(f.bot.setEventAccess(16)); f.step();
   timeMs += 1210000; receiveNetworkTime(1800002600); f.step();
   assert(f.bot.jobsInUse());
@@ -2847,6 +2883,15 @@ static void native_repeater_monitor() {
   recovery.deliver(routedResponse(peer, recoveredTag, alternatePath)); recovery.step();
   assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
          snapshots[0].fresh && snapshots[0].attempts == 6);
+  assert(loadBotRepeaterPolicy(discoveredPolicy));
+  const auto retainedFlood = discoveredPolicy.targets[0].lastFloodUtc;
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:ABCDEF112233", key);
+  recovery.bot.repeaterCommand(command, reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
+  recovery.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:abcdef112233 repair=0"));
+  assert(loadBotRepeaterPolicy(discoveredPolicy) && discoveredPolicy.targets[0].lastFloodUtc == retainedFlood);
+  assert(recovery.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 1 &&
+         snapshots[0].fresh && snapshots[0].attempts == 6 && snapshots[0].stats.uptimeSeconds == 54321);
   assert(recovery.bot.setEventAccess(0) && saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
   puts("PASS native repeater recovery: learned three-byte hop, bounded direct-failure backoff, configurable flood repair, stale/foreign rejection and alternate multihop recovery");
 }

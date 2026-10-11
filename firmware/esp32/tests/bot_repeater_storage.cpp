@@ -37,7 +37,7 @@ static void expect(const BotRepeaterPolicy &policy) {
   BotRepeaterPolicy actual;
   assert(loadBotRepeaterPolicy(actual));
   assert(actual.enabled == policy.enabled && actual.intervalSeconds == policy.intervalSeconds &&
-         actual.discoverySeconds == policy.discoverySeconds);
+         actual.discoverySeconds == policy.discoverySeconds && actual.disabledTargets == policy.disabledTargets);
   for (unsigned i = 0; i < BotRepeaterLimit; ++i)
     assert(!strcmp(actual.targets[i].alias, policy.targets[i].alias) &&
            !memcmp(actual.targets[i].key, policy.targets[i].key, 32) &&
@@ -61,6 +61,7 @@ int main() {
   expect(old);
   next.intervalSeconds = 600;
   next.discoverySeconds = 1800;
+  next.disabledTargets = 1;
   for (unsigned fault = 0; fault < 8; ++fault) {
     const auto authority = identity_test::durable.at(Key);
     switch (fault) {
@@ -130,7 +131,21 @@ int main() {
   expect(old);
   assert(!memcmp(legacy.data(), "BRM\1", 4));
   assert(saveBotRepeaterPolicy(next)); expect(next);
-  assert(!memcmp(filesystem_test::files.at("/repeaters-b.bin").data(), "BRM\2", 4));
+  assert(!memcmp(filesystem_test::files.at("/repeaters-b.bin").data(), "BRM\3", 4));
+  identity_test::durable.clear(); filesystem_test::files.clear();
+  auto &version2 = filesystem_test::files["/repeaters-a.bin"];
+  const size_t version2Size = 4 + offsetof(BotRepeaterPolicy, disabledTargets);
+  version2.resize(version2Size);
+  memcpy(version2.data(), "BRM\2", 4);
+  memcpy(version2.data() + 4, &old, version2Size - 4);
+  auto &v2Reference = identity_test::durable[Key];
+  v2Reference.resize(37);memcpy(v2Reference.data(), "BRF\1", 4);v2Reference[4] = 0;
+  mesh::Utils::sha256(v2Reference.data() + 5, 32, version2.data(), version2.size());
+  expect(old);
+  assert(saveBotRepeaterPolicy(next));expect(next);
+  BotRepeaterPolicy invalid;
+  invalid.disabledTargets = 1;assert(!invalid.valid());
+  invalid = old;invalid.disabledTargets = uint16_t(1u << BotRepeaterLimit);assert(!invalid.valid());
   assert(psram_test::allocations.empty());
-  puts("PASS repeater storage: version-1 migration/default 900s, configurable cooldown retention, 37-byte authority, verified slots, explicit faults and unchanged Lua reserve");
+  puts("PASS repeater storage: v1/v2 migration, persisted per-target disable and cooldowns, 37-byte authority, verified slots, explicit faults and unchanged Lua reserve");
 }
