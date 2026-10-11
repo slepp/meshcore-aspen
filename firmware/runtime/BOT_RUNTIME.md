@@ -408,7 +408,7 @@ and [reminder route/time rules](#reboot-autonomous-personal-dm-reminders).
 | `mesh.wait{kind=..., timeout_ms=...[, filters...]}` | ACK/TRACE result or immutable received text/channel handle | 1..30000 ms; `ack`, `text`, `channel`, `trace`; channel wait separately granted |
 | `mesh.forward(packet)` | Terminal TX result | One separately granted sender/destination pair; latest eligible follow-up DM, re-encrypted as the bot |
 | `request_trace([width_hex])`, `mesh.trace([width_hex])`, `trace([width_hex])` | Bounded native TRACE-result text | Direct route; explicit widths 1/2/4/8, not ordinary width 3 |
-| `mesh.find_path(hex_prefix)` | Fresh repeater route or labelled cached fallback | 1..64 case-insensitive hex digits; 10-second asynchronous probe; `action_trace` permission and radio budgets |
+| `mesh.find_path(hex_prefix)` | Fresh repeater route or labelled cached fallback | 1..64 case-insensitive hex digits; up to 30 seconds waiting for admission, then a 10-second asynchronous probe; `action_trace` permission and radio budgets |
 | `mesh.multitrace([width_hex[, count]])` | Bounded numbered text summary | Count 1..3, default 2; sequential yielding operations share invocation budget |
 | `mesh.advert()`, `advert()` | Bounded completion text | Actual advert TX completion; 15-minute public advert gate and shared airtime |
 
@@ -902,7 +902,7 @@ without resetting role identities, channels, destinations or airtime settings.
 | `!test` | Native message connection, complete received flood path when available, actual RSSI/SNR; local reflection explicitly has no measured RF signal |
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
 | `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Three-byte hashes shorten to two bytes when needed and unambiguous; further shortening retains whole hashes and marks truncation. Ninth paths, missing paths and RX queue overflow also mark the result truncated |
-| `!find-path PREFIX` | Finds a fresh repeater route in up to 10 seconds; case-insensitive key prefix; explicit cached fallback on timeout |
+| `!find-path PREFIX` | Waits up to 30 seconds for admission, then probes for 10 seconds; case-insensitive key prefix; explicit cached fallback on timeout |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Bot introduction and pointers to command help and installed programs |
 | `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
@@ -2990,3 +2990,42 @@ remaining UBSan checks apply throughout.
 
 For profile sizes and allocation lifetimes, use
 [device resource budgets](../esp32/resource-budget.md).
+
+### Learned contacts and routes
+
+The command bot retains up to 16 signed contacts and its authenticated learned
+routes. `bot contacts` shows pending changes, checkpoint errors and writes since
+boot. Changed state is checkpointed every five minutes; idle state causes no
+writes. `bot contacts flush` saves pending changes immediately. A controlled
+radio reboot or application update also flushes native state and reports a
+failure before proceeding. Automatic recovery rollback remains available when
+an application cannot start.
+
+After a reset, cached contacts wait for trusted local UTC. Signed contacts
+expire seven days after their last accepted advert. Known learned paths are
+retained for seven days; direct-send freshness remains ten minutes. Paths are discarded when the bot identity or frequency, bandwidth, SF or
+CR changes. Restored contacts do not appear as newly heard neighbours and do
+not restore RSSI/SNR readings. An advert received without trusted UTC can be
+checkpointed after clock synchronization establishes its local receipt time.
+A reset before that synchronization can lose that new contact.
+
+Saved repeater paths are operator seeds. Reapplying the same seed keeps a newer
+learned route; changing the seed deliberately replaces the current route.
+Discovery cooldowns remain durable before a flood is admitted.
+
+One interactive `!find-path` command can wait up to 30 seconds for the shared
+probe spacing. Its ten-second response timer starts when the probe is admitted.
+A second waiting command receives a busy reply. Cancelling the command or
+revoking its radio permission while it waits prevents its probe.
+
+On Aspen, the companion keeps the latest signed advert for each of its bounded
+contact slots in PSRAM and exports it immediately. It checkpoints pending
+adverts and contact metadata after five minutes from the first change, with a
+five-minute retry after a failed write. A controlled flush writes adverts before
+metadata. Previous files remain available during publication; completed advert
+writes remove their temporary previous copy. Existing raw advert files and
+legacy contact records remain readable after an application rollback.
+
+Pine's separate companion store uses its existing journal with the same
+five-minute checkpoint interval. Host Base roles retain their existing host
+storage policy.

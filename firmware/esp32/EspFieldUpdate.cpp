@@ -23,6 +23,16 @@ EspUpdate update;
 std::mutex updateMutex;
 std::atomic<bool> busy{false}, rebootRequested{false}, rollbackRequested{false}, healthy{false};
 std::atomic<bool> rollbackObserved{false};
+std::atomic<bool (*)()> flushRuntime{nullptr};
+std::atomic<uint32_t> flushRequested{0}, flushCompleted{0};
+std::atomic<bool> flushResult{false};
+bool flushForUpdate() {
+  if (!flushRuntime.load()) return true;
+  const uint32_t ticket = flushRequested.fetch_add(1) + 1;
+  const uint32_t started = millis();
+  while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 10000) delay(1);
+  return flushCompleted.load() == ticket && flushResult.load();
+}
 uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0;
 bool automaticRollbackAttempted = false;
 std::atomic<const char *> recovery{""};
@@ -127,7 +137,7 @@ struct Adapter final : EspUpdate::Backend {
     return esp_image_get_metadata(&position, &metadata) == ESP_OK &&
            metadata.image_len == expectedSize;
   }
-  bool activate() override { return esp_ota_set_boot_partition(partition) == ESP_OK; }
+  bool activate() override { return flushForUpdate() && esp_ota_set_boot_partition(partition) == ESP_OK; }
   void abort() override {
     if (open) esp_ota_abort(handle);
     open = false;
@@ -162,6 +172,7 @@ esp_err_t statusLocked(httpd_req_t *request, const char *code) {
   return response(request, code, text);
 }
 }
+void setEspUpdateFlush(bool (*flush)()) { flushRuntime = flush; }
 bool espUpdateBusy() { return busy.load(); }
 esp_err_t statusEspUpdate(httpd_req_t *request) {
   std::lock_guard<std::mutex> lock(updateMutex);
@@ -202,6 +213,10 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   authorized = authorized && length > 0 && size_t(length) < sizeof(manifest) &&
     mesh::Identity(key).verify(sig, reinterpret_cast<uint8_t *>(manifest), length);
   if (authorized) memcpy(updateDigest, digest, sizeof(updateDigest));
+  if (authorized && !flushForUpdate()) {
+    busy = false;
+    return response(request, "503 Service Unavailable", "{\"error\":\"Native state flush failed before update; inspect bot contacts\"}");
+  }
   if (!update.start(adapter, request->content_len, adapter.partition ? adapter.partition->size : 0, authorized)) {
     busy = false;
     return statusLocked(request, authorized ? "400 Bad Request" : "403 Forbidden");
@@ -247,6 +262,11 @@ esp_err_t rebootEspUpdate(httpd_req_t *request) {
 }
 void espUpdateRecovery(const char *reason) { recovery = reason; }
 void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
+  const uint32_t requested = flushRequested.load();
+  if (requested != flushCompleted.load()) {
+    const auto flush = flushRuntime.load();
+    flushResult = !flush || flush(); flushCompleted = requested;
+  }
   rolesReady = rolesReady && publicProvisioningReady();
   esp_ota_img_states_t state;
   if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
@@ -277,7 +297,11 @@ void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
       esp_ota_mark_app_invalid_rollback_and_reboot();
       rollbackRequested = false; rebootRequested = false; rebootAt = 0;
       recovery = "Application rollback failed; use retained USB recovery";
-    } else ESP.restart();
+    } else if (const auto flush = flushRuntime.load(); !flush || flush()) ESP.restart();
+    else {
+      rebootRequested = false; rebootAt = 0;
+      recovery = "Native state flush failed; application reboot cancelled; inspect bot contacts";
+    }
   }
 }
 } // namespace onchip

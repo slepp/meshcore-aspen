@@ -424,6 +424,31 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                 text = text.replace("_radio->getLastRSSI()", "onchip::nativeRSSI(*_radio)")
                 text = text.replace("radio_driver", f"onchip::{role}Radio()")
                 text = text.replace("rtc_clock", f"onchip::{role}Clock()")
+            if role == "companion" and path.name == "MyMesh.h":
+                text = '#include "CompanionPersistence.h"\n' + text
+                text = replace_once(text, "    return _store->getBlobByKey(key, key_len, dest_buf);",
+                                    "    return pending_adverts.get(*_store, key, key_len, dest_buf);")
+                text = replace_once(text, "    return _store->putBlobByKey(key, key_len, src_buf, len);",
+                                    "    if (!pending_adverts.put(key, key_len, src_buf, len)) return false;\n"
+                                    "    onchipDirtyContacts(); return true;")
+                text = replace_once(text, "  unsigned long dirty_contacts_expiry;",
+                                    "  unsigned long dirty_contacts_expiry;\n"
+                                    "  onchip::CompanionAdvertCache<MAX_CONTACTS> pending_adverts;\n"
+                                    "  void onchipDirtyContacts() { if (!dirty_contacts_expiry) dirty_contacts_expiry = millis() + 300000; }")
+                text = replace_once(text, "  void saveContacts();", "  bool saveContacts();")
+            if role == "companion" and path.name == "MyMesh.cpp":
+                text = text.replace("dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);",
+                                    "onchipDirtyContacts();")
+                text = text.replace("_store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);",
+                                    "pending_adverts.forget(pub_key); _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);")
+                text = replace_once(text, "void OnchipCompanion::saveContacts() {\n  _store->saveContacts(this, save_filter);\n}",
+                                    "bool OnchipCompanion::saveContacts() {\n"
+                                    "  if (!pending_adverts.flush(*_store) || !_store->saveContacts(this, save_filter)) return false;\n"
+                                    "  dirty_contacts_expiry = 0; return true;\n}")
+                text = replace_once(text, "    saveContacts();\n    dirty_contacts_expiry = 0;",
+                                    "    if (!saveContacts()) dirty_contacts_expiry = millis() + 300000;")
+                text = replace_once(text, "  if (!_store->saveContacts(this, save_filter)) return false;",
+                                    "  if (!saveContacts()) return false;")
             if role == "companion" and path.name == "DataStore.cpp":
                 text = body(text, "bool DataStore::formatFileSystem()", "  return false;")
                 start = text.index("void DataStore::saveContacts(")
@@ -433,7 +458,39 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                                     "      if (!success) { file.close(); return false; }")
                 save = replace_once(save, "    file.close();\n  }\n}",
                                     "    file.flush();\n    file.close();\n    return true;\n  }\n  return false;\n}")
+                save = replace_once(save, '"/contacts3"', '"/contacts3-writing"')
+                save = replace_once(save, "    uint32_t idx = 0;", "    SHA256 checkpointHash;\n"
+                                    "    auto checkpointWrite = [&](const uint8_t *bytes, size_t size) {\n"
+                                    "      const size_t count = file.write(bytes, size); checkpointHash.update(bytes, count); return count;\n    };\n"
+                                    "    uint32_t idx = 0;")
+                save = save.replace("file.write(", "checkpointWrite(")
+                # The helper itself must call the file, not recurse.
+                save = replace_once(save, "const size_t count = checkpointWrite(bytes, size);",
+                                    "const size_t count = file.write(bytes, size);")
+                save = replace_once(save, "    file.flush();", "    uint8_t digest[32]; checkpointHash.finalize(digest, 32);\n"
+                                    "    if (file.write(digest, 32) != 32) { file.close(); return false; }\n    file.flush();")
+                save = replace_once(save, "    return true;",
+                                    '    return onchip::companion_persistence::publish(*_getContactsChannelsFS(), "/contacts3-writing", "/contacts3",\n'
+                                    '        [&](const char *name) { return onchip::companion_persistence::contactsValid(*_getContactsChannelsFS(), name, MAX_CONTACTS); });')
                 text = text[:start] + save + text[end:]
+                text = replace_once(text, 'File file = openRead(_getContactsChannelsFS(), "/contacts3");',
+                                    'const char *name = onchip::companion_persistence::contactsValid(*_getContactsChannelsFS(), "/contacts3", MAX_CONTACTS) ? "/contacts3" : "/contacts3-prev";\n'
+                                    'if (!onchip::companion_persistence::contactsValid(*_getContactsChannelsFS(), name, MAX_CONTACTS)) return;\n'
+                                    'File file = openRead(_getContactsChannelsFS(), name);')
+                text = '#include "CompanionPersistence.h"\n' + text
+                # ESP32 blob methods retain the existing per-key authority and raw export interface.
+                start_blob = text.index("uint8_t DataStore::getBlobByKey(", text.index("inline void makeBlobPath("))
+                section = text[start_blob:]
+                section = body(section, "uint8_t DataStore::getBlobByKey(",
+                               "  char path[64]; makeBlobPath(key, key_len, path, sizeof(path));\n"
+                               "  return onchip::companion_persistence::blobGet(*_fs, path, dest_buf);")
+                section = body(section, "bool DataStore::putBlobByKey(",
+                               "  char path[64]; makeBlobPath(key, key_len, path, sizeof(path));\n"
+                               "  return onchip::companion_persistence::blobPut(*_fs, path, src_buf, len);")
+                section = body(section, "bool DataStore::deleteBlobByKey(",
+                               "  char path[64]; makeBlobPath(key, key_len, path, sizeof(path));\n"
+                               "  onchip::companion_persistence::blobDelete(*_fs, path); return true;")
+                text = text[:start_blob] + section
                 start = text.index("void DataStore::saveChannels(")
                 end = text.index("\n#if defined(NRF52_PLATFORM)", start)
                 save = text[start:end].replace("void DataStore::saveChannels(", "bool DataStore::saveChannels(")

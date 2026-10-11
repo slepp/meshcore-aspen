@@ -79,8 +79,23 @@ int main(int argc, char **) {
   request = candidate(authority == 1 ? 0 : 1);
   onchip::uploadEspUpdate(&request);
   assert(begins == 0 && request.status == "403 Forbidden");
+  unsigned flushes = 0;
+  static bool flushOk = false;
+  static unsigned *flushCount = nullptr; flushCount = &flushes;
+  onchip::setEspUpdateFlush([] { ++*flushCount; return flushOk; });
+  onDelay = [] { onchip::serviceEspUpdate(true, false, false); };
+  request = candidate(authority);
+  onchip::uploadEspUpdate(&request);
+  assert(begins == 0 && switches == 0 && request.status == "503 Service Unavailable" && flushes == 1);
+  flushOk = true;
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);
   assert(begins == 1 && switches == 1 && request.response.find("\"state\":\"verified\"") != std::string::npos);
-  puts("Public OTA uses selected operator authority; unprovisioned boot cannot confirm healthy");
+  assert(flushes == 3); // dispatcher flush before flash and before boot selection
+  flushOk = false;
+  onchip::rebootEspUpdate(&request);
+  onchip::serviceEspUpdate(true, false, false); testMillis += 1500;
+  onchip::serviceEspUpdate(true, false, false);
+  assert(ESP.restarts == 0 && flushes == 4);
+  puts("Public OTA uses selected operator authority; dispatch flush failure prevents flash/reboot; unprovisioned boot cannot confirm healthy");
 }

@@ -37,7 +37,8 @@ inline int httpd_req_recv(httpd_req_t *r, char *out, size_t size) {
 }
 inline uint32_t testMillis = 1;
 inline uint32_t millis() { return testMillis; }
-inline void delay(unsigned n) { testMillis += n; }
+inline void (*onDelay)() = nullptr;
+inline void delay(unsigned n) { testMillis += n; if (onDelay) onDelay(); }
 struct EspMock { unsigned restarts = 0; void restart() { ++restarts; } };
 inline EspMock ESP;
 namespace mesh {

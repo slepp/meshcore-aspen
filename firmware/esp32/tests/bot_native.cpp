@@ -9,6 +9,7 @@
 #endif
 #include "RoleProfile.h"
 #include "BotStore.h"
+#include "BotLearnedState.h"
 #include "BotJournal.h"
 #include "Clock.h"
 #include "support/BotNativeHarness.h"
@@ -745,6 +746,7 @@ struct NativeRelay : Peer {
 };
 #include "bot_discovery_cases.h"
 #include "bot_contact_recovery_cases.h"
+#include "bot_learned_state_cases.h"
 static void stock_chat_through_native_relay() {
   for (bool scoped : {false, true}) for (uint8_t width : {1, 2, 3}) {
     Fixture f;
@@ -2688,12 +2690,16 @@ static void native_find_path() {
   f.deliver(response(peer, tag, false, true, Bytes{0xaa, 0xbb, 0xcc})); f.step();
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
   assert(!strcmp(reply, "pilot route=3:cc268ad12600 repair=0"));
-  // Explicit owner seeds win on both initial add over an existing contact and
-  // reapplication after a different route was learned, without clearing cooldown.
+  // Reapplying the saved seed preserves a newer learned route. Changing the
+  // seed deliberately replaces it, without clearing the discovery cooldown.
   snprintf(command, sizeof(command), "add pilot %s 912525000 3:112233", key);
   f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
-  assert(!strcmp(reply, "pilot route=3:112233 repair=0"));
+  assert(!strcmp(reply, "pilot route=3:cc268ad12600 repair=0"));
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:445566", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:445566 repair=0"));
   assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
   // Prefix ambiguity is resolved before any radio effect.
   uint8_t collision[32]; memcpy(collision, peer.self_id.pub_key, 32); collision[31] ^= 1;
@@ -2717,7 +2723,7 @@ static void native_find_path() {
   f.deliver(response(peer, 1800000200, true, true, path)); f.step(300);
   assert(!f.bot.jobsInUse() && probes() == 1);
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
-  assert(!strcmp(reply, "pilot route=3:112233 repair=0"));
+  assert(!strcmp(reply, "pilot route=3:445566 repair=0"));
   // Restore the original monitor authority after this isolated test process.
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
   puts("PASS find-path: empty guest flood, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
@@ -2930,6 +2936,9 @@ static void native_repeater_monitor() {
   puts("PASS native repeater monitor: autonomous scheduled RF, owner policy, full-key/tag correlation, PATH response, battery/status cache, no burst/retry and timeout backoff");
 
   f.bot.stop();
+  // This separate discovery case starts without a learned route; only its flood cooldown survives its two boots.
+  filesystem_test::files.erase("/command-bot/learned-0");
+  filesystem_test::files.erase("/command-bot/learned-1");
   uint32_t floodUtc = 0;
   const auto originalFreeEntries = identity_test::freeEntries;
   for (unsigned boot = 0; boot < 2; ++boot) {
@@ -3006,6 +3015,9 @@ static void native_repeater_monitor() {
   assert(saveBotRepeaterPolicy({}));
   puts("PASS native repeater flood: persisted 900-second boundary across restart, visible discovery wait and exactly one new eligible request");
 
+  // Start the independent repair scenario without the earlier monitor's learned path.
+  filesystem_test::files.erase("/command-bot/learned-0");
+  filesystem_test::files.erase("/command-bot/learned-1");
   BotRadioPolicy recoveryPolicy;
   recoveryPolicy.pathWidth = 3;
   assert(saveBotRadioPolicy(recoveryPolicy));
@@ -4754,6 +4766,9 @@ int main(int argc, char **argv) {
     network_service_lifecycle();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--learned-state-test")) {
+    learned_state_storage(); native_learned_state(); native_find_path_queue(); return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
     native_contact_recovery();
     return 0;
@@ -4983,6 +4998,9 @@ int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--native-services-test")) {
     network_service_lifecycle();
     return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--learned-state-test")) {
+    learned_state_storage(); native_learned_state(); native_find_path_queue(); return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--contact-recovery-test")) {
     native_contact_recovery();

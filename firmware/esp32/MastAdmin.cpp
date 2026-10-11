@@ -236,7 +236,7 @@ constexpr Help topics[] = {
     {"packet", "packet SLOT budget STAGES FUEL US CAPS; stages=1..255 fuel=1..100000 us=1..20000; caps system=1 PHY=2 compose=4; help packet 3", 2},
     {"packet", "packet 3/3: packet SLOT begin ID16 lua|wasm SIZE SHA256; chunk ID16 INDEX HEX; commit|cancel ID16; read INDEX; admin.py packet install SLOT FILE", 3},
     {"bot", "bot help; bot status|stats|contacts|radio|policy|mesh|name|aliases|discovery|adaptive|shared|reminders|events|forward|https ..."},
-    {"bot", "bot 2/4: bot log|diagnostics|admission|destination|channel-wait|home|cancel; role help; source status; help bot 3", 2},
+    {"bot", "bot 2/4: bot log|diagnostics|admission|destination|channel-wait|home|cancel; contacts flush; role help; source status; help bot 3", 2},
     {"bot", "bot 3/4: bot membership [SLOT ...]; bot access [CONTEXT ...]; Public commands default denied; use help channels; help bot 4", 3},
     {"bot", "bot 4/4: bot thread ...; bot repeaters ...; bot data ...; source api storage; help threads; help repeaters; data help", 4},
     {"channels", "bot membership SLOT off|public|#NAME|private NAME_HEX KEY32; bot access dm|SLOT default|COMMAND MASK|inherit; slots 0..7"},
@@ -1742,6 +1742,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     for (unsigned i = 0; i < 32; ++i) snprintf(reply.text + 4 + 2 * i, 3, "%02x", key[i]);
   } else if (!strcmp(command, "bot admission")) {
     commandBotService().admissionStatus(reply.text, sizeof(reply.text));
+  } else if (!strcmp(command, "bot contacts flush")) {
+    strcpy(reply.text, commandBotService().flushLearnedState() ?
+           "Saved learned contacts; dirty=0" :
+           "Error: learned contacts checkpoint failed; dirty=1; inspect bot contacts");
   } else if (!strcmp(command, "bot contacts")) {
     commandBotService().contactStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot diagnostics")) {
@@ -2281,6 +2285,10 @@ void MastAdmin::loop() {
 #endif
     strcpy(outcome_, enabled ? "WiFi reconnect requested; association not yet confirmed" : "WiFi disabled; RF roles remain active");
   } else if (effect_ == Effect::Reboot) {
+    if (!flushRuntimeState()) {
+      strcpy(outcome_, "Error: native state flush failed; reboot cancelled; inspect bot contacts");
+      effect_ = Effect::None; return;
+    }
     strcpy(outcome_, "Reboot requested");
 #ifdef ARDUINO_ARCH_ESP32
     ESP.restart();

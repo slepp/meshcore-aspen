@@ -640,6 +640,7 @@ void loop() {
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   nativeRolesReady = nativeRolesReady && onchip::commandBotService().bootReady();
 #endif
+  onchip::setEspUpdateFlush(onchip::flushRuntimeState);
   onchip::serviceEspUpdate(nativeRolesReady, wifi_was_connected && http_ready,
                           wifi_recovery.enabled());
   esp_task_wdt_reset();

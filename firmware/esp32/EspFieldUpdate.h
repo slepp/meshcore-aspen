@@ -11,6 +11,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request);
 esp_err_t statusEspUpdate(httpd_req_t *request);
 esp_err_t rebootEspUpdate(httpd_req_t *request);
 bool espUpdateBusy();
+void setEspUpdateFlush(bool (*flush)());
 void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled);
 void espUpdateRecovery(const char *reason);
 }

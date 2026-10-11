@@ -842,7 +842,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     return;
   }
   if (!strcmp(input, "api find-path")) {
-    respond("Find-path mesh.find_path(hex-prefix) digits=1..64 case=insensitive wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
+    respond("Find-path mesh.find_path(hex-prefix) digits=1..64 case=insensitive admission-wait=30s response-wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
     return;
   }
   if (!strcmp(input, "api mesh")) {

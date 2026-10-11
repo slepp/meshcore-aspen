@@ -3451,12 +3451,15 @@ static void wifi_provisioning_fields() {
 }
 #endif
 
+#include "companion_checkpoint_cases.h"
+
 int main(int argc, char **argv) {
 #ifdef ONCHIP_WIFI_PROVISIONING_TEST
   wifi_provisioning_fields();
   return 0;
 #endif
 #ifdef ONCHIP_CONTACT_RECOVERY_TEST
+  companion_checkpoint();
   companion_contact_recovery();
   return 0;
 #endif

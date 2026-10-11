@@ -61,6 +61,7 @@ public:
   void setContactLookup(ContactLookup lookup) { contactLookup_ = lookup; }
   void setPacketReportReader(bool (*reader)(unsigned, mp_report &)) { packetReport_ = reader; }
   void contactStatus(char *text, size_t capacity) const;
+  bool flushLearnedState();
   void targetAliasesCommand(const char *arguments, char *reply, size_t capacity);
   void diagnosticStatus(char *text, size_t capacity) const;
   struct Counters {

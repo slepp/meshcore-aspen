@@ -665,6 +665,21 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   if (bootProfile.observer())
     observer.observeRoles(status);
 }
+bool flushRuntimeState() {
+  bool ok = true;
+  for (unsigned i = 0; i < 3; ++i) {
+    const auto role = static_cast<Role>(i);
+    if (!bootProfile.has(role)) continue;
+    if (rolePhase(role) != RolePhase::Running) { ok = false; continue; }
+    const bool saved = role == Role::Repeater ? repeaterFlush() :
+                       role == Role::Room ? roomFlush() : companionFlush();
+    ok = saved && ok;
+  }
+#if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
+  ok = commandBotService().flushLearnedState() && ok;
+#endif
+  return ok;
+}
 void loop() {
   loopClocks();
 #if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT

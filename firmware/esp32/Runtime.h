@@ -38,6 +38,8 @@ bool companionContactAdvert(const uint8_t *hash, unsigned &cursor,
 bool localTransmitSource(uint8_t slot, uint32_t generation,
                          RadioDashboard::RoleStatus &status);
 void loop();
+// Dispatch thread only; retains settings and identities.
+bool flushRuntimeState();
 bool packetSystemSnapshot(packet_engine::SystemInfo &);
 packet_engine::Fault packetComposeOwned(const packet_engine::ComposeRequest &,
     const uint8_t *, uint16_t, uint8_t *, uint16_t &);

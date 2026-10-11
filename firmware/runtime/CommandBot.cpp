@@ -10,6 +10,7 @@
 #include "BuildClock.h"
 #include "RoleStorage.h"
 #include "ReplyRouting.h"
+#include "BotLearnedState.h"
 #include "MastAdmin.h"
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/SimpleMeshTables.h>
@@ -167,7 +168,9 @@ struct CommandBot::Core : mesh::Mesh {
   struct Contact {
     mesh::Identity id;
     uint32_t advert = 0, heard = 0;
-    uint32_t routeAt = 0;
+    uint32_t routeAt = 0, acceptedUtc = 0, heardUtc = 0, routeUtc = 0;
+    uint8_t signedAdvert[255]{}, signedSize = 0;
+    bool learnedRoute = false;
     bool used = false;
     char name[33]{};
     uint32_t observedAt = 0;
@@ -179,6 +182,11 @@ struct CommandBot::Core : mesh::Mesh {
     float rssi = 0, snr = 0;
     PeerRoute route;
   } contacts[16];
+  BotLearnedState learned;
+  bool learnedPending = false;
+  uint32_t liveFrequency = 0, liveBandwidth = 0;
+  uint8_t liveSf = 0, liveCr = 0;
+  bool livePhyKnown = false;
   uint32_t contactRecoveryAt = 0, contactsRecovered = 0, contactRecoveryRejected = 0;
   bool contactRecoveryStarted = false;
   uint8_t matches[16]{};
@@ -252,6 +260,7 @@ struct CommandBot::Core : mesh::Mesh {
     mesh::Packet *outbound = nullptr;
     uint32_t deadline = 0, expectedAck = 0, rxAckAt = 0, traceTag = 0, traceAuth = 0;
     bool ioPending = false, ackExpected = false, acked = false, overflow = false;
+    bool findPathWaiting = false;
     struct Received {
       BotPacketInfo info{};
       char text[BotReplyLimit + 1]{};
@@ -537,6 +546,137 @@ struct CommandBot::Core : mesh::Mesh {
     }
     return Mesh::onRecvPacket(p);
   }
+  uint32_t learnedUtc() const {
+    uint32_t earliest = 0, latest = 0;
+    return trustedNetworkTime(earliest, latest) ? earliest : 0;
+  }
+  void heardContact(Contact &contact) {
+    contact.heard = millis(); contact.heardUtc = learnedUtc();
+    learned.changed(millis());
+  }
+  void learnedPath(Contact &contact) {
+    contact.learnedRoute = true;
+    if (!contact.acceptedUtc) contact.acceptedUtc = learnedUtc();
+    contact.routeAt = millis(); contact.routeUtc = learnedUtc();
+    heardContact(contact);
+  }
+  bool signedContact(Contact &contact, const uint8_t *raw, uint8_t size) {
+    mesh::Packet packet{};
+    if (!size || !packet.readFrom(raw, size) || packet.getPayloadVer() != PAYLOAD_VER_1 ||
+        packet.getPayloadType() != PAYLOAD_TYPE_ADVERT ||
+        !mesh::Packet::isValidPathLen(packet.path_len) || packet.payload_len < 100 ||
+        packet.payload_len > 100 + MAX_ADVERT_DATA_SIZE ||
+        memcmp(packet.payload, contact.id.pub_key, 32)) return false;
+    const size_t dataSize = packet.payload_len - 100;
+    uint8_t message[36 + MAX_ADVERT_DATA_SIZE]{};
+    memcpy(message, packet.payload, 36); memcpy(message + 36, packet.payload + 100, dataSize);
+    AdvertDataParser advert(packet.payload + 100, dataSize);
+    if (!contact.id.verify(packet.payload + 36, message, 36 + dataSize) ||
+        !advert.isValid() || !advert.hasName()) return false;
+    contact.advert = queued_tx::get32(packet.payload + 32);
+    memcpy(contact.signedAdvert, raw, size); contact.signedSize = size;
+    snprintf(contact.name, sizeof(contact.name), "%.32s", advert.getName());
+    for (char *p = contact.name; *p; ++p)
+      if (static_cast<unsigned char>(*p) < 32 || static_cast<unsigned char>(*p) > 126) *p = '?';
+    return true;
+  }
+  bool learnedPhy() const {
+    const auto profile = owner.radio_.configuration();
+    return learned.data.frequency == profile.freq_hz && learned.data.bandwidth == profile.bw_hz &&
+           learned.data.sf == profile.sf && learned.data.cr == profile.cr;
+  }
+  void restoreLearned() {
+    learned.load(self_id.pub_key); learnedPending = true;
+    expireLearned();
+  }
+  void expireLearned() {
+    const auto profile = owner.radio_.configuration();
+    if (livePhyKnown && (liveFrequency != profile.freq_hz || liveBandwidth != profile.bw_hz ||
+        liveSf != profile.sf || liveCr != profile.cr)) {
+      for (auto &contact : contacts) if (contact.used && contact.learnedRoute) {
+        contact.route = {}; contact.routeUtc = 0; contact.learnedRoute = false;
+        learned.changed(millis());
+      }
+    }
+    liveFrequency = profile.freq_hz; liveBandwidth = profile.bw_hz;
+    liveSf = profile.sf; liveCr = profile.cr; livePhyKnown = true;
+    for (auto &contact : contacts) if (contact.used && contact.learnedRoute &&
+        uint32_t(millis() - contact.routeAt) >= BotLearnedState::RouteSeconds * 1000) {
+      contact.route = {}; contact.routeUtc = 0; contact.learnedRoute = false;
+      learned.changed(millis());
+    }
+    const uint32_t utc = learnedUtc();
+    // Keep the original receipt times while UTC is unavailable. A reboot never renews cache age.
+    if (!utc) return;
+    if (learnedPending) {
+      learnedPending = false;
+      for (const auto &entry : learned.data.entries) {
+        if (!entry.advertSize && entry.routeLength == 0xff) continue;
+        if (entry.acceptedUtc && utc < entry.acceptedUtc) { learnedPending = true; continue; }
+        if (!entry.acceptedUtc || utc - entry.acceptedUtc >= BotLearnedState::ContactSeconds) continue;
+        Contact *slot = nullptr; bool known = false;
+        for (auto &contact : contacts) {
+          if (contact.used && contact.id.matches(entry.key)) { known = true; break; }
+          if (!contact.used && !slot) slot = &contact;
+        }
+        if (known || !slot) continue;
+        Contact candidate{}; candidate.id = mesh::Identity(entry.key);
+        if (candidate.id.matches(self_id.pub_key) ||
+            (entry.advertSize ? !signedContact(candidate, entry.advert, entry.advertSize) :
+                              repeaterIndex(entry.key) < 0)) { ++learned.rejected; continue; }
+        candidate.used = true; candidate.acceptedUtc = entry.acceptedUtc;
+        candidate.heardUtc = entry.heardUtc; candidate.routeUtc = entry.routeUtc;
+        candidate.heard = millis() - (BotLearnedState::FreshRouteSeconds * 1000);
+        if (learnedPhy() && entry.routeLength != 0xff && entry.routeUtc && utc >= entry.routeUtc &&
+            utc - entry.routeUtc < BotLearnedState::RouteSeconds && entry.heardUtc &&
+            utc >= entry.heardUtc && utc - entry.heardUtc < BotLearnedState::RouteSeconds) {
+          candidate.route.learn(entry.route, entry.routeLength); candidate.route.scoped = entry.scope;
+          candidate.learnedRoute = true;
+          candidate.routeAt = millis() - (utc - entry.routeUtc) * 1000;
+          candidate.heard = millis() - (utc - entry.heardUtc) * 1000;
+        }
+        *slot = candidate; ++learned.restored;
+      }
+    }
+    for (auto &contact : contacts) if (contact.used) {
+      if (!contact.acceptedUtc && contact.observed && uint32_t(millis() - contact.observedAt) < (BotLearnedState::FreshRouteSeconds * 1000)) {
+        contact.acceptedUtc = utc - uint32_t(millis() - contact.observedAt) / 1000;
+        contact.heardUtc = utc - uint32_t(millis() - contact.heard) / 1000;
+        if (contact.learnedRoute && !contact.routeUtc && uint32_t(millis() - contact.routeAt) < (BotLearnedState::FreshRouteSeconds * 1000))
+          contact.routeUtc = utc - uint32_t(millis() - contact.routeAt) / 1000;
+        learned.changed(millis());
+      }
+      if (contact.learnedRoute && contact.routeUtc && utc < contact.routeUtc) {
+        contact.route = {}; contact.routeUtc = 0; contact.learnedRoute = false;
+        learned.changed(millis());
+      }
+      if (contact.acceptedUtc && utc >= contact.acceptedUtc &&
+          utc - contact.acceptedUtc >= BotLearnedState::ContactSeconds) {
+        contact = {}; learned.changed(millis());
+      }
+    }
+  }
+  bool checkpointLearned(bool force = false) {
+    if (!learned.dirty || (!force && learned.wait(millis()))) return true;
+    if (learnedPending) return !force; // Wait for UTC before replacing quarantined records.
+    const auto profile = owner.radio_.configuration();
+    learned.data.frequency = profile.freq_hz; learned.data.bandwidth = profile.bw_hz;
+    learned.data.sf = profile.sf; learned.data.cr = profile.cr;
+    for (unsigned i = 0; i < 16; ++i) {
+      auto &entry = learned.data.entries[i]; entry = {};
+      const auto &contact = contacts[i];
+      if (!contact.used || !contact.acceptedUtc || (!contact.signedSize && !contact.learnedRoute)) continue;
+      memcpy(entry.key, contact.id.pub_key, 32);
+      entry.advertSize = contact.signedSize; memcpy(entry.advert, contact.signedAdvert, contact.signedSize);
+      entry.acceptedUtc = contact.acceptedUtc; entry.heardUtc = contact.heardUtc;
+      if (contact.learnedRoute) {
+        memcpy(entry.route, contact.route.bytes, MAX_PATH_SIZE);
+        entry.routeLength = contact.route.length; entry.scope = contact.route.scoped;
+        entry.routeUtc = contact.routeUtc;
+      }
+    }
+    return learned.save(millis(), force);
+  }
   void onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id,
                     uint32_t timestamp, const uint8_t *data, size_t size) override {
     AdvertDataParser advert(data, size);
@@ -549,14 +689,16 @@ struct CommandBot::Core : mesh::Mesh {
       }
       if (!slot && (!contact.used || (!contact.observed && repeaterIndex(contact.id.pub_key) < 0) ||
                     (repeaterIndex(contact.id.pub_key) < 0 &&
-                     uint32_t(millis() - contact.heard) >= 600000)))
+                     uint32_t(millis() - contact.heard) >= (BotLearnedState::FreshRouteSeconds * 1000))))
         slot = &contact;
     }
     if (!slot) { reject("Bot contact table full (16)"); return; }
     if (!slot->used || !slot->id.matches(id)) *slot = {};
     slot->used = true;
     slot->observed = true;
-    slot->id = id; slot->advert = timestamp; slot->heard = millis();
+    slot->id = id; slot->advert = timestamp; heardContact(*slot);
+    slot->acceptedUtc = learnedUtc();
+    slot->signedSize = packet->writeTo(slot->signedAdvert);
     snprintf(slot->name, sizeof(slot->name), "%.32s", advert.getName());
     for (char *p = slot->name; *p; ++p)
       if (static_cast<unsigned char>(*p) < 32 || static_cast<unsigned char>(*p) > 126) *p = '?';
@@ -646,34 +788,14 @@ struct CommandBot::Core : mesh::Mesh {
         owner.fault("Bot contact recovery failed: contact table full (16)");
         return false;
       }
-      mesh::Packet packet{};
-      if (!size || !packet.readFrom(raw, size) || packet.getPayloadVer() != PAYLOAD_VER_1 ||
-          packet.getPayloadType() != PAYLOAD_TYPE_ADVERT ||
-          !mesh::Packet::isValidPathLen(packet.path_len) || packet.payload_len < 100 ||
-          packet.payload_len > 100 + MAX_ADVERT_DATA_SIZE || memcmp(packet.payload, key, 32)) {
+      Contact recovered{}; recovered.id = id;
+      if (!signedContact(recovered, raw, size)) {
         ++contactRecoveryRejected;
-        owner.fault("Bot contact recovery rejected companion advert: missing data or invalid format/full key");
+        owner.fault("Bot contact recovery rejected companion advert: invalid signed advert");
         continue;
       }
-      const size_t dataSize = packet.payload_len - 100;
-      const auto *data = packet.payload + 100;
-      uint8_t message[36 + MAX_ADVERT_DATA_SIZE]{};
-      memcpy(message, packet.payload, 36);
-      memcpy(message + 36, data, dataSize);
-      AdvertDataParser advert(data, dataSize);
-      if (!id.verify(packet.payload + 36, message, 36 + dataSize) ||
-          !advert.isValid() || !advert.hasName()) {
-        ++contactRecoveryRejected;
-        owner.fault("Bot contact recovery rejected companion advert: invalid signature or name");
-        continue;
-      }
-      *slot = {};
-      slot->used = true;
-      slot->id = id;
-      slot->advert = queued_tx::get32(packet.payload + 32);
-      snprintf(slot->name, sizeof(slot->name), "%.32s", advert.getName());
-      for (char *p = slot->name; *p; ++p)
-        if (static_cast<unsigned char>(*p) < 32 || static_cast<unsigned char>(*p) > 126) *p = '?';
+      recovered.used = true; recovered.acceptedUtc = learnedUtc();
+      *slot = recovered; learned.changed(millis());
       ++contactsRecovered;
     }
     return false;
@@ -718,7 +840,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!monitored && extraType == PAYLOAD_TYPE_RESPONSE) return false;
     contact.route.learn(path, length);
     contact.route.scoped = routing.scope(packet);
-    contact.routeAt = contact.heard = millis();
+    learnedPath(contact);
     if (monitored) {
       if (packet->isRouteFlood()) {
         auto *reply = createPathReturn(contact.id, secret, packet->path, packet->path_len, 0, nullptr, 0);
@@ -848,6 +970,10 @@ struct CommandBot::Core : mesh::Mesh {
     return slot;
   }
   void startRepeater(Invocation &job) {
+    for (const auto &waiting : invocations)
+      if (waiting.used && waiting.ioPending && waiting.findPathWaiting) {
+        failRepeater(job, BotRepeaterError::NotDue, "An interactive route command is waiting"); return;
+      }
     if (!repeaterPolicy.enabled) {
       failRepeater(job, BotRepeaterError::Disabled,
                    "Repeater monitor disabled; inspect bot repeaters status and storage");
@@ -1073,14 +1199,25 @@ struct CommandBot::Core : mesh::Mesh {
         directProbe = true;
       }
     }
-    if (repeaterSent && uint32_t(millis() - repeaterAt) < 30000) {
-      finishRadio(job, "Route/repeater probes are limited to one per 30 seconds"); return;
-    }
+    bool busy = repeaterSent && uint32_t(millis() - repeaterAt) < 30000;
     for (const auto &other : invocations)
       if (&other != &job && other.used && other.ioPending &&
           (repeaterIo(other) || other.io.kind == BotIoRequest::FindPath)) {
-        finishRadio(job, "Another route/repeater probe is pending"); return;
+        if (other.findPathWaiting) {
+          finishRadio(job, "A route command is already waiting; retry after it completes"); return;
+        }
+        busy = true;
       }
+    if (busy) {
+      if (!job.findPathWaiting) {
+        job.findPathWaiting = true; job.deadline = millis() + 30000;
+      }
+      return;
+    }
+    if (job.findPathWaiting) {
+      job.findPathWaiting = false;
+      job.deadline = millis() + job.io.delayMs;
+    }
     // The command's own ACK may still be queued. Use the normal queued-radio
     // admission rather than rejecting every authenticated DM as busy.
     if (!owner.radio_.queuedReady()) {
@@ -1161,7 +1298,7 @@ struct CommandBot::Core : mesh::Mesh {
           contact.route.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
                                                    (job.io.routeSize / job.io.routeWidth)));
           contact.route.scoped = routing.scope(packet);
-          contact.routeAt = contact.heard = millis();
+          learnedPath(contact);
           const int index = repeaterIndex(contact.id.pub_key);
           if (index >= 0) {
             auto &state = repeaters[unsigned(index)];
@@ -1292,8 +1429,8 @@ struct CommandBot::Core : mesh::Mesh {
     for (auto &contact : contacts)
       if (contact.used && contact.id.matches(key) && contact.route.length != 0xff &&
           mesh::Packet::isValidPathLen(contact.route.length) &&
-          uint32_t(millis() - contact.routeAt) < 600000 &&
-          uint32_t(millis() - contact.heard) < 600000) return &contact;
+          uint32_t(millis() - contact.routeAt) < (BotLearnedState::FreshRouteSeconds * 1000) &&
+          uint32_t(millis() - contact.heard) < (BotLearnedState::FreshRouteSeconds * 1000)) return &contact;
     return nullptr;
   }
   bool routeLoops(const PeerRoute &route) const {
@@ -1735,7 +1872,7 @@ struct CommandBot::Core : mesh::Mesh {
         finishRadio(job, "Forward grant revoked; remote outcome may be unknown");
       } else if (!meshIoCurrent(job)) {
         finishRadio(job, "Mesh grant revoked; admitted TX may already have occurred");
-      } else if (int32_t(millis() - job.deadline) >= 0) {
+      } else if (int32_t(millis() - job.deadline) >= (job.findPathWaiting ? 1 : 0)) {
         if (job.io.kind == BotIoRequest::FindPath && (job.result.transmitted || job.io.revision == 2)) {
           finishFindPath(job, false); continue;
         }
@@ -1743,11 +1880,19 @@ struct CommandBot::Core : mesh::Mesh {
           failRepeater(job, BotRepeaterError::Timeout, "Repeater response timed out; no automatic request retry");
           continue;
         }
+        if (job.findPathWaiting) {
+          finishRadio(job, "Route command waited 30 seconds for probe admission; no probe sent"); continue;
+        }
         finishRadio(job, job.io.kind == BotIoRequest::Send || job.io.kind == BotIoRequest::Forward ||
                     job.io.kind == BotIoRequest::Advert ||
                     (job.io.kind == BotIoRequest::Trace && !job.result.transmitted) ?
                     "Native TX deadline; outcome unknown" :
                     job.io.kind == BotIoRequest::Trace ? "Native TRACE timed out" : "Native packet wait timed out");
+      } else if (job.findPathWaiting) {
+        const auto flags = policy.flags(job.event, "action_trace");
+        if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute)))
+          finishRadio(job, "Route command permission revoked while waiting");
+        else startFindPath(job);
       } else if (job.io.kind == BotIoRequest::Advert && !job.outbound &&
                  !owner.radio_.hasPendingWork() && owner.radio_.queuedReady()) {
         auto *packet = makeAdvert(false, principal(job.event));
@@ -1981,7 +2126,7 @@ struct CommandBot::Core : mesh::Mesh {
       releasePacket(response); ++stats.rejected; return;
     }
     sender.route.scoped = route.scoped;
-    sender.heard = now;
+    heardContact(sender);
     discoverySent = true; discoveryAt = now;
     if (pathReturn)
       routing.flood(*this, response, route.scoped, request->getPathHashSize(), 300);
@@ -2319,7 +2464,7 @@ struct CommandBot::Core : mesh::Mesh {
     *slot = {};
     slot->used = true; slot->at = now; slot->ackAt = now;
     memcpy(slot->request, event.request, sizeof(event.request));
-    if (sender) sender->heard = now;
+    if (sender) heardContact(*sender);
     event.routeType = packet->getRouteType();
 #ifdef MESH_PACKET_ENGINE_API
     event.engineOrigin = packet->_engineOrigin;
@@ -2591,9 +2736,14 @@ void CommandBot::contactStatus(char *text, size_t capacity) const {
     routed += contact.route.length != 0xff;
   }
   snprintf(text, capacity,
-           "Contacts=%u/16 observed=%u routed=%u lookup=%s recovered=%u rejected=%u; recovery never learns routes/RF or grants access",
+           "Contacts=%u/16 observed=%u routed=%u lookup=%s recovered=%u rejected=%u",
            contacts, observed, routed, contactLookup_ ? "companion" : "none",
            core_->contactsRecovered, core_->contactRecoveryRejected);
+  const size_t used = strlen(text);
+  if (used < capacity) snprintf(text + used, capacity - used,
+      "; dirty=%u clock-wait=%u checkpoint=%us writes=%u save-error=%u save-ms=%u bad-cache=%u",
+      core_->learned.dirty, core_->learnedPending, BotLearnedState::CheckpointMs / 1000,
+      core_->learned.writes, core_->learned.failed, core_->learned.saveMs, core_->learned.rejected);
 }
 
 void CommandBot::admissionStatus(char *text, size_t capacity) const {
@@ -2801,6 +2951,7 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
     core_->forwarding = {};
     fault("Forward policy references bot identity; live forwarding disabled");
   }
+  core_->restoreLearned();
   core_->begin();
   status_.has_identity = true;
   memcpy(status_.public_key, core_->self_id.pub_key, 32);
@@ -2878,7 +3029,9 @@ void CommandBot::radioPolicyCommand(const char *command, char *reply, size_t cap
   snprintf(reply, capacity, core_ ? "Saved and applied native command policy; in-flight work may finish or fail" :
                                   "Saved native command policy; applied on next bot startup");
 }
+bool CommandBot::flushLearnedState() { return !core_ || core_->checkpointLearned(true); }
 void CommandBot::stop() {
+  if (core_ && !flushLearnedState()) fault("Learned contacts checkpoint failed before bot stop");
   if (core_) {
     core_->adminAcknowledged(core_->adminReplyTicket, false);
     for (const auto &job : core_->invocations) core_->adminAcknowledged(job.adminTicket, false);
@@ -2899,12 +3052,15 @@ uint32_t CommandBot::hostWaitMs() const {
   if (radio_.hasBufferedEvents() || worker_.ownerWorkPending()) return 0;
   const uint32_t now = millis();
   uint32_t wait = core_->packets.nextInboundWait(now);
+  if (!core_->learnedPending) wait = std::min(wait, core_->learned.wait(now));
   if (core_->initializing && core_->initializationRetryAt)
     botEarlier(wait, now, core_->initializationRetryAt);
   for (const auto &job : core_->invocations) if (job.used) {
     if (job.collecting) botEarlier(wait, now, job.collectionStart + job.event.windowMs);
     else if (job.deferred) botEarlier(wait, now, job.notBefore);
     if (job.ioPending) botEarlier(wait, now, job.deadline);
+    if (job.findPathWaiting) botEarlier(wait, now,
+        core_->repeaterSent ? core_->repeaterAt + 30000 : now);
   }
   if (core_->reminderActive) botEarlier(wait, now, core_->reminderDeadline);
   const uint32_t scheduled = worker_.scheduleSeconds();
@@ -2955,6 +3111,8 @@ void CommandBot::loop() {
     if (epoch <= 4102444800u) rtc_.synchronize(static_cast<uint32_t>(epoch));
   }
   rtc_.tick();
+  core_->expireLearned();
+  core_->checkpointLearned();
   if (core_->initializing && core_->initializationRetryAt &&
       int32_t(millis() - core_->initializationRetryAt) >= 0 && !worker_.busy()) {
     core_->initializationRetryAt = 0;
@@ -3343,10 +3501,12 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     if (!alias) {
       const uint32_t elapsed = uint32_t(millis() - core_->repeaterAt);
       const uint32_t wait = core_->repeaterSent && elapsed < 30000 ? (30000 - elapsed + 999) / 1000 : 0;
-      unsigned pending = 0;
-      for (const auto &job : core_->invocations)
+      unsigned pending = 0, waiting = 0;
+      for (const auto &job : core_->invocations) {
         pending += job.used && job.ioPending && (core_->repeaterIo(job) || job.io.kind == BotIoRequest::FindPath);
-      snprintf(reply, capacity, "Probe wait=%us pending=%u; route/repeater starts share 30s spacing", wait, pending);
+        waiting += job.used && job.ioPending && job.findPathWaiting;
+      }
+      snprintf(reply, capacity, "Probe wait=%us pending=%u waiting=%u; starts share 30s; command waits 30s then probes 10s", wait, pending, waiting);
       return;
     }
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters timing [ALIAS]"); return; }
@@ -3527,9 +3687,11 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
         memcmp(old.key, next.key, 32) || old.frequencyHz != next.frequencyHz;
     const bool pathChanged = memcmp(&old.path, &next.path, sizeof(next.path));
     if (identityChanged) core_->repeaters[i] = {};
-    if (changedTarget >= 0 && next.used && explicitPath) {
+    if (changedTarget >= 0 && next.used && explicitPath && pathChanged) {
       for (auto &contact : core_->contacts) if (contact.used && contact.id.matches(next.key)) {
         contact.route = PeerRoute{};
+        contact.learnedRoute = false; contact.routeUtc = 0;
+        core_->learned.changed(millis());
         if (next.path.known)
           contact.route.learn(next.path.bytes, uint8_t((next.path.width - 1) << 6 | next.path.count));
         contact.routeAt = millis();

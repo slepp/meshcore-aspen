@@ -8,7 +8,7 @@ namespace nrfmast {
 class CompanionStore {
 public:
   static constexpr unsigned Contacts = 8, Channels = 4;
-  static constexpr uint32_t FlushMs = 30000, RefillMs = 15000;
+  static constexpr uint32_t FlushMs = 300000, RefillMs = 15000;
   struct Contact {
     uint8_t key[32]{}, name[32]{}, path[64]{};
     uint8_t type = 0, flags = 0, pathLength = OUT_PATH_UNKNOWN, advertLength = 0;

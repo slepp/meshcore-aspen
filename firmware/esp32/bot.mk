@@ -60,6 +60,9 @@ bot-command-replies-test: bot-host-runner
 .PHONY: bot-thread-policy-test
 bot-thread-policy-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --thread-policy-test
+.PHONY: bot-learned-state-test
+bot-learned-state-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --learned-state-test
 .PHONY: bot-contact-recovery-test
 bot-contact-recovery-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --contact-recovery-test
@@ -331,7 +334,7 @@ bot-wasm-build-test:
 		$(MAKE) bot-firmware BUILD=$(ROOT)/.tmp/onchip-wasm-firmware \
 		CONFIG=$(ROOT)/firmware/esp32/platformio.ini.example ENV=Xiao_S3_WIO_onchip_beta
 $(BOT_HOST_RUNNER): prepare bot-prepare-phy tests/bot_native.cpp tests/support/BotNativeHarness.cpp \
-		tests/bot_contact_recovery_cases.h \
+		tests/bot_contact_recovery_cases.h tests/bot_learned_state_cases.h ../runtime/BotLearnedState.h \
 		tests/support/BotNativeHarness.h tests/support/BotReplayNetwork.cpp tests/support/BotReplayNetwork.h ../runtime/AdaptiveAdmission.h \
 		$(filter-out $(NATIVE)/Repeater.cpp $(NATIVE)/Room.cpp $(NATIVE)/Companion.cpp,$(BOT_REPLAY_RUNTIME_SOURCES)) Runtime.h \
 		$(BOT_NATIVE_SOURCES) $(BOT_NATIVE_MESH_SOURCES) $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(BOT_LUA_OBJECTS) $(BOT_WAMR_LIB)
@@ -380,7 +383,7 @@ $(BOT_BUILD)/host-mast-source.o: ../runtime/MastSource.cpp ../runtime/MastSource
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) $(BOT_HOST_ADMIN_FLAGS) $(BOT_NATIVE_FLAGS) -I$(ROOT)/internal/nativebot $(BOT_NATIVE_INCLUDES) -c $< -o $@
 $(BOT_NATIVE_WORKER): $(BOT_LUA_OBJECTS) $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) \
-		../runtime/CommandBot.h LocalRadio.h ../runtime/BotSignal.h ../runtime/AdaptiveAdmission.h ../runtime/BotScheduleFiles.h ../runtime/BotJournal.h ../runtime/BotTimers.h ../runtime/BotReminders.h $(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o \
+		../runtime/CommandBot.h ../runtime/BotLearnedState.h LocalRadio.h ../runtime/BotSignal.h ../runtime/AdaptiveAdmission.h ../runtime/BotScheduleFiles.h ../runtime/BotJournal.h ../runtime/BotTimers.h ../runtime/BotReminders.h $(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o \
 		$(ROOT)/internal/nativebot/worker.cpp $(ROOT)/internal/nativebot/HostLocalRadio.h \
 		$(ROOT)/internal/nativebot/nvs.cpp $(ROOT)/internal/nativebot/spiffs.cpp \
 		$(ROOT)/internal/nativebot/HttpsTransport.cpp $(ROOT)/internal/nativebot/HttpsTransport.h \
