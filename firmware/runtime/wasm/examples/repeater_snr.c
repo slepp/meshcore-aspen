@@ -24,10 +24,10 @@ static int same(const peer *p, const uint8_t *key, unsigned width) {
   return 1;
 }
 static void reset(peer *p, const uint8_t *key, unsigned width) {
+  if (p->width) for (unsigned i = 0; i < 256; ++i) p->histogram[i] = 0;
   p->width = width; p->count = p->next = 0; p->heard = 0;
   p->snr_sum = p->rssi_sum = 0;
   p->below = p->percentile = 0;
-  for (unsigned i = 0; i < 256; ++i) p->histogram[i] = 0;
   for (unsigned i = 0; i < width; ++i) p->key[i] = key[i];
 }
 static peer *find(const uint8_t *key, unsigned width, uint32_t now) {
@@ -44,6 +44,7 @@ static peer *find(const uint8_t *key, unsigned width, uint32_t now) {
   reset(p, key, width); return p;
 }
 static void sample(peer *p) {
+  if (!p->count) p->percentile = info.snr_quarter_db + 128;
   if (p->count == WINDOW) {
     p->snr_sum -= p->snr[p->next]; p->rssi_sum -= p->rssi[p->next];
     unsigned old = (int)p->snr[p->next] + 128;

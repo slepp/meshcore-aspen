@@ -303,7 +303,7 @@ static void repeater_snr() {
     }
     uint16_t length = offset + 2 + 2 * width; bytes[length - 1] = 0x42;
     const std::vector<uint8_t> original(bytes, bytes + length);
-    auto m = metadata(); m.snrQuarterDb = snr; m.rssi = -100 + snr;
+    auto m = metadata(); m.snrQuarterDb = snr; m.rssi = -85;
     m.local = flags == 1; m.reflectionOrigin = flags == 2; m.engineOrigin = flags == 3;
     const auto result = pipeline.process(m, bytes, length, Capacity);
     if (!pipeline.enabled(0)) fprintf(stderr, "SNR fault=%u fuel=%u error=%s\n",
@@ -318,13 +318,14 @@ static void repeater_snr() {
   std::vector<int> samples;
   for (int value : {-12, 4, 20, 36}) { receive(0xd12600, value); samples.push_back(value); }
   assert(host.reports.read(0, report) && report.row_count == 1 && !strcmp(report.rows[0].label, "D12600"));
-  assert(report.rows[0].values[0] == 4 && report.rows[0].values[2] == 3 && report.rows[0].values[3] == 9);
+  assert(report.rows[0].values[0] == 4 && report.rows[0].values[2] == 3 && report.rows[0].values[3] == 9 && report.rows[0].values[4] == -85);
   for (unsigned i = 0; i < 300; ++i) { int value = int(i % 80) - 40; samples.push_back(value); receive(0xd12600, value); }
   samples.erase(samples.begin(), samples.end() - 256);
   double sum = 0; for (int value : samples) sum += value;
   std::sort(samples.begin(), samples.end());
   assert(host.reports.read(0, report) && report.rows[0].values[0] == 256 && report.rows[0].values[1] == 304);
   assert(report.rows[0].values[2] == sum / 1024 && report.rows[0].values[3] == samples[(256 * 95 + 99) / 100 - 1] / 4.0);
+  receive(0xeeeeee, 127); receive(0xeeeeed, -128);
   receive(0xd1, 8, 1); receive(0xd126, 12, 2, 0);
   for (unsigned i = 0; i < 24; ++i) for (unsigned j = 0; j < 256 + i; ++j) receive(0x100000 + i, int(j % 80) - 40);
   assert(host.reports.read(0, report) && report.row_count == 16 && !strcmp(report.rows[0].label, "D12600"));
