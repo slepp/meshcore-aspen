@@ -53,6 +53,19 @@ int main() {
   companionDashboardContacts(status);
   assert(status.contact_total == 1 && status.contact_count == 1);
   assert(!strcmp(status.contacts[0].name, contact.name) && status.contacts[0].type == 2);
+  auto &companion = status.companion;
+  companion.listening = true;
+  companion.port = 5000;
+  companion.connected = 1;
+  companion.capacity = 2;
+  companion.rejected = 3;
+  auto &client = companion.clients[1];
+  client.connected = client.app_started = true;
+  client.address = 0x0a10015f;
+  client.port = 34922;
+  client.generation = 9;
+  client.protocol_version = 13;
+  strcpy(client.app_name, "App \"<script>\"");
   RadioDashboard dashboard;
   assert(dashboard.publish(500, status));
   RadioDashboard::Snapshot snapshot;
@@ -63,6 +76,8 @@ int main() {
   assert(strstr(json, "\"contacts\":{\"capacity\":32,\"total\":1,\"truncated\":false"));
   assert(strstr(json, "\"name\":\"D1\\\"\\\\\\u000a<script>\""));
   assert(strstr(json, "\"type\":2"));
+  assert(strstr(json, "\"companion\":{\"listening\":true,\"port\":5000,\"connected\":1,\"capacity\":2,\"rejected\":3"));
+  assert(strstr(json, "\"clients\":[{\"slot\":1,\"address\":\"10.16.1.95\",\"port\":34922,\"generation\":9,\"protocol_version\":13,\"app_started\":true,\"app_name\":\"App \\\"<script>\\\"\"}]"));
   assert(!strstr(json, "eeeeeeee") && !strstr(json, "secret") && !strstr(json, "channel"));
   busy = true;
   companionDashboardContacts(status);
@@ -99,6 +114,13 @@ int main() {
     client.connected = client.negotiated = true;
     client.generation = client.credit_ms = client.rf_ms = UINT32_MAX;
     client.factor = std::numeric_limits<float>::max();
+  }
+  for (auto &client : snapshot.radio.companion.clients) {
+    client.connected = client.app_started = true;
+    client.address = client.generation = UINT32_MAX;
+    client.port = UINT16_MAX;
+    client.protocol_version = UINT8_MAX;
+    memset(client.app_name, '\n', sizeof(client.app_name) - 1);
   }
   for (auto &event : snapshot.events) {
     event.sequence = event.at_ms = UINT64_MAX;

@@ -121,10 +121,12 @@ public:
     }
     throw std::runtime_error("too many pushes before response");
   }
-  void handshake(uint8_t version = 3) {
+  void handshake(uint8_t version = 3, const Bytes& appName = {}) {
     command({22, version});
     REQUIRE(response()[0] == 13);
-    command({1, 3, 0, 0, 0, 0, 0, 0});
+    Bytes start{1, 3, 0, 0, 0, 0, 0, 0};
+    start.insert(start.end(), appName.begin(), appName.end());
+    command(start);
     REQUIRE(response()[0] == 5);
   }
   Bytes sync() { command({10}); return response(); }
@@ -488,16 +490,33 @@ void boundedAdmissionAndNativeFailure() {
   std::vector<std::unique_ptr<Client>> clients;
   for (unsigned i = 0; i < CompanionSessions::MaxClients; ++i) {
     clients.emplace_back(std::make_unique<Client>(sessions.port()));
-    clients.back()->handshake();
+    clients.back()->handshake(13, Bytes(40, 'A' + i));
   }
-  REQUIRE(sessions.stats().connectedClients == CompanionSessions::MaxClients);
+  const auto full = sessions.stats();
+  REQUIRE(full.connectedClients == CompanionSessions::MaxClients);
+  REQUIRE(full.listening && full.port == sessions.port());
+  for (unsigned i = 0; i < CompanionSessions::MaxClients; ++i) {
+    const auto& client = full.clients[i];
+    REQUIRE(client.connected && client.appStarted && client.version == 13);
+    REQUIRE(client.address == 0x7f000001 && client.port == clients[i]->localPort());
+    REQUIRE(client.generation == 1 && std::string(client.appName) == std::string(31, 'A' + i));
+  }
   Client excess(sessions.port());
   excess.closed();
   until([&] { return sessions.stats().rejectedClients == 1; });
+  clients[0]->disconnect();
+  until([&] { return sessions.stats().connectedClients == CompanionSessions::MaxClients - 1; });
+  REQUIRE(!sessions.stats().clients[0].connected);
+  clients[0] = std::make_unique<Client>(sessions.port());
+  clients[0]->handshake();
+  const auto reused = sessions.stats().clients[0];
+  REQUIRE(reused.connected && reused.generation == 2 && !reused.appName[0]);
+  REQUIRE(reused.port == clients[0]->localPort() && reused.version == 3);
   native.failCollection.store(true);
   until([&] { return sessions.stats().nativeFault; });
   for (const auto& client : clients) client->closed();
   REQUIRE(sessions.stats().nativeErrors == 1);
+  REQUIRE(!sessions.stats().listening && !sessions.stats().connectedClients);
 }
 
 void disableRetiresCollectionBeforeNativeContactEnd() {

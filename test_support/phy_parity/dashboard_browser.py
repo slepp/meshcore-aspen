@@ -26,6 +26,15 @@ renderEvents = data => {
 };
 </script>""")
 expected = json.loads((build / "dashboard.json").read_bytes())
+expected["kiss"]["connected"] = 0
+expected["kiss"]["clients"] = []
+expected["companion"] = {
+    "listening": True, "port": 5000, "connected": 2, "capacity": 2, "rejected": 3,
+    "clients": [{"slot": i, "address": "10.16.1.95", "port": 34922 + i,
+                 "generation": i + 1, "protocol_version": 13, "app_started": True,
+                 "app_name": "<meshcore-link>" if i == 0 else "MeshCore iOS"}
+                for i in range(2)],
+}
 expected["contacts"] = {
     "capacity": 32, "total": 40, "truncated": True,
     "items": [{"public_key": "b726" + "00" * 30, "name": "SLP AR1", "type": 2}],
@@ -136,6 +145,10 @@ try:
                 "src 9a → dst 55"
             )
             assert "Companion contacts: 1 of 40 (incomplete)." in dom
+            assert 'id="companion-count" class="number warning">2 / 2</p>' in dom
+            assert "Full: new connections are rejected." in dom
+            assert "10.16.1.95:34922" in dom and "&lt;meshcore-link&gt;" in dom
+            assert "No connected KISS clients." in dom
             assert "contact list incomplete" not in decode[1]
             for field in ("header", "route", "src", "dst", "mac", "payload"):
                 assert f'class="field-{field}"' in dom

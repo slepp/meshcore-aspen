@@ -125,9 +125,9 @@ $(BUILD)/remote: $(ROOT)/firmware/shared/RemoteKissRadio.cpp $(ROOT)/firmware/sh
 		$(ROOT)/firmware/shared/RemoteKissRadio.cpp $(ROOT)/test_support/test_remote_kiss_radio.cpp -o $@
 $(BUILD)/dashboard: $(BUILD)/RadioDashboard.o $(ROOT)/test_support/phy_parity/dashboard.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Werror -pthread $^ -o $@
-$(BUILD)/dashboard-contacts-bridge.inc: $(ROOT)/firmware/esp32/prepare.py
+$(BUILD)/dashboard-contacts-bridge.inc: $(ROOT)/firmware/esp32/prepare.py $(ROOT)/test_support/phy_parity/Makefile
 	@mkdir -p $(BUILD)
-	python3 -c 'import runpy; print(runpy.run_path("$(ROOT)/firmware/esp32/prepare.py")["COMPANION_DASHBOARD_BRIDGE"])' > $@
+	python3 -c 'import runpy; bridge = runpy.run_path("$(ROOT)/firmware/esp32/prepare.py")["COMPANION_DASHBOARD_BRIDGE"]; print("#include \"DashboardContacts.h\"\nnamespace onchip {\n" + bridge[bridge.index("void companionDashboardContacts"):])' > $@
 $(BUILD)/dashboard-contacts: $(ROOT)/test_support/phy_parity/dashboard_contacts.cpp $(ROOT)/firmware/shared/RadioDashboard.cpp $(ROOT)/firmware/shared/RadioDashboard.h $(ROOT)/firmware/esp32/DashboardContacts.h $(BUILD)/dashboard-contacts-bridge.inc
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Werror -DMESHCORE_ONCHIP=1 -DESP32=1 -I$(BUILD) \
 		$(ROOT)/firmware/shared/RadioDashboard.cpp $< -o $@

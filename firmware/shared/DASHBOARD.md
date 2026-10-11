@@ -12,9 +12,18 @@ heading and browser title instead. `role name kiss Aspen` updates that name
 without rebuilding or restarting; the next status or live update shows it.
 This changes neither an RF identity nor the DHCP/mDNS hostname.
 There are no fixed IP addresses or device-specific identifiers in the page.
-SSID, WiFi credentials, private identities, stored keys and client IP addresses
-are not exported. Packet history contains only length, timing, outcome,
+SSID, WiFi credentials, private identities and stored keys are not exported.
+Packet history contains only length, timing, outcome,
 signal metadata and the first 16 raw RF bytes as hex.
+
+On Aspen, **Companion clients** shows occupied slots separately from KISS.
+When all companion slots are occupied, new app connections are rejected;
+disconnect an existing client before connecting another. **Connected companions**
+lists each client's IP address and source port, session, requested protocol
+version and app name when supplied. App names are client-reported labels,
+not verified identities. The rejected-connection count covers the time since
+boot. These fields are also available under `companion` in `/api/status` and
+live snapshots. Older firmware and standalone modems omit this section.
 
 Recent activity decodes that preview into compact lines: packet type, routing
 mode, payload version and encryption; path prefixes; and visible envelope

@@ -606,8 +606,27 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   status.role_count = RadioDashboard::ROLE_CAPACITY;
   for (unsigned i = 0; i < 3; ++i)
     roleStatus(static_cast<Role>(i), status.roles[i]);
-  if (bootProfile.has(Role::Companion) &&
-      companionSessions().stats().nativeFault) {
+  const auto companionStats = companionSessions().stats();
+  auto &tcp = status.companion;
+  static_assert(CompanionSessions::MaxClients <= RadioDashboard::COMPANION_CLIENT_CAPACITY,
+                "Companion clients exceed dashboard capacity");
+  tcp.listening = companionStats.listening;
+  tcp.port = companionStats.port;
+  tcp.connected = companionStats.connectedClients;
+  tcp.capacity = CompanionSessions::MaxClients;
+  tcp.rejected = companionStats.rejectedClients;
+  for (unsigned i = 0; i < tcp.capacity; ++i) {
+    const auto &source = companionStats.clients[i];
+    auto &client = tcp.clients[i];
+    client.connected = source.connected;
+    client.address = source.address;
+    client.port = source.port;
+    client.generation = source.generation;
+    client.protocol_version = source.version;
+    client.app_started = source.appStarted;
+    memcpy(client.app_name, source.appName, sizeof(client.app_name));
+  }
+  if (bootProfile.has(Role::Companion) && companionStats.nativeFault) {
     auto &companion = status.roles[2];
     companion.ready = false;
     strcpy(companion.state, "fault");

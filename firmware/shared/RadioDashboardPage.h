@@ -115,7 +115,8 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
     <article class="card"><p class="eyebrow">Device</p><p id="uptime" class="number">-</p><p id="wifi" class="muted">WiFi status unavailable</p>
       <p id="heap" class="muted">Memory status unavailable</p>
       <details><summary>DMA memory</summary><small>Free / largest block / lowest free since boot</small><p id="dma-heap">-</p></details></article>
-    <article class="card"><p class="eyebrow">KISS clients</p><p id="client-count" class="number">-</p><p id="owner" class="muted">-</p></article>
+    <article class="card"><p class="eyebrow">KISS clients</p><p id="client-count" class="number">-</p><p id="owner" class="muted">-</p>
+      <div id="companion-overview" hidden><p class="eyebrow">Companion clients</p><p id="companion-count" class="number">-</p><p id="companion-status" role="status">-</p></div></article>
     <article class="card"><p class="eyebrow">Transmit queue</p><p id="queue" class="number">-</p><p id="radio-state" class="muted">Waiting for status</p></article>
   </section>
 
@@ -162,12 +163,20 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <table><thead><tr><th>Role</th><th>Name</th><th>Status</th><th>Identity</th><th>Radio session</th></tr></thead><tbody id="roles"></tbody></table>
     </div>
   </section>
+  <section id="companion-panel" class="card wide" hidden>
+    <div class="section-head"><h2>Connected companions</h2><span id="companion-endpoint" class="muted"></span></div>
+    <p id="companion-detail" class="muted"></p>
+    <div class="scroll" tabindex="0" aria-label="Connected companion clients">
+      <table><thead><tr><th>Client</th><th>Address</th><th>App name</th><th>Session</th><th>Protocol</th><th>Status</th></tr></thead><tbody id="companion-clients"></tbody></table>
+    </div>
+    <p id="companion-empty" class="empty">No connected companions.</p>
+  </section>
   <section class="card wide">
-    <div class="section-head"><h2>Connected clients</h2></div>
+    <div class="section-head"><h2>Connected KISS clients</h2></div>
     <div class="scroll" tabindex="0" aria-label="Connected KISS clients">
       <table><thead><tr><th>Client</th><th>Session</th><th>Protocol</th><th>Airtime factor</th><th>TX allowance</th><th>TX airtime</th></tr></thead><tbody id="clients"></tbody></table>
     </div>
-    <p id="clients-empty" class="empty">No connected clients.</p>
+    <p id="clients-empty" class="empty">No connected KISS clients.</p>
   </section>
   <section class="card">
     <div class="section-head"><div><h2>Recent activity</h2><p id="history-detail" class="muted">-</p></div>
@@ -516,6 +525,34 @@ function render(data) {
   text('uptime', duration(data.uptime_ms));
   text('wifi', data.wifi.connected ? 'WiFi ' + data.wifi.rssi_dbm + ' dBm / up ' + duration(data.wifi.uptime_ms) : 'WiFi disconnected');
   text('client-count', data.kiss.connected + ' / ' + data.kiss.capacity);
+  const companion = data.companion;
+  byId('companion-overview').hidden = byId('companion-panel').hidden = !companion;
+  const companionRows = [];
+  if (companion) {
+    const full = companion.capacity > 0 && companion.connected >= companion.capacity;
+    text('companion-count', companion.connected + ' / ' + companion.capacity);
+    byId('companion-count').className = 'number ' + (full ? 'warning' : '');
+    text('companion-status', !companion.listening ? 'Companion connections unavailable.' : full ?
+      'Full: new connections are rejected.' :
+      (companion.capacity - companion.connected) + ' connection ' +
+        (companion.capacity - companion.connected === 1 ? 'slot' : 'slots') + ' available.');
+    byId('companion-status').className = !companion.listening || full ? 'warning' : 'muted';
+    text('companion-endpoint', companion.port ? 'TCP port ' + companion.port : 'Listener stopped');
+    text('companion-detail', (full ? 'Disconnect another companion client to connect. ' : '') +
+      number(companion.rejected) + ' connections rejected since boot. App names are supplied by clients.');
+    for (const c of companion.clients) {
+      const row = document.createElement('tr');
+      cell(row, 'Companion ' + (c.slot + 1));
+      cell(row, c.address + ':' + c.port);
+      cell(row, c.app_name || 'Not supplied');
+      cell(row, c.generation);
+      cell(row, c.protocol_version ? 'v' + c.protocol_version : 'Not supplied');
+      cell(row, c.app_started ? 'Connected' : 'Waiting for app');
+      companionRows.push(row);
+    }
+  }
+  byId('companion-clients').replaceChildren(...companionRows);
+  byId('companion-empty').hidden = companionRows.length !== 0;
   text('owner', s.owner_slot < 0 ? 'No radio settings owner' : 'Radio settings owner: ' + sourceLabel(data, s.owner_slot));
   text('queue', s.queued + ' / ' + s.capacity);
   text('radio-state', p.fault ? 'Profile fault: TX disabled' : s.transmitting ? 'RF transmission in progress' : s.carrier_wait ? 'Waiting for carrier access' : 'Ready');

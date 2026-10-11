@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CompanionSessions.h"
 
+#include <algorithm>
 #include <errno.h>
 #include <fcntl.h>
 #include <new>
@@ -101,8 +102,19 @@ CompanionSessions::Stats CompanionSessions::stats() const {
   Guard guard(*this);
   Stats result = counters;
   result.rfRequestPending = rfPending;
-  for (const auto& client : clients)
-    if (client.active && !client.closing) ++result.connectedClients;
+  result.listening = running && enabled && networkAvailable && !counters.nativeFault;
+  result.port = boundPort;
+  for (unsigned i = 0; i < MaxClients; ++i) {
+    const auto& client = clients[i];
+    if (!client.active || client.closing) continue;
+    ++result.connectedClients;
+    auto& info = result.clients[i];
+    info = client.info;
+    info.connected = true;
+    info.generation = client.generation;
+    info.appStarted = client.appStarted;
+    info.version = client.version;
+  }
   return result;
 }
 void CompanionSessions::enable() { Guard guard(*this); enabled = true; collecting = true; }
@@ -401,6 +413,11 @@ size_t CompanionSessions::checkRecvFrame(uint8_t* data) {
       client.version = data[1];
       data[1] = 3;
     }
+    if (data[0] == AppStart && size >= 8) {
+      memset(client.info.appName, 0, sizeof(client.info.appName));
+      const size_t length = std::min(size - 8, sizeof(client.info.appName) - 1);
+      memcpy(client.info.appName, data + 8, length);
+    }
     return size;
   }
   return 0;
@@ -589,7 +606,9 @@ void CompanionSessions::networkPass() {
     }
   }
   for (unsigned budget = 0; budget < MaxClients; ++budget) {
-    const int fd = accept(listener, nullptr, nullptr);
+    sockaddr_in address{};
+    socklen_t addressLength = sizeof(address);
+    const int fd = accept(listener, reinterpret_cast<sockaddr*>(&address), &addressLength);
     if (fd < 0) {
       if (!wouldBlock()) { Guard guard(*this); diagnostics |= SocketFailure; }
       break;
@@ -608,6 +627,9 @@ void CompanionSessions::networkPass() {
         for (unsigned i = 0; i < MaxClients; ++i) {
           if (clients[i].active) continue;
           auto& client = clients[i];
+          client.info = {};
+          client.info.address = ntohl(address.sin_addr.s_addr);
+          client.info.port = ntohs(address.sin_port);
           ++client.generation;
           client.active = true;
           client.closing = client.pending = client.appStarted = client.notified = client.cursorStarted = false;

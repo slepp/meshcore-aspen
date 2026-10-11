@@ -34,6 +34,13 @@ public:
   static constexpr unsigned OutputDepth = 16;
   static constexpr unsigned JournalDepth = 64;
 
+  struct ClientInfo {
+    bool connected = false, appStarted = false;
+    uint32_t address = 0, generation = 0;
+    uint16_t port = 0;
+    uint8_t version = 0;
+    char appName[32]{};
+  };
   struct Stats {
     uint32_t acceptedClients = 0;
     uint32_t rejectedClients = 0;
@@ -51,6 +58,9 @@ public:
     unsigned connectedClients = 0;
     bool nativeFault = false;
     bool rfRequestPending = false;
+    bool listening = false;
+    uint16_t port = 0;
+    ClientInfo clients[MaxClients]{};
   };
   // Invoked on the network task; custom handlers must not block.
   using DiagnosticHandler = void (*)(const char*);
@@ -99,6 +109,7 @@ private:
     uint32_t generation = 0;
   };
   struct Session {
+    ClientInfo info;
     Frame command;
     unsigned head = 0, count = 0;
     uint32_t generation = 0;

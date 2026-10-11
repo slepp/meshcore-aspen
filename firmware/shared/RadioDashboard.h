@@ -19,6 +19,14 @@ public:
 #if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
   static constexpr size_t JSON_CAPACITY = 40960;
   static constexpr size_t CONTACT_CAPACITY = 32;
+  static constexpr size_t COMPANION_CLIENT_CAPACITY = 4;
+  struct CompanionClient {
+    bool connected = false, app_started = false;
+    uint32_t address = 0, generation = 0;
+    uint16_t port = 0;
+    uint8_t protocol_version = 0;
+    char app_name[32]{};
+  };
   struct ContactStatus {
     uint8_t public_key[32]{};
     char name[32]{};
@@ -95,6 +103,13 @@ public:
     uint8_t role_count = 0;
     RoleStatus roles[ROLE_CAPACITY]{};
 #if defined(ESP32) && !defined(NRF52_PLATFORM)
+    struct CompanionStatus {
+      bool listening = false;
+      uint16_t port = 0;
+      unsigned connected = 0, capacity = 0;
+      uint32_t rejected = 0;
+      CompanionClient clients[COMPANION_CLIENT_CAPACITY]{};
+    } companion;
     bool contacts_available = false;
     uint16_t contact_count = 0, contact_total = 0;
     ContactStatus contacts[CONTACT_CAPACITY]{};

@@ -302,6 +302,26 @@ size_t RadioDashboard::formatJSON(const Snapshot &s, const char *name,
              r.stream.fault ? "true" : "false", r.stream.output_overflows);
   }
 #if defined(MESHCORE_ONCHIP) && defined(ESP32) && !defined(NRF52_PLATFORM)
+  const auto &companion = r.companion;
+  j.append(",\"companion\":{\"listening\":%s,\"port\":%u,\"connected\":%u,"
+           "\"capacity\":%u,\"rejected\":%u,\"clients\":[",
+           companion.listening ? "true" : "false", companion.port, companion.connected,
+           companion.capacity, companion.rejected);
+  bool clientComma = false;
+  for (unsigned i = 0; i < COMPANION_CLIENT_CAPACITY; ++i) {
+    const auto &client = companion.clients[i];
+    if (!client.connected) continue;
+    j.append("%s{\"slot\":%u,\"address\":\"%u.%u.%u.%u\",\"port\":%u,"
+             "\"generation\":%u,\"protocol_version\":%u,\"app_started\":%s,\"app_name\":",
+             clientComma ? "," : "", i, unsigned(client.address >> 24),
+             unsigned((client.address >> 16) & 255), unsigned((client.address >> 8) & 255),
+             unsigned(client.address & 255), client.port, client.generation,
+             client.protocol_version, client.app_started ? "true" : "false");
+    j.string(client.app_name);
+    j.append("}");
+    clientComma = true;
+  }
+  j.append("]}");
   if (r.contacts_available) {
     const unsigned count = std::min<size_t>(r.contact_count, CONTACT_CAPACITY);
     j.append(",\"contacts\":{\"capacity\":%u,\"total\":%u,\"truncated\":%s,\"items\":[",

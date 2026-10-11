@@ -27,7 +27,7 @@ const element = id => {
 };
 let socket;
 vm.runInNewContext(script, {
-  document: {getElementById: element, createElement: () => new Element(), addEventListener() {}, hidden: false},
+  document: {getElementById: element, createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}, hidden: false},
   window: {addEventListener() {}}, location: {protocol: 'http:', host: 'radio.local'},
   WebSocket: class { constructor() { socket = this; } close() { assert.fail('Valid role snapshot rejected'); } },
   Intl, Date, Math, console, setTimeout() {}, clearTimeout() {},
@@ -62,12 +62,46 @@ const event = {direction: 'tx', state: 2, reason: 0, length: 3, at_ms: snapshot.
   preview_hex: '010203', preview_truncated: false};
 snapshot.history.events = [event];
 show(snapshot);
-assert.match(element('events').children[0].children[2].textContent, /Repeater/);
+assert.match(element('events').children[0].children[2].children[0].textContent, /Repeater/);
 event.source_generation++;
 show(snapshot);
-assert.doesNotMatch(element('events').children[0].children[2].textContent, /Repeater/);
+assert.doesNotMatch(element('events').children[0].children[2].children[0].textContent, /Repeater/);
 delete snapshot.roles;
 show(snapshot);
 assert.equal(element('role-panel').hidden, true);
 assert.equal(element('roles').children.length, 0);
+snapshot.kiss.connected = 0;
+snapshot.kiss.clients = [];
+snapshot.companion = {listening: true, port: 5000, connected: 2, capacity: 2, rejected: 3,
+  clients: [{slot: 1, address: '10.16.1.95', port: 34922, generation: 9,
+    protocol_version: 13, app_started: true, app_name: '<img src=x onerror=alert(1)>'},
+    {slot: 0, address: '10.16.1.95', port: 46864, generation: 1,
+      protocol_version: 0, app_started: false, app_name: ''}]};
+show(snapshot);
+assert.equal(element('companion-panel').hidden, false);
+assert.equal(element('companion-overview').hidden, false);
+assert.equal(element('companion-count').textContent, '2 / 2');
+assert.match(element('companion-status').textContent, /Full:.*rejected/);
+assert.match(element('companion-detail').textContent, /Disconnect another companion client/);
+assert.equal(element('companion-status').className, 'warning');
+const clientRow = element('companion-clients').children[0];
+assert.equal(clientRow.children[1].textContent, '10.16.1.95:34922');
+assert.equal(clientRow.children[2].textContent, snapshot.companion.clients[0].app_name);
+assert.equal(clientRow.children[4].textContent, 'v13');
+assert.equal(element('companion-clients').children[1].children[2].textContent, 'Not supplied');
+assert.equal(element('companion-clients').children[1].children[5].textContent, 'Waiting for app');
+assert.equal(element('clients-empty').hidden, false);
+snapshot.companion.connected = 0;
+snapshot.companion.clients = [];
+show(snapshot);
+assert.match(element('companion-status').textContent, /2 connection slots available/);
+assert.equal(element('companion-count').className, 'number ');
+assert.equal(element('companion-empty').hidden, false);
+snapshot.companion.listening = false;
+show(snapshot);
+assert.match(element('companion-status').textContent, /unavailable/);
+delete snapshot.companion;
+show(snapshot);
+assert.equal(element('companion-panel').hidden, true);
+assert.equal(element('companion-overview').hidden, true);
 console.log('Dashboard roles: native public identities, names, faults, generation labels and radio-only hiding passed');
