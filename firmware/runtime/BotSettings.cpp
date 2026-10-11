@@ -165,6 +165,9 @@ struct RepeaterWorkspaceDeleter {
 };
 using RepeaterStorage = std::unique_ptr<RepeaterWorkspace, RepeaterWorkspaceDeleter>;
 static_assert(sizeof(RepeaterReference) == 37, "Keep repeater NVS authority bounded");
+size_t repeaterNvsRequired(bool present) {
+  return BotKvPublicEntries + (present ? 0u : 5u);
+}
 bool readRepeaterReference(RepeaterReference &reference, bool &present) {
   present = false;
   nvs_handle_t handle;
@@ -226,7 +229,7 @@ void botRepeaterStorageStatus(char *reply, size_t capacity) {
   }
   snprintf(reply, capacity, "Repeater storage nvs-free=%u required=%u authority=%s",
            unsigned(stats.free_entries),
-           unsigned(BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u)),
+           unsigned(repeaterNvsRequired(present)),
            present ? "saved" : "none");
 }
 bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy, char *error, size_t capacity) {
@@ -245,7 +248,7 @@ bool saveBotRepeaterPolicy(const BotRepeaterPolicy &policy, char *error, size_t 
   auto result = nvs_get_stats(nullptr, &stats);
   if (result != ESP_OK) return failSave("repeater monitor headroom read", result);
   // A new four-entry reference must leave the existing public KV floor intact.
-  const size_t required = BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u);
+  const size_t required = repeaterNvsRequired(present);
   if (stats.free_entries < required) {
     if (error && capacity)
       snprintf(error, capacity, "repeater NVS headroom: %u free, %u required",

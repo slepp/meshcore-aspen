@@ -9,6 +9,7 @@
 #endif
 #include "RoleProfile.h"
 #include "BotStore.h"
+#include "BotJournal.h"
 #include "Clock.h"
 #include "support/BotNativeHarness.h"
 #ifdef BOT_HOST_RUNNER
@@ -2678,6 +2679,7 @@ static void native_repeater_monitor() {
 
   f.bot.stop();
   uint32_t floodUtc = 0;
+  const auto originalFreeEntries = identity_test::freeEntries;
   for (unsigned boot = 0; boot < 2; ++boot) {
     assert(saveBotEventAccess(0));
     Fixture restart; restart.start();
@@ -2694,6 +2696,23 @@ static void native_repeater_monitor() {
     assert(restart.bot.activateStaged()); restart.step();
     assert(restart.bot.pollSourceResult(staged) && staged.ok);
     assert(restart.bot.setEventAccess(16)); restart.step();
+    if (!boot) {
+      identity_test::freeEntries = BotKvPublicEntries - 1;
+      restart.radio.sent.clear(); timeMs += 16000; restart.step();
+      for (const auto &raw : restart.radio.sent) {
+        mesh::Packet packet;
+        assert(packet.readFrom(raw.data(), raw.size()));
+        assert(packet.getPayloadType() != PAYLOAD_TYPE_REQ);
+      }
+      BotRepeaterPolicy retained;
+      assert(loadBotRepeaterPolicy(retained) && retained.enabled &&
+             retained.targets[0].lastFloodUtc == 0);
+      restart.bot.repeaterCommand("status", reply, sizeof(reply));
+      assert(strstr(reply, "on=0"));
+      identity_test::freeEntries = 301;
+      restart.bot.repeaterCommand("on", reply, sizeof(reply));
+      assert(!strncmp(reply, "Saved/applied", 13));
+    }
     restart.radio.sent.clear(); timeMs += 16000; restart.step();
     unsigned floods = 0;
     for (const auto &raw : restart.radio.sent) {
@@ -2731,6 +2750,7 @@ static void native_repeater_monitor() {
     }
     assert(restart.bot.setEventAccess(0)); restart.step();
   }
+  identity_test::freeEntries = originalFreeEntries;
   assert(saveBotRepeaterPolicy({}));
   puts("PASS native repeater flood: persisted 900-second boundary across restart, visible discovery wait and exactly one new eligible request");
 

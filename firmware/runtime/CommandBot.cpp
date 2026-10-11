@@ -828,6 +828,11 @@ struct CommandBot::Core : mesh::Mesh {
     return slot;
   }
   void startRepeater(Invocation &job) {
+    if (!repeaterPolicy.enabled) {
+      failRepeater(job, BotRepeaterError::Disabled,
+                   "Repeater monitor disabled; inspect bot repeaters status and storage");
+      return;
+    }
     if (!repeaterAuthority(job)) {
       failRepeater(job, BotRepeaterError::Permission, "Repeater polling requires the owner grant and a scheduled event or owner DM");
       return;

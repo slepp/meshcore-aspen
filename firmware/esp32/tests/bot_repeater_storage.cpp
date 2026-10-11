@@ -52,11 +52,11 @@ int main() {
   empty.discoverySeconds = 86401; assert(!empty.valid());
   empty.discoverySeconds = 86400; assert(empty.valid());
   botRepeaterStorageStatus(status, sizeof(status));
-  assert(strstr(status, "required=313 authority=none"));
+  assert(strstr(status, "required=202 authority=none"));
   auto old = fixture(), next = old;
   assert(saveBotRepeaterPolicy(old));
   botRepeaterStorageStatus(status, sizeof(status));
-  assert(strstr(status, "required=308 authority=saved"));
+  assert(strstr(status, "required=197 authority=saved"));
   assert(identity_test::durable.at(Key).size() == 37);
   expect(old);
   next.intervalSeconds = 600;
@@ -96,12 +96,27 @@ int main() {
   assert(!saveBotRepeaterPolicy(next));
   assert(identity_test::durable.at(Key) == authority);
   identity_test::durable.clear(); filesystem_test::files.clear();
-  identity_test::freeEntries = BotCoreNvsReserveEntries + BotNvsMutationEntries + 4;
+  identity_test::freeEntries = BotKvPublicEntries + 4;
   assert(!saveBotRepeaterPolicy(old, error, sizeof(error)) && identity_test::durable.empty() &&
          filesystem_test::files.empty());
-  assert(strstr(error, "312 free, 313 required"));
+  assert(strstr(error, "201 free, 202 required"));
   identity_test::freeEntries++;
   assert(saveBotRepeaterPolicy(old, error, sizeof(error)) && !error[0]);
+  botRepeaterStorageStatus(status, sizeof(status));
+  assert(strstr(status, "required=197 authority=saved"));
+  const auto savedFiles = filesystem_test::files;
+  const auto savedAuthority = identity_test::durable;
+  identity_test::freeEntries = BotKvPublicEntries - 1;
+  assert(!saveBotRepeaterPolicy(next, error, sizeof(error)) &&
+         strstr(error, "196 free, 197 required"));
+  assert(filesystem_test::files == savedFiles && identity_test::durable == savedAuthority);
+  expect(old);
+  identity_test::freeEntries++;
+  assert(saveBotRepeaterPolicy(next, error, sizeof(error)) && !error[0]);
+  expect(next);
+  identity_test::freeEntries = 301;
+  assert(saveBotRepeaterPolicy(old, error, sizeof(error)) && !error[0]);
+  expect(old);
   identity_test::durable.clear(); filesystem_test::files.clear();
   const size_t legacySize = 4 + offsetof(BotRepeaterPolicy, discoverySeconds);
   auto &legacy = filesystem_test::files["/repeaters-a.bin"];
