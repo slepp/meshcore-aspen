@@ -318,6 +318,11 @@ static void registry() {
   assert(!strcmp(run(hello, event("!hello two\\ names")).text, "Hello two names"));
   assert(!strcmp(run(hello, event("!double -8 true")).text, "-16"));
   assert(!strcmp(run(hello, event("!double 8 false")).text, "off"));
+  const std::string hex = "command('hop','prefix:hex:6','Hex prefix') function hop(p) return p end";
+  assert(!strcmp(run(hex, event("!hop d1aB00")).text, "D1AB00"));
+  assert(!strcmp(run(hex, event("!hop d")).text, "D"));
+  for (const char *input : {"!hop d1xz", "!hop 0x12", "!hop d126001", "!hop ''"})
+    run(hex, event(input), false);
   for (const char *command : {"!hello", "!hello a b", "!hello ''", "!hello 'bad", "!hello 'a'b",
                               "!hello abc\\", "!double 9 true", "!double 1 1", "!double 1.0 true",
                               "!double 999999999999999999999 true", "!unknown"}) {
@@ -1271,14 +1276,13 @@ static void diagnosticCommands() {
     const auto limit = e.replyLimit;
     e.replyLimit = 108;
     assert(command("!about") ==
-           "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
+           "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
     e.replyLimit = limit;
-    assert(command("!version").find("MeshCore rev d92964352441; Lua 5.5.1; built fixture compilation") == 0);
-    assert(command("!uptime") == "Uptime snapshot since boot: 49d 17h 2m 49s");
+    assert(command("!version").find("Version: MeshCore d92964352441; Lua 5.5.1; built fixture compilation") == 0);
+    assert(command("!uptime") == "Uptime: 49d 17h 2m 49s");
     auto status = command("!status");
     assert(status.find("WiFi=disconnected") != std::string::npos &&
-           status.find("battery=unavailable") != std::string::npos &&
-           status.find("roles selected/ready=15/5") != std::string::npos);
+             status.find("roles selected/ready=15/5") != std::string::npos);
     for (const char *page : {"!air", "!air 1", "!air 2", "!air 3", "!air 4"}) {
       const auto result = command(page);
       assert(result.find("Error:") == std::string::npos && result.find("4294967295") != std::string::npos);
@@ -1299,13 +1303,13 @@ static void diagnosticCommands() {
   for (uint8_t width : {1, 2, 3}) {
     e.path.width = width; e.path.count = 1;
     memset(e.path.bytes, 0xab, width);
-    assert(command("!signal").find(std::string("path=") +
+    assert(command("!signal").find(std::string("path ") +
            (width == 1 ? "ab" : width == 2 ? "abab" : "ababab")) != std::string::npos);
   }
   e.path.width = 1; e.path.count = 63;
   assert(command("!signal").find("path omitted; use !path") != std::string::npos);
   e.path.known = false; e.signal = false;
-  assert(command("!signal") == "Packet RF measurement unavailable; path=unknown (direct)");
+  assert(command("!signal") == "Signal: RF measurement unavailable; path unknown (direct)");
   e.node.available = e.air.available = false;
   assert(command("!about").find("!help NAME") != std::string::npos);
   for (const char *c : {"!version", "!uptime", "!status", "!air"})
@@ -1319,11 +1323,15 @@ static void diagnosticCommands() {
   run(program("ctx.node.ready=false"), event("!custom"), false);
   {
     const char *source =
-        "local previous command('snapshot','mode?:string:4','Snapshot') "
+        "local previous,previousLimits command('snapshot','mode?:string:4','Snapshot') "
         "function snapshot(mode) "
-        "local n if mode=='full' then local sender=ctx.sender n=ctx.node else n=ctx.node end "
+        "local n,limits if mode=='full' then local sender=ctx.sender n=ctx.node limits=ctx.limits "
+        "else limits=ctx.limits n=ctx.node end "
         "local sender=ctx.sender "
-        "if n~=ctx.node or ctx['node\\0extra']~=nil then return 'bad identity' end "
+        "if n~=ctx.node or limits~=ctx.limits or ctx['node\\0extra']~=nil or ctx['limits\\0extra']~=nil then return 'bad identity' end "
+        "if limits.reply_bytes~=160-n.uptime_ms//10 then return 'bad limit' end "
+        "if previousLimits and previousLimits.reply_bytes~=limits.reply_bytes+1 then return 'bad old limit' end "
+        "previousLimits=limits "
         "local old=previous and previous.uptime_ms or 0 previous=n "
         "return tostring(n.uptime_ms)..' '..tostring(old) end";
     BotSession cached; BotVmStats cachedStats; char cachedError[128]{};
@@ -1331,12 +1339,14 @@ static void diagnosticCommands() {
     unsigned id = 0;
     for (const char *command : {"!snapshot", "!snapshot full", "!snapshot"}) {
       auto invocation = event(command); invocation.node.uptimeMs = 10 * ++id;
+      invocation.replyLimit = 160 - id;
       assert(cached.start(id, invocation, cachedError, sizeof(cachedError)));
       BotSession::Result result; assert(cached.poll(result) && result.ok);
       const auto expected = std::to_string(10 * id) + " " + std::to_string(10 * (id - 1));
       assert(result.action.text == expected);
     }
   }
+  run(program("ctx.limits.reply_bytes=0"), event("!custom"), false);
   run(program("ctx.air.credit_ms=0"), event("!custom"), false);
   run(program("node.report=function() return 'fake' end"), event("!custom"), false);
   validate("function node() return 'override' end", false);
@@ -1358,11 +1368,11 @@ static void diagnosticCommands() {
   assert(vm.manifest().count == 2 && vm.manifest().find("custom"));
   BotSession::Result result;
   assert(vm.start(1, event("!custom"), error, sizeof(error)) && vm.poll(result) &&
-         result.ok && strstr(result.action.text, "RSSI=-90dBm SNR=5dB"));
+         result.ok && strstr(result.action.text, "SNR 5 dB; RSSI -90 dBm"));
   assert(vm.start(2, event("!change"), error, sizeof(error)) && vm.poll(result) &&
          !result.ok && strstr(result.error, "reserved"));
   assert(vm.start(3, event("!signal"), error, sizeof(error)) && vm.poll(result) &&
-         result.ok && strstr(result.action.text, "RSSI=-90dBm SNR=5dB"));
+         result.ok && strstr(result.action.text, "SNR 5 dB; RSSI -90 dBm"));
   auto bad = event("!version"); memset(bad.node.build, 'x', sizeof(bad.node.build));
   run(BotDefaultSource, bad, false);
   puts("PASS diagnostics Lua: real-metadata contract, RF-capacity high counters, explicit missing data, private-free DM/channel help, local signal and full-width paths");
@@ -2025,15 +2035,15 @@ int main(int argc, char **argv) {
       "9223372036854775807"));
   assert(!strcmp(run(BotDefaultSource, event("!path")).text, "1:a1b2"));
   assert(!strcmp(run(BotDefaultSource, event("!test")).text,
-                 "Connected; path 1:a1b2; RSSI=-90 dBm SNR=5 dB"));
+                 "Connected: SNR 5 dB; RSSI -90 dBm; path 1:a1b2"));
   auto unmeasured = event("!test");
   unmeasured.signal = false;
   assert(!strstr(run(BotDefaultSource, unmeasured).text, "local;"));
   unmeasured.local = true;
-  assert(strstr(run(BotDefaultSource, unmeasured).text, "local; RSSI/SNR unavailable"));
+  assert(strstr(run(BotDefaultSource, unmeasured).text, "local reflection; RF unmeasured"));
   auto mt = event("!mt 1"); mt.observationCount = 8; mt.truncated = true;
   for (auto &path : mt.observations) path.known = true;
-  assert(strstr(run(BotDefaultSource, mt).text, "8 unique paths"));
+  assert(strstr(run(BotDefaultSource, mt).text, "Paths: 8"));
   assert(strstr(run(BotDefaultSource, mt).text, "truncated"));
   auto routes = event("!mt 5"); routes.observationCount = 2;
   for (unsigned i = 0; i < 2; ++i) {
@@ -2042,11 +2052,28 @@ int main(int argc, char **argv) {
     for (unsigned j = 0; j < path.size(); ++j) path.bytes[j] = uint8_t(0xa1 + 16 * i + j);
   }
   assert(!strcmp(run(BotDefaultSource, routes).text,
-                 "2 unique paths in 5000 ms; a1a2a3,a4a5a6 | b1b2b3,b4b5b6"));
+                 "Paths: 2 in 5s; a1a2a3,a4a5a6 | b1b2b3,b4b5b6"));
+  auto compact = routes;
+  compact.replyLimit = 50;
+  for (unsigned i = 0; i < 2; ++i) {
+    compact.observations[i].count = 3;
+    for (unsigned j = 6; j < 9; ++j) compact.observations[i].bytes[j] = uint8_t(0xa1 + 16 * i + j);
+  }
+  assert(!strcmp(run(BotDefaultSource, compact).text,
+                 "Paths: 2 in 5s; a1a2,a4a5,a7a8 | b1b2,b4b5,b7b8"));
+  compact.replyLimit = 55;
+  for (unsigned i = 0; i < 2; ++i) {
+    compact.observations[i].bytes[0] = 0xaa;
+    compact.observations[i].bytes[1] = 0xbb;
+    compact.observations[i].bytes[2] = uint8_t(i + 1);
+  }
+  const std::string collision = run(BotDefaultSource, compact).text;
+  assert(collision.find("aabb01") != std::string::npos && collision.find("aabb02") != std::string::npos &&
+         collision.find("truncated") == std::string::npos);
   routes.observations[0].width = 1; routes.observations[0].count = 6;
   routes.observations[1].width = 2; routes.observations[1].count = 3;
   assert(!strcmp(run(BotDefaultSource, routes).text,
-                 "2 unique paths in 5000 ms; a1,a2,a3,a4,a5,a6 | b1b2,b3b4,b5b6"));
+                 "Paths: 2 in 5s; a1,a2,a3,a4,a5,a6 | b1b2,b3b4,b5b6"));
   for (uint8_t width : {1, 2, 3}) {
     for (auto &path : routes.observations) {
       path.width = width; path.count = uint8_t(std::min<size_t>(63, BotPathLimit / width));
@@ -2064,7 +2091,7 @@ int main(int argc, char **argv) {
         do {
           const auto comma = hashes.find(',', offset);
           const auto end = comma == std::string::npos ? hashes.size() : comma;
-          assert(end - offset == 2 * width);
+          assert(end - offset == 2 * std::min<unsigned>(width, 2));
           offset = end + 1;
         } while (offset < hashes.size());
       }
@@ -2082,13 +2109,14 @@ int main(int argc, char **argv) {
     memset(path.bytes, int(0xa0 + i), sizeof(path.bytes));
   }
   const std::string crowded = run(BotDefaultSource, routes).text;
-  assert(crowded.size() <= routes.replyLimit && crowded.find("8 unique paths") == 0 &&
-         crowded.find("a0a0a0") != std::string::npos &&
-         crowded.find(" | a1a1a1") != std::string::npos &&
+  assert(crowded.size() <= routes.replyLimit && crowded.find("Paths: 8") == 0 &&
+         crowded.find("a0a0") != std::string::npos &&
+         crowded.find(" | a1a1") != std::string::npos &&
          crowded.find("; truncated") != std::string::npos);
   puts("PASS multitrace collector output: two actual width-three paths, whole-segment truncation at reply bounds and direct/no-hop distinction");
   assert(strstr(run(BotDefaultSource, event("!trace")).text, "Error: TRACE"));
   assert(run(BotDefaultSource, event("!trace 2:0102aabb")).kind == BotAction::Trace);
+  assert(run(BotDefaultSource, event("!trace 2:0102AaBB")).kind == BotAction::Trace);
   const std::string wideTrace = "!trace 8:" + std::string(144, 'a');
   assert(event(wideTrace.c_str()).routeSize == 72);
   assert(run(BotDefaultSource, event(wideTrace.c_str())).kind == BotAction::Trace);
@@ -2097,9 +2125,9 @@ int main(int argc, char **argv) {
   wide.path.width = 3; wide.path.count = 21;
   assert(strlen(run(BotDefaultSource, wide).text) == 128);
   strcpy(wide.name, "test");
-  assert(strstr(run(BotDefaultSource, wide).text, "path too long"));
+  assert(strstr(run(BotDefaultSource, wide).text, "path omitted; use !path"));
   auto direct = event("!path"); direct.path.known = false;
-  assert(strstr(run(BotDefaultSource, direct).text, "no complete heard path"));
+  assert(strstr(run(BotDefaultSource, direct).text, "no complete flood path"));
   auto invalid = mt; invalid.observationCount = 9;
   run(BotDefaultSource, invalid, false);
   invalid = event("!mt"); invalid.windowMs = 30001;

@@ -176,7 +176,8 @@ bool formatBotPath(const BotPath &path, char *output, size_t capacity) {
 }
 
 namespace {
-bool formatDisplayPath(const BotPath &path, char *output, size_t capacity) {
+bool formatDisplayPath(const BotPath &path, char *output, size_t capacity,
+                       const uint8_t *widths = nullptr) {
   if (!path.valid()) return false;
   if (!path.count) {
     constexpr char empty[] = "no repeaters";
@@ -188,7 +189,8 @@ bool formatDisplayPath(const BotPath &path, char *output, size_t capacity) {
   size_t used = 0;
   for (unsigned hop = 0; hop < path.count; ++hop) {
     if (hop) output[used++] = ',';
-    for (unsigned byte = 0; byte < path.width; ++byte) {
+    const unsigned width = widths ? widths[hop] : path.width;
+    for (unsigned byte = 0; byte < width; ++byte) {
       snprintf(output + used, capacity - used, "%02x", path.bytes[hop * path.width + byte]);
       used += 2;
     }
@@ -205,16 +207,20 @@ bool formatObservedPaths(const BotEvent &event, char *output, size_t capacity) {
   if (event.observationCount > BotObservationLimit)
     return fail(output, capacity, "Invalid observation count");
   uint8_t hops[BotObservationLimit]{};
+  uint8_t widths[BotObservationLimit][BotPathLimit]{};
   for (unsigned i = 0; i < event.observationCount; ++i) {
     if (!event.observations[i].valid()) return fail(output, capacity, "Invalid observed path");
     hops[i] = event.observations[i].count;
+    memset(widths[i], event.observations[i].width, hops[i]);
   }
-  const int header = snprintf(output, capacity, "%u unique paths in %u ms",
-                              unsigned(event.observationCount), unsigned(event.windowMs));
+  const int header = snprintf(output, capacity, "Paths: %u in %us",
+                              unsigned(event.observationCount), unsigned(event.windowMs / 1000));
   const auto length = [&](unsigned i, unsigned count) {
     const auto &path = event.observations[i];
-    return !path.count ? 12 :
-        2 * path.width * int(count) + int(count) - 1 + (count < path.count ? 3 : 0);
+    if (!path.count) return 12;
+    int size = int(count) - 1 + (count < path.count ? 3 : 0);
+    for (unsigned hop = 0; hop < count; ++hop) size += 2 * widths[i][hop];
+    return size;
   };
   bool truncated = event.truncated;
   unsigned shown = event.observationCount;
@@ -223,6 +229,39 @@ bool formatObservedPaths(const BotEvent &event, char *output, size_t capacity) {
     for (unsigned i = 0; i < shown; ++i) size += length(i, hops[i]);
     return size;
   };
+  if (required() > limit) {
+    struct Hop { uint8_t path, hop; } prefixes[BotObservationLimit * (BotPathLimit / 2)];
+    unsigned count = 0;
+    for (unsigned i = 0; i < shown; ++i) {
+      const auto &path = event.observations[i];
+      if (path.width < 2) continue;
+      for (unsigned hop = 0; hop < path.count; ++hop)
+        prefixes[count++] = {uint8_t(i), uint8_t(hop)};
+    }
+    const auto bytes = [&](const Hop &hop) {
+      const auto &path = event.observations[hop.path];
+      return path.bytes + path.width * hop.hop;
+    };
+    const auto key = [&](const Hop &hop) {
+      const auto *p = bytes(hop);
+      return unsigned(p[0]) * 256 + p[1];
+    };
+    std::sort(prefixes, prefixes + count, [&](const Hop &a, const Hop &b) { return key(a) < key(b); });
+    for (unsigned first = 0; first < count;) {
+      unsigned end = first + 1;
+      while (end < count && key(prefixes[end]) == key(prefixes[first])) ++end;
+      bool collision = false;
+      for (unsigned at = first; at < end; ++at)
+        if (event.observations[prefixes[at].path].width == 2 ||
+            bytes(prefixes[at])[2] != bytes(prefixes[first])[2]) {
+          collision = true; break;
+        }
+      if (!collision)
+        for (unsigned at = first; at < end; ++at)
+          widths[prefixes[at].path][prefixes[at].hop] = 2;
+      first = end;
+    }
+  }
   if (required() > limit) {
     truncated = true;
     for (unsigned i = 0; i < shown; ++i)
@@ -248,7 +287,7 @@ bool formatObservedPaths(const BotEvent &event, char *output, size_t capacity) {
     auto path = event.observations[i];
     path.count = hops[i];
     char text[3 * BotPathLimit + 1]{};
-    if (!formatDisplayPath(path, text, sizeof(text))) return fail(output, capacity, "Invalid observed path");
+    if (!formatDisplayPath(path, text, sizeof(text), widths[i])) return fail(output, capacity, "Invalid observed path");
     const char *suffix = hops[i] < event.observations[i].count ? "..." : "";
     used += snprintf(output + used, capacity - used, "%s%s%s", i ? " | " : "; ", text, suffix);
   }
@@ -323,22 +362,8 @@ bool parseBotCommand(const char *text, size_t size, BotEvent &event,
 
 const char BotDefaultSource[] = R"lua(
 function ping() return "Pong" end
-function path()
-  if not ctx.packet.path_known then return "Error: received direct packet has no complete heard path" end
-  return ctx.packet.path
-end
-function test()
-  local path=ctx.packet.path
-  if not ctx.packet.path_known then path="unknown (direct)" end
-  local signal="RSSI/SNR unavailable"
-  if ctx.radio.local_reflection then signal="local; "..signal end
-  if ctx.radio.measured then
-    signal="RSSI="..tostring(ctx.radio.rssi_dbm).." dBm SNR="..tostring(ctx.radio.snr_db).." dB"
-  end
-  local result="Connected; path "..path.."; "..signal
-  if #result>ctx.limits.reply_bytes then return "Error: path too long for one !test reply; use !path" end
-  return result
-end
+function path() return node.report("path") end
+function test() return node.report("test") end
 function mt(seconds)
   return node.report("mt")
 end
@@ -533,43 +558,53 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
   const auto &n = e.node;
   const auto &a = e.air;
   int size = 0;
-  if (!strcmp(name, "signal")) {
+  if (!strcmp(name, "path")) {
+    if (!formatBotPath(e.path, output, capacity)) {
+      size = snprintf(output, capacity, "Error: received direct/local packet has no complete flood path");
+      return size > 0 && size < int(capacity) && size <= e.replyLimit;
+    }
+    return strlen(output) <= e.replyLimit ||
+           error("Path exceeds reply capacity; use a private DM");
+  }
+  if (!strcmp(name, "signal") || !strcmp(name, "test")) {
+    const bool test = !strcmp(name, "test");
     char signal[64], path[3 * BotPathLimit + 1];
     if (e.local) strcpy(signal, "local reflection; RF unmeasured");
     else if (!e.signal) strcpy(signal, "RF measurement unavailable");
-    else snprintf(signal, sizeof(signal), "RSSI=%.6gdBm SNR=%.6gdB", double(e.rssi), double(e.snr));
-    if (!formatDisplayPath(e.path, path, sizeof(path))) strcpy(path, "unknown (direct)");
-    size = snprintf(output, capacity, "Packet %s; path=%s", signal, path);
+    else snprintf(signal, sizeof(signal), "SNR %.6g dB; RSSI %.6g dBm", double(e.snr), double(e.rssi));
+    if (!(test ? formatBotPath(e.path, path, sizeof(path)) : formatDisplayPath(e.path, path, sizeof(path))))
+      strcpy(path, "unknown (direct)");
+    size = snprintf(output, capacity, "%s: %s; path %s", test ? "Connected" : "Signal", signal, path);
     if (size >= int(capacity) || size > e.replyLimit)
-      size = snprintf(output, capacity, "Packet %s; path omitted; use !path", signal);
+      size = snprintf(output, capacity, "%s: %s; path omitted; use !path", test ? "Connected" : "Signal", signal);
   } else if (!strcmp(name, "air")) {
     if (page < 1 || page > 4) return error("Use !air [1..4]");
     if (!a.available) size = snprintf(output, capacity, "Error: scheduler snapshot unavailable");
     else if (page == 1)
-      size = snprintf(output, capacity, "Air snapshot ms: credit bot=%u all=%u; bot60s reserved=%u left=%u; more !air 2",
+      size = snprintf(output, capacity, "Airtime ms: credit bot=%u all=%u; 60s reserved=%u left=%u; !air 2",
                       unsigned(a.creditMs), unsigned(a.aggregateCreditMs), unsigned(a.reservedMs), unsigned(a.remainingMs));
     else if (page == 2)
-      size = snprintf(output, capacity, "Air snapshot q bot=%u all=%u tx=%s; RFms bot=%u all=%u; more !air 3",
+      size = snprintf(output, capacity, "Airtime: queue bot=%u all=%u TX=%s; RF ms bot=%u all=%u; !air 3",
                       unsigned(a.queued), unsigned(a.aggregateQueued), a.transmitting ? "yes" : "no",
                       unsigned(a.rfMs), unsigned(a.aggregateRfMs));
     else if (page == 3)
-      size = snprintf(output, capacity, "Air snapshot TX ok/fail bot=%u/%u all=%u/%u; more !air 4",
+      size = snprintf(output, capacity, "Airtime TX ok/fail: bot=%u/%u all=%u/%u; !air 4",
                       unsigned(a.successes), unsigned(a.failures), unsigned(a.aggregateSuccesses), unsigned(a.aggregateFailures));
     else
-      size = snprintf(output, capacity, "Air gen=%u cfg=%u; bot60s limit=%ums; u32 totals wrap/reset; history/duty unavailable",
+      size = snprintf(output, capacity, "Airtime: gen=%u cfg=%u; 60s limit=%u ms; counters wrap/reset",
                       unsigned(a.generation), unsigned(a.configurationGeneration), unsigned(a.limitMs));
   } else if (!strcmp(name, "about")) {
-    size = snprintf(output, capacity, "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
+    size = snprintf(output, capacity, "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
   } else if (!strcmp(name, "version")) {
     if (!n.available || !n.nativeRevision[0] || !n.build[0])
       size = snprintf(output, capacity, "Error: build metadata unavailable");
-    else size = snprintf(output, capacity, "MeshCore rev %s; Lua %s; built %s",
+    else size = snprintf(output, capacity, "Version: MeshCore %s; Lua %s; built %s",
                          n.nativeRevision, luaVersion, n.build);
   } else if (!strcmp(name, "uptime")) {
     if (!n.available) size = snprintf(output, capacity, "Error: uptime unavailable");
     else {
       const uint64_t s = n.uptimeMs / 1000;
-      size = snprintf(output, capacity, "Uptime snapshot since boot: %llud %uh %um %us",
+      size = snprintf(output, capacity, "Uptime: %llud %uh %um %us",
                       static_cast<unsigned long long>(s / 86400), unsigned(s / 3600 % 24),
                       unsigned(s / 60 % 60), unsigned(s % 60));
     }
@@ -578,7 +613,7 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
     else {
       char roles[40] = "unavailable";
       if (n.rolesKnown) snprintf(roles, sizeof(roles), "%u/%u (R1 room2 C4 O8)", n.selectedRoles, n.readyRoles);
-      size = snprintf(output, capacity, "Snapshot bot=%s fault=%s WiFi=%s; battery=unavailable; roles selected/ready=%s",
+      size = snprintf(output, capacity, "Status: bot=%s fault=%s WiFi=%s; roles selected/ready=%s",
                       !n.enabled ? "off" : n.ready ? "ready" : "not-ready", n.fault ? "yes" : "no",
                       !n.wifiKnown ? "unavailable" : n.wifiConnected ? "connected" : "disconnected", roles);
     }

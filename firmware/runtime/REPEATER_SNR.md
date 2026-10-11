@@ -1,10 +1,16 @@
-# Nearby repeater SNR
+# Nearby repeater signal
 
 Aspen can keep the last 256 received SNR and RSSI measurements for nearby
 repeater hops in PSRAM. The dashboard shows average SNR, nearest-rank P95,
 average RSSI, sample count, total heard and last-heard age. `!snr` lists the
-three most frequently heard retained hops; `!snr D12600` shows one hop's
-measurements. Use the uppercase hop prefix shown in the summary.
+three most frequently heard reported hops; `!rssi` is an alias that shows the
+same SNR and RSSI measurements together.
+
+Use any case-insensitive hex prefix of one to six digits: `!snr d1` can match
+`D12600`. A single match shows its measurements and last-heard age. Multiple
+matches are all included when their compact measurements fit the reply;
+otherwise the bot asks for a longer prefix. Matching searches the reported
+hops, including their original one-, two- or three-byte labels.
 
 The Wasm packet program owns the sample rings and calculations. Command Lua,
 the dashboard and telemetry read its numeric report; they do not keep separate
@@ -14,7 +20,7 @@ sample histories. No polling or extra RF transmissions are needed to sample.
 
 Use firmware whose `packet api` response includes `report=1` and capability
 `8`. Check both packet slots first and export an occupied slot before replacing
-it. The example command reads slot 0; change `node.packet_report(0)` if using
+it. The example command reads slot 0; change `node.packet_report(0,hop)` if using
 slot 1. These commands assume slot 0 is unused:
 
 ```sh
@@ -74,6 +80,7 @@ was trusted, otherwise zero. Use it to distinguish a quiet link from fresh data.
 
 `make -C firmware/esp32 packet-lua-test` runs the real Wasm sampler against known
 quarter-dB samples, ring wrap, path widths, 24 retained hops and the shared
-`!snr` command. It also checks report rollback, capability and numeric bounds.
+`!snr`/`!rssi` prefix matching and reply bounds. It also checks report rollback,
+capability and numeric bounds.
 `make -C firmware/esp32 telemetry-test` checks row rotation and bounded encoding.
 These checks do not transmit or change a connected radio.

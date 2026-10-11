@@ -608,14 +608,14 @@ static void command_mesh_experience() {
   const auto channel = Peer::hashtag("#example1");
   mesh::Utils::sha256(digest, sizeof(digest), canonical, strlen(question) + 4, channel.secret, sizeof(channel.secret));
   char other[64] = "Otherbot: [q:";
-  for (unsigned i = 0; i < 4; ++i) snprintf(other + 13 + 2 * i, 3, "%02x", digest[i]);
-  strcpy(other + 21, "] Pong");
+  snprintf(other + 13, 3, "%02x", digest[0]);
+  strcpy(other + 15, "] Pong");
   f.deliver(outsider.group(other)); f.step(700);
   assert(caller.groupReplies(f.radio).empty() && f.bot.counters().readSuppressed == 1);
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(caller.group("user: !plugins")); f.step(700);
   const auto delayed = caller.groupReplies(f.radio);
-  assert(delayed.size() == 1 && delayed[0].find("[q:") == 0 && delayed[0].find("custom 3 commands") != std::string::npos);
+  assert(delayed.size() == 1 && delayed[0].find("[q:") == 0 && delayed[0][5] == ']' && delayed[0][6] == ' ' && delayed[0].find("custom 3 commands") != std::string::npos);
   assert(f.bot.setSharedState(true));
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(caller.group("user: !board put example unsafe")); f.step();
@@ -737,7 +737,7 @@ static void stock_chat_through_native_relay() {
     for (unsigned i = 0; i < width; ++i)
       snprintf(observed + 2 * i, 3, "%02x", relay.self_id.pub_key[i]);
     assert(peer.messages.size() == 1 &&
-           peer.messages[0] == "1 unique paths in 1000 ms; " + std::to_string(width) + ":" + observed);
+           peer.messages[0] == "Paths: 1 in 1s; " + std::string(observed));
     timeMs += 61000;
     assert(peer.command(*contact, "!ping") == MSG_SEND_SENT_DIRECT);
     run();
@@ -934,7 +934,7 @@ static void commands_and_packets() {
   Peer peer; f.learn(peer);
   assert(f.command(peer, "!ping") == "Pong");
   assert(f.command(peer, "!path", 2, {0xa1, 0xa2, 0xb1, 0xb2}) == "2:a1a2b1b2");
-  assert(f.command(peer, "!test", 1, {0xab}).find("RSSI=-91.5 dBm SNR=5.25 dB") != std::string::npos);
+  assert(f.command(peer, "!test", 1, {0xab}).find("SNR 5.25 dB; RSSI -91.5 dBm") != std::string::npos);
   assert(f.command(peer, "!trace").find("Error: TRACE") == 0);
   assert(f.command(peer, "!trace", 3, {0xa1, 0xb2, 0xc3}) ==
          "Error: TRACE requires an explicit route or a received flood path (width 1/2)");
@@ -1039,7 +1039,7 @@ static void commands_and_packets() {
   timeMs += 1000; f.step();
   const auto replies = peer.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 1 && replies[0] ==
-         "8 unique paths in 1000 ms; 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08; truncated");
+         "Paths: 8 in 1s; 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08; truncated");
   assert(f.bot.counters().observationsDropped == 1);
   timeMs += 61000; f.radio.sent.clear();
   const auto overflow = peer.command(f.bot.publicKey(), "!mt 1", 1, {0xa1});
@@ -1102,7 +1102,7 @@ static void collected_path_segments() {
   timeMs += 5000; f.step();
   const auto replies = peer.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 1 && replies[0] ==
-         "2 unique paths in 5000 ms; a1a2a3,b1b2b3 | c1c2c3,d1d2d3");
+         "Paths: 2 in 5s; a1a2a3,b1b2b3 | c1c2c3,d1d2d3");
   assert(replies[0].size() <= BotReplyLimit && f.bot.counters().observationsDropped == 0);
   puts("PASS !mt 5 native two-path reply: actual three-byte header segments, deduplicated and bounded");
 }
@@ -1130,7 +1130,7 @@ static void deferred_receive_metadata() {
     timeMs += 100; f.step();
     auto replies = peer.replies(f.bot.publicKey(), f.radio);
     assert(replies.size() == 1 &&
-           replies[0] == "Connected; path 1:a1; RSSI=-103.5 dBm SNR=-4.25 dB");
+           replies[0] == "Connected: SNR -4.25 dB; RSSI -103.5 dBm; path 1:a1");
 
     timeMs += 61000; f.radio.sent.clear();
     const auto mt = peer.command(f.bot.publicKey(), "!mt 1", 1, {0xa1});
@@ -1150,7 +1150,7 @@ static void deferred_receive_metadata() {
     assert(peer.replies(f.bot.publicKey(), f.radio).empty());
     timeMs += 1000; f.step();
     replies = peer.replies(f.bot.publicKey(), f.radio);
-    assert(replies.size() == 1 && replies[0] == "2 unique paths in 1000 ms; 1:a1 | 1:b2");
+    assert(replies.size() == 1 && replies[0] == "Paths: 2 in 1s; a1 | b2");
     assert(f.bot.counters().observationsDropped == 0);
 
     timeMs += 61000; f.radio.sent.clear();
@@ -1158,7 +1158,7 @@ static void deferred_receive_metadata() {
     f.step();
     replies = peer.replies(f.bot.publicKey(), f.radio);
     assert(replies.size() == 1 &&
-           replies[0] == "Connected; path 1:c3; local; RSSI/SNR unavailable");
+           replies[0] == "Connected: local reflection; RF unmeasured; path 1:c3");
   }
   puts("PASS deferred flood receive metadata survives unrelated RF/local packets; "
        "!test signal and !mt RF-only paths remain packet-specific");
@@ -2889,7 +2889,7 @@ static void event_collector_capacity() {
       if (accepted[i]) {
         assert(replies.front().size() <= BotReplyLimit);
         assert(replies.front() == (mode == 2 ? "Error: Bot busy; collected command not executed" :
-                                               "1 unique paths in 1000 ms; 1:01"));
+                                               "Paths: 1 in 1s; 01"));
       }
     }
     assert(f.bot.counters().eventsQueued == 1 && !f.bot.counters().eventsCompleted);
@@ -2954,7 +2954,7 @@ static void channel_wait_collector_and_source_fences() {
          !f.bot.counters().eventsCompleted);
   timeMs = started + 32600; f.step();
   const auto completed = caller.groupReplies(f.radio);
-  assert(completed.size() == 2 && completed.back() == "1 unique paths in 2000 ms; 3:010203");
+  assert(completed.size() == 2 && completed.back() == "Paths: 1 in 2s; 010203");
   assert(f.bot.counters().eventsCompleted == 1 && f.bot.counters().eventsFailed == 0);
   assert(f.bot.setEventAccess(0));
 
@@ -3120,14 +3120,13 @@ static void native_diagnostics() {
   const auto status = f.command(first, "!status");
   assert(status.find("bot=ready") != std::string::npos &&
          status.find("roles selected/ready=0/0") != std::string::npos &&
-         status.find("battery=unavailable") != std::string::npos &&
          status.find("WiFi=unavailable") != std::string::npos);
   assert(f.command(first, "!about") ==
-         "Mesh command bot. !help lists commands; !help NAME shows usage; !plugins lists installed programs.");
+         "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
   const auto version = f.command(first, "!version");
-  assert(version.find("MeshCore rev d92964352441; Lua 5.5.1; built ") == 0 &&
+  assert(version.find("Version: MeshCore d92964352441; Lua 5.5.1; built ") == 0 &&
          version.find("image hash unavailable") == std::string::npos);
-  assert(f.command(first, "!uptime").find("Uptime snapshot since boot:") == 0);
+  assert(f.command(first, "!uptime").find("Uptime:") == 0);
   RadioDashboard::RoleStatus botStatus; f.bot.dashboardStatus(botStatus);
   mesh::QueuedRadioStats before;
   assert(f.mux.getQueuedRadioStats(botStatus.source_slot, before));
@@ -3140,8 +3139,8 @@ static void native_diagnostics() {
     const auto signal = f.command(first, "!signal", width, Bytes(width, 0x12));
     std::string path;
     for (unsigned i = 0; i < width; ++i) path += "12";
-    assert(signal.find("RSSI=-91.5dBm SNR=5.25dB") != std::string::npos &&
-           signal.find("path=" + path) != std::string::npos);
+    assert(signal.find("SNR 5.25 dB; RSSI -91.5 dBm") != std::string::npos &&
+           signal.find("path " + path) != std::string::npos);
   }
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!signal", 1, {0x12}), -101.0f, 1.25f);
@@ -3149,8 +3148,8 @@ static void native_diagnostics() {
   f.step();
   const auto firstReplies = first.replies(f.bot.publicKey(), f.radio);
   const auto secondReplies = second.replies(f.bot.publicKey(), f.radio);
-  assert(firstReplies.size() == 1 && firstReplies[0].find("RSSI=-101dBm SNR=1.25dB; path=12") != std::string::npos);
-  assert(secondReplies.size() == 1 && secondReplies[0].find("RSSI=-81dBm SNR=3.75dB; path=abcdef") != std::string::npos);
+  assert(firstReplies.size() == 1 && firstReplies[0].find("SNR 1.25 dB; RSSI -101 dBm; path 12") != std::string::npos);
+  assert(secondReplies.size() == 1 && secondReplies[0].find("SNR 3.75 dB; RSSI -81 dBm; path abcdef") != std::string::npos);
   timeMs += 61000; f.radio.sent.clear();
   f.reflect(first.command(f.bot.publicKey(), "!signal")); f.step();
   const auto local = first.replies(f.bot.publicKey(), f.radio);
@@ -3176,7 +3175,7 @@ static void native_diagnostics() {
   f.deliver(second.targetedGroup(f.bot.publicKey(), "different-name: !signal", "#example1", 1)); f.step();
   assert(f.bot.counters().duplicates == duplicates + 1 &&
          first.groupReplies(f.radio, 1).size() == 2 &&
-         first.groupReplies(f.radio, 1).back().find("RSSI=") != std::string::npos);
+         first.groupReplies(f.radio, 1).back().find("RSSI ") != std::string::npos);
   timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = policy.airtimeMs + 1;
   f.deliver(first.targetedGroup(f.bot.publicKey(), "nickname: !air", "#example1", 1)); f.step();
   assert(first.groupReplies(f.radio, 1).empty());

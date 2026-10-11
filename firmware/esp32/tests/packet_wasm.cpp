@@ -335,17 +335,32 @@ static void repeater_snr() {
   BotSession bot; BotVmStats stats;
   assert(bot.load(plugin.data(), plugin.size(), 1, stats, error, sizeof(error)));
   unsigned id = 0;
-  for (const char *command : {"!snr", "!snr D12600", "!snr FFFFFF"}) {
+  const auto signalCommand = [&](const char *command, const mp_report &snapshot, unsigned limit = BotReplyLimit) {
     BotEvent e{}; assert(parseBotCommand(command, strlen(command), e, error, sizeof(error)));
-    e.authenticated = true; e.node.uptimeMs = 2123;
+    e.authenticated = true; e.node.uptimeMs = 2123; e.replyLimit = limit;
     assert(bot.start(++id, e, error, sizeof(error)));
     BotIoRequest request; assert(bot.nextIo(request) && request.kind == BotIoRequest::Inspect && !strcmp(request.key, "packet_report"));
-    BotIoResult completion{}; completion.token = request.token; completion.ok = completion.found = true; completion.packetReport = report;
+    BotIoResult completion{}; completion.token = request.token; completion.ok = completion.found = true; completion.packetReport = snapshot;
     assert(bot.complete(completion)); BotSession::Result result;
     assert(bot.poll(result));
     if (!result.ok) fprintf(stderr, "snr bot: %s\n", result.error);
-    assert(result.ok && strstr(result.action.text, id == 1 ? "SNR avg/P95" : id == 2 ? "256 samples" : "No SNR samples"));
-  }
+    assert(result.ok && strlen(result.action.text) <= limit);
+    return std::string(result.action.text);
+  };
+  assert(signalCommand("!snr", report).find("RSSI avg dBm") != std::string::npos);
+  const auto detail = signalCommand("!snr D12600", report);
+  assert(detail.find("samples 256/256") != std::string::npos && detail.find("RSSI") != std::string::npos);
+  for (const char *command : {"!snr d1", "!snr D1", "!snr d1260", "!rssi d12600"})
+    assert(signalCommand(command, report) == detail);
+  assert(signalCommand("!snr FFFFFF", report).find("No signal samples") == 0);
+  assert(signalCommand("!snr 10", report).find("use a longer prefix") != std::string::npos);
+  auto matching = report; matching.row_count = 2;
+  strcpy(matching.rows[1].label, "D12700");
+  const auto combined = signalCommand("!snr d1", matching, 90);
+  assert(combined.find("D12600") != std::string::npos && combined.find("D12700") != std::string::npos);
+  assert(signalCommand("!rssi D1", matching, 90) == combined);
+  assert(signalCommand("!snr d1", matching, 60) == "2 hops match D1; use a longer prefix");
+  assert(signalCommand("!snr d126", matching, 60).find("SNR avg/P95") == 0);
   const char *snapshotSource =
       "command('snapshot','','Snapshot') function snapshot() "
       "local old=node.packet_report().rows[1].values "

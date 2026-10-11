@@ -40,6 +40,10 @@ constexpr char AdaptivePolicyFault[] = "Adaptive policy unreadable; bot adaptive
 static_assert(sizeof(AdaptivePolicyFault) <= sizeof(RadioDashboard::RoleStatus::fault),
               "Adaptive policy fault must fit dashboard status");
 constexpr uint8_t NativeTelemetryRequest = 0x03;
+constexpr size_t ReadMarkerSize = 7;
+void readMarker(char *output, const uint8_t *request) {
+  snprintf(output, ReadMarkerSize + 1, "[q:%02x] ", request[0]);
+}
 namespace bot_pool {
 #define ONCHIP_PACKET_CAPACITY BotPacketCapacity
 #include "support/PacketPool.h"
@@ -1872,12 +1876,11 @@ struct CommandBot::Core : mesh::Mesh {
                         matched.secret, sizeof(matched.secret));
     const char *message = reinterpret_cast<const char *>(colon + 2);
     const size_t messageSize = length - nicknameSize - 2;
-    if (!event.local && messageSize >= 13 && !strncmp(message, "[q:", 3) && message[11] == ']' && message[12] == ' ') {
+    if (!event.local && messageSize >= ReadMarkerSize && !strncmp(message, "[q:", 3) &&
+        message[ReadMarkerSize - 2] == ']' && message[ReadMarkerSize - 1] == ' ') {
       for (auto &job : invocations) if (job.used && job.deferred) {
-        char marker[14] = "[q:";
-        for (unsigned i = 0; i < 4; ++i) snprintf(marker + 3 + 2 * i, 3, "%02x", job.event.request[i]);
-        strcpy(marker + 11, "] ");
-        if (!memcmp(marker, message, 13) && !memcmp(job.event.channelId, event.channelId, 32)) {
+        char marker[ReadMarkerSize + 1]; readMarker(marker, job.event.request);
+        if (!memcmp(marker, message, ReadMarkerSize) && !memcmp(job.event.channelId, event.channelId, 32)) {
           ++stats.readSuppressed;
           audit(job.event, job.job, "cancelled", "another-bot-replied");
           wipe(&job, sizeof(job));
@@ -2016,7 +2019,7 @@ struct CommandBot::Core : mesh::Mesh {
       rejectAdmission(event, packet, sender, secret, "target required: !@ALIAS COMMAND or !@BOTKEY8 COMMAND", 0); return;
     }
     const bool readQuery = event.channel[0] && !event.targeted && botReadOnlyQuery(event.name);
-    if (readQuery) event.replyLimit -= 13;
+    if (readQuery) event.replyLimit -= ReadMarkerSize;
     if (const char *error = owner.worker_.admissionError(event)) {
       audit(event, 0, "rejected", "source-admission");
       reject(error);
@@ -2138,11 +2141,9 @@ struct CommandBot::Core : mesh::Mesh {
   }
   mesh::Packet *channelReply(const char *reply, const Invocation &invocation) {
     if (!invocation.event.targeted && botReadOnlyQuery(invocation.event.name)) {
-      char marked[BotReplyLimit + 1] = "[q:";
-      for (unsigned i = 0; i < 4; ++i) snprintf(marked + 3 + 2 * i, 3, "%02x", invocation.event.request[i]);
-      strcpy(marked + 11, "] ");
-      if (strlen(reply) + 13 > BotReplyLimit) return nullptr;
-      strcpy(marked + 13, reply);
+      char marked[BotReplyLimit + 1]; readMarker(marked, invocation.event.request);
+      if (strlen(reply) + ReadMarkerSize > BotReplyLimit) return nullptr;
+      strcpy(marked + ReadMarkerSize, reply);
       return channelReply(marked, invocation.groupChannel);
     }
     return channelReply(reply, invocation.groupChannel);

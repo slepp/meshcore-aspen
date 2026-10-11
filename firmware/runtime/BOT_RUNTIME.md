@@ -451,10 +451,10 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `utility.convert(value, from_unit, to_unit)` | RF-safe result text | Value ≤32 B, units ≤4 B; explicit supported unit families |
 | `utility.roll([notation])` | RF-safe result text | Default `1d6`; bounded dice notation |
 | `utility.choose(options)` | RF-safe choice text | Pipe-separated nonempty options, ≤148 B |
-| `node.report(name[, page])` | Read-only diagnostic text | `about`, `version`, `uptime`, `status`, `signal`, `air`, `mt`; only air has pages 1..4 |
+| `node.report(name[, page])` | Read-only diagnostic text | `about`, `version`, `uptime`, `status`, `signal`, `air`, `mt`, `path`, `test`; only air has pages 1..4 |
 | `node.plugins([page])` | Manifest/module summary text | Current source generation, not per-package installation |
 | `node.neighbors([page])` | Yielded bounded observation text | Pages 1..16; cached signed contacts/routes, not live adjacency |
-| `node.packet_report([slot])` | Yielded read-only `{name, row_count, rows}` snapshot or `nil` | Aspen packet slot 0 or 1; each row has `label` and field-name-indexed numeric `values`; see [packet reports](PACKET_ENGINES.md#numeric-reports-shared-with-commands) |
+| `node.packet_report([slot[, label_prefix]])` | Yielded read-only `{name, row_count, rows}` snapshot or `nil` | Aspen packet slot 0 or 1; optional case-insensitive label prefix, at most 23 bytes; each row has `label` and field-name-indexed numeric `values`; see [packet reports](PACKET_ENGINES.md#numeric-reports-shared-with-commands) |
 | `node.admin(command)` | Yielded bounded backend result text | Authenticated trusted-owner private DM only; limited bot admin operations |
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
 | `tostring(number)` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; not Lua's general-purpose `tostring` |
@@ -759,9 +759,10 @@ After verifying the intended masks, save `bot on` and restart to resume it.
 Untargeted native read queries (`ping`, `help`, `plugins`, `neighbors`, `about`,
 `version`, `uptime`, `status`, `signal`, `path`, `air`, `test`, `mt`, `calc`,
 `convert`, `roll`, `choose`) wait a random **250..1250 ms** before invocation,
-in addition to an `mt` collection window. Replies include `[q:XXXXXXXX]`,
-derived from the same native channel request digest. Hearing that marker
-cancels a matching not-yet-run read query. This is bounded, best-effort,
+in addition to an `mt` collection window. Replies include `[q:XX]`,
+the first byte of the native channel request digest in hex. Hearing that marker
+cancels a matching not-yet-run read query in the same channel. The short marker
+saves reply space; a collision can suppress an unrelated pending query. This is bounded, best-effort,
 **unauthenticated channel suppression**: a channel member can suppress a
 reply, and simultaneous replies remain possible. Explicit targets bypass it.
 It never elects a writer or deduplicates state changes across bots. Pending
@@ -867,7 +868,7 @@ without resetting role identities, channels, destinations or airtime settings.
 | `!ping` | `Pong` |
 | `!test` | Native message connection, complete received flood path when available, actual RSSI/SNR; local reflection explicitly has no measured RF signal |
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
-| `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Long replies retain whole hashes and explicitly mark truncation; ninth paths, missing paths and RX queue overflow also mark the result truncated |
+| `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Three-byte hashes shorten to two bytes when needed and unambiguous; further shortening retains whole hashes and marks truncation. Ninth paths, missing paths and RX queue overflow also mark the result truncated |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Bot introduction and pointers to command help and installed programs |
 | `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
@@ -941,23 +942,25 @@ paths` reports these encodings and supported widths.
 Multi-test counts complete paths, not hashes of paths, and excludes local
 forwarding reflections from its RF observation count. It runs the handler
 once after the window, not continuously during collection. For example,
-`!mt 5` can return `2 unique paths in 5000 ms; a1a2a3,b1b2b3 | c1c2c3,d1d2d3`.
-Each entry preserves the received path's 1/2/3-byte hash width and segment
-order; commas separate complete hashes without a width prefix. Hashes are not
+`!mt 5` can return `Paths: 2 in 5s; a1a2a3,b1b2b3 | c1c2c3,d1d2d3`.
+Each entry preserves segment order; commas separate hashes without a width prefix. Hashes are not
 expanded into full public keys. `no repeaters` means an
 observed zero-hop flood, not a consumed direct route. With no complete flood
 observation, the reply explicitly reports direct/local path information as
 unknown.
 
-When complete paths do not fit the invocation's RF reply limit, space is
-shared across observed routes. `...` marks a path shortened at a whole-hash
+When complete paths do not fit the invocation's RF reply limit, three-byte
+hashes shorten to two-byte prefixes unless that would make different observed
+hashes indistinguishable. Existing one-byte hashes remain one byte. If the
+routes still do not fit, space is shared across observed routes.
+`...` marks a path shortened at a whole-hash
 boundary; `; truncated` marks shortened/omitted paths or incomplete collection.
 The reported count is the number of distinct stored observations, not a claim
 that a truncated collection contains every route. Two long paths retain
 segments from both rather than returning only their count. Full captured
 paths remain available to Lua in `ctx.observation.paths`.
-A path too long for one `!test` response returns an error directing the sender
-to `!path`.
+A path too long for one `!test` response is omitted while retaining the signal
+measurements and directing the sender to `!path`.
 Unknown command names and invalid schema arguments return an explicit error.
 `!help [PAGE]` lists native and installed commands; `!help NAME [PAGE]` shows
 the complete native argument schema, manifest help and available example.
@@ -1059,10 +1062,13 @@ exports, invalid schemas and initialization side effects reject installation.
 Only initialization can register commands.
 
 Schemas are comma-separated, at most 96 bytes and four positional arguments:
-`name:string:N` is one nonempty token; `name:text:N` consumes the remaining
+`name:string:N` is one nonempty token; `name:hex:N` is a nonempty hex token
+normalized to uppercase; `name:text:N` consumes the remaining
 text and must be last; `name:int:MIN:MAX` is a bounded integer;
 `name:bool` accepts only `true` or `false`. Strings/text have explicit bounds
-of 1..159 bytes. An optional trailing argument uses `name?:TYPE` and becomes
+of 1..159 bytes. Hex bounds are 1..159 digits; odd-length prefixes are allowed.
+Commands requiring complete bytes or a fixed path width validate those separately.
+An optional trailing argument uses `name?:TYPE` and becomes
 Lua `nil` when omitted. Required arguments cannot follow optional ones.
 Token strings support single/double quotes and backslash escaping; malformed
 quotes, excess/missing arguments, oversized strings and out-of-range numbers
@@ -1248,8 +1254,8 @@ The sandbox opens no standard libraries. Native helpers provide command
 registration, reply/trace/help, numeric `tostring`, `kv` and timer sleep.
 The frozen `utility` table supplies bounded arithmetic, conversion and random
 selection helpers; these do not expose a compiler or general math library.
-The frozen `node.report(name[, page])` binding formats the six read-only
-diagnostics and the `mt` path-collection report from the current invocation,
+The frozen `node.report(name[, page])` binding formats the read-only
+diagnostics and path reports from the current invocation,
 with the same authority and reply bounds; only `air` accepts a page (1..4,
 default 1). It cannot run during source
 initialization, refresh a snapshot or mutate native state.

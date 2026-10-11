@@ -275,7 +275,16 @@ void pushNode(lua_State *s, const onchip::BotNodeSnapshot &n) {
   }
   freeze(s);
 }
-void pushEvent(lua_State *s, const onchip::BotEvent &e, int nodeReference = LUA_NOREF) {
+void pushLimits(lua_State *s, const onchip::BotEvent &e) {
+  lua_createtable(s, 0, 4);
+  integer(s, "reply_bytes", e.replyLimit);
+  integer(s, "path_bytes", onchip::BotPathLimit);
+  integer(s, "trace_bytes", onchip::BotTraceLimit);
+  integer(s, "trace_hops", onchip::BotTraceHopLimit);
+  freeze(s);
+}
+void pushEvent(lua_State *s, const onchip::BotEvent &e, int nodeReference = LUA_NOREF,
+               int limitsReference = LUA_NOREF) {
   lua_createtable(s, 0, 7);
   const char *kinds[] = {"command", "startup", "connectivity", "message", "node_status", "scheduled"};
   text(s, "kind", kinds[e.kind]);
@@ -360,12 +369,9 @@ void pushEvent(lua_State *s, const onchip::BotEvent &e, int nodeReference = LUA_
   }
   freeze(s); lua_setfield(s, -2, "paths");
   freeze(s); lua_setfield(s, -2, "observation");
-  lua_createtable(s, 0, 4);
-  integer(s, "reply_bytes", e.replyLimit);
-  integer(s, "path_bytes", onchip::BotPathLimit);
-  integer(s, "trace_bytes", onchip::BotTraceLimit);
-  integer(s, "trace_hops", onchip::BotTraceHopLimit);
-  freeze(s); lua_setfield(s, -2, "limits");
+  if (limitsReference == LUA_NOREF) pushLimits(s, e);
+  else lua_rawgeti(s, LUA_REGISTRYINDEX, limitsReference);
+  lua_setfield(s, -2, "limits");
   freeze(s);
 }
 struct Call {
@@ -385,6 +391,7 @@ struct Call {
   unsigned utilityCalls = 0;
   int eventReference = LUA_NOREF;
   int nodeReference = LUA_NOREF;
+  int limitsReference = LUA_NOREF;
   int moduleReference = LUA_NOREF;
   int originalReference = LUA_NOREF;
   int sourceOwnersReference = LUA_NOREF;
@@ -408,15 +415,18 @@ int contextIndex(lua_State *s) {
   if (call.eventReference == LUA_NOREF) {
     size_t length = 0;
     const char *key = lua_type(s, 2) == LUA_TSTRING ? lua_tolstring(s, 2, &length) : nullptr;
-    if (key && length == 4 && !memcmp(key, "node", 4)) {
-      if (call.nodeReference == LUA_NOREF) {
-        pushNode(s, call.event->node);
-        call.nodeReference = luaL_ref(s, LUA_REGISTRYINDEX);
+    const bool node = key && length == 4 && !memcmp(key, "node", 4);
+    if (node || (key && length == 6 && !memcmp(key, "limits", 6))) {
+      int &reference = node ? call.nodeReference : call.limitsReference;
+      if (reference == LUA_NOREF) {
+        if (node) pushNode(s, call.event->node);
+        else pushLimits(s, *call.event);
+        reference = luaL_ref(s, LUA_REGISTRYINDEX);
       }
-      lua_rawgeti(s, LUA_REGISTRYINDEX, call.nodeReference);
+      lua_rawgeti(s, LUA_REGISTRYINDEX, reference);
       return 1;
     }
-    pushEvent(s, *call.event, call.nodeReference);
+    pushEvent(s, *call.event, call.nodeReference, call.limitsReference);
     call.eventReference = luaL_ref(s, LUA_REGISTRYINDEX);
   }
   lua_rawgeti(s, LUA_REGISTRYINDEX, call.eventReference);
@@ -949,6 +959,20 @@ int finishIo(lua_State *s, int, lua_KContext) {
       return luaL_error(s, "Invalid packet report snapshot");
     auto *snapshot = static_cast<mp_report *>(lua_newuserdatauv(s, sizeof(mp_report), 0));
     *snapshot = r;
+    if (call.io->value[0]) {
+      const size_t prefixSize = strlen(call.io->value);
+      snapshot->row_count = 0;
+      for (unsigned i = 0; i < r.row_count; ++i) {
+        bool match = true;
+        for (size_t at = 0; at < prefixSize; ++at) {
+          char a = r.rows[i].label[at], b = call.io->value[at];
+          if (a >= 'a' && a <= 'z') a -= 'a' - 'A';
+          if (b >= 'a' && b <= 'z') b -= 'a' - 'A';
+          if (a != b) { match = false; break; }
+        }
+        if (match) snapshot->rows[snapshot->row_count++] = r.rows[i];
+      }
+    }
     packetReportMetatable(s, "onchip.bot.packet_report", packetReportIndex);
     return 1;
   }
@@ -2183,9 +2207,10 @@ int nodePacketReport(lua_State *s) {
   return luaL_error(s, "Packet reports are unavailable in this compact profile");
 #else
   const auto slot = lua_isnoneornil(s, 1) ? 0 : luaL_checkinteger(s, 1);
-  if (slot < 0 || slot > 1 || lua_gettop(s) > 1) return luaL_error(s, "Packet report slot requires 0 or 1");
+  if (slot < 0 || slot > 1 || lua_gettop(s) > 2) return luaL_error(s, "Packet report requires slot 0 or 1 and optional label prefix");
   auto &request = prepareIo(s, onchip::BotIoRequest::Inspect);
   strcpy(request.key, "packet_report"); request.revision = uint32_t(slot); request.delayMs = 5000;
+  if (!lua_isnoneornil(s, 2)) boundedString(s, 2, request.value, MP_REPORT_NAME);
   return lua_yieldk(s, 0, 0, finishIo);
 #endif
 }
@@ -2867,6 +2892,8 @@ struct BotSession::Impl {
       luaL_unref(state, LUA_REGISTRYINDEX, job.call.eventReference);
     if (job.call.nodeReference != LUA_NOREF)
       luaL_unref(state, LUA_REGISTRYINDEX, job.call.nodeReference);
+    if (job.call.limitsReference != LUA_NOREF)
+      luaL_unref(state, LUA_REGISTRYINDEX, job.call.limitsReference);
     if (job.reference != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, job.reference);
     job.~Job();
     new (&job) Job;

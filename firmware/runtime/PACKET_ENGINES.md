@@ -505,10 +505,13 @@ admission succeed; a successful drop may publish. Disabling, faulting or
 replacing a program clears its report. A failed replacement retains the prior
 report. Reports and guest globals are volatile and reset on restart/reload.
 
-Command Lua reads `node.packet_report(slot)` through its normal cooperative
+Command Lua reads `node.packet_report(slot[, label_prefix])` through its normal cooperative
 worker I/O. It returns `nil` before publication, otherwise a read-only
 `{name, row_count, rows}` snapshot. Iterate `1..report.row_count`; each row has
-`label` and `values`, indexed by field name. This API is available on Aspen's
+`label` and `values`, indexed by field name. An optional prefix of at most 23
+bytes filters labels case-insensitively on the copied snapshot. No matches
+returns a report with zero rows; it does not change the published report.
+This API is available on Aspen's
 ESP32 profile. The dashboard exports the same data as `packet_reports` with
 `slot`, `name`, `fields` and `rows` (`label` and numeric `values` arrays).
 Telemetry exports one rotating row per accepted upload as `meshcore_packet`.

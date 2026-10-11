@@ -500,8 +500,10 @@ On a configured channel, use a configured `!@ALIAS COMMAND`,
 `!@BOTKEY8 COMMAND` (or a full public key) for
 custom commands, boards, TRACE and state changes. The eight hex digits are the
 bot key prefix, not a display nickname. Untargeted read-only queries use a
-250..1250 ms jitter window and `[q:XXXXXXXX]` correlation marker for best-effort
-suppression. Any channel member can forge such a reply; it is never owner
+250..1250 ms jitter window and `[q:XX]` correlation marker for best-effort
+suppression in the same channel. The marker uses one digest byte to save reply
+space; collisions can suppress an unrelated pending query. Any channel member
+can forge such a reply; it is never owner
 authentication or write-leader election. Explicit targets bypass suppression.
 `!plugins [PAGE]` describes the real active shared source/modules;
 `!neighbors [PAGE]` reports signed-advert observations and cached paths, not

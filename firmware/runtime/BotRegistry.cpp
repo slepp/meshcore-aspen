@@ -76,7 +76,7 @@ namespace {
 struct Parameter {
   char name[BotNameLimit + 1]{};
   BotValue::Type type = BotValue::String;
-  bool optional = false, rest = false;
+  bool optional = false, rest = false, hex = false;
   int32_t minimum = 0, maximum = 0;
 };
 bool fail(char *error, size_t capacity, const char *message) {
@@ -123,11 +123,12 @@ bool schema(const char *input, Parameter parameters[BotParameterLimit], unsigned
     if (limit) *limit++ = 0;
     if (!strcmp(type, "bool") && !limit) {
       p.type = BotValue::Boolean;
-    } else if ((!strcmp(type, "string") || !strcmp(type, "text")) && limit) {
+    } else if ((!strcmp(type, "string") || !strcmp(type, "text") || !strcmp(type, "hex")) && limit) {
       p.rest = !strcmp(type, "text");
+      p.hex = !strcmp(type, "hex");
       if (!integer(limit, p.maximum) || p.maximum < 1 || p.maximum > int(BotArgumentsLimit) ||
           (p.rest && next))
-        return fail(error, capacity, "String/text bound invalid; text must be the last argument");
+        return fail(error, capacity, "Text/hex bound requires 1..159 digits or bytes; text must be last");
     } else if (!strcmp(type, "int") && limit) {
       p.type = BotValue::Integer;
       char *maximum = strchr(limit, ':');
@@ -136,7 +137,7 @@ bool schema(const char *input, Parameter parameters[BotParameterLimit], unsigned
       if (!integer(limit, p.minimum) || !integer(maximum, p.maximum) || p.minimum > p.maximum)
         return fail(error, capacity, "Invalid integer bounds");
     } else {
-      return fail(error, capacity, "Use string:N, text:N, int:MIN:MAX or bool");
+      return fail(error, capacity, "Use string:N, text:N, hex:N, int:MIN:MAX or bool");
     }
     part = next;
   }
@@ -250,6 +251,14 @@ bool parseBotArguments(const BotCommand &command, const char *input,
         char reason[48];
         snprintf(reason, sizeof(reason), "requires 1..%u bytes", unsigned(p.maximum));
         return invalid(reason);
+      }
+      if (p.hex) {
+        for (size_t at = 0; at < size; ++at) {
+          char &c = value.text[at];
+          if (c >= 'a' && c <= 'f') c -= 'a' - 'A';
+          if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
+            return invalid("requires hexadecimal digits");
+        }
       }
     } else if (p.type == BotValue::Integer) {
       if (!integer(value.text, value.integer) || value.integer < p.minimum || value.integer > p.maximum)
