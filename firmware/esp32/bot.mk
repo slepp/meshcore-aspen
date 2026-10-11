@@ -30,6 +30,9 @@ BOT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder 
 	-ffunction-sections -fdata-sections -Wl,--gc-sections -pthread \
 	-DMESHCORE_ONCHIP_BOT=1 -DONCHIP_BOT_WASM=$(ONCHIP_BOT_WASM) $(BOT_WAMR_INCLUDES) $(TEST_FLAGS)
 .PHONY: bot-adaptive-test bot-adaptive-native-test bot-adaptive-admin-test bot-source-api-test
+.PHONY: bot-find-path-test
+bot-find-path-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --find-path-test
 .PHONY: bot-repeater-test
 bot-repeater-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --repeater-test

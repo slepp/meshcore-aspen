@@ -8,7 +8,7 @@ namespace onchip {
 bool botSourceIsWasm(const char *source, size_t size);
 constexpr unsigned BotCommandLimit = 8, BotParameterLimit = 4;
 constexpr unsigned BotModuleLimit = 8;
-constexpr unsigned BotBuiltinCommandLimit = 30;
+constexpr unsigned BotBuiltinCommandLimit = 31;
 struct BotCommand {
   enum Permission : uint8_t { Public, Private, Owner, Channel, Shared, Reminder, Home } permission = Public;
   char name[BotNameLimit + 1]{}, function[BotNameLimit + 1]{};

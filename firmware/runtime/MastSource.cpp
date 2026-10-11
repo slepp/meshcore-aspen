@@ -841,6 +841,10 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s global-min=30s discovery=60..86400s default=900s", BotRepeaterLimit);
     return;
   }
+  if (!strcmp(input, "api find-path")) {
+    respond("Find-path mesh.find_path(hex-prefix) digits=1..64 case=insensitive wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
+    return;
+  }
   if (!strcmp(input, "api mesh")) {
     static constexpr char meshApi[] =
         "Mesh compose=dm,channel,trace dm=caller+owner-fullkey[1-4] "

@@ -42,8 +42,9 @@ path when unknown; the first eligible request uses bounded flood discovery.
 Frequency `0` explicitly permits polling on the modem's current frequency.
 `add` updates an existing alias; duplicate target keys and the bot's own key
 are rejected. Normal capacity is 12 targets; compact Pine capacity is four.
-An updated path replaces that target's cached outbound route. Other targets'
-routes, pending requests and next-poll times remain unchanged.
+An explicit path replaces that target's cached outbound route, including when
+first adding an already known contact or reapplying the same saved seed. Other
+targets' routes, pending requests and next-poll times remain unchanged.
 
 Pause one target without losing its key, route, cooldown or last-good sample:
 
@@ -54,10 +55,10 @@ bot repeaters enable ridge on
 bot repeaters remove ridge
 ```
 
-`enable` is saved and applies immediately. A disabled target sends no requests
-and reports `enabled=0`, `error=disabled` and `wait=disabled`; retained voltage
-stays at its original sample time. Re-enabling respects the existing poll and
-discovery cooldowns. Updating a disabled alias with `add` keeps it disabled.
+`enable` is saved and applies immediately. A disabled target sends no scheduled
+monitor requests and reports `enabled=0`, `error=disabled` and `wait=disabled`;
+retained voltage stays at its original sample time. Re-enabling respects the
+existing poll and discovery cooldowns. Updating a disabled alias with `add` keeps it disabled.
 `remove` deletes the saved target; a new alias added to that slot starts enabled.
 Disabling or editing one target cancels only its pending request and cannot
 undo a request already transmitted. Use `bot repeaters off` to stop all targets.
@@ -105,6 +106,8 @@ cooldown still applies. `timing ridge` reports the waiting reason, seconds until
 the next eligible poll/discovery and the last sample's UTC timestamp. Eligibility
 does not reserve airtime or bypass another pending request. Learned routes are
 rebuilt after a restart; adverts do not supply status or an outbound route.
+`timing` without an alias reports the shared route/monitor start cooldown and
+number of pending probes, without sending RF.
 See [Aspen telemetry setup](../esp32/TELEMETRY.md) if publishing is not already
 configured. HTTP 2xx confirms receiver acceptance; query the receiver to
 check ingestion.

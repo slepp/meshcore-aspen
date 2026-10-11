@@ -408,6 +408,7 @@ and [reminder route/time rules](#reboot-autonomous-personal-dm-reminders).
 | `mesh.wait{kind=..., timeout_ms=...[, filters...]}` | ACK/TRACE result or immutable received text/channel handle | 1..30000 ms; `ack`, `text`, `channel`, `trace`; channel wait separately granted |
 | `mesh.forward(packet)` | Terminal TX result | One separately granted sender/destination pair; latest eligible follow-up DM, re-encrypted as the bot |
 | `request_trace([width_hex])`, `mesh.trace([width_hex])`, `trace([width_hex])` | Bounded native TRACE-result text | Direct route; explicit widths 1/2/4/8, not ordinary width 3 |
+| `mesh.find_path(hex_prefix)` | Fresh repeater route or labelled cached fallback | 1..64 case-insensitive hex digits; 10-second asynchronous probe; `action_trace` permission and radio budgets |
 | `mesh.multitrace([width_hex[, count]])` | Bounded numbered text summary | Count 1..3, default 2; sequential yielding operations share invocation budget |
 | `mesh.advert()`, `advert()` | Bounded completion text | Actual advert TX completion; 15-minute public advert gate and shared airtime |
 
@@ -459,6 +460,9 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
 | `tostring(number[, places])` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; optional 0..6 decimal places, rounded half away from zero; not Lua's general-purpose `tostring` |
 | `ping()`, `test()`, `path()`, `mt()`, `help(...)` | Composable bundled diagnostic text | Current invocation context; nested calls share quotas and do not independently reply |
+
+Compact Pine omits `node.packet_report` (`nil`); numeric packet-report inspection
+is available on Aspen and the host.
 
 Utilities require authenticated DM or verified selected-channel context and
 allow eight calls per invocation. Unsupported arguments are errors.
@@ -704,6 +708,35 @@ works. `node.neighbors(page)` yields a bounded dispatcher-produced report;
 the VM never reads the live contact cache. `node.plugins(page)` returns the
 copied active manifest metadata.
 
+Use `!find-path d2` to check the bot's route to a new repeater. Hex prefixes
+are case-insensitive and may end on a single hex digit; ambiguous prefixes ask
+for more digits before sending anything. The destination must already have a
+full public key in the bot's signed contacts, the companion's saved signed
+adverts or the owner's monitor targets. A hash seen only in an RF path does not
+identify a destination. Receive or share its signed advert first if it is unknown.
+
+The bot sends one anonymous empty-password guest login by flood, then confirms
+the returned route with a tagged base-telemetry request sent directly along it.
+Default open-guest repeaters can admit the bot through this normal login; a
+closed guest password requires the repeater owner to grant the bot access.
+A login reply alone never counts as a fresh route. Both packets share the
+existing airtime admission and `action_trace` permission. The whole operation
+waits up to 10 seconds outside the Lua VM, with no automatic retries.
+
+Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
+diagnostic can still probe it under the command permissions and radio budget.
+Route discovery and monitor requests share one start per 30 seconds. Monitored
+targets also retain their saved flood-discovery cooldown across restarts. While
+that cooldown runs, a known route can be tested directly and is labelled
+`cached route confirmed`; an unknown route reports the cooldown without sending.
+A successful new flood route is labelled `fresh`, followed by `WIDTH:HEX`.
+If an actual transmitted attempt times out, the reply labels any retained route
+`probe timed out; cached`. With no cached route, it reports that the repeater may
+be offline or may not permit guest discovery. A long route that cannot fit the
+reply reports its hop count rather than a partial route. Routes stay in RAM
+and must be learned again after a restart. Lua handlers can use the same
+asynchronous operation through `mesh.find_path(prefix)`.
+
 Configure target aliases through authenticated administration:
 
 ```text
@@ -869,6 +902,7 @@ without resetting role identities, channels, destinations or airtime settings.
 | `!test` | Native message connection, complete received flood path when available, actual RSSI/SNR; local reflection explicitly has no measured RF signal |
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
 | `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Three-byte hashes shorten to two bytes when needed and unambiguous; further shortening retains whole hashes and marks truncation. Ninth paths, missing paths and RX queue overflow also mark the result truncated |
+| `!find-path PREFIX` | Finds a fresh repeater route in up to 10 seconds; case-insensitive key prefix; explicit cached fallback on timeout |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Bot introduction and pointers to command help and installed programs |
 | `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |

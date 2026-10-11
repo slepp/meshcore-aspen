@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
 #include "BotVm.h"
+#include <cctype>
 #include "PacketReports.h"
 #include "BotBuiltinManifest.h"
 #if ONCHIP_BOT_WASM
@@ -142,7 +143,7 @@ int readonlyIndex(lua_State *state) {
 void freeze(lua_State *state) {
   // A userdata proxy prevents writes to existing keys as well as new keys.
 #if ONCHIP_BOT_COMPACT_PROFILE
-  lua_newuserdatauv(state, 1, 1);
+  lua_newuserdatauv(state, 0, 1);
   lua_pushvalue(state, -2); lua_setiuservalue(state, -2, 1);
   if (luaL_newmetatable(state, "onchip.bot.readonly")) {
     lua_pushcfunction(state, readonlyIndex); lua_setfield(state, -2, "__index");
@@ -1095,7 +1096,8 @@ int finishIo(lua_State *s, int, lua_KContext) {
       freeze(s);
     }
   } else if (call.io->kind == onchip::BotIoRequest::Trace || call.io->kind == onchip::BotIoRequest::Advert ||
-             call.io->kind == onchip::BotIoRequest::Inspect || call.io->kind == onchip::BotIoRequest::Admin) {
+             call.io->kind == onchip::BotIoRequest::Inspect || call.io->kind == onchip::BotIoRequest::Admin ||
+             call.io->kind == onchip::BotIoRequest::FindPath) {
     lua_pushstring(s, call.completion->value);
   } else lua_pushboolean(s, true);
   return 1;
@@ -2314,6 +2316,20 @@ int nodePacketReport(lua_State *s) {
   return lua_yieldk(s, 0, 0, finishIo);
 #endif
 }
+int findPath(lua_State *s) {
+  if (lua_gettop(s) != 1) return luaL_error(s, "find_path requires one hex key prefix");
+  auto &request = prepareIo(s, onchip::BotIoRequest::FindPath);
+  boundedString(s, 1, request.value, 65);
+  const size_t length = strlen(request.value);
+  if (!length) return luaL_error(s, "Use 1..64 hex digits");
+  for (size_t i = 0; i < length; ++i) {
+    if (!isxdigit(static_cast<unsigned char>(request.value[i])))
+      return luaL_error(s, "Use a hexadecimal public-key prefix");
+    request.value[i] = char(tolower(static_cast<unsigned char>(request.value[i])));
+  }
+  request.delayMs = 10000;
+  return lua_yieldk(s, 0, 0, finishIo);
+}
 int nodeNeighbors(lua_State *s) {
   const lua_Integer page = lua_isnoneornil(s, 1) ? 1 : luaL_checkinteger(s, 1);
   if (page < 1 || page > 16) return luaL_error(s, "Neighbors page requires 1..16");
@@ -2402,7 +2418,9 @@ int nodeReport(lua_State *s) {
 void nodeApi(lua_State *s) {
   lua_newtable(s);
   lua_pushcfunction(s, nodeReport); lua_setfield(s, -2, "report");
+#if !ONCHIP_BOT_COMPACT_PROFILE
   lua_pushcfunction(s, nodePacketReport); lua_setfield(s, -2, "packet_report");
+#endif
   lua_pushcfunction(s, pluginInfo); lua_setfield(s, -2, "plugins");
   lua_pushcfunction(s, nodeNeighbors); lua_setfield(s, -2, "neighbors");
   lua_pushcfunction(s, nodeAdmin); lua_setfield(s, -2, "admin");
@@ -2485,6 +2503,7 @@ int execute(lua_State *s) {
   helper(s, call, "call_original", callOriginal);
   helper(s, call, "reply", reply);
   helper(s, call, "request_trace", trace);
+  helper(s, call, "find_path", findPath);
   helper(s, call, "command_help", commandHelp);
   utilityApi(s);
   nodeApi(s);
@@ -2511,7 +2530,9 @@ int execute(lua_State *s) {
   if (!call.manifest->count && !call.manifest->eventMask) return luaL_error(s, "source must declare exported command functions or events");
   for (unsigned i = 0; i < call.manifest->count; ++i) {
     lua_getglobal(s, call.manifest->commands[i].function);
-    if (!lua_isfunction(s, -1) || lua_iscfunction(s, -1))
+    const bool nativeFindPath = call.bundled && !strcmp(call.manifest->commands[i].name, "find-path") &&
+                               lua_tocfunction(s, -1) == findPath;
+    if (!lua_isfunction(s, -1) || (lua_iscfunction(s, -1) && !nativeFindPath))
       return luaL_error(s, "registered export is not a Lua function");
     lua_pop(s, 1);
   }
@@ -2765,6 +2786,7 @@ struct BotSession::Impl {
     helper(s, call, "call_original", callOriginal);
     helper(s, call, "reply", reply);
     helper(s, call, "request_trace", trace);
+    helper(s, call, "find_path", findPath);
     helper(s, call, "command_help", commandHelp);
     helper(s, call, "sleep", sleepFor);
     helper(s, call, "advert", sendAdvert);
@@ -2801,10 +2823,11 @@ struct BotSession::Impl {
     lua_pushcfunction(s, forwardPacket); lua_setfield(s, -2, "forward");
     lua_pushcfunction(s, waitPacket); lua_setfield(s, -2, "wait");
     lua_pushcfunction(s, traceRoute); lua_setfield(s, -2, "trace");
+    lua_pushcfunction(s, findPath); lua_setfield(s, -2, "find_path");
     lua_pushcfunction(s, multiTrace); lua_setfield(s, -2, "multitrace");
     lua_pushcfunction(s, sendAdvert); lua_setfield(s, -2, "advert");
     freeze(s); lua_setglobal(s, "mesh");
-    lua_newuserdatauv(s, 1, 0);
+    lua_newuserdatauv(s, 0, 0);
     lua_newtable(s);
     lua_pushcfunction(s, contextIndex); lua_setfield(s, -2, "__index");
     lua_pushcfunction(s, readonly); lua_setfield(s, -2, "__newindex");
@@ -2875,7 +2898,9 @@ struct BotSession::Impl {
         return luaL_error(s, "source must declare exported command functions or events");
       for (unsigned i = 0; i < call.manifest->count; ++i) {
         lua_getglobal(s, call.manifest->commands[i].function);
-        const bool valid = lua_isfunction(s, -1) && !lua_iscfunction(s, -1);
+        const bool nativeFindPath = call.bundled && !strcmp(call.manifest->commands[i].name, "find-path") &&
+                                   lua_tocfunction(s, -1) == findPath;
+        const bool valid = lua_isfunction(s, -1) && (!lua_iscfunction(s, -1) || nativeFindPath);
         lua_pop(s, 1);
         if (!valid) return luaL_error(s, "registered export is not a Lua function");
       }

@@ -2382,7 +2382,7 @@ static void native_source_api_capacities() {
   assert(overrides == "Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=8");
   assert(overrides.size() < 146);
   for (const char *query : {"source api sources", "source api repeaters", "source api bundled",
-                           "source api events"}) {
+                           "source api events", "source api find-path"}) {
     const auto response = f.administer(query);
     assert(response.find("Error:") != 0 && response.size() < 146);
   }
@@ -2541,6 +2541,181 @@ static void native_board() {
   puts("PASS native board: verified channel-key/nickname sharing, distinct secrets, private notes/DM denial, source/reboot, widths1/2/3, dedup/zero cooldown, malformed crypto and failed durable grant revoke");
 }
 
+static void native_find_path() {
+  assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotRepeaterPolicy({}));
+  Fixture f; f.start();
+  Peer caller, peer, stranger;
+  f.learn(caller); f.learn(peer); f.learn(stranger);
+  char key[65]{}, command[160]{}, reply[192]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02X", peer.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:112233", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  const auto probes = [&]() {
+    unsigned count = 0;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
+      count += p.getPayloadType() == PAYLOAD_TYPE_ANON_REQ || p.getPayloadType() == PAYLOAD_TYPE_REQ;
+    }
+    return count;
+  };
+  const auto ask = [&]() {
+    timeMs += 61000; f.radio.sent.clear();
+    snprintf(command, sizeof(command), "!find-path %s", key);
+    f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+  };
+  // Clock readiness is a native admission check, before either packet is sent.
+  ask(); assert(probes() == 0 && !f.bot.jobsInUse());
+  auto replies = caller.replies(f.bot.publicKey(), f.radio);
+  assert(replies.size() == 1 && replies[0].find("trusted clock") != std::string::npos);
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  ask(); assert(probes() == 1 && f.bot.jobsInUse());
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
+    if (p.getPayloadType() != PAYLOAD_TYPE_ANON_REQ) continue;
+    assert(p.isRouteFlood());
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    const int size = mesh::Utils::MACThenDecrypt(secret, plain, p.payload + 33, p.payload_len - 33);
+    assert(size == 16 && plain[4] == 0); // Only an empty guest password.
+  }
+  const Bytes path{0xcc, 0x26, 0x8a, 0xd1, 0x26, 0x00};
+  const auto response = [&](Peer &sender, uint32_t tag, bool login, bool withPath, const Bytes &route, uint8_t sample = 120) {
+    uint8_t secret[32]{}, plain[16]{};
+    sender.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, tag);
+    if (login) plain[7] = 1;
+    else { plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; plain[6] = 1; plain[7] = sample; }
+    auto *packet = withPath ? sender.createPathReturn(mesh::Identity(f.bot.publicKey()), secret,
+        (route.empty() ? secret : route.data()), uint8_t(0x80 | route.size() / 3), PAYLOAD_TYPE_RESPONSE, plain, login ? 13 : 8) :
+        sender.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, login ? 13 : 8);
+    assert(packet);
+    packet->header |= !login && !withPath ? ROUTE_TYPE_FLOOD : ROUTE_TYPE_DIRECT;
+    packet->path_len = 0x80;
+    return sender.wire(packet);
+  };
+  f.deliver(response(stranger, 1800000000, true, true, path)); f.step();
+  assert(probes() == 1);
+  f.deliver(response(peer, 1800000000, true, true, path)); f.step(300);
+  assert(probes() == 2 && f.bot.jobsInUse());
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:112233 repair=0")); // Provisional only.
+  uint32_t tag = 0;
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
+    if (p.getPayloadType() != PAYLOAD_TYPE_REQ) continue;
+    assert(p.isRouteDirect() && p.getPathHashSize() == 3 && p.getPathHashCount() == 2 &&
+           !memcmp(p.path, path.data(), path.size()));
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    const int size = mesh::Utils::MACThenDecrypt(secret, plain, p.payload + 2, p.payload_len - 2);
+    assert(size == 16 && plain[4] == 3 && plain[5] == uint8_t(~TELEM_PERM_BASE));
+    tag = queued_tx::get32(plain);
+  }
+  assert(tag);
+  // A delayed login can have the exact same UTC/tag. It is not telemetry.
+  f.deliver(response(peer, tag, true, true, path)); f.step();
+  f.deliver(response(stranger, tag, false, false, {})); f.step();
+  f.deliver(response(peer, tag - 1, false, true, path)); f.step();
+  f.reflect(response(peer, tag, false, false, {})); f.step();
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:112233 repair=0") && f.bot.jobsInUse());
+  f.deliver(response(peer, tag, false, true, {})); f.step();
+  assert(f.bot.jobsInUse()); // A telemetry PATH cannot claim a false direct route.
+  f.deliver(response(peer, tag, false, false, {}, 121)); f.step(300);
+  assert(!f.bot.jobsInUse());
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:cc268ad12600 repair=0"));
+  replies = caller.replies(f.bot.publicKey(), f.radio);
+  assert(replies.size() == 1 && replies[0].find("fresh 3:cc268ad12600") != std::string::npos);
+  BotRepeaterPolicy retained; assert(loadBotRepeaterPolicy(retained));
+  const uint32_t floodUtc = retained.targets[0].lastFloodUtc;
+  // During the monitored flood cooldown, test the known route with new direct
+  // traffic and label it as a confirmed cached route rather than a new flood.
+  ask(); assert(probes() == 1 && f.bot.jobsInUse());
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
+    if (p.getPayloadType() == PAYLOAD_TYPE_ANON_REQ) assert(p.isRouteDirect());
+  }
+  f.deliver(response(peer, 1800000062, true, false, {})); f.step(300);
+  assert(probes() == 2);
+  // Leave the confirmation unanswered: return explicitly cached output only
+  // after the actual attempt times out, retaining the saved flood cooldown.
+  timeMs += 10000; f.step(300);
+  replies = caller.replies(f.bot.publicKey(), f.radio);
+  assert(replies.size() == 1 && replies[0].find("probe timed out; cached 3:cc268ad12600") != std::string::npos);
+  assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
+  f.deliver(response(peer, tag, false, true, Bytes{0xaa, 0xbb, 0xcc})); f.step();
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:cc268ad12600 repair=0"));
+  // Explicit owner seeds win on both initial add over an existing contact and
+  // reapplication after a different route was learned, without clearing cooldown.
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:112233", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:112233 repair=0"));
+  assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
+  // Prefix ambiguity is resolved before any radio effect.
+  uint8_t collision[32]; memcpy(collision, peer.self_id.pub_key, 32); collision[31] ^= 1;
+  char second[65]{}; for (unsigned i = 0; i < 32; ++i) snprintf(second + 2*i, 3, "%02x", collision[i]);
+  snprintf(command, sizeof(command), "add other %s 912525000", second);
+  f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  snprintf(command, sizeof(command), "!find-path %.2s", key);
+  replies.clear(); const auto ambiguous = f.command(caller, command);
+  assert(ambiguous.find("2 matches:") != std::string::npos && probes() == 0);
+  // The independent RF-action policy still applies in an authenticated DM.
+  f.bot.radioPolicyCommand("access dm action_trace 2", reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved and applied", 17));
+  snprintf(command, sizeof(command), "!find-path %s", key);
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+  replies = caller.replies(f.bot.publicKey(), f.radio);
+  assert(replies.size() == 1 && replies[0].find("denies radio action") != std::string::npos && probes() == 0);
+  f.bot.radioPolicyCommand("access dm action_trace inherit", reply, sizeof(reply));
+  ask(); assert(probes() == 1 && f.bot.jobsInUse());
+  f.bot.cancelJobs(); f.step();
+  f.deliver(response(peer, 1800000200, true, true, path)); f.step(300);
+  assert(!f.bot.jobsInUse() && probes() == 1);
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
+  assert(!strcmp(reply, "pilot route=3:112233 repair=0"));
+  // Restore the original monitor authority after this isolated test process.
+  assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
+  puts("PASS find-path: empty guest flood, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
+}
+static void find_path_full_contact_scan() {
+  using namespace contact_recovery_test;
+  assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotRepeaterPolicy({}));
+  Fixture f; f.start();
+  Peer caller; f.learn(caller);
+  const uint8_t nibble = (caller.self_id.pub_key[0] & 0xf0) == 0xd0 ? 0xe0 : 0xd0;
+  std::vector<std::unique_ptr<Peer>> cached;
+  saved.clear();
+  while (cached.size() < 15) {
+    auto peer = std::make_unique<Peer>();
+    if ((peer->self_id.pub_key[0] & 0xf0) == nibble) continue;
+    saved.push_back(snapshot(*peer)); cached.push_back(std::move(peer));
+  }
+  f.bot.setContactLookup(lookup);
+  for (const auto &peer : cached) assert(f.command(*peer, "!ping") == "Pong");
+  assert(status(f).find("Contacts=16/16 observed=1") == 0);
+  std::vector<std::unique_ptr<Peer>> candidates;
+  saved.clear();
+  while (candidates.size() < 2) {
+    auto peer = std::make_unique<Peer>();
+    if ((peer->self_id.pub_key[0] & 0xf0) != nibble ||
+        (!candidates.empty() && peer->self_id.pub_key[0] == candidates[0]->self_id.pub_key[0])) continue;
+    saved.push_back(snapshot(*peer)); candidates.push_back(std::move(peer));
+  }
+  char command[32]; snprintf(command, sizeof(command), "!find-path %x", nibble >> 4);
+  const auto text = f.command(caller, command);
+  assert(text.find("Contact scan incomplete") != std::string::npos);
+  assert(status(f).find("Contacts=16/16 observed=1") == 0);
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+    assert(packet.getPayloadType() != PAYLOAD_TYPE_ANON_REQ && packet.getPayloadType() != PAYLOAD_TYPE_REQ);
+  }
+  saved.clear();
+  puts("PASS find-path full contact scan: single-nibble candidates across different peer hashes cannot recycle slots or become falsely unique");
+}
 static void native_repeater_monitor() {
   assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy({}) &&
          saveBotRepeaterPolicy({}));
@@ -2560,7 +2735,7 @@ static void native_repeater_monitor() {
   assert(strstr(reply, "nvs-free=") && strstr(reply, "authority=saved"));
   f.bot.repeaterCommand("help", reply, sizeof(reply));
   assert(strlen(reply) <= 162 && strstr(reply, "config ALIAS") && strstr(reply, "storage") &&
-         strstr(reply, "discovery SEC") && strstr(reply, "timing ALIAS"));
+         strstr(reply, "discovery SEC") && strstr(reply, "timing [ALIAS]"));
   f.bot.repeaterCommand("discovery 1800", reply, sizeof(reply));
   assert(!strncmp(reply, "Saved/applied", 13) && strstr(reply, "discovery=1800s"));
   f.bot.repeaterCommand("discovery 59", reply, sizeof(reply));
@@ -4559,6 +4734,11 @@ int main(int argc, char **argv) {
     native_thread_policy();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
+    native_find_path();
+    find_path_full_contact_scan();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {
     native_repeater_monitor();
     return 0;
@@ -4782,6 +4962,11 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && !strcmp(argv[1], "--thread-policy-test")) {
     native_thread_policy();
+    return 0;
+  }
+  if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
+    native_find_path();
+    find_path_full_contact_scan();
     return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--repeater-test")) {

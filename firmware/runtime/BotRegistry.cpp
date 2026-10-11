@@ -160,7 +160,7 @@ bool botReservedCommand(const char *name) {
   for (const char *reserved : {"ping", "test", "path", "mt", "trace", "help", "remind", "reminders", "cancel",
                              "remember", "recall", "forget", "notes", "list-memories",
                              "calc", "convert", "roll", "choose", "weather", "service", "board",
-                             "about", "version", "uptime", "status", "signal", "air", "plugins", "neighbors", "admin"})
+                             "about", "version", "uptime", "status", "signal", "air", "plugins", "neighbors", "find-path", "find_path", "admin"})
     if (!strcmp(name, reserved)) return true;
   return false;
 }

@@ -87,6 +87,8 @@ static void commandOverrides() {
   assert(!metadata.isBundled());
   assert(!strcmp(run(wrapper, event("!ping")).text, "Regional Pong"));
   assert(!strcmp(run(program("return call_original('calc','(2+3)*4')"), event("!custom")).text, "= 20"));
+  load("command('custom','','Native export denied','find_path')", false);
+  assert(!validate("command('custom','','Native export denied','find_path')", false).count);
   load(wrapper);
   assert(!strcmp(invoke(event("!ping")).action.text, "Regional Pong"));
   invoke(event("!ping extra"), false);

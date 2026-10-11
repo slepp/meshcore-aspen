@@ -544,6 +544,7 @@ command("air","page?:int:1:4","Scheduler airtime, queues and TX counters","air",
 command("help","name?:string:24,page?:int:1:40","Commands/arguments; !help PAGE or NAME [PAGE]","help","public","!help remember")
 command("plugins","page?:int:1:4","Active source/manifest/modules; shared Lua namespace","plugins","public","!plugins 2")
 command("neighbors","page?:int:1:16","Contacts from signed adverts and cached routes","neighbors","public","!neighbors 2")
+command("find-path","prefix:string:64","Fresh flood route discovery; 10s, cached fallback","find_path","public","!find-path d2")
 command("admin","text?:text:155","Trusted-owner DM: bot status/help/cancel","admin","owner","!admin bot status")
 )lua";
 static_assert(sizeof(BotDiagnosticSource) <= 2048, "Keep compiled diagnostics independently bounded");
