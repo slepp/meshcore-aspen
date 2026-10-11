@@ -56,7 +56,10 @@ public:
     char text[24]; path(slot, index, text);
     auto file = SPIFFS.open(text, "w");
     if (!file) return false;
-    file.flush(); return file.size() == 0;
+    file.flush(); file.close();
+    // Arduino caches the pre-truncation size until the file is reopened.
+    auto actual = SPIFFS.open(text, "r");
+    return actual && actual.size() == 0;
   }
   bool append(uint8_t slot, uint8_t index, const uint8_t *bytes, size_t size) override {
     char text[24]; path(slot, index, text);

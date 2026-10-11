@@ -57,6 +57,7 @@ struct PacketProgramWorker::Impl {
     };
     const auto &r = request;
     const uint64_t started = clockUs();
+    constexpr uint64_t InstallDeadlineUs = 2000000;
     const size_t size = r.source.size;
     if (r.slot >= packet_engine::EngineLimit || r.from > PacketProgramUpload ||
         r.to >= PacketProgramEmpty || !size || size > PacketProgramSourceLimit ||
@@ -75,8 +76,11 @@ struct PacketProgramWorker::Impl {
     std::unique_ptr<uint8_t[]> source(new (std::nothrow) uint8_t[size]);
 #endif
     if (!source) { fail("packet source memory allocation failed"); return; }
-    if (!store.read(r.slot, r.from, 0, source.get(), size) || clockUs() - started > 100000) {
-      fail("packet source read failed or exceeded 100 ms"); return;
+    if (!store.read(r.slot, r.from, 0, source.get(), size)) {
+      fail("packet source read failed"); return;
+    }
+    if (clockUs() - started > InstallDeadlineUs) {
+      fail("packet source lookup/read exceeded the 2 s installation limit"); return;
     }
     uint8_t digest[32]; store.digest(source.get(), size, digest);
     if (memcmp(digest, r.source.hash, sizeof(digest))) {
@@ -99,7 +103,7 @@ struct PacketProgramWorker::Impl {
         fail("packet durable source readback SHA256 differs"); return;
       }
     }
-    if (clockUs() - started > 2000000) { fail("packet installation exceeded 2 s"); return; }
+    if (clockUs() - started > InstallDeadlineUs) { fail("packet installation exceeded 2 s"); return; }
     result.ok = true;
   }
   void run() {

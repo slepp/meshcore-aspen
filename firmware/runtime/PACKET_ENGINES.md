@@ -515,3 +515,8 @@ Telemetry exports one rotating row per accepted upload as `meshcore_packet`.
 
 See [Nearby repeater SNR](REPEATER_SNR.md) for a complete Wasm sampler and Lua
 command using this shared report.
+
+Packet source lookup, reading, runtime preparation and durable verification run
+in the loader worker under one two-second installation limit. Cold filesystem
+lookups share that allowance. Script initialization and packet execution keep
+their separate fuel/time limits; filesystem waits do not run in radio dispatch.
