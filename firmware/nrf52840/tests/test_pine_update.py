@@ -56,6 +56,12 @@ class PineUpdateTests(unittest.TestCase):
         return pine_update.verify(self.manifest, self.signature, self.package,
                                   board or self.board, self.key.with_suffix(".pub"))
 
+    def retained(self, slot=0, generation=7, digest="a" * 64):
+        responses = {command: prefix + "saved" for command, prefix in pine_update.QUERIES.items()}
+        responses["source status"] = f"gen={generation} active={slot} prev=3 size=4096 upload=none next=0/0; source ready"
+        responses["source hash"] = f"SHA256 {digest} gen={generation}"
+        return responses
+
     def test_valid_signature_and_application_layout(self):
         self.assertEqual(self.verify(), self.data)
         self.assertTrue(self.data["update_only"])
@@ -132,13 +138,14 @@ class PineUpdateTests(unittest.TestCase):
     def test_upload_timeout_is_uncertain_and_not_retried(self):
         import hardware
         args = SimpleNamespace(board=self.board, port=self.directory / "device",
-                               current_sha="0" * 64, zip=self.package)
+                               current_sha="0" * 64, zip=self.package,
+                               record=self.directory / "update.json")
         def query(link, command, prefix):
             if command == "get application":
                 return "application sha256=" + args.current_sha
             if command == "get update":
                 return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
-            return prefix + "saved"
+            return self.retained()[command]
         endpoint = SimpleNamespace(vid=0x2886, serial_number="PINE", pid=0x44,
                                    device="selected-bootloader")
         with patch.object(hardware, "connection", return_value=MagicMock()), \
@@ -153,3 +160,164 @@ class PineUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "completion uncertain"):
                 pine_update.flash_snapshot(self.data, args)
             self.assertEqual(upload.call_count, 1)
+        record = json.loads(args.record.read_text())
+        self.assertEqual(record["manifest"], self.data)
+        self.assertEqual(record["usb_serial"], "PINE")
+        self.assertEqual(record["previous_sha256"], args.current_sha)
+        self.assertEqual(args.record.stat().st_mode & 0o777, 0o600)
+
+    def recovery(self):
+        record = {"format": "pine-application-update-v1", "usb_serial": "PINE",
+                  "application_port": str(self.directory / "application"),
+                  "previous_sha256": "0" * 64, "bootloader": "0.6.1",
+                  "manifest": self.data,
+                  "retained": self.retained()}
+        args = SimpleNamespace(board=self.board, port=self.directory / "bootloader",
+                               record=self.directory / "update.json", zip=self.package,
+                               operation="recover")
+        args.record.write_text(json.dumps(record))
+        args.record.chmod(0o600)
+        return args, record
+
+    def test_existing_record_stops_before_handover(self):
+        import hardware
+        args, _ = self.recovery()
+        args.current_sha = "0" * 64
+        original = args.record.read_bytes()
+        def query(link, command, prefix):
+            if command == "get application":
+                return "application sha256=" + args.current_sha
+            if command == "get update":
+                return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+            return self.retained()[command]
+        with patch.object(hardware, "connection", return_value=MagicMock()), \
+                patch.object(hardware, "usb_serial", return_value="PINE"), \
+                patch.object(hardware, "bootloader") as handover, \
+                patch.object(pine_update, "read_command", side_effect=query), \
+                patch.object(pine_update.time, "sleep"):
+            with self.assertRaises(FileExistsError):
+                pine_update.flash_snapshot(self.data, args)
+            handover.assert_not_called()
+        self.assertEqual(args.record.read_bytes(), original)
+
+    def test_explicit_recovery_keeps_signed_snapshot_and_original_state(self):
+        import hardware
+        args, record = self.recovery()
+        endpoint = SimpleNamespace(device="identified-bootloader")
+        with patch.object(hardware, "device", return_value=endpoint), \
+                patch.object(hardware, "require_bootloader") as selected, \
+                patch.object(hardware, "usb_serial", return_value="PINE"), \
+                patch.object(hardware, "bootloader") as handover, \
+                patch.object(pine_update, "upload_snapshot") as upload, \
+                patch.object(pine_update, "check_application") as check:
+            pine_update.flash(self.data, args)
+            selected.assert_called_once_with(str(args.port))
+            handover.assert_not_called()
+            upload.assert_called_once()
+            self.assertNotEqual(upload.call_args.args[0], self.package)
+            self.assertEqual(upload.call_args.args[1], endpoint.device)
+            check.assert_called_once_with(self.data, Path(record["application_port"]), record["retained"])
+
+    def test_recovery_refuses_other_image_device_record_and_running_app(self):
+        import hardware
+        args, record = self.recovery()
+        for field, value in (("usb_serial", "OTHER"), ("bootloader", "0.7.0"),
+                             ("manifest", dict(self.data, board="sensecap-solar")),
+                             ("retained", {"ids": "ids saved"})):
+            with self.subTest(field=field):
+                args.record.write_text(json.dumps(dict(record, **{field: value})))
+                with patch.object(hardware, "usb_serial", return_value="PINE"), \
+                        patch.object(pine_update, "upload_snapshot") as upload:
+                    with self.assertRaisesRegex(ValueError, "differs"):
+                        pine_update.recover_snapshot(self.data, args)
+                    upload.assert_not_called()
+        args.record.write_text(json.dumps(record))
+        with patch.object(hardware, "usb_serial", return_value="PINE"), \
+                patch.object(hardware, "device"), \
+                patch.object(hardware, "require_bootloader", side_effect=ValueError("Enter serial DFU")), \
+                patch.object(pine_update, "upload_snapshot") as upload:
+            with self.assertRaisesRegex(ValueError, "serial DFU"):
+                pine_update.recover_snapshot(self.data, args)
+            upload.assert_not_called()
+        args.record.chmod(0o644)
+        with patch.object(pine_update, "upload_snapshot") as upload:
+            with self.assertRaisesRegex(ValueError, "owner-only"):
+                pine_update.recover_snapshot(self.data, args)
+            upload.assert_not_called()
+        args.record.chmod(0o600)
+        args.record.with_suffix(".linked").hardlink_to(args.record)
+        with patch.object(pine_update, "upload_snapshot") as upload:
+            with self.assertRaisesRegex(ValueError, "one link"):
+                pine_update.recover_snapshot(self.data, args)
+            upload.assert_not_called()
+
+    def test_post_update_and_recovery_check_running_hash_and_retained_state(self):
+        import hardware
+        args, record = self.recovery()
+        port = Path(record["application_port"])
+        port.touch()
+        running = f'application start=0x27000 bytes={self.data["application"]["bytes"]} sha256={self.data["application"]["sha256"]}'
+        responses = dict(record["retained"], **{"ver": "vpine-0.1.1 date", "get application": running})
+        with patch.object(hardware, "connection", return_value=MagicMock()), \
+                patch.object(pine_update, "read_command", side_effect=lambda _, command, prefix: responses[command]), \
+                patch.object(pine_update.time, "sleep"):
+            pine_update.check_application(self.data, port, record["retained"])
+            responses["get application"] = running.replace("sha256=", "sha256=0")
+            with self.assertRaisesRegex(RuntimeError, "running hash differs"):
+                pine_update.check_application(self.data, port, record["retained"])
+            responses["get application"] = running
+            responses["ids"] = "ids replaced"
+            with self.assertRaisesRegex(RuntimeError, "retained state differs: ids"):
+                pine_update.check_application(self.data, port, record["retained"])
+
+    def test_normal_and_recovery_preserve_custom_source_allow_new_bundled_handlers(self):
+        import hardware
+        running = f'application start=0x27000 bytes={self.data["application"]["bytes"]} sha256={self.data["application"]["sha256"]}'
+        cases = ((3, 3, "b" * 64, 7, True), (0, 0, "b" * 64, 7, False),
+                 (0, 0, "a" * 64, 7, True), (3, 0, "a" * 64, 7, False),
+                 (0, 0, "a" * 64, 8, False))
+        for index, (old_slot, new_slot, digest, generation, accepted) in enumerate(cases):
+            with self.subTest(slot=old_slot, new_slot=new_slot, digest=digest[0], generation=generation):
+                port = self.directory / f"application-{index}"
+                port.touch()
+                args = SimpleNamespace(board=self.board, port=port, current_sha="0" * 64,
+                                       zip=self.package, record=self.directory / f"update-{index}.json")
+                before = self.retained(slot=old_slot)
+                after = self.retained(slot=new_slot, generation=generation, digest=digest)
+                after["source status"] = after["source status"].replace("size=4096", "size=3999")
+                booted = False
+                def handover(_):
+                    nonlocal booted
+                    booted = True
+                def query(link, command, prefix):
+                    if command == "get application":
+                        return running if booted else "application sha256=" + args.current_sha
+                    if command == "get update":
+                        return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+                    if command == "ver":
+                        return "vpine-0.1.1 date"
+                    return (after if booted else before)[command]
+                endpoint = SimpleNamespace(vid=0x2886, serial_number="PINE", pid=0x44,
+                                           device="identified-bootloader")
+                with patch.object(hardware, "connection", return_value=MagicMock()), \
+                        patch.object(hardware, "usb_serial", return_value="PINE"), \
+                        patch.object(hardware, "bootloader", side_effect=handover), \
+                        patch.object(hardware, "device", return_value=endpoint), \
+                        patch.object(hardware, "require_bootloader"), \
+                        patch("serial.tools.list_ports.comports", return_value=[endpoint]), \
+                        patch.object(pine_update, "upload_snapshot") as upload, \
+                        patch.object(pine_update, "read_command", side_effect=query), \
+                        patch.object(pine_update.time, "sleep"):
+                    if accepted:
+                        pine_update.flash_snapshot(self.data, args)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "retained source selection/hash differs"):
+                            pine_update.flash_snapshot(self.data, args)
+                    self.assertEqual(json.loads(args.record.read_text())["retained"], before)
+                    args.port = self.directory / "bootloader"
+                    if accepted:
+                        pine_update.recover_snapshot(self.data, args)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "retained source selection/hash differs"):
+                            pine_update.recover_snapshot(self.data, args)
+                    self.assertEqual(upload.call_count, 2)

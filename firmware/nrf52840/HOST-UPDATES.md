@@ -42,13 +42,21 @@ accessible; do not erase, replace the bootloader or install a full-device image.
      --zip pine-xiao-application.zip \
      --manifest pine-xiao.json --signature pine-xiao.json.sig \
      --port /dev/serial/by-id/YOUR_PINE \
-     --current-sha PREVIOUS_RUNNING_APPLICATION_SHA256
+     --current-sha PREVIOUS_RUNNING_APPLICATION_SHA256 \
+     --record /private/pine-update.json
    ```
 
    The tool checks that running hash, reads retained public identities/settings,
    selects the same USB serial in the bootloader and performs one app-only
    upload. It checks the new running hash and retained identity/PHY/BLE/source
-   responses after startup. Solar manifests can be verified offline; use that
+   responses after startup. Before handover it saves a new `0600` update record
+   containing the signed manifest, exact USB serial and retained public state.
+   Installed custom Lua must retain its source selection, generation and hash.
+   Bundled handlers must remain selected, but their bytes can change with the
+   verified application; they are covered by its application hash.
+   Keep that record with the backup until the update is checked; an existing
+   record is never overwritten. If omitted, `--record` uses a unique file in
+   `.build/` and prints its path. Solar manifests can be verified offline; use that
    board's established app-only recovery path for installation.
 5. Read `ver`, the active role's status and `get application`. Check the saved
    source/notes and expected companion or peer connection. An RF transmission
@@ -59,6 +67,38 @@ replay the update**. Inspect the running application or identified bootloader,
 then use the same verified app-only package if recovery is needed. The tool
 does not clear storage or substitute a blank profile. Peer mode uses this USB
 path; its exclusive peer GATT service does not expose BLE DFU.
+
+## Recover an interrupted serial transfer
+
+First check whether the application is running. If `get application` already
+matches the signed manifest, inspect its retained state instead of uploading
+again. If Pine remains in serial DFU, select its exact bootloader USB path and
+use the protected record from that transfer:
+
+```sh
+python3 firmware/nrf52840/pine_update.py recover \
+  --board xiao-nrf52840-wio-sx1262 \
+  --zip pine-xiao-application.zip \
+  --manifest pine-xiao.json --signature pine-xiao.json.sig \
+  --port /dev/serial/by-id/YOUR_PINE_BOOTLOADER \
+  --record /private/pine-update.json
+```
+
+Recovery verifies the package signature again, matches the original board,
+image and inventoried USB serial, and requires that device to already be in
+DFU. It performs one application upload, then checks the running hash and the
+original retained-state responses through the recorded application port.
+Custom Lua retains its exact selection, generation and hash; bundled handlers
+remain selected and come from the verified application.
+It never resets a running application or chooses another attached board.
+Keep power stable until those checks complete. A second timeout remains an
+uncertain outcome; inspect the device before another explicit recovery attempt.
+
+The record is needed because a stranded bootloader cannot report the prior
+application or settings. It is not a node backup and cannot restore erased
+state. Transfers made by other tools without this record keep their established
+bootloader recovery procedure. Do not manufacture a record or erase storage
+to bypass a mismatch.
 
 ## Build and sign an application
 

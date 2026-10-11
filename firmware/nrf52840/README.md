@@ -1,5 +1,10 @@
 # Standalone XIAO nRF52840 repeater and command bot
 
+Start with [Pine field setup](FIELD-SETUP.md) to update an initialized node,
+select Lua, Room, packet programs or BLE peer mode, and recover without clearing
+saved state. Keep USB accessible; the current download is an application update
+and does not commission a blank board.
+
 Run the shared production Lua bot and a MeshCore repeater on the Seeed XIAO
 nRF52840 with Wio SX1262 using **`nrfmast_fleet_lua`**. Both share one radio and
 keep their existing separate identities. Use an ordinary MeshCore mobile app

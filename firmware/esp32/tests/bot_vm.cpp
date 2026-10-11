@@ -498,8 +498,11 @@ static void initializationBudgets() {
   assert(loaded && stats.initUs > 20000 && stats.initUs < 50000);
   assert(stats.loadUs < limits.loadWallUs && stats.peakBytes <= limits.heapBytes);
   BotSession::Result result;
+  if (ONCHIP_BOT_COMPACT_PROFILE) fakeStep = 5;
   assert(vm.start(7, event("!comfortable"), error, sizeof(error)));
-  assert(vm.poll(result) && result.ok && result.stats.invokeUs>20000 && result.stats.invokeUs<limits.wallUs);
+  assert(vm.poll(result) && result.ok && result.stats.invokeUs<limits.wallUs);
+  if (!ONCHIP_BOT_COMPACT_PROFILE) assert(result.stats.invokeUs>20000);
+  fakeStep = 20;
   assert(vm.start(1, event("!busy"), error, sizeof(error)));
   assert(vm.poll(result) && !result.ok && strstr(result.error, "invocation"));
   assert(result.stats.invokeUs >= limits.wallUs && result.stats.instructions < limits.instructions);
@@ -512,15 +515,18 @@ static void initializationBudgets() {
   assert(vm.complete(completion) && vm.poll(result) && result.ok);
   assert(!strcmp(result.action.text, "awake") && result.stats.invokeUs < limits.wallUs);
   assert(result.stats.loadUs == 0 && result.stats.initUs == 0);
-  const std::string comfortable = "local n=0 for i=1,1500 do n=n+i end function custom() return n end";
+  const std::string comfortable = ONCHIP_BOT_COMPACT_PROFILE ?
+      "local n=0 for i=1,500 do n=n+i end function custom() return n end" :
+      "local n=0 for i=1,1500 do n=n+i end function custom() return n end";
   assert(vm.load(comfortable.data(), comfortable.size(), 2, stats, error, sizeof(error)));
-  assert(stats.initUs > 50000 && stats.initUs < limits.initWallUs);
+  assert(stats.initUs > (ONCHIP_BOT_COMPACT_PROFILE ? 20000 : 50000) && stats.initUs < limits.initWallUs);
   const std::string excessive = "local n=0 for i=1,4000 do n=n+i end function custom() return n end";
   assert(!vm.load(excessive.data(), excessive.size(), 2, stats, error, sizeof(error)));
-  assert(strstr(error, "Init deadline ") && strstr(error, "/100000us peak="));
+  assert(strstr(error, "Init deadline ") &&
+         strstr(error, ONCHIP_BOT_COMPACT_PROFILE ? "/50000us peak=" : "/100000us peak="));
   assert(stats.initUs >= limits.initWallUs && stats.instructions < limits.instructions);
   fakeStep = 0;
-  puts("PASS separate budgets: normal initialization headroom, 100ms runaway bounds and suspended I/O excluded");
+  puts("PASS separate budgets: profile initialization/invocation bounds and suspended I/O excluded");
 }
 static void retained() {
   BotSession vm;

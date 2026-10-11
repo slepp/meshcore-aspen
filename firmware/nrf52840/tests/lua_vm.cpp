@@ -89,14 +89,26 @@ static void customCapacity() {
   BotSession session;
   BotVmStats stats;
   char error[128]{};
-  assert(!session.load(source.data(), source.size(), 1, stats, error, sizeof(error)) &&
-         strstr(error, "Lua heap limit"));
-  BotVmLimits probe;
-  probe.heapBytes = 96 * 1024;
-  assert(session.load(source.data(), source.size(), 1, stats, error, sizeof(error), probe));
-  printf("Pine dense-catalog constraint: source=%zuB exports=%u rows=32 required_load_peak=%zuB allocator_model_peak=%zuB exceeds_production_cap=%zuB; diagnostic_only_quota=%zuB\n",
-         source.size(), session.manifest().count, stats.peakBytes, physicalPeak,
-         BotVmLimits{}.heapBytes, probe.heapBytes);
+  const bool denseLoaded = session.load(source.data(), source.size(), 1, stats, error, sizeof(error));
+  if (!denseLoaded) fprintf(stderr, "Pine dense catalog rejected: %s\n", error);
+  assert(denseLoaded && session.manifest().count == 8 && stats.peakBytes <= BotVmLimits{}.heapBytes);
+  assert(session.start(1, event("!summary"), error, sizeof(error)));
+  BotSession::Result catalog;
+  BotIoRequest waiting;
+  assert(session.nextIo(waiting) && waiting.kind == BotIoRequest::Send && waiting.reply &&
+         strstr(waiting.value, "32 synthetic station fixtures"));
+  BotIoResult awake; awake.token = waiting.token; awake.ok = true;
+  assert(session.complete(awake) && session.poll(catalog) && catalog.ok);
+  assert(session.start(2, event("!station 32"), error, sizeof(error)));
+  assert(session.nextIo(waiting) && waiting.kind == BotIoRequest::Sleep);
+  awake.token = waiting.token;
+  assert(session.complete(awake) && session.nextIo(waiting) && waiting.kind == BotIoRequest::Send &&
+         waiting.reply && strstr(waiting.value, "Fixture East 32 [AD07ah] elevation=432"));
+  awake.token = waiting.token;
+  assert(session.complete(awake) && session.poll(catalog) && catalog.ok);
+  assert(catalog.stats.peakBytes <= BotVmLimits{}.heapBytes);
+  printf("Pine dense catalog: source=%zuB exports=%u rows=32 load_peak=%zuB invoke_peak=%zuB cap=%zuB\n",
+         source.size(), session.manifest().count, stats.peakBytes, catalog.stats.peakBytes, BotVmLimits{}.heapBytes);
   session.clear();
   file = std::ifstream("../runtime/plugins/examples/lab.lua");
   assert(file);
