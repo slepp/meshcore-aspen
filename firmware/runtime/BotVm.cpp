@@ -162,6 +162,70 @@ void freeze(lua_State *state) {
   lua_setmetatable(state, -2);
   lua_remove(state, -2);
 }
+#if !ONCHIP_BOT_COMPACT_PROFILE
+struct PacketReportView {
+  const mp_report *report;
+  unsigned row;
+  enum Kind { Rows, Row, Values } kind;
+};
+int packetReportViewIndex(lua_State *s);
+void packetReportMetatable(lua_State *s, const char *name, lua_CFunction index) {
+  if (luaL_newmetatable(s, name)) {
+    lua_pushcfunction(s, index); lua_setfield(s, -2, "__index");
+    lua_pushcfunction(s, readonly); lua_setfield(s, -2, "__newindex");
+    lua_pushboolean(s, false); lua_setfield(s, -2, "__metatable");
+  }
+  lua_setmetatable(s, -2);
+}
+void packetReportView(lua_State *s, const mp_report *report, unsigned row,
+                      PacketReportView::Kind kind, bool root) {
+  auto *view = static_cast<PacketReportView *>(lua_newuserdatauv(s, sizeof(PacketReportView), 1));
+  *view = {report, row, kind};
+  // Every child keeps the copied root alive independently of its parent view.
+  if (root) lua_pushvalue(s, 1);
+  else lua_getiuservalue(s, 1, 1);
+  lua_setiuservalue(s, -2, 1);
+  packetReportMetatable(s, "onchip.bot.packet_report_view", packetReportViewIndex);
+}
+const char *packetReportKey(lua_State *s) {
+  if (lua_type(s, 2) != LUA_TSTRING) return nullptr;
+  size_t length;
+  const char *key = lua_tolstring(s, 2, &length);
+  return strlen(key) == length ? key : nullptr;
+}
+int packetReportIndex(lua_State *s) {
+  auto *report = static_cast<const mp_report *>(luaL_checkudata(s, 1, "onchip.bot.packet_report"));
+  const char *key = packetReportKey(s);
+  if (key && !strcmp(key, "name")) lua_pushstring(s, report->name);
+  else if (key && !strcmp(key, "row_count")) lua_pushinteger(s, report->row_count);
+  else if (key && !strcmp(key, "rows")) packetReportView(s, report, 0, PacketReportView::Rows, true);
+  else lua_pushnil(s);
+  return 1;
+}
+int packetReportViewIndex(lua_State *s) {
+  auto &view = *static_cast<PacketReportView *>(luaL_checkudata(s, 1, "onchip.bot.packet_report_view"));
+  const auto &report = *view.report;
+  if (view.kind == PacketReportView::Rows) {
+    int valid = 0;
+    const auto index = lua_type(s, 2) == LUA_TNUMBER ? lua_tointegerx(s, 2, &valid) : 0;
+    if (valid && index >= 1 && index <= report.row_count)
+      packetReportView(s, &report, unsigned(index - 1), PacketReportView::Row, false);
+    else lua_pushnil(s);
+    return 1;
+  }
+  const char *key = packetReportKey(s);
+  if (view.kind == PacketReportView::Row && key && !strcmp(key, "label"))
+    lua_pushstring(s, report.rows[view.row].label);
+  else if (view.kind == PacketReportView::Row && key && !strcmp(key, "values"))
+    packetReportView(s, &report, view.row, PacketReportView::Values, false);
+  else if (view.kind == PacketReportView::Values && key) {
+    for (unsigned f = 0; f < report.field_count; ++f)
+      if (!strcmp(key, report.fields[f])) { lua_pushnumber(s, report.rows[view.row].values[f]); return 1; }
+    lua_pushnil(s);
+  } else lua_pushnil(s);
+  return 1;
+}
+#endif
 void text(lua_State *s, const char *key, const char *value) {
   lua_pushstring(s, value); lua_setfield(s, -2, key);
 }
@@ -867,16 +931,10 @@ int finishIo(lua_State *s, int, lua_KContext) {
     const auto &r = result.packetReport;
     if (!packet_engine::Reports::valid(r))
       return luaL_error(s, "Invalid packet report snapshot");
-    lua_newtable(s); text(s, "name", r.name); integer(s, "row_count", r.row_count);
-    lua_createtable(s, r.row_count, 0);
-    for (unsigned i = 0; i < r.row_count; ++i) {
-      lua_newtable(s); text(s, "label", r.rows[i].label);
-      lua_newtable(s);
-      for (unsigned f = 0; f < r.field_count; ++f) number(s, r.fields[f], r.rows[i].values[f]);
-      freeze(s); lua_setfield(s, -2, "values");
-      freeze(s); lua_rawseti(s, -2, i + 1);
-    }
-    freeze(s); lua_setfield(s, -2, "rows"); freeze(s); return 1;
+    auto *snapshot = static_cast<mp_report *>(lua_newuserdatauv(s, sizeof(mp_report), 0));
+    *snapshot = r;
+    packetReportMetatable(s, "onchip.bot.packet_report", packetReportIndex);
+    return 1;
   }
 #endif
   if (call.io->reply) call.replyCompleted = true;

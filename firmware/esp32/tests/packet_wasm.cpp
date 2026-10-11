@@ -346,6 +346,44 @@ static void repeater_snr() {
     if (!result.ok) fprintf(stderr, "snr bot: %s\n", result.error);
     assert(result.ok && strstr(result.action.text, id == 1 ? "SNR avg/P95" : id == 2 ? "256 samples" : "No SNR samples"));
   }
+  const char *snapshotSource =
+      "command('snapshot','','Snapshot') function snapshot() "
+      "local old=node.packet_report().rows[1].values "
+      "local new=node.packet_report() "
+      "if new.rows[0]~=nil or new.rows[17]~=nil or new.rows[1.5]~=nil then return 'bad bounds' end "
+      "if new.unknown~=nil or new.rows[1].unknown~=nil or old.unknown~=nil then return 'bad keys' end "
+      "return tostring(old.samples|0)..' '..tostring(new.rows[1].values.samples|0) end";
+  BotSession snapshots;
+  assert(snapshots.load(snapshotSource, strlen(snapshotSource), 1, stats, error, sizeof(error)));
+  BotEvent snapshotEvent{};
+  assert(parseBotCommand("!snapshot", 9, snapshotEvent, error, sizeof(error)));
+  assert(snapshots.start(1, snapshotEvent, error, sizeof(error)));
+  BotIoRequest snapshotRequest;
+  BotIoResult snapshotCompletion{};
+  snapshotCompletion.ok = snapshotCompletion.found = true;
+  snapshotCompletion.packetReport = report;
+  for (double samples : {11., 99.}) {
+    assert(snapshots.nextIo(snapshotRequest));
+    snapshotCompletion.token = snapshotRequest.token;
+    snapshotCompletion.packetReport.rows[0].values[0] = samples;
+    assert(snapshots.complete(snapshotCompletion));
+  }
+  resetBotIoResult(snapshotCompletion);
+  BotSession::Result snapshotResult;
+  assert(snapshots.poll(snapshotResult));
+  if (!snapshotResult.ok) fprintf(stderr, "report snapshot: %s\n", snapshotResult.error);
+  assert(snapshotResult.ok && !strcmp(snapshotResult.action.text, "11 99"));
+  for (const char *target : {"r.name", "r.rows[1]", "r.rows[1].label", "r.rows[1].values.samples"}) {
+    const std::string source = std::string("command('write','','Write') function write() local r=node.packet_report() ") + target + "='changed' return 'bad' end";
+    BotSession immutable;
+    assert(immutable.load(source.data(), source.size(), 1, stats, error, sizeof(error)));
+    BotEvent e{}; assert(parseBotCommand("!write", 6, e, error, sizeof(error)));
+    assert(immutable.start(1, e, error, sizeof(error)) && immutable.nextIo(snapshotRequest));
+    snapshotCompletion = {}; snapshotCompletion.token = snapshotRequest.token;
+    snapshotCompletion.ok = snapshotCompletion.found = true; snapshotCompletion.packetReport = report;
+    assert(immutable.complete(snapshotCompletion) && immutable.poll(snapshotResult));
+    assert(!snapshotResult.ok && strstr(snapshotResult.error, "read-only"));
+  }
   struct Failing : Engine { Decision process(const Metadata &, Call &) override { return Decision::Failed; } } failing;
   assert(pipeline.attach(failing, {"failure", 1, 1000, 20000}) == Registration::Attached);
   const auto before = report;
