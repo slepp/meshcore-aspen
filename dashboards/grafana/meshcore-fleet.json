@@ -25,8 +25,8 @@
   ],
   "id": null,
   "uid": "meshcore-fleet-vm",
-  "title": "MeshCore \u00b7 fleet, radios and bots",
-  "description": "Native ESP32 telemetry and Python companion-bot metrics. Independent filters and explicit gaps; no synthetic health or RF delivery claims.",
+  "title": "MeshCore · fleet, radios and bots",
+  "description": "ESP32 resources, sampled state transitions, physical RF, Lua activity and Python companion-bot health.",
   "tags": [
     "meshcore",
     "fleet",
@@ -34,7 +34,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -60,13 +60,20 @@
       "url": "/d/meshcore-repeaters-vm",
       "keepTime": true,
       "includeVars": true
+    },
+    {
+      "title": "Nearby repeater SNR and RSSI",
+      "type": "link",
+      "url": "/d/meshcore-signal-vm",
+      "keepTime": true,
+      "includeVars": true
     }
   ],
   "panels": [
     {
       "id": 1,
       "type": "row",
-      "title": "Fleet \u00b7 reporting and readiness",
+      "title": "Fleet · reporting and readiness",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -88,12 +95,12 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two independent feeds:** ESP32 native publishing uses **device / role**; the Python companion bot uses **mesh / site (bot) / polled node / probe route**. Site must identify one bot. Filters do not join these feeds.\n\nReport ages search the **History** window; no sample means absent or outside that window, not healthy. Age colors assume a 60-second publisher; adjust for your interval. Ordinary graphs use the selected time range and do not fill gaps. Instant readiness is not a live RF delivery check.\n\n**Pine has no direct IP metrics.** A bot can report Pine's returned repeater status only when configured to poll it. Host Lua/Wasm roles have no native VictoriaMetrics exporter here. VM fields are the last Lua operation, not Wasm metrics, per-plugin metrics or task CPU time. See the adjacent dashboard README for coverage."
+        "content": "**Two independent feeds:** ESP32 native publishing uses **device / role**; the Python companion bot uses **mesh / site (bot) / polled node / probe route**. Site must identify one bot. Filters do not join these feeds.\n\nReport ages search the **History** window; no sample means absent or outside that window, not healthy. Age colors assume a 60-second publisher; adjust for your interval. State timelines show sampled flags; poll/probe blocks show sampled outcomes. Gaps remain unknown. Check report age before interpreting a final state. Use the Nearby repeater signal dashboard for the packet-hook SNR/RSSI rings.\n\n**Pine has no direct IP metrics.** A bot can report Pine's returned repeater status only when configured to poll it. Host Lua/Wasm roles have no native VictoriaMetrics exporter here. VM fields are the last Lua operation, not Wasm metrics, per-plugin metrics or task CPU time. See the adjacent dashboard README for coverage."
       }
     },
     {
       "id": 3,
-      "title": "Native device \u00b7 age of last report",
+      "title": "Native device · age of last report",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -165,7 +172,7 @@
     },
     {
       "id": 4,
-      "title": "Companion bot \u00b7 age of last collection sample",
+      "title": "Companion bot · age of last collection sample",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -237,7 +244,7 @@
     },
     {
       "id": 5,
-      "title": "Native device \u00b7 last reported uptime",
+      "title": "Native device · last reported uptime",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -301,8 +308,8 @@
     },
     {
       "id": 6,
-      "title": "Native role \u00b7 readiness / identity",
-      "type": "timeseries",
+      "title": "Native role · readiness / identity",
+      "type": "state-timeline",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -317,7 +324,7 @@
       "targets": [
         {
           "expr": "meshcore_role_ready{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
-          "legendFormat": "{{device}} / {{role}} \u00b7 ready",
+          "legendFormat": "{{device}} / {{role}} · ready",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -329,7 +336,7 @@
         },
         {
           "expr": "meshcore_role_identity_present{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
-          "legendFormat": "{{device}} / {{role}} \u00b7 identity_present",
+          "legendFormat": "{{device}} / {{role}} · identity_present",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -342,62 +349,53 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "min": 0,
-          "max": 1,
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Absent / not ready",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Present / ready",
+                  "color": "green"
+                }
+              }
             }
-          }
+          ]
         },
         "overrides": []
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
       }
     },
     {
       "id": 7,
       "type": "row",
-      "title": "Native node \u00b7 memory and connection",
+      "title": "Native node · memory and connection",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -409,7 +407,7 @@
     },
     {
       "id": 8,
-      "title": "Internal heap \u00b7 free / low-water / largest block",
+      "title": "Internal heap · free / low-water / largest block",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -425,7 +423,7 @@
       "targets": [
         {
           "expr": "meshcore_device_heap_free_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 free",
+          "legendFormat": "{{device}} · free",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -437,7 +435,7 @@
         },
         {
           "expr": "meshcore_device_heap_minimum_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 minimum",
+          "legendFormat": "{{device}} · minimum",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -449,7 +447,7 @@
         },
         {
           "expr": "meshcore_device_heap_largest_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 largest",
+          "legendFormat": "{{device}} · largest",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -514,7 +512,7 @@
     },
     {
       "id": 9,
-      "title": "DMA-capable heap \u00b7 free / low-water / largest block",
+      "title": "DMA-capable heap · free / low-water / largest block",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -530,7 +528,7 @@
       "targets": [
         {
           "expr": "meshcore_device_dma_free_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 free",
+          "legendFormat": "{{device}} · free",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -542,7 +540,7 @@
         },
         {
           "expr": "meshcore_device_dma_minimum_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 minimum",
+          "legendFormat": "{{device}} · minimum",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -554,7 +552,7 @@
         },
         {
           "expr": "meshcore_device_dma_largest_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 largest",
+          "legendFormat": "{{device}} · largest",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -619,7 +617,7 @@
     },
     {
       "id": 10,
-      "title": "PSRAM \u00b7 free / low-water / largest / total",
+      "title": "PSRAM · free / low-water / largest / total",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -635,7 +633,7 @@
       "targets": [
         {
           "expr": "meshcore_device_psram_free_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 free",
+          "legendFormat": "{{device}} · free",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -647,7 +645,7 @@
         },
         {
           "expr": "meshcore_device_psram_minimum_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 minimum",
+          "legendFormat": "{{device}} · minimum",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -659,7 +657,7 @@
         },
         {
           "expr": "meshcore_device_psram_largest_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 largest",
+          "legendFormat": "{{device}} · largest",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -671,7 +669,7 @@
         },
         {
           "expr": "meshcore_device_psram_total_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 total",
+          "legendFormat": "{{device}} · total",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -987,8 +985,8 @@
     },
     {
       "id": 14,
-      "title": "WiFi \u00b7 sampled connection",
-      "type": "timeseries",
+      "title": "WiFi · sampled connection",
+      "type": "state-timeline",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1016,62 +1014,53 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "min": 0,
-          "max": 1,
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Disconnected",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Connected",
+                  "color": "green"
+                }
+              }
             }
-          }
+          ]
         },
         "overrides": []
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
       }
     },
     {
       "id": 15,
       "type": "row",
-      "title": "Native shared radio \u00b7 physical RF and scheduler",
+      "title": "Native shared radio · physical RF and scheduler",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -1099,7 +1088,7 @@
       "targets": [
         {
           "expr": "rate(meshcore_radio_rx_packets_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 rx_packets",
+          "legendFormat": "{{device}} · rx_packets",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1112,7 +1101,7 @@
         },
         {
           "expr": "rate(meshcore_radio_tx_accepted_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 tx_accepted",
+          "legendFormat": "{{device}} · tx_accepted",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1125,7 +1114,7 @@
         },
         {
           "expr": "rate(meshcore_radio_tx_succeeded_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 tx_succeeded",
+          "legendFormat": "{{device}} · tx_succeeded",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1138,7 +1127,7 @@
         },
         {
           "expr": "rate(meshcore_radio_tx_failed_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 tx_failed",
+          "legendFormat": "{{device}} · tx_failed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1151,7 +1140,7 @@
         },
         {
           "expr": "rate(meshcore_radio_tx_unknown_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 tx_unknown",
+          "legendFormat": "{{device}} · tx_unknown",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1233,7 +1222,7 @@
       "targets": [
         {
           "expr": "rate(meshcore_radio_rx_errors_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 rx_errors",
+          "legendFormat": "{{device}} · rx_errors",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1246,7 +1235,7 @@
         },
         {
           "expr": "rate(meshcore_radio_tx_rejected_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 tx_rejected",
+          "legendFormat": "{{device}} · tx_rejected",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1312,7 +1301,7 @@
     },
     {
       "id": 18,
-      "title": "RF airtime \u00b7 observed TX / estimated RX",
+      "title": "RF airtime · observed TX / estimated RX",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1328,7 +1317,7 @@
       "targets": [
         {
           "expr": "rate(meshcore_radio_tx_rf_seconds_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 TX",
+          "legendFormat": "{{device}} · TX",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1336,11 +1325,12 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "refId": "A"
+          "refId": "A",
+          "interval": "1m"
         },
         {
           "expr": "rate(meshcore_radio_rx_estimated_seconds_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 estimated RX",
+          "legendFormat": "{{device}} · estimated RX",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1348,7 +1338,8 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "refId": "B"
+          "refId": "B",
+          "interval": "1m"
         }
       ],
       "fieldConfig": {
@@ -1405,7 +1396,7 @@
     },
     {
       "id": 19,
-      "title": "Shared scheduler \u00b7 queue / transmitting / carrier wait / fault",
+      "title": "Shared scheduler · queued packets",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1421,7 +1412,7 @@
       "targets": [
         {
           "expr": "meshcore_radio_queued{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 queued",
+          "legendFormat": "{{device}} · queued",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1430,48 +1421,12 @@
             "uid": "${DS_VM}"
           },
           "refId": "A"
-        },
-        {
-          "expr": "meshcore_radio_transmitting{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 transmitting",
-          "instant": false,
-          "range": true,
-          "editorMode": "code",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "refId": "B"
-        },
-        {
-          "expr": "meshcore_radio_carrier_wait{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 carrier_wait",
-          "instant": false,
-          "range": true,
-          "editorMode": "code",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "refId": "C"
-        },
-        {
-          "expr": "meshcore_radio_fault{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 fault",
-          "instant": false,
-          "range": true,
-          "editorMode": "code",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "refId": "D"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -1488,7 +1443,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -1522,8 +1477,159 @@
       }
     },
     {
+      "id": 66,
+      "title": "Shared scheduler · sampled states",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "description": "Sampled transmitting, carrier-wait and fault flags. Short transitions between reports may be missed; no report is an unknown state.",
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "meshcore_radio_transmitting{device=~\"${device:regex}\"}",
+          "legendFormat": "{{device}} · transmitting",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "refId": "B"
+        },
+        {
+          "expr": "meshcore_radio_carrier_wait{device=~\"${device:regex}\"}",
+          "legendFormat": "{{device}} · carrier_wait",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "refId": "C"
+        },
+        {
+          "expr": "meshcore_radio_fault{device=~\"${device:regex}\"}",
+          "legendFormat": "{{device}} · fault",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No report",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Idle / clear",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Active",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fault$"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Clear",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "Fault",
+                        "color": "red"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*carrier_wait$"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Clear",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "Waiting",
+                        "color": "yellow"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
+      }
+    },
+    {
       "id": 20,
-      "title": "Shared scheduler \u00b7 airtime credit",
+      "title": "Shared scheduler · airtime credit",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1532,7 +1638,7 @@
       "description": "Current scheduler credit, not cumulative airtime.",
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 77,
         "w": 12,
         "h": 8
       },
@@ -1605,12 +1711,12 @@
     {
       "id": 21,
       "type": "row",
-      "title": "Native role \u00b7 source attribution",
+      "title": "Native role · source attribution",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 79,
+        "y": 85,
         "w": 24,
         "h": 1
       }
@@ -1626,14 +1732,14 @@
       "description": "Role counters are subsets of physical RF totals. Do not add them to physical totals. They reset on source reattachment.",
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 86,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_role_tx_succeeded_total{device=~\"${device:regex}\",role=~\"${role:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} / {{role}} \u00b7 succeeded",
+          "legendFormat": "{{device}} / {{role}} · succeeded",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1646,7 +1752,7 @@
         },
         {
           "expr": "rate(meshcore_role_tx_failed_total{device=~\"${device:regex}\",role=~\"${role:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} / {{role}} \u00b7 failed",
+          "legendFormat": "{{device}} / {{role}} · failed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1712,7 +1818,7 @@
     },
     {
       "id": 23,
-      "title": "Source queue / transmitting",
+      "title": "Source queued packets",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -1721,14 +1827,14 @@
       "description": "Only attached sources emit these gauges. Unattributed host-client traffic still appears in physical totals.",
       "gridPos": {
         "x": 12,
-        "y": 80,
+        "y": 86,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_role_queued{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
-          "legendFormat": "{{device}} / {{role}} \u00b7 queued",
+          "legendFormat": "{{device}} / {{role}} · queued",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1737,24 +1843,12 @@
             "uid": "${DS_VM}"
           },
           "refId": "A"
-        },
-        {
-          "expr": "meshcore_role_transmitting{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
-          "legendFormat": "{{device}} / {{role}} \u00b7 transmitting",
-          "instant": false,
-          "range": true,
-          "editorMode": "code",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -1771,7 +1865,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -1805,24 +1899,98 @@
       }
     },
     {
-      "id": 24,
-      "title": "Source generation",
-      "type": "timeseries",
+      "id": 67,
+      "title": "Source · sampled transmission",
+      "type": "state-timeline",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Generation changes identify source reattachment and counter resets; this is a gauge, not a label or a counter.",
+      "description": "Only attached sources emit these gauges. Unattributed host-client traffic still appears in physical totals.",
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 94,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "meshcore_role_transmitting{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
+          "legendFormat": "{{device}} / {{role}} · transmitting",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No report",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Idle",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Transmitting",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
+      }
+    },
+    {
+      "id": 24,
+      "title": "Source generation",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "description": "Generation changes identify source reattachment and counter resets; this is a gauge, not a label or a counter. Numeric segments distinguish generations; the series colour has no health meaning.",
+      "gridPos": {
+        "x": 0,
+        "y": 100,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_role_source_generation{device=~\"${device:regex}\",role=~\"${role:regex}\"}",
-          "legendFormat": "{{device}} / {{role}} \u00b7 generation",
+          "legendFormat": "{{device}} / {{role}} · generation",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -1835,54 +2003,32 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "fillOpacity": 85,
             "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
+            "spanNulls": false
           }
         },
         "overrides": []
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
       }
     },
     {
@@ -1896,7 +2042,7 @@
       "description": "Observed RF seconds/second attributable to the source. Subsets of the shared radio, not additional airtime.",
       "gridPos": {
         "x": 12,
-        "y": 88,
+        "y": 100,
         "w": 12,
         "h": 8
       },
@@ -1978,7 +2124,7 @@
       "description": "Current source credit; attached sources only.",
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 108,
         "w": 12,
         "h": 8
       },
@@ -2051,12 +2197,12 @@
     {
       "id": 27,
       "type": "row",
-      "title": "On-device Lua \u00b7 jobs, outcomes and last operation",
+      "title": "On-device Lua · jobs, outcomes and last operation",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 116,
         "w": 24,
         "h": 1
       }
@@ -2072,7 +2218,7 @@
       "description": "Occupied I/O job slots include completions awaiting dispatch. This is not a coroutine count or plugin invocation count.",
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 117,
         "w": 12,
         "h": 8
       },
@@ -2093,7 +2239,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -2110,7 +2256,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -2154,14 +2300,14 @@
       "description": "Service-wide counters, not per-plugin series.",
       "gridPos": {
         "x": 12,
-        "y": 105,
+        "y": 117,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_lua_vm_failures_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 vm_failures",
+          "legendFormat": "{{device}} · vm_failures",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2174,7 +2320,7 @@
         },
         {
           "expr": "rate(meshcore_lua_rejected_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 rejected",
+          "legendFormat": "{{device}} · rejected",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2187,7 +2333,7 @@
         },
         {
           "expr": "rate(meshcore_lua_busy_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 busy",
+          "legendFormat": "{{device}} · busy",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2200,7 +2346,7 @@
         },
         {
           "expr": "rate(meshcore_lua_sender_limited_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 sender_limited",
+          "legendFormat": "{{device}} · sender_limited",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2213,7 +2359,7 @@
         },
         {
           "expr": "rate(meshcore_lua_channel_limited_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 channel_limited",
+          "legendFormat": "{{device}} · channel_limited",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2226,7 +2372,7 @@
         },
         {
           "expr": "rate(meshcore_lua_global_limited_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 global_limited",
+          "legendFormat": "{{device}} · global_limited",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2239,7 +2385,7 @@
         },
         {
           "expr": "rate(meshcore_lua_airtime_limited_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 airtime_limited",
+          "legendFormat": "{{device}} · airtime_limited",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2314,14 +2460,14 @@
       "description": "Event completion is not a peer acknowledgement; replies are service counters.",
       "gridPos": {
         "x": 0,
-        "y": 113,
+        "y": 125,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_lua_events_queued_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 events_queued",
+          "legendFormat": "{{device}} · events_queued",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2334,7 +2480,7 @@
         },
         {
           "expr": "rate(meshcore_lua_events_completed_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 events_completed",
+          "legendFormat": "{{device}} · events_completed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2347,7 +2493,7 @@
         },
         {
           "expr": "rate(meshcore_lua_events_failed_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 events_failed",
+          "legendFormat": "{{device}} · events_failed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2360,7 +2506,7 @@
         },
         {
           "expr": "rate(meshcore_lua_events_dropped_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 events_dropped",
+          "legendFormat": "{{device}} · events_dropped",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2373,7 +2519,7 @@
         },
         {
           "expr": "rate(meshcore_lua_replies_total{device=~\"${device:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{device}} \u00b7 replies",
+          "legendFormat": "{{device}} · replies",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2439,23 +2585,23 @@
     },
     {
       "id": 31,
-      "title": "Last Lua VM phase \u00b7 fraction of default budget",
+      "title": "Last Lua VM phase · fraction of selected limit",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Latest completed operation only, not phase maxima. Default limits: load 330ms, init 50ms, active invoke 20ms. Cached invokes have zero load/init; suspended I/O and RF wait are excluded.",
+      "description": "Latest completed operation, not phase maxima or worker CPU use. Select the limits from bot limits; defaults here are the noncompact 1000/100/100 ms profile. Compact defaults are 330/50/20 ms; bundled Lua can use a 1000 ms load limit. Suspended I/O and RF wait are excluded.",
       "gridPos": {
         "x": 12,
-        "y": 113,
+        "y": 125,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
-          "expr": "meshcore_lua_last_vm_load_seconds{device=~\"${device:regex}\"} / 0.330",
-          "legendFormat": "{{device}} \u00b7 load / 330ms",
+          "expr": "meshcore_lua_last_vm_load_seconds{device=~\"${device:regex}\"} / (${vm_load_ms} / 1000)",
+          "legendFormat": "{{device}} · load / ${vm_load_ms}ms",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2466,8 +2612,8 @@
           "refId": "A"
         },
         {
-          "expr": "meshcore_lua_last_vm_init_seconds{device=~\"${device:regex}\"} / 0.050",
-          "legendFormat": "{{device}} \u00b7 init / 50ms",
+          "expr": "meshcore_lua_last_vm_init_seconds{device=~\"${device:regex}\"} / (${vm_init_ms} / 1000)",
+          "legendFormat": "{{device}} · init / ${vm_init_ms}ms",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2478,8 +2624,8 @@
           "refId": "B"
         },
         {
-          "expr": "meshcore_lua_last_vm_invoke_seconds{device=~\"${device:regex}\"} / 0.020",
-          "legendFormat": "{{device}} \u00b7 invoke / 20ms",
+          "expr": "meshcore_lua_last_vm_invoke_seconds{device=~\"${device:regex}\"} / (${vm_invoke_ms} / 1000)",
+          "legendFormat": "{{device}} · invoke / ${vm_invoke_ms}ms",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2552,7 +2698,7 @@
     },
     {
       "id": 32,
-      "title": "Last Lua VM \u00b7 peak allocation / free heap / stack low-water",
+      "title": "Last Lua VM · peak allocation / free heap / stack low-water",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -2561,14 +2707,14 @@
       "description": "Sample of the latest completed source load or invocation; stack is worker-task low-water free space, not every task's stack. Fields appear only after a VM sample.",
       "gridPos": {
         "x": 0,
-        "y": 121,
+        "y": 133,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_lua_last_vm_peak_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 peak_bytes",
+          "legendFormat": "{{device}} · peak_bytes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2580,7 +2726,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_free_internal_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 free_internal_bytes",
+          "legendFormat": "{{device}} · free_internal_bytes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2592,7 +2738,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_free_psram_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 free_psram_bytes",
+          "legendFormat": "{{device}} · free_psram_bytes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2604,7 +2750,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_stack_free_bytes{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 stack_free_bytes",
+          "legendFormat": "{{device}} · stack_free_bytes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2669,7 +2815,7 @@
     },
     {
       "id": 33,
-      "title": "Last Lua VM \u00b7 wall time / phases",
+      "title": "Last Lua VM · wall time / phases",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -2678,14 +2824,14 @@
       "description": "Gauges, not rates. Includes the latest operation's accounted phases, not running-job CPU usage.",
       "gridPos": {
         "x": 12,
-        "y": 121,
+        "y": 133,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_lua_last_vm_seconds{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 seconds",
+          "legendFormat": "{{device}} · seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2697,7 +2843,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_load_seconds{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 load_seconds",
+          "legendFormat": "{{device}} · load_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2709,7 +2855,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_init_seconds{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 init_seconds",
+          "legendFormat": "{{device}} · init_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2721,7 +2867,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_invoke_seconds{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 invoke_seconds",
+          "legendFormat": "{{device}} · invoke_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2733,7 +2879,7 @@
         },
         {
           "expr": "meshcore_lua_last_vm_cleanup_seconds{device=~\"${device:regex}\"}",
-          "legendFormat": "{{device}} \u00b7 cleanup_seconds",
+          "legendFormat": "{{device}} · cleanup_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2798,7 +2944,7 @@
     },
     {
       "id": 34,
-      "title": "Last Lua VM \u00b7 instructions",
+      "title": "Last Lua VM · instructions",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -2807,7 +2953,7 @@
       "description": "Instruction count of the last completed VM operation; a gauge, not cumulative invocations.",
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 141,
         "w": 12,
         "h": 8
       },
@@ -2828,7 +2974,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -2881,12 +3027,12 @@
     {
       "id": 35,
       "type": "row",
-      "title": "Companion bot \u00b7 connection, collection and VictoriaMetrics delivery",
+      "title": "Companion bot · connection, collection and VictoriaMetrics delivery",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 137,
+        "y": 149,
         "w": 24,
         "h": 1
       }
@@ -2894,7 +3040,7 @@
     {
       "id": 36,
       "title": "Bot connection state",
-      "type": "timeseries",
+      "type": "state-timeline",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -2902,14 +3048,14 @@
       "description": "site is the bot selector because this emitter has no bot label. Give each bot a unique mesh/site tag pair.",
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 150,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_bot_connected{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 connected",
+          "legendFormat": "{{mesh}} / {{site}} · connected",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2921,7 +3067,7 @@
         },
         {
           "expr": "meshcore_bot_radio_offline{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 radio_offline",
+          "legendFormat": "{{mesh}} / {{site}} · radio_offline",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2933,7 +3079,7 @@
         },
         {
           "expr": "meshcore_bot_reconnecting{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 reconnecting",
+          "legendFormat": "{{mesh}} / {{site}} · reconnecting",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -2946,56 +3092,100 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Inactive",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Active",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*connected$"
+            },
+            "properties": [
               {
-                "color": "green",
-                "value": null
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Disconnected",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "Connected",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           },
-          "min": 0,
-          "max": 1,
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(radio_offline|reconnecting)$"
             },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Inactive",
+                        "color": "green"
+                      },
+                      "1": {
+                        "text": "Active",
+                        "color": "yellow"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
       }
     },
     {
@@ -3009,14 +3199,14 @@
       "description": "Process uptime, not companion-radio uptime.",
       "gridPos": {
         "x": 12,
-        "y": 138,
+        "y": 150,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_bot_uptime_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 uptime",
+          "legendFormat": "{{mesh}} / {{site}} · uptime",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3090,14 +3280,14 @@
       "description": "Capture queue fields are omitted when no capture writer exists.",
       "gridPos": {
         "x": 0,
-        "y": 146,
+        "y": 158,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_bot_command_queue{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 command_queue",
+          "legendFormat": "{{mesh}} / {{site}} · command_queue",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3109,7 +3299,7 @@
         },
         {
           "expr": "meshcore_bot_capture_queue{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 capture_queue",
+          "legendFormat": "{{mesh}} / {{site}} · capture_queue",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3121,7 +3311,7 @@
         },
         {
           "expr": "meshcore_bot_capture_queue_capacity{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 capture_queue_capacity",
+          "legendFormat": "{{mesh}} / {{site}} · capture_queue_capacity",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3135,7 +3325,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -3152,7 +3342,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -3196,14 +3386,14 @@
       "description": "Counters reset on bot restart. A disconnected receiver cannot receive failure reports until connectivity returns.",
       "gridPos": {
         "x": 12,
-        "y": 146,
+        "y": 158,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_bot_collection_failures_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 collection failures",
+          "legendFormat": "{{mesh}} / {{site}} · collection failures",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3216,7 +3406,7 @@
         },
         {
           "expr": "rate(meshcore_bot_status_skips_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 status admission skips",
+          "legendFormat": "{{mesh}} / {{site}} · status admission skips",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3229,7 +3419,7 @@
         },
         {
           "expr": "rate(meshcore_exporter_failures_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 write failures",
+          "legendFormat": "{{mesh}} / {{site}} · write failures",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3242,7 +3432,7 @@
         },
         {
           "expr": "rate(meshcore_exporter_dropped_lines_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 dropped lines",
+          "legendFormat": "{{mesh}} / {{site}} · dropped lines",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3255,7 +3445,7 @@
         },
         {
           "expr": "rate(meshcore_bot_edge_counter_evictions_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 edge evictions",
+          "legendFormat": "{{mesh}} / {{site}} · edge evictions",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3330,14 +3520,14 @@
       "description": "Includes in-flight body. Queue is memory-only and is not durable across crashes.",
       "gridPos": {
         "x": 0,
-        "y": 154,
+        "y": 166,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_exporter_queue_bytes{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 queued bytes",
+          "legendFormat": "{{mesh}} / {{site}} · queued bytes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3412,14 +3602,14 @@
       "description": "Zero success timestamps are suppressed. Collection can succeed while an individual source fails. These gauges can themselves go stale; use fleet report age.",
       "gridPos": {
         "x": 12,
-        "y": 154,
+        "y": 166,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "(time() - meshcore_bot_collection_last_success_timestamp_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}) and (meshcore_bot_collection_last_success_timestamp_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 collection",
+          "legendFormat": "{{mesh}} / {{site}} · collection",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3431,7 +3621,7 @@
         },
         {
           "expr": "(time() - meshcore_exporter_last_success_timestamp_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}) and (meshcore_exporter_last_success_timestamp_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 write",
+          "legendFormat": "{{mesh}} / {{site}} · write",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3443,7 +3633,7 @@
         },
         {
           "expr": "meshcore_exporter_oldest_age_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 oldest batch",
+          "legendFormat": "{{mesh}} / {{site}} · oldest batch",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3481,7 +3671,7 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -3517,7 +3707,7 @@
     {
       "id": 42,
       "title": "Passive source availability",
-      "type": "timeseries",
+      "type": "state-timeline",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -3525,14 +3715,14 @@
       "description": "Successful empty collection is 1; unreadable source is 0. This does not initiate device queries.",
       "gridPos": {
         "x": 0,
-        "y": 162,
+        "y": 174,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_source_ok{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{source}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{source}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3545,56 +3735,47 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "min": 0,
-          "max": 1,
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unreadable",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available",
+                  "color": "green"
+                }
+              }
             }
-          }
+          ]
         },
         "overrides": []
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
       }
     },
     {
@@ -3608,14 +3789,14 @@
       "description": "Last-operation duration gauges. Native ESP32 publisher HTTP timing is not exported.",
       "gridPos": {
         "x": 12,
-        "y": 162,
+        "y": 174,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_bot_collection_duration_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 collection",
+          "legendFormat": "{{mesh}} / {{site}} · collection",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3627,7 +3808,7 @@
         },
         {
           "expr": "meshcore_exporter_last_request_duration_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 write",
+          "legendFormat": "{{mesh}} / {{site}} · write",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3693,19 +3874,19 @@
     {
       "id": 44,
       "type": "row",
-      "title": "Companion bot \u00b7 shared RF work scheduler",
+      "title": "Companion bot · shared RF work scheduler",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 170,
+        "y": 182,
         "w": 24,
         "h": 1
       }
     },
     {
       "id": 45,
-      "title": "RF work \u00b7 queue depth / running",
+      "title": "RF work · queued jobs",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3714,14 +3895,14 @@
       "description": "Bot-owned operator/status/probe jobs, not packets. Running exchanges are never pre-empted.",
       "gridPos": {
         "x": 0,
-        "y": 171,
+        "y": 183,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_radio_work_queue_depth{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 queue_depth",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · queue_depth",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3730,24 +3911,12 @@
             "uid": "${DS_VM}"
           },
           "refId": "A"
-        },
-        {
-          "expr": "meshcore_radio_work_running{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 running",
-          "instant": false,
-          "range": true,
-          "editorMode": "code",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -3764,7 +3933,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -3798,8 +3967,82 @@
       }
     },
     {
+      "id": 68,
+      "title": "RF work · sampled running state",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "description": "Bot-owned operator/status/probe jobs, not packets. Running exchanges are never pre-empted.",
+      "gridPos": {
+        "x": 0,
+        "y": 191,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "meshcore_radio_work_running{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · running",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No report",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Idle",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Running",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
+      }
+    },
+    {
       "id": 46,
-      "title": "RF work \u00b7 oldest wait / active job duration",
+      "title": "RF work · oldest wait / active job duration",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3807,15 +4050,15 @@
       },
       "description": "Current gauges. Long operator jobs can delay optional polls and probes.",
       "gridPos": {
-        "x": 12,
-        "y": 171,
+        "x": 0,
+        "y": 197,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_radio_work_oldest_queued_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 oldest_queued_seconds",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · oldest_queued_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3827,7 +4070,7 @@
         },
         {
           "expr": "meshcore_radio_work_running_seconds{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 running_seconds",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · running_seconds",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3893,7 +4136,7 @@
     },
     {
       "id": 47,
-      "title": "RF work \u00b7 outcomes",
+      "title": "RF work · outcomes",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -3901,15 +4144,15 @@
       },
       "description": "One outcome per job or batch, not packet deliveries. Cancelled includes queue timeouts.",
       "gridPos": {
-        "x": 0,
-        "y": 179,
+        "x": 12,
+        "y": 197,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_radio_work_completed_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 completed",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · completed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3922,7 +4165,7 @@
         },
         {
           "expr": "rate(meshcore_radio_work_failed_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 failed",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · failed",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -3935,7 +4178,7 @@
         },
         {
           "expr": "rate(meshcore_radio_work_cancelled_total{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",work_class=~\"${work_class:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} \u00b7 cancelled",
+          "legendFormat": "{{mesh}} / {{site}} / {{work_class}} · cancelled",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4002,12 +4245,12 @@
     {
       "id": 48,
       "type": "row",
-      "title": "Observer \u00b7 received traffic, commands and retained state",
+      "title": "Observer · received traffic, commands and retained state",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 187,
+        "y": 205,
         "w": 24,
         "h": 1
       }
@@ -4023,7 +4266,7 @@
       "description": "Trailing-window count divided by window seconds. Despite the name _total, this is a window gauge: do not use rate(). Physical captured packets only.",
       "gridPos": {
         "x": 0,
-        "y": 188,
+        "y": 206,
         "w": 12,
         "h": 8
       },
@@ -4095,7 +4338,7 @@
     },
     {
       "id": 50,
-      "title": "RF packet mix \u00b7 trailing window",
+      "title": "RF packet mix · trailing window",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -4104,14 +4347,14 @@
       "description": "Window gauges. Repeated hashes are extra observations, not packet loss.",
       "gridPos": {
         "x": 12,
-        "y": 188,
+        "y": 206,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_packets_window{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{route_type}} / {{payload_type}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{route_type}} / {{payload_type}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4125,7 +4368,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -4141,7 +4384,7 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -4176,7 +4419,7 @@
     },
     {
       "id": 51,
-      "title": "Receiver SNR \u00b7 window mean / min / max",
+      "title": "Receiver SNR · window mean / min / max",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -4185,14 +4428,14 @@
       "description": "Gated by sample count so empty windows do not show a retained old signal mean.",
       "gridPos": {
         "x": 0,
-        "y": 196,
+        "y": 214,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_packets_snr_db_mean{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_snr_db_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 mean",
+          "legendFormat": "{{mesh}} / {{site}} · mean",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4204,7 +4447,7 @@
         },
         {
           "expr": "meshcore_packets_snr_db_min{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_snr_db_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 min",
+          "legendFormat": "{{mesh}} / {{site}} · min",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4216,7 +4459,7 @@
         },
         {
           "expr": "meshcore_packets_snr_db_max{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_snr_db_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 max",
+          "legendFormat": "{{mesh}} / {{site}} · max",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4246,7 +4489,7 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -4281,7 +4524,7 @@
     },
     {
       "id": 52,
-      "title": "Receiver RSSI \u00b7 window mean / min / max",
+      "title": "Receiver RSSI · window mean / min / max",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -4290,14 +4533,14 @@
       "description": "Local receiver measurements, including the final relay on multihop traffic.",
       "gridPos": {
         "x": 12,
-        "y": 196,
+        "y": 214,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_packets_rssi_dbm_mean{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_rssi_dbm_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 mean",
+          "legendFormat": "{{mesh}} / {{site}} · mean",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4309,7 +4552,7 @@
         },
         {
           "expr": "meshcore_packets_rssi_dbm_min{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_rssi_dbm_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 min",
+          "legendFormat": "{{mesh}} / {{site}} · min",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4321,7 +4564,7 @@
         },
         {
           "expr": "meshcore_packets_rssi_dbm_max{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} and (meshcore_packets_rssi_dbm_samples{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"} > 0)",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 max",
+          "legendFormat": "{{mesh}} / {{site}} · max",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4351,7 +4594,7 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -4386,7 +4629,7 @@
     },
     {
       "id": 53,
-      "title": "Commands \u00b7 requests / replies / without reply",
+      "title": "Commands · requests / replies / without reply",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -4395,14 +4638,14 @@
       "description": "Trailing-window gauges for registered commands (unknown names become other). Recorded replies are not RF acknowledgements.",
       "gridPos": {
         "x": 0,
-        "y": 204,
+        "y": 222,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_command_requests{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{command}} / {{kind}} \u00b7 requests",
+          "legendFormat": "{{mesh}} / {{site}} · {{command}} / {{kind}} · requests",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4414,7 +4657,7 @@
         },
         {
           "expr": "meshcore_command_replies{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{command}} / {{kind}} \u00b7 replies",
+          "legendFormat": "{{mesh}} / {{site}} · {{command}} / {{kind}} · replies",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4426,7 +4669,7 @@
         },
         {
           "expr": "meshcore_command_without_reply{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{command}} / {{kind}} \u00b7 without_reply",
+          "legendFormat": "{{mesh}} / {{site}} · {{command}} / {{kind}} · without_reply",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4440,7 +4683,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -4500,14 +4743,14 @@
       "description": "Python bot file sizes only. No on-device KV, file, timer or reminder storage usage is exported.",
       "gridPos": {
         "x": 12,
-        "y": 204,
+        "y": 222,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_storage_database_bytes{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 database",
+          "legendFormat": "{{mesh}} / {{site}} · database",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4519,7 +4762,7 @@
         },
         {
           "expr": "meshcore_storage_wal_bytes{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 wal",
+          "legendFormat": "{{mesh}} / {{site}} · wal",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4584,7 +4827,7 @@
     },
     {
       "id": 55,
-      "title": "Heard nodes \u00b7 freshness windows",
+      "title": "Heard nodes · freshness windows",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -4593,14 +4836,14 @@
       "description": "Population of contacts heard during each labelled window; gauges, not rates. Includes nodes beyond individual-series caps.",
       "gridPos": {
         "x": 0,
-        "y": 212,
+        "y": 230,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_nodes_heard_nodes{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{window}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{window}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4614,7 +4857,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -4631,7 +4874,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -4675,14 +4918,14 @@
       "description": "Stored summaries, not rateable counters. Exported edges are capped. Prefix-only endpoints are not resolved identities.",
       "gridPos": {
         "x": 12,
-        "y": 212,
+        "y": 230,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_graph_edges{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 graph edges",
+          "legendFormat": "{{mesh}} / {{site}} · graph edges",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4694,7 +4937,7 @@
         },
         {
           "expr": "meshcore_graph_edges_exported{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 exported edges",
+          "legendFormat": "{{mesh}} / {{site}} · exported edges",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4706,7 +4949,7 @@
         },
         {
           "expr": "meshcore_paths_nodes{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 path nodes",
+          "legendFormat": "{{mesh}} / {{site}} · path nodes",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4718,7 +4961,7 @@
         },
         {
           "expr": "meshcore_neighbours_links{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 cached neighbour links",
+          "legendFormat": "{{mesh}} / {{site}} · cached neighbour links",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4732,7 +4975,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -4749,7 +4992,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -4785,19 +5028,19 @@
     {
       "id": 57,
       "type": "row",
-      "title": "Polled relay / companion \u00b7 returned status and configured probes",
+      "title": "Polled relay / companion · returned status and configured probes",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 220,
+        "y": 238,
         "w": 24,
         "h": 1
       }
     },
     {
       "id": 58,
-      "title": "Node status \u00b7 age of last successful sample",
+      "title": "Node status · age of last successful sample",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -4806,14 +5049,14 @@
       "description": "Age of returned status, not last advert. Polling must already be configured in the bot. Importing this dashboard sends no RF requests.",
       "gridPos": {
         "x": 0,
-        "y": 221,
+        "y": 239,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "time() - tlast_over_time(meshcore_node_uptime{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$history])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}}",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -4870,22 +5113,22 @@
     {
       "id": 59,
       "title": "Node poll result / probe result",
-      "type": "timeseries",
+      "type": "status-history",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Last sampled exchange outcome, not a cumulative counter or packet delivery ratio. Probe route is independent of node filter.",
+      "description": "Last sampled exchange outcome, not a cumulative counter or packet delivery ratio. Probe route is independent of node filter. Blocks show sampled outcomes, not continuous reachability; repeated uploads can repeat the last outcome.",
       "gridPos": {
         "x": 12,
-        "y": 221,
+        "y": 239,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_poll_ok{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{kind}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{kind}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4897,7 +5140,7 @@
         },
         {
           "expr": "meshcore_probe_ok{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",route=~\"${route:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{route}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{route}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -4910,55 +5153,44 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 2,
-          "noValue": "No sample",
+          "decimals": 0,
+          "noValue": "No report",
           "color": {
             "mode": "palette-classic"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "min": 0,
-          "max": 1,
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "axisPlacement": "auto",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Failed",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Succeeded",
+                  "color": "green"
+                }
+              }
             }
-          }
+          ]
         },
         "overrides": []
       },
       "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+          "mode": "single",
+          "sort": "none"
         }
       }
     },
@@ -4973,14 +5205,14 @@
       "description": "Device uptime from status/local stats. This can describe Pine only if the bot actually polls Pine.",
       "gridPos": {
         "x": 0,
-        "y": 229,
+        "y": 247,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_node_uptime{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5054,14 +5286,14 @@
       "description": "Returned battery millivolts converted to volts. Missing readings are not filled.",
       "gridPos": {
         "x": 12,
-        "y": 229,
+        "y": 247,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_node_bat{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"} / 1000",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5135,14 +5367,14 @@
       "description": "These unsuffixed fields are monotonic device counters, reset on reboot. Unsupported firmware fields are absent.",
       "gridPos": {
         "x": 0,
-        "y": 237,
+        "y": 255,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_node_nb_recv{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}} \u00b7 nb_recv",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}} · nb_recv",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5155,7 +5387,7 @@
         },
         {
           "expr": "rate(meshcore_node_nb_sent{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}} \u00b7 nb_sent",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}} · nb_sent",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5168,7 +5400,7 @@
         },
         {
           "expr": "rate(meshcore_node_recv_errors{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}} \u00b7 recv_errors",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}} · recv_errors",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5181,7 +5413,7 @@
         },
         {
           "expr": "rate(meshcore_node_direct_dups{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}} \u00b7 direct_dups",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}} · direct_dups",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5194,7 +5426,7 @@
         },
         {
           "expr": "rate(meshcore_node_flood_dups{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} / {{role}} \u00b7 flood_dups",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} / {{role}} · flood_dups",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5269,14 +5501,14 @@
       "description": "Cumulative seconds converted to seconds/second. Status semantics are separate from native shared-radio attribution.",
       "gridPos": {
         "x": 12,
-        "y": 237,
+        "y": 255,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "rate(meshcore_node_airtime{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} \u00b7 TX",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} · TX",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5289,7 +5521,7 @@
         },
         {
           "expr": "rate(meshcore_node_rx_airtime{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}[$__rate_interval])",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}} \u00b7 RX",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}} · RX",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5364,14 +5596,14 @@
       "description": "Gauge from the last returned status/local radio stats. Missing node status does not become zero.",
       "gridPos": {
         "x": 0,
-        "y": 245,
+        "y": 263,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_node_tx_queue_len{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",node=~\"${node:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{node}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{node}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5385,7 +5617,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 2,
+          "decimals": 0,
           "noValue": "No sample",
           "color": {
             "mode": "palette-classic"
@@ -5402,7 +5634,7 @@
           "min": 0,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1,
             "fillOpacity": 8,
             "showPoints": "auto",
@@ -5437,7 +5669,7 @@
     },
     {
       "id": 65,
-      "title": "Configured probe \u00b7 directed link SNR",
+      "title": "Configured probe · directed link SNR",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -5446,14 +5678,14 @@
       "description": "Each hop reports reception of the previous hop. A later failed probe can leave an older signal sample; inspect probe outcome and sample time.",
       "gridPos": {
         "x": 12,
-        "y": 245,
+        "y": 263,
         "w": 12,
         "h": 8
       },
       "targets": [
         {
           "expr": "meshcore_link_snr{mesh=~\"${mesh:regex}\",site=~\"${site:regex}\",route=~\"${route:regex}\"}",
-          "legendFormat": "{{mesh}} / {{site}} \u00b7 {{route}} \u00b7 {{src}} \u2192 {{dst}}",
+          "legendFormat": "{{mesh}} / {{site}} · {{route}} · {{src}} → {{dst}}",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -5723,6 +5955,57 @@
         ],
         "multi": false,
         "includeAll": false
+      },
+      {
+        "name": "vm_load_ms",
+        "label": "VM load limit (ms)",
+        "type": "textbox",
+        "query": "1000",
+        "current": {
+          "text": "1000",
+          "value": "1000"
+        },
+        "options": [
+          {
+            "text": "1000",
+            "value": "1000",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "vm_init_ms",
+        "label": "VM init limit (ms)",
+        "type": "textbox",
+        "query": "100",
+        "current": {
+          "text": "100",
+          "value": "100"
+        },
+        "options": [
+          {
+            "text": "100",
+            "value": "100",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "vm_invoke_ms",
+        "label": "VM active limit (ms)",
+        "type": "textbox",
+        "query": "100",
+        "current": {
+          "text": "100",
+          "value": "100"
+        },
+        "options": [
+          {
+            "text": "100",
+            "value": "100",
+            "selected": true
+          }
+        ]
       }
     ]
   }

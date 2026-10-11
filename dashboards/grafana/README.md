@@ -15,6 +15,12 @@ packet counters, duplicates, receive errors and airtime. **Poll wait** and
 [remote repeater monitor](../../firmware/runtime/REMOTE_REPEATERS.md) first.
 The fleet dashboard links to this focused view.
 
+Import [`meshcore-signal.json`](meshcore-signal.json) for the nearby repeater
+hops sampled by the Wasm packet hook. Compare mean/P95 SNR, mean RSSI, sample
+counts and last-heard age in one table, with separate signal histories. See
+[Nearby repeater SNR](../../firmware/runtime/REPEATER_SNR.md) to install the
+sampler. This feed needs no status polls or extra RF transmissions.
+
 ## Import and select a node
 
 1. In Grafana, add a **Prometheus** datasource pointing at your authorized
@@ -25,8 +31,8 @@ The fleet dashboard links to this focused view.
 2. Set the datasource scrape interval to the actual sample cadence
    (normally `60s` for the ESP32 publisher). Use **Dashboards → New → Import**,
    upload the JSON and select that datasource at the import prompt.
-   Grafana 10+ and its built-in Prometheus, text, stat and time-series panels
-   are sufficient.
+   Grafana 10+ and its built-in Prometheus, text, stat, table, state-timeline,
+   status-history and time-series panels are sufficient.
 3. Start with the report-age panels. Select **Native device / Native role** for
    the ESP32 feed. Select **Bot mesh / Bot site** for a Python bot, then
    **Polled node**, **Probe route** or **RF work class** for its detail panels.
@@ -64,7 +70,7 @@ bot and Go host roles share a radio.
 ## Read values and gaps
 
 - Report age uses VictoriaMetrics `tlast_over_time()` through the normal
-  Prometheus datasource. This is the only MetricsQL-specific function used.
+  Prometheus datasource. Other queries use ordinary PromQL functions.
   Native age is receiver receipt age; Python sample age uses original
   collection timestamps retained during retries. Neither is RF last-heard age.
   Last-reported uptime is explicitly a historical sample, not an extrapolation.
@@ -105,14 +111,55 @@ bot and Go host roles share a radio.
   Heap/DMA pools overlap. Heap minima and worker stack free space are
   low-water gauges. Last-VM fields are the latest completed source load or
   invocation, not maxima or a record of every operation.
-- VM phase fractions use default limits: load 330ms, initialization 50ms,
-  active invocation 20ms. Cached invokes have zero load/init. Suspended I/O,
-  package transfer and RF wait are excluded. Change the denominators if your
-  runtime limits change. Cleanup has no invented budget.
+- VM phase fractions use the dashboard's **VM load / init / active limit (ms)**
+  inputs. Set these from `bot limits`; defaults are the noncompact
+  1000/100/100 ms profile (compact: 330/50/20 ms). Cached invokes have zero
+  load/init. Suspended I/O, package transfer and RF wait are excluded. Phase
+  fractions do not measure the shared worker compute allowance. Cleanup has
+  no invented budget.
 - Unsupported battery/PSRAM/temperature fields are absent. WiFi RSSI is
   connected-only. Signal-window means are gated by valid sample count.
   Directed probe-link SNR can remain from a previous successful probe after a
   later failure; inspect the probe outcome and sample time.
+
+## Choose a view
+
+- **State timelines** show role readiness/identity, WiFi and bot connection,
+  source generation, scheduler flags, source availability, and repeater monitor
+  result/wait states. Equal adjacent states merge; gaps remain unknown. These
+  are sampled flags: a short transition between uploads can be missed. A final
+  coloured segment does not override an old report age.
+- **Status history** shows sampled poll/probe outcomes as separate blocks. A
+  repeated published outcome is not another exchange or a continuous uptime
+  guarantee.
+- **Time series** show signal, voltage, memory, elapsed time and counter rates.
+  Queue counts have their own stepped graphs, separate from state flags.
+  Cumulative packet counts remain available beside reset-aware rates.
+- **Stats** answer current-age and latest-value questions. The signal table
+  puts paired SNR and RSSI, sample count, heard count and RF age on one row per
+  receiver/slot/hop; sort Heard to find frequently observed repeaters.
+
+### Nearby repeater signal
+
+The signal dashboard selects `device`, packet `slot` and hop `label`, always
+with `report="repeater_snr"`. Mean SNR, nearest-rank P95 SNR and mean RSSI use
+the same ring of up to 256 observations. P95 describes the stronger end of SNR.
+Prefixes of different widths remain separate; they can collide and do not
+authenticate a node. Heard counts reset when their bucket is recreated, so
+they are shown as counts rather than `rate()`.
+
+One hop is exported per successful upload. Sixteen hops at a 60-second cadence
+take up to 16 minutes to cycle. **Report hold** defaults to 20 minutes; values
+expire after that window. Increase it if your complete rotation takes longer.
+The hop report-age colours assume this cadence (yellow at 16 minutes, red at
+20); adjust them when changing the publisher interval or hold.
+
+**RF last-heard age** subtracts `last_seen_utc` from query time, independently
+of upload time. Zero/untrusted RF timestamps have no age or heard-state value.
+Repeated uploads of a quiet ring do not reset its RF age. The one-hour state
+timeline reports whether the exported observation is within an hour; an
+expired report or untrusted clock remains unknown. Historical signal graphs
+show exported ring snapshots, not every individual packet.
 
 ## Panel-to-metric map
 
@@ -166,10 +213,9 @@ native `fresh` flag. Unsupported voltage is absent, never zero or an estimated
 percentage. History graphs preserve past values and gaps.
 
 Error code `12` means **frequency mismatch**: no request is sent and the shared
-modem is not retuned. On the current Aspen setup, four 910.525 MHz targets
-remain fenced while Aspen stays on 912.525 MHz. The dashboard does not make
-those repeaters appear online. The monitor-result panel maps every native
-error code; remote `error_flags` are a separate raw firmware field.
+modem is not retuned. Match the saved target frequency to the monitor's current
+radio profile before expecting status responses. The monitor-result panel maps
+every native error code; remote `error_flags` are a separate raw firmware field.
 
 Rate targets use a five-minute minimum step, allowing a window of at least
 four normal polls. Repeated publication of a cached sample is not additional
@@ -214,11 +260,13 @@ Python bot series follow
 revision `bac3bd868f7d271e36a69e65764c33d5a9fb5b50`, in its metrics and
 radio-work service modules.
 
-Check the JSON and native formatter locally:
+Check the dashboard JSON locally. Run the native formatter check when changing
+the emitter:
 
 ```sh
 python -m json.tool dashboards/grafana/meshcore-fleet.json >/dev/null
 python -m json.tool dashboards/grafana/meshcore-repeaters.json >/dev/null
+python -m json.tool dashboards/grafana/meshcore-signal.json >/dev/null
 make -C firmware/esp32 telemetry-test
 ```
 

@@ -1,0 +1,1024 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_VM",
+      "label": "VictoriaMetrics (Prometheus)",
+      "description": "Select the Prometheus-compatible datasource for your authorized VictoriaMetrics query endpoint.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "meshcore-signal-vm",
+  "title": "MeshCore · nearby repeater signal",
+  "description": "Paired SNR/RSSI sample rings from the packet hook, with RF last-heard age and report age.",
+  "tags": [
+    "meshcore",
+    "signal",
+    "victoriametrics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Nearby repeaters heard by this receiver",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 6
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Select a receiver and hop. These paired SNR/RSSI rings sample the final repeater hop of received flood packets. Direct and empty-path packets are excluded. Different prefix widths remain separate; prefixes can collide.\n\n**Mean and P95 use the last 256 samples.** P95 describes stronger SNR observations. Heard counts restart when a bucket is recreated.\n\n**One hop per upload:** 16 hops at 60 seconds take up to 16 minutes. Report hold carries exported rings for that window, then leaves a gap. RF age uses the observation time; uploads can repeat a quiet ring. The summary stats cover the selected hops; use the table for each hop."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Most recent RF observation · selected hops",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 4
+      },
+      "description": "Age of the newest trusted RF observation among the selected hops. Check the table for each hop's RF age.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(clamp_min(time() - (last_over_time(meshcore_packet_last_seen_utc{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]) > 0), 0))",
+          "legendFormat": "Last RF observation",
+          "instant": true,
+          "range": false,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No trusted RF time",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true
+        },
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Oldest hop report · selected hops",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 4
+      },
+      "description": "Oldest received report among hops retained by Report hold. Expired reports leave the table. Up to 16 minutes is normal at 16 hops / 60 seconds.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(time() - tlast_over_time(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]))",
+          "legendFormat": "Oldest hop report",
+          "instant": true,
+          "range": false,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No report",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 960
+              },
+              {
+                "color": "red",
+                "value": 1200
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true
+        },
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Latest exported signal rings",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 11
+      },
+      "description": "Compare SNR and RSSI from the same exported ring. Counts are per bucket, not packet delivery rates. Results expire after Report hold. Sort by Heard to find the most frequently observed hops.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "label_join(last_over_time(meshcore_packet_mean_db{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "expr": "label_join(last_over_time(meshcore_packet_p95_db{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "C",
+          "expr": "label_join(last_over_time(meshcore_packet_rssi_mean_dbm{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "D",
+          "expr": "label_join(last_over_time(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "E",
+          "expr": "label_join(last_over_time(meshcore_packet_heard_total{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "F",
+          "expr": "label_join(last_over_time(meshcore_packet_window{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "G",
+          "expr": "label_join(clamp_min(time() - (last_over_time(meshcore_packet_last_seen_utc{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]) > 0), 0), \"hop_key\", \" / \", \"device\", \"slot\", \"label\")",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No report",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SNR mean (dB)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dB"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SNR P95 (dB)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dB"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RSSI mean (dBm)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dBm"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Samples"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Heard"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Capacity"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RF age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Receiver / slot / hop"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Heard",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "hop_key",
+            "mode": "outerTabular"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Time 6": true,
+              "Time 7": true,
+              "device": true,
+              "slot": true,
+              "label": true,
+              "report": true,
+              "device 1": true,
+              "device 2": true,
+              "device 3": true,
+              "device 4": true,
+              "device 5": true,
+              "device 6": true,
+              "device 7": true,
+              "slot 1": true,
+              "slot 2": true,
+              "slot 3": true,
+              "slot 4": true,
+              "slot 5": true,
+              "slot 6": true,
+              "slot 7": true,
+              "label 1": true,
+              "label 2": true,
+              "label 3": true,
+              "label 4": true,
+              "label 5": true,
+              "label 6": true,
+              "label 7": true,
+              "report 1": true,
+              "report 2": true,
+              "report 3": true,
+              "report 4": true,
+              "report 5": true,
+              "report 6": true,
+              "report 7": true,
+              "__name__": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "__name__ 3": true,
+              "__name__ 4": true,
+              "__name__ 5": true,
+              "__name__ 6": true,
+              "__name__ 7": true
+            },
+            "renameByName": {
+              "hop_key": "Receiver / slot / hop",
+              "Value #A": "SNR mean (dB)",
+              "Value #B": "SNR P95 (dB)",
+              "Value #C": "RSSI mean (dBm)",
+              "Value #D": "Samples",
+              "Value #E": "Heard",
+              "Value #F": "Capacity",
+              "Value #G": "RF age"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "SNR · ring mean and P95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Paired rolling ring, held for Report hold. P95 is the stronger end of the distribution; gaps mean no recent export.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time(meshcore_packet_mean_db{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}} · mean",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "last_over_time(meshcore_packet_p95_db{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}} · P95",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dB",
+          "noValue": "No report",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0,
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*P95$"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    6,
+                    6
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "RSSI · ring mean",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Same packets and ring as SNR; no arbitrary universal signal threshold.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time(meshcore_packet_rssi_mean_dbm{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}}",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "noValue": "No report",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0,
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Sample ring · occupied / capacity",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Up to 256 paired observations per hop. A reset can follow restart, replacement or return after an hour.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}} · samples",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "B",
+          "expr": "last_over_time(meshcore_packet_window{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}} · capacity",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No report",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0,
+            "lineWidth": 2
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Heard observations since bucket creation",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Count gauge retained within a packet-program bucket. Do not use rate(): bucket eviction/recreation and report rotation change its lifetime.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "last_over_time(meshcore_packet_heard_total{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold])",
+          "legendFormat": "{{device}} / {{slot}} · {{label}}",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No report",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0,
+            "lineWidth": 2
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "RF last-heard age history",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Age rises until a new RF observation is exported. Trusted RF timestamps only.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_min(time() - (last_over_time(meshcore_packet_last_seen_utc{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]) > 0), 0)",
+          "legendFormat": "{{device}} / {{slot}} · {{label}}",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No report",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0,
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Last heard within one hour · sampled state",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Green means the last exported RF observation is less than one hour old. Grey means older. Missing/untrusted timestamp or expired report is unknown.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - (last_over_time(meshcore_packet_last_seen_utc{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\",label=~\"${hop:regex}\"}[$signal_hold]) > 0)) < bool 3600",
+          "legendFormat": "{{device}} / {{slot}} · {{label}}",
+          "instant": false,
+          "range": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "noValue": "No report",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Older than one hour",
+                  "color": "text"
+                },
+                "1": {
+                  "text": "Heard within one hour",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "mergeValues": true,
+        "alignValue": "left"
+      }
+    }
+  ],
+  "links": [
+    {
+      "title": "Fleet health",
+      "type": "link",
+      "url": "/d/meshcore-fleet-vm",
+      "keepTime": true,
+      "includeVars": true
+    },
+    {
+      "title": "Remote repeater status",
+      "type": "link",
+      "url": "/d/meshcore-repeaters-vm",
+      "keepTime": true,
+      "includeVars": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "label": "Receiver device",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "query": {
+          "query": "label_values(meshcore_packet_samples{report=\"repeater_snr\"}, device)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(meshcore_packet_samples{report=\"repeater_snr\"}, device)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "slot",
+        "label": "Packet slot",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "query": {
+          "query": "label_values(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\"}, slot)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\"}, slot)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "hop",
+        "label": "Repeater hop",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "query": {
+          "query": "label_values(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\"}, label)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(meshcore_packet_samples{report=\"repeater_snr\",device=~\"${device:regex}\",slot=~\"${slot:regex}\"}, label)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "signal_hold",
+        "label": "Report hold",
+        "type": "custom",
+        "query": "20m,30m,1h",
+        "current": {
+          "text": "20m",
+          "value": "20m"
+        },
+        "options": [
+          {
+            "text": "20m",
+            "value": "20m",
+            "selected": true
+          },
+          {
+            "text": "30m",
+            "value": "30m",
+            "selected": false
+          },
+          {
+            "text": "1h",
+            "value": "1h",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  }
+}

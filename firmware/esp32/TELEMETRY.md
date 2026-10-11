@@ -358,7 +358,10 @@ Suffix `_total` means a cumulative counter; other fields are gauges. Heap
 minimums and VM stack free space are low-water gauges. Last-VM fields describe
 the latest completed VM operation (source load or invocation), not aggregate
 heap use or running jobs. Phase fields use existing VM wall-time accounting:
-330 ms load, 50 ms initialization and 20 ms active-invocation default limits.
+Noncompact defaults are 1000 ms load, 100 ms initialization and 100 ms active
+invocation; compact profiles retain 330/50/20 ms. Read `bot limits` for the
+configured limits; bundled Lua sources can have a 1000 ms load limit. The
+command worker shares a 25% elapsed-time allowance with 100 ms burst credit; these phase fields do not measure that worker allowance.
 Cached invocations have zero load/init work. Suspended native I/O, package
 transfer and RF scheduling/delivery are not active VM execution or task CPU
 time. A later completed operation replaces the last sample; these fields are

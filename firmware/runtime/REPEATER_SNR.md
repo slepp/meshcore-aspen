@@ -64,7 +64,11 @@ keeps its final report. Always check last-heard age. Restarting Aspen or reloadi
 the packet program clears all rings. The guest uses one 64 KiB PSRAM linear
 memory, including rings, histogram and report storage.
 
-## VictoriaMetrics
+## Grafana and VictoriaMetrics
+
+Import the [nearby repeater signal dashboard](../../dashboards/grafana/README.md)
+to compare paired SNR/RSSI rings, counts and RF last-heard age. Its Report hold
+default covers a full 16-hop rotation at the normal 60-second upload cadence.
 
 With existing telemetry enabled, `meshcore_packet` sends one rotating row per
 successful upload, tagged by `device`, `slot`, `report` and `label`. Sixteen rows
