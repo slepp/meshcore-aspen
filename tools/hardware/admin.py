@@ -1114,8 +1114,8 @@ def main():
                     if args.values:
                         stages, fuel, microseconds, caps = args.values
                         if not (1 <= stages <= 255 and 1 <= fuel <= 100000 and
-                                1 <= microseconds <= 20000 and 0 <= caps <= 7):
-                            raise ValueError("Packet budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..7")
+                                1 <= microseconds <= 20000 and 0 <= caps <= 15):
+                            raise ValueError("Packet budget requires STAGES 1..255 FUEL 1..100000 US 1..20000 CAPS 0..15")
                         text += " " + " ".join(map(str, args.values))
                 print(checked(client, text))
         elif args.action == "cloudroom":

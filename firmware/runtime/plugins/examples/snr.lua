@@ -1,6 +1,6 @@
 local function decimal(n)
   local sign=n<0 and "-" or ""
-  local v=((n<0 and -n or n)*100+0.5)//1
+  local v=((((n<0 and -n or n)*100+0.5)//1)|0)
   return sign..tostring(v//100).."."..(v%100<10 and "0" or "")..tostring(v%100)
 end
 command("snr","hop?:string:6","Nearby repeater SNR")
@@ -12,9 +12,9 @@ function snr(hop)
       local row=report.rows[i]
       if row.label==hop then
         local v=row.values
-        local age=(ctx.node.uptime_ms-v.last_seen_ms)%4294967296
+        local age=(ctx.node.uptime_ms-(v.last_seen_ms|0))%4294967296
         return row.label.." SNR avg "..decimal(v.mean_db).." P95 "..decimal(v.p95_db).." dB; "..
-          tostring(v.samples).." samples; heard "..tostring(v.heard_total)..
+          tostring(v.samples|0).." samples; heard "..tostring(v.heard_total|0)..
           "; RSSI "..decimal(v.rssi_mean_dbm).." dBm; "..tostring(age//1000).."s ago"
       end
     end
