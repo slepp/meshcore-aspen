@@ -7,9 +7,13 @@ phone must authenticate using Pine's saved six-digit BLE PIN.
 The running image must already contain this guarded entry feature. Install
 that image once through the existing Pine-only USB application DFU deployment
 path before depending on no-wire updates; this does not replace the bootloader.
+The phone or host must remain within Bluetooth range. LoRa administration only
+arms entry; it does not carry the firmware file. Exclusive BLE peer mode has no
+DFU service and requires the [USB application update path](HOST-UPDATES.md).
 
 **Important:** the retained bootloader overwrites the application in place.
-There is no signed-image trust, rollback or bootloader-session deadline.
+There is no device-enforced image signature, rollback or bootloader-session
+deadline.
 The 120-second deadline below bounds *entry from the running application*,
 not an ongoing or abandoned bootloader transfer. Keep the phone nearby, power
 stable and the verified ZIP available until Pine has restarted. Interrupted
@@ -33,6 +37,10 @@ reserved-flash boundary. The production ZIP contains only `firmware.bin`,
 `0.5`, device type is `0x52`, and the build requires SoftDevice ID `0x123`.
 The BIN starts at `0x27000`; its end must be below `0xED000`.
 Neither a raw fullflash BIN nor a Secure DFU ZIP is a substitute.
+For a package with a signed Pine manifest, use
+[`pine_update.py verify`](HOST-UPDATES.md#update-an-initialized-xiao-pine)
+before giving that same inner ZIP to the BLE tool. The BLE wrapper itself
+checks layout and CRC, not the manifest signature.
 
 Provision the BLE PIN through Pine's existing local USB console before taking
 it into the field (`set bot.ble.pin SIX_DIGITS`). Do not put the PIN in logs,
@@ -165,7 +173,7 @@ because SYSTEMOFF would strand an inaccessible Pine.
 
 ## Aborted transfer and preservation checks
 
-**Keep Pine accessible by USB; mast deployment is on hold.** Its installed
+**Keep USB recovery accessible; BLE-only recovery is not reliable.** Its installed
 bootloader `0.6.1` completed a 643,736-byte BLE application update and restarted
 with the saved role names, PHY, policy and Lua source. However, after a transfer
 was interrupted at 8,200 bytes, a fresh start returned Nordic response `100102`
@@ -208,7 +216,10 @@ Poll status through `PENDING`/`BUSY` until
 Read increasing indices until `EOF`. Each `DATA HEX` row carries at most
 48 snapshot bytes. Save the complete snapshot privately, verify its SHA-256,
 and repeat the export after restart to compare the same caller KV and selected
-source hash. Do not compare live counters, heap, Lua globals or runtime epochs.
+custom source hash/generation. Read `source status` as well: bundled handlers
+(`active=3`) must remain selected, but their hash can change with the application.
+Verify those bundled bytes through `get application` instead. Do not compare
+live counters, heap, Lua globals or runtime epochs.
 For bot-scoped KV use `bot data export kv bot KEY64` with 64 zero digits.
 `conversation` and `channel` exports also require their full nonzero principal
 identity; they are separate scopes, not aliases for caller data.
