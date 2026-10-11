@@ -2335,10 +2335,12 @@ time simply holds the bounded on-disk jobs; there is no waiting coroutine to
 exhaust. With fresh time, a job more than **60 seconds overdue** becomes
 `overdue`, without a transmission.
 
-The destination must be rediscovered and have a native-authenticated PATH
-received within the last ten minutes, including **after every reboot**.
-Routes are not persisted or guessed; a fresh signed advert alone is insufficient.
-The recipient/native peer must supply that PATH within the deadline window.
+The destination needs a native-authenticated PATH and accepted contact activity
+within the last ten minutes. Saved routes retain their original timestamps
+across a restart and can satisfy this freshness window once UTC is trusted.
+Older paths retained in the seven-day cache do not satisfy it; a fresh signed
+advert alone is insufficient. The recipient/native peer must refresh the PATH
+within the deadline window when the saved route is too old.
 No active route-discovery flood, automatic probe, fallback flood or RF retry
 is introduced. Widths 1/2/3, own/loop exclusion, native timestamp/crypto, shared
 airtime credits and the existing queued bot source are reused. One route-less
