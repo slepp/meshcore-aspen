@@ -468,6 +468,9 @@ make -C firmware/esp32 bot-packet-origin-test BUILD="$PWD/.tmp/onchip-packet-nat
 make -C firmware/esp32 packet-lua-test
 ```
 
+Wasm charges fuel for each opcode and checks elapsed time every 64 opcodes,
+at native imports and before publication.
+
 The portable check covers registration, mutation/rollback, drop, budgets,
 recursion, emission-origin guards and atomic emission rejection. The arbiter
 check covers RF/host/native fanout, source-specific drops, transmission,

@@ -125,7 +125,7 @@ static void faults() {
   assert(run(pipeline, 13, bytes, length) == Decision::Continue);
   assert(length == 2 && bytes[0] == 13 && host.sent.empty() &&
          host.errors.back() == Fault::Deadline && !pipeline.enabled(0));
-  assert(engine.stats().instructions < 1000);
+  assert(engine.stats().instructions <= 64 * 200);
   const auto loop = source("packet-4"); char error[128]{};
   assert(engine.load(loop.data(), loop.size(), error, sizeof(error)));
   TestHost fullHost; Pipeline fullPipeline(fullHost); attach(fullPipeline, engine, 100000);
@@ -343,7 +343,7 @@ static void repeater_snr() {
     assert(bot.complete(completion)); BotSession::Result result;
     assert(bot.poll(result));
     if (!result.ok) fprintf(stderr, "snr bot: %s\n", result.error);
-    assert(result.ok && strstr(result.action.text, id == 1 ? "SNR avg/P95" : id == 2 ? "256/256 samples" : "No SNR samples"));
+    assert(result.ok && strstr(result.action.text, id == 1 ? "SNR avg/P95" : id == 2 ? "256 samples" : "No SNR samples"));
   }
   struct Failing : Engine { Decision process(const Metadata &, Call &) override { return Decision::Failed; } } failing;
   assert(pipeline.attach(failing, {"failure", 1, 1000, 20000}) == Registration::Attached);

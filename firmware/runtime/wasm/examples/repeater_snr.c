@@ -6,6 +6,7 @@ typedef struct {
   uint16_t count, next;
   uint32_t heard, last_ms, last_utc;
   int32_t snr_sum, rssi_sum;
+  uint16_t histogram[256], below, percentile;
   int8_t snr[WINDOW];
   int16_t rssi[WINDOW];
   double mean, p95, rssi_mean;
@@ -14,7 +15,7 @@ static peer peers[PEERS];
 static mp_info info;
 static mp_system clock_info;
 static mp_report report;
-static uint16_t histogram[256];
+static uint8_t order[PEERS];
 static uint8_t path[64], header[6];
 static void text(char *out, const char *in) { while ((*out++ = *in++)) {} }
 static int same(const peer *p, const uint8_t *key, unsigned width) {
@@ -25,6 +26,8 @@ static int same(const peer *p, const uint8_t *key, unsigned width) {
 static void reset(peer *p, const uint8_t *key, unsigned width) {
   p->width = width; p->count = p->next = 0; p->heard = 0;
   p->snr_sum = p->rssi_sum = 0;
+  p->below = p->percentile = 0;
+  for (unsigned i = 0; i < 256; ++i) p->histogram[i] = 0;
   for (unsigned i = 0; i < width; ++i) p->key[i] = key[i];
 }
 static peer *find(const uint8_t *key, unsigned width, uint32_t now) {
@@ -43,7 +46,11 @@ static peer *find(const uint8_t *key, unsigned width, uint32_t now) {
 static void sample(peer *p) {
   if (p->count == WINDOW) {
     p->snr_sum -= p->snr[p->next]; p->rssi_sum -= p->rssi[p->next];
+    unsigned old = (int)p->snr[p->next] + 128;
+    --p->histogram[old]; if (old < p->percentile) --p->below;
   } else ++p->count;
+  unsigned bucket = info.snr_quarter_db + 128;
+  ++p->histogram[bucket]; if (bucket < p->percentile) ++p->below;
   p->snr[p->next] = (int8_t)info.snr_quarter_db;
   p->rssi[p->next] = (int16_t)info.rssi;
   p->snr_sum += info.snr_quarter_db; p->rssi_sum += info.rssi;
@@ -53,30 +60,28 @@ static void sample(peer *p) {
   p->last_utc = clock_info.flags & MP_TRUSTED_TIME ? clock_info.unix_time : 0;
   p->mean = (double)p->snr_sum / (4 * p->count);
   p->rssi_mean = (double)p->rssi_sum / p->count;
-  for (unsigned i = 0; i < 256; ++i) histogram[i] = 0;
-  for (unsigned i = 0; i < p->count; ++i) ++histogram[(int)p->snr[i] + 128];
   const unsigned rank = (p->count * 95 + 99) / 100;
-  unsigned count = 0;
-  for (unsigned i = 0; i < 256; ++i) {
-    count += histogram[i];
-    if (count >= rank) { p->p95 = ((int)i - 128) / 4.0; break; }
+  while (p->below >= rank) { --p->percentile; p->below -= p->histogram[p->percentile]; }
+  while (p->below + p->histogram[p->percentile] < rank) {
+    p->below += p->histogram[p->percentile]; ++p->percentile;
   }
+  p->p95 = ((int)p->percentile - 128) / 4.0;
+  unsigned index = p - peers, at = 0;
+  while (order[at] != index) ++at;
+  for (; at + 1 < PEERS; ++at) order[at] = order[at + 1];
+  at = PEERS - 1;
+  while (at && (p->heard >= peers[order[at - 1]].heard || !peers[order[at - 1]].count)) {
+    order[at] = order[at - 1]; --at;
+  }
+  order[at] = index;
 }
+
 static int publish(void) {
   report.row_count = 0;
-  uint32_t selected = 0;
-  for (unsigned row = 0; row < MP_REPORT_ROWS; ++row) {
-    unsigned best = PEERS;
-    for (unsigned i = 0; i < PEERS; ++i) {
-      if (!peers[i].count || (uint32_t)(clock_info.uptime_ms - peers[i].last_ms) >= STALE_MS) continue;
-      if (selected & (1u << i)) continue;
-      if (best == PEERS || peers[i].heard > peers[best].heard ||
-          (peers[i].heard == peers[best].heard &&
-           (uint32_t)(clock_info.uptime_ms - peers[i].last_ms) <
-           (uint32_t)(clock_info.uptime_ms - peers[best].last_ms))) best = i;
-    }
-    if (best == PEERS) break;
-    selected |= 1u << best;
+  for (unsigned at = 0; at < PEERS && report.row_count < MP_REPORT_ROWS; ++at) {
+    const unsigned best = order[at];
+    if (!peers[best].count || (uint32_t)(clock_info.uptime_ms - peers[best].last_ms) >= STALE_MS) continue;
+    const unsigned row = report.row_count;
     const peer *p = &peers[best]; mp_report_row *out = &report.rows[row];
     static const char hex[] = "0123456789ABCDEF";
     for (unsigned i = 0; i < p->width; ++i) {
@@ -93,6 +98,7 @@ static int publish(void) {
 }
 MP_EXPORT("mp_init") int mp_init(void) {
   report.version = MP_REPORT_VERSION; report.field_count = 8;
+  for (unsigned i = 0; i < PEERS; ++i) order[i] = i;
   text(report.name, "repeater_snr");
   static const char *fields[] = {"samples", "heard_total", "mean_db", "p95_db", "rssi_mean_dbm",
                                  "last_seen_ms", "window", "last_seen_utc"};

@@ -166,11 +166,11 @@ public:
   void fail(Fault fault) {
     if (fault_ == Fault::None && fault != Fault::None) fault_ = fault;
   }
-  bool consume(uint32_t amount = 1) {
+  bool consume(uint32_t amount = 1, bool checkTime = true) {
     if (fault_ != Fault::None) return false;
     if (amount > fuel_) { fail(Fault::Fuel); return false; }
     fuel_ -= amount;
-    if (uint32_t(host_.microsNow() - started_) >= limit_) {
+    if (checkTime && uint32_t(host_.microsNow() - started_) >= limit_) {
       fail(Fault::Deadline); return false;
     }
     return true;

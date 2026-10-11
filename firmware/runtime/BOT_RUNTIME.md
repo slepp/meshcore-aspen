@@ -504,11 +504,10 @@ metadata**, with eight custom commands and eight declared modules.
 Four job slots include one reserved native diagnostic slot. Each invocation
 has at most eight native I/O operations, a 10,000-instruction bound and 20 ms
 cumulative active execution budget across resumes. The source generation has a 96 KiB allocator budget
-and a 16,384-step parser bound; installed-source loading is limited to 330 ms
-and initialization to 50 ms. Exactly matching firmware-owned bundled Lua
-bytes have a one-second recovery-load allowance when using the default loader
-limits. Explicit nondefault loader limits remain authoritative; Wasm retains
-its 330 ms load budget.
+and a 16,384-step parser bound; installed-source loading is limited to one second
+and initialization to 50 ms. Compact profiles retain a 330 ms installed-source
+load limit; exactly matching bundled Lua bytes have a one-second recovery
+allowance. Explicit nondefault loader limits remain authoritative.
 Suspended storage/radio/network/timer time is separate
 from active execution. Native providers enforce their own deadlines and token
 fences; they do not block radio dispatch or create unlimited Lua tasks.
@@ -1268,8 +1267,8 @@ limit and allocator failure. The existing source/fault response reports the
 deadline's elapsed/limit microseconds and peak Lua allocation, or the failed
 heap/allocator category and peak/cap bytes; a deadline-induced allocation
 refusal is not reported as generic Lua "not enough memory".
-Retained compilation/initialization have cumulative **330 ms load and 50 ms
-initialization** limits across bundled and installed code. Each invocation has
+Retained compilation/initialization have cumulative **one-second load and 50 ms
+initialization** (330 ms load on compact profiles) limits across bundled and installed code. Each invocation has
 **20 ms cumulative active wall time**, excluding suspended I/O time, and retains
 its instruction count across yields. Runnable loops cannot evade the limits by
 yielding. The legacy one-shot test interface retains its separate 20 ms cleanup
@@ -1283,7 +1282,7 @@ editable bytes; it does not relax invocation execution. `bot-vm-test` includes
 a 20-us synthetic-clock regression for the bundle plus a maximum-size editable
 fixture. Its timings model budget consumption, not physical ESP32 execution.
 The source byte count and peak allocations depend on the selected bundle.
-Load still has a 330 ms limit, independent of the 20 ms active execution,
+Load has a one-second limit (330 ms on compact profiles), independent of the 20 ms active execution,
 96 KiB heap and 16,384 parser-step limits.
 
 `BotVmLimits.initWallUs` selects initialization headroom independently of
@@ -1295,7 +1294,7 @@ does not grant longer-running commands or additional I/O authority.
 | Stage | Default bound / accounting |
 | --- | --- |
 | Download, upload and source-file copy | Transport/storage deadlines, outside the VM phase counters |
-| Compile/load installed source | 330 ms aggregate; `loadUs`; exactly matching firmware-owned bundled bytes use the default one-second recovery allowance |
+| Compile/load installed source | One second aggregate; `loadUs`; compact profiles use 330 ms for installed sources |
 | Initialize declarations, modules and source state | 50 ms aggregate; `initUs` |
 | Invoke cached handlers and resume runnable work | 20 ms cumulative per command; `invokeUs`; no recompile |
 | Wait for native storage, network, timer or radio I/O | Suspended time is excluded from active execution; native operation deadlines still apply |
@@ -2900,7 +2899,7 @@ digest, and rejects incomplete reads, changed content, growth, and late
 results. A separate 100 ms source-read deadline covers opening, reading,
 closing and hashing; individual SDK filesystem calls are not preemptible.
 Compilation then uses the same independent phase budgets as RAM staging:
-330 ms aggregate load followed by at most 50 ms initialization; retained
+one-second aggregate load (330 ms on compact profiles) followed by at most 50 ms initialization; retained
 teardown runs no script finalizers.
 Activation uses the verified RAM snapshot, so subsequent file edits/removal
 cannot change its code. Filesystem access is never exposed to Lua.

@@ -34,7 +34,8 @@ struct PacketWasm::Impl {
   Call *call = nullptr;
   static bool tick(void *owner) {
     auto &s = *static_cast<Impl *>(owner);
-    return !s.call || s.call->consume();
+    // Fuel remains exact; check elapsed time every 64 opcodes and at every import/return.
+    return !s.call || s.call->consume(1, (s.meter.used & 63u) == 1);
   }
   static Impl *self(wasm_exec_env_t env) {
     auto *context = wamr::context(env, wamr::Kind::Packet);

@@ -455,7 +455,7 @@ static void manifestLifetimes() {
   puts("PASS manifest lifetimes: owned copies/aliases, custom/native suspended jobs, cancellation, swap/destruction, rollback and failed init");
 }
 static void initializationBudgets() {
-  static_assert(BotVmLimits{}.loadWallUs == 330000 &&
+  static_assert(BotVmLimits{}.loadWallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs) &&
                 BotVmLimits{}.initWallUs == 50000 && BotVmLimits{}.wallUs == 20000);
   static_assert(BotVmLimits{}.instructions == 10000 && BotVmLimits{}.parserSteps == 16384);
   static_assert(BotVmLimits{}.heapBytes == (ONCHIP_BOT_COMPACT_PROFILE ? 48 : 96) * 1024);
@@ -1930,7 +1930,7 @@ int main(int argc, char **argv) {
     assert(strstr(error, "Load deadline ") && strstr(error, "/100000us peak="));
     assert(phases.loadUs >= limits.loadWallUs && phases.peakBytes < limits.heapBytes);
     limits = {};
-    assert(limits.loadWallUs == 330000 && limits.initWallUs == 50000 &&
+    assert(limits.loadWallUs == BotBundledLoadWallUs && limits.initWallUs == 50000 &&
            limits.wallUs == 20000 && limits.heapBytes == 96 * 1024 &&
            limits.instructions == 10000 && limits.parserSteps == 16384);
     const auto full = large + std::string(BotSourceLimit - large.size(), ' ');
@@ -1979,15 +1979,17 @@ int main(int argc, char **argv) {
     limits = {};
     fakeTime = 1000; fakeStep = 40;
     assert(retained.load(BotDefaultSource, strlen(BotDefaultSource), 1, phases, error, sizeof(error), limits));
-    assert(phases.loadUs >= limits.loadWallUs && phases.loadUs < BotBundledLoadWallUs &&
+    assert(phases.loadUs < limits.loadWallUs &&
            phases.initUs < limits.initWallUs && phases.peakBytes < limits.heapBytes);
     assert(BotVm::validate(BotDefaultSource, strlen(BotDefaultSource), phases, error, sizeof(error), limits));
-    assert(phases.loadUs >= limits.loadWallUs && phases.loadUs < BotBundledLoadWallUs);
-    const std::string modifiedBundle = std::string(BotDefaultSource) + " ";
+    assert(phases.loadUs < limits.loadWallUs);
+    const std::string modifiedBundle = "function custom() return 'ok' end";
+    assert(retained.load(modifiedBundle.data(), modifiedBundle.size(), 1, phases, error, sizeof(error), limits));
+    limits.loadWallUs = 330000;
     assert(!retained.load(modifiedBundle.data(), modifiedBundle.size(), 1, phases, error, sizeof(error), limits));
     assert(strstr(error, "Load deadline ") && strstr(error, "/330000us peak="));
     assert(phases.loadUs >= limits.loadWallUs);
-    fakeTime = 1000; fakeStep = 130;
+    limits = {}; fakeTime = 1000; fakeStep = 130;
     assert(!retained.load(BotDefaultSource, strlen(BotDefaultSource), 1, phases, error, sizeof(error), limits));
     assert(strstr(error, "Load deadline ") && strstr(error, "/1000000us peak="));
     assert(phases.loadUs >= BotBundledLoadWallUs);

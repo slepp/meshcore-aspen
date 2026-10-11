@@ -280,6 +280,8 @@ struct BotVmStats {
   uint32_t freeInternalBytes = 0, freePsramBytes = 0, stackHighWaterBytes = 0;
 };
 
+constexpr uint64_t BotBundledLoadWallUs = 1000000;
+
 struct BotVmLimits {
 #if ONCHIP_BOT_COMPACT_PROFILE
   size_t heapBytes = 48 * 1024;
@@ -287,12 +289,11 @@ struct BotVmLimits {
   size_t heapBytes = 96 * 1024;
 #endif
   uint32_t instructions = 10000, parserSteps = 16384;
-  uint64_t loadWallUs = 330000;
+  // Every retained custom source also loads the bundled command environment.
+  uint64_t loadWallUs = ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs;
   uint64_t wallUs = 20000;
   uint64_t initWallUs = 50000;
 };
-
-constexpr uint64_t BotBundledLoadWallUs = 1000000;
 
 // No MeshCore objects, secrets or borrowed packet buffers cross this boundary.
 bool parseBotCommand(const char *text, size_t size, BotEvent &event,

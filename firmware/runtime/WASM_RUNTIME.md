@@ -260,7 +260,7 @@ metered `mc_init` initializes a package.
 | Instruction budget | 10000 across start and all async resumptions |
 | Guest execution wall budget | 20000 µs accumulated across resumptions |
 | Initialization wall budget | 50000 µs for `mc_init`, separate from command execution |
-| Loader wall budget | 330000 µs, checked after bounded load |
+| Loader wall budget | 1000000 µs, checked after bounded load |
 | Imported native calls | 64 across start and resumptions |
 | Yielded native operations | 8 across start and resumptions |
 | WAMR shared runtime pool | fixed 1048576 bytes, allocated lazily in PSRAM |
@@ -542,7 +542,7 @@ newly booted bot can learn its authenticated reply route.
 Cancellation discards local staging/jobs, but a submitted GET or POST can still
 have a remote effect. Inspect status/readback before repeating it.
 Exactly matching firmware-owned bundled Lua bytes have a default one-second
-recovery-load allowance; other Lua sources and Wasm retain the 330 ms load
+recovery-load allowance; other noncompact Lua sources and Wasm use the same one-second load
 budget. Explicit nondefault loader limits remain authoritative.
 WAMR does not guard the native task stack; measure task headroom and internal
 heap/largest block alongside the separate PSRAM pool and linear memory.
