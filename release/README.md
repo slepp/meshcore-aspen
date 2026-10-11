@@ -6,12 +6,12 @@ upstream base and is recorded separately.
 
 | Product | Candidate tag | Stable tag | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | As needed | `aspen-v0.1.11` | `aspen-v0.1.12` |
+| Aspen | As needed | `aspen-v0.1.12` | `aspen-v0.1.13` |
 | Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
 | Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental series | `willow-v0.0.2` | `willow-v0.0.3` |
+| Willow | Experimental series | `willow-v0.0.3` | `willow-v0.0.4` |
 
-Show users **Aspen 0.1.11 · based on MeshCore 1.17.1**. Release candidates
+Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
 while below 1.0, a minor release can change a supported API. An upstream update
 is a product release too: choose the product bump according to its effect on
@@ -21,7 +21,7 @@ tag to another commit.
 [`products.json`](products.json) is the version authority. Edit only the product
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 The generated firmware header, Go constants and Willow version modules share
-this authority. Companion device information reports `aspen-0.1.11`,
+this authority. Companion device information reports `aspen-0.1.12`,
 `birch-0.1.1` or `pine-0.1.0`;
 the full identity must fit 19 ASCII bytes plus NUL. The dashboard exposes the
 full upstream tag and commit. Host `ver` includes product and MeshCore versions.
@@ -83,7 +83,7 @@ Use `refs/heads/main` only when it resolves to the selected signed source commit
 For a tagged source revision, pass its exact `refs/tags/TAG` instead. The selected
 public ref must still resolve to the checkout's HEAD.
 
-The Aspen bundle name is `aspen-v0.1.11-xiao-esp32s3-sx1262-SOURCE12.zip`.
+The Aspen bundle name is `aspen-v0.1.12-xiao-esp32s3-sx1262-SOURCE12.zip`.
 Its files include `manifest.json`, checksums, application and separate
 initial-install images, source and relink archives, resolved dependency
 inventory, exact build profile/hash, toolchain versions/compiler hash, upstream
@@ -210,6 +210,39 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Aspen 0.1.12 and Willow 0.0.3
+
+The native bot retains a bounded cache of verified signed contacts and its own
+learned routes across restarts. Dirty state is checkpointed every five minutes;
+unchanged state causes no writes. Contact observations and known paths are
+retained for seven days; direct-send freshness remains ten minutes.
+Restored entries wait for trusted UTC
+before use and are never counted as new RF reception. Configured repeater route
+seeds remain separate from learned routes.
+
+Aspen's companion also coalesces signed advert blobs and contact metadata on a
+five-minute deadline. Reads can use pending adverts immediately. Failed saves
+retain pending work, and the stored advert format remains readable after an
+application rollback.
+
+Controlled Aspen restarts and application updates flush pending native state.
+`bot contacts` reports checkpoint state; `bot contacts flush` saves pending
+learned observations. A route command can wait up to 30 seconds for the shared
+radio opportunity, then has ten seconds for the probe. Cancellation and access
+changes are checked before transmission. Rolling SNR/RSSI samples remain in
+PSRAM and restart empty; VictoriaMetrics retains their exported history.
+
+Use the [application maintenance command](../tools/hardware/ESP32_MAINTENANCE.md)
+for a signed application-only update with an authenticated backup and retained
+state checks. Its receipt lets an interrupted operation resume status checks
+without repeating upload or restart.
+
+Willow builds with the current Hew compiler and matching libraries on `PATH`.
+Frozen-state rebinding validates a private staged copy before publishing the
+new state directory. A clean parallel build prepares the native worker's radio
+objects before compiling the worker. Follow the
+[upgrade and latest-state rollback procedure](../experiments/hew-roles/MIGRATION.md#upgrade-a-frozen-willow-state).
 
 ## Aspen 0.1.11
 

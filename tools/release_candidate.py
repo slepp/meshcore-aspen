@@ -210,6 +210,7 @@ def build(product, ref, output, native_image=None, host_only=False):
     directory.mkdir()  # Never overwrite a candidate, even from the same SHA.
     env = {key: os.environ[key] for key in ("HOME", "USER", "PATH") if key in os.environ}
     env.update(PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(ROOT / ".tmp"),
+               PLATFORMIO_RUN_JOBS=os.environ.get("PLATFORMIO_RUN_JOBS", "2"),
                SOURCE_DATE_EPOCH=run(["git", "show", "-s", "--format=%ct", "HEAD"]))
     log = directory / "build.log"
 

@@ -720,8 +720,9 @@ the returned route with a tagged base-telemetry request sent directly along it.
 Default open-guest repeaters can admit the bot through this normal login; a
 closed guest password requires the repeater owner to grant the bot access.
 A login reply alone never counts as a fresh route. Both packets share the
-existing airtime admission and `action_trace` permission. The whole operation
-waits up to 10 seconds outside the Lua VM, with no automatic retries.
+existing airtime admission and `action_trace` permission. One command can wait
+up to 30 seconds for admission, then has ten seconds for the probe outside the
+Lua VM, with no automatic retries.
 
 Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
 diagnostic can still probe it under the command permissions and radio budget.
@@ -733,8 +734,9 @@ A successful new flood route is labelled `fresh`, followed by `WIDTH:HEX`.
 If an actual transmitted attempt times out, the reply labels any retained route
 `probe timed out; cached`. With no cached route, it reports that the repeater may
 be offline or may not permit guest discovery. A long route that cannot fit the
-reply reports its hop count rather than a partial route. Routes stay in RAM
-and must be learned again after a restart. Lua handlers can use the same
+reply reports its hop count rather than a partial route. Learned routes use the
+[bounded checkpoint cache](#learned-contacts-and-routes) across restarts.
+Lua handlers can use the same
 asynchronous operation through `mesh.find_path(prefix)`.
 
 Configure target aliases through authenticated administration:
@@ -3003,8 +3005,9 @@ an application cannot start.
 
 After a reset, cached contacts wait for trusted local UTC. Signed contacts
 expire seven days after their last accepted advert. Known learned paths are
-retained for seven days; direct-send freshness remains ten minutes. Paths are discarded when the bot identity or frequency, bandwidth, SF or
-CR changes. Restored contacts do not appear as newly heard neighbours and do
+retained for seven days; direct-send freshness remains ten minutes. Paths are
+discarded when the bot identity or frequency, bandwidth, SF or CR changes.
+Restored contacts do not appear as newly heard neighbours and do
 not restore RSSI/SNR readings. An advert received without trusted UTC can be
 checkpointed after clock synchronization establishes its local receipt time.
 A reset before that synchronization can lose that new contact.
