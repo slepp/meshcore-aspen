@@ -256,7 +256,26 @@ int stringInteger(lua_State *s) {
 void integer(lua_State *s, const char *key, lua_Integer value) {
   lua_pushinteger(s, value); lua_setfield(s, -2, key);
 }
-void pushEvent(lua_State *s, const onchip::BotEvent &e) {
+void pushNode(lua_State *s, const onchip::BotNodeSnapshot &n) {
+  lua_createtable(s, 0, 15);
+  boolean(s, "available", n.available); boolean(s, "enabled", n.enabled);
+  boolean(s, "ready", n.ready); boolean(s, "fault", n.fault);
+  boolean(s, "roles_known", n.rolesKnown);
+  integer(s, "selected_roles", n.selectedRoles); integer(s, "ready_roles", n.readyRoles);
+  boolean(s, "wifi_known", n.wifiKnown); boolean(s, "wifi_connected", n.wifiConnected);
+  boolean(s, "battery_available", false);
+  integer(s, "uptime_ms", n.uptimeMs);
+  text(s, "native_revision", n.nativeRevision); text(s, "build", n.build);
+  text(s, "name", n.name); integer(s, "source_generation", n.sourceGeneration);
+  text(s, "lua_version", LUA_VERSION_MAJOR "." LUA_VERSION_MINOR "." LUA_VERSION_RELEASE);
+  if (n.hasIdentity) {
+    char key[65];
+    for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", n.publicKey[i]);
+    text(s, "public_key", key);
+  }
+  freeze(s);
+}
+void pushEvent(lua_State *s, const onchip::BotEvent &e, int nodeReference = LUA_NOREF) {
   lua_createtable(s, 0, 7);
   const char *kinds[] = {"command", "startup", "connectivity", "message", "node_status", "scheduled"};
   text(s, "kind", kinds[e.kind]);
@@ -313,23 +332,9 @@ void pushEvent(lua_State *s, const onchip::BotEvent &e) {
   integer(s, "frequency_hz", e.frequency); integer(s, "bandwidth_hz", e.bandwidth);
   integer(s, "sf", e.sf); integer(s, "cr", e.cr);
   freeze(s); lua_setfield(s, -2, "radio");
-  const auto &n = e.node;
-  lua_createtable(s, 0, 15);
-  boolean(s, "available", n.available); boolean(s, "enabled", n.enabled);
-  boolean(s, "ready", n.ready); boolean(s, "fault", n.fault);
-  boolean(s, "roles_known", n.rolesKnown);
-  integer(s, "selected_roles", n.selectedRoles); integer(s, "ready_roles", n.readyRoles);
-  boolean(s, "wifi_known", n.wifiKnown); boolean(s, "wifi_connected", n.wifiConnected);
-  boolean(s, "battery_available", false);
-  integer(s, "uptime_ms", n.uptimeMs);
-  text(s, "native_revision", n.nativeRevision); text(s, "build", n.build);
-  text(s, "name", n.name); integer(s, "source_generation", n.sourceGeneration);
-  text(s, "lua_version", LUA_VERSION_MAJOR "." LUA_VERSION_MINOR "." LUA_VERSION_RELEASE);
-  if (n.hasIdentity) {
-    for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", n.publicKey[i]);
-    text(s, "public_key", key);
-  }
-  freeze(s); lua_setfield(s, -2, "node");
+  if (nodeReference == LUA_NOREF) pushNode(s, e.node);
+  else lua_rawgeti(s, LUA_REGISTRYINDEX, nodeReference);
+  lua_setfield(s, -2, "node");
   const auto &a = e.air;
   lua_createtable(s, 0, 18);
   boolean(s, "available", a.available); boolean(s, "transmitting", a.transmitting);
@@ -379,6 +384,7 @@ struct Call {
   uint32_t builtinDeclarations = 0;
   unsigned utilityCalls = 0;
   int eventReference = LUA_NOREF;
+  int nodeReference = LUA_NOREF;
   int moduleReference = LUA_NOREF;
   int originalReference = LUA_NOREF;
   int sourceOwnersReference = LUA_NOREF;
@@ -400,7 +406,17 @@ int contextIndex(lua_State *s) {
   auto &call = context(s);
   if (call.initializing || !call.event) return luaL_error(s, "ctx requires an invocation");
   if (call.eventReference == LUA_NOREF) {
-    pushEvent(s, *call.event);
+    size_t length = 0;
+    const char *key = lua_type(s, 2) == LUA_TSTRING ? lua_tolstring(s, 2, &length) : nullptr;
+    if (key && length == 4 && !memcmp(key, "node", 4)) {
+      if (call.nodeReference == LUA_NOREF) {
+        pushNode(s, call.event->node);
+        call.nodeReference = luaL_ref(s, LUA_REGISTRYINDEX);
+      }
+      lua_rawgeti(s, LUA_REGISTRYINDEX, call.nodeReference);
+      return 1;
+    }
+    pushEvent(s, *call.event, call.nodeReference);
     call.eventReference = luaL_ref(s, LUA_REGISTRYINDEX);
   }
   lua_rawgeti(s, LUA_REGISTRYINDEX, call.eventReference);
@@ -2849,6 +2865,8 @@ struct BotSession::Impl {
     if (job.thread) lua_closethread(job.thread, nullptr);
     if (job.call.eventReference != LUA_NOREF)
       luaL_unref(state, LUA_REGISTRYINDEX, job.call.eventReference);
+    if (job.call.nodeReference != LUA_NOREF)
+      luaL_unref(state, LUA_REGISTRYINDEX, job.call.nodeReference);
     if (job.reference != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, job.reference);
     job.~Job();
     new (&job) Job;

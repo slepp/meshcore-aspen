@@ -1317,6 +1317,26 @@ static void diagnosticCommands() {
   for (const char *name : {"about", "version", "uptime", "status", "signal", "air"})
     validate("function " + std::string(name) + "() return 'override' end", false);
   run(program("ctx.node.ready=false"), event("!custom"), false);
+  {
+    const char *source =
+        "local previous command('snapshot','mode?:string:4','Snapshot') "
+        "function snapshot(mode) "
+        "local n if mode=='full' then local sender=ctx.sender n=ctx.node else n=ctx.node end "
+        "local sender=ctx.sender "
+        "if n~=ctx.node or ctx['node\\0extra']~=nil then return 'bad identity' end "
+        "local old=previous and previous.uptime_ms or 0 previous=n "
+        "return tostring(n.uptime_ms)..' '..tostring(old) end";
+    BotSession cached; BotVmStats cachedStats; char cachedError[128]{};
+    assert(cached.load(source, strlen(source), 1, cachedStats, cachedError, sizeof(cachedError)));
+    unsigned id = 0;
+    for (const char *command : {"!snapshot", "!snapshot full", "!snapshot"}) {
+      auto invocation = event(command); invocation.node.uptimeMs = 10 * ++id;
+      assert(cached.start(id, invocation, cachedError, sizeof(cachedError)));
+      BotSession::Result result; assert(cached.poll(result) && result.ok);
+      const auto expected = std::to_string(10 * id) + " " + std::to_string(10 * (id - 1));
+      assert(result.action.text == expected);
+    }
+  }
   run(program("ctx.air.credit_ms=0"), event("!custom"), false);
   run(program("node.report=function() return 'fake' end"), event("!custom"), false);
   validate("function node() return 'override' end", false);
