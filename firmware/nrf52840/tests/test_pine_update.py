@@ -179,6 +179,31 @@ class PineUpdateTests(unittest.TestCase):
         args.record.chmod(0o600)
         return args, record
 
+    def test_check_record_completes_readbacks_without_reset_or_upload(self):
+        import hardware
+        args, record = self.recovery()
+        original = args.record.read_bytes()
+        with patch.object(hardware, "usb_serial", return_value="PINE"), \
+                patch.object(hardware, "bootloader") as handover, \
+                patch.object(pine_update, "upload_snapshot") as upload, \
+                patch.object(pine_update, "check_application") as check:
+            pine_update.check_record(self.data, args)
+            check.assert_called_once_with(self.data, args.port, record["retained"])
+            upload.assert_not_called()
+            handover.assert_not_called()
+        self.assertEqual(args.record.read_bytes(), original)
+
+    def test_check_record_rejects_another_image_before_device_access(self):
+        import hardware
+        args, record = self.recovery()
+        record["manifest"]["application"]["sha256"] = "f" * 64
+        args.record.write_text(json.dumps(record))
+        with patch.object(hardware, "usb_serial", return_value="PINE"), \
+                patch.object(pine_update, "check_application") as check:
+            with self.assertRaisesRegex(ValueError, "record differs"):
+                pine_update.check_record(self.verify(), args)
+            check.assert_not_called()
+
     def test_existing_record_stops_before_handover(self):
         import hardware
         args, _ = self.recovery()

@@ -154,10 +154,10 @@ def flash_snapshot(data, args):
     check_application(data, args.port, before)
 
 
-def recover_snapshot(data, args):
-    from hardware import device, require_bootloader, usb_serial
+def read_record(data, args):
+    from hardware import usb_serial
     if args.board != "xiao-nrf52840-wio-sx1262":
-        raise ValueError("Serial recovery currently supports the inventoried XIAO only")
+        raise ValueError("Serial recovery/checks currently support the inventoried XIAO only")
     fd = os.open(args.record, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as source:
         info = os.fstat(source.fileno())
@@ -177,6 +177,17 @@ def recover_snapshot(data, args):
                 for command, value in record["retained"].items())):
         raise ValueError("Update record differs from signed package or inventoried Pine; no recovery attempted")
     source_selection(record["retained"])
+    return record
+
+
+def check_record(data, args):
+    record = read_record(data, args)
+    check_application(data, args.port, record["retained"])
+
+
+def recover_snapshot(data, args):
+    from hardware import device, require_bootloader
+    record = read_record(data, args)
     # An explicit recovery starts only in DFU; it never resets a running application.
     selected = device(str(args.port))
     require_bootloader(str(args.port))
@@ -231,7 +242,7 @@ def main():
     create.add_argument("--source", required=True)
     create.add_argument("--version", required=True)
     create.add_argument("--output", type=Path, required=True)
-    for name in ("verify", "flash", "recover"):
+    for name in ("verify", "flash", "recover", "check"):
         command = sub.add_parser(name)
         command.add_argument("--manifest", type=Path, required=True)
         command.add_argument("--signature", type=Path, required=True)
@@ -240,10 +251,11 @@ def main():
             command.add_argument("--port", type=Path, required=True)
             command.add_argument("--current-sha", required=True, help="Previously read running application SHA256")
             command.add_argument("--record", type=Path, help="New private update record; default .build/pine-update-TIME.json")
-        elif name == "recover":
-            command.add_argument("--port", type=Path, required=True, help="Inventoried Pine already in serial DFU")
+        elif name in ("recover", "check"):
+            command.add_argument("--port", type=Path, required=True,
+                                 help="Inventoried Pine in serial DFU for recover, or running application for check")
             command.add_argument("--record", type=Path, required=True, help="Protected record from the original flash attempt")
-    for command in (create, sub.choices["verify"], sub.choices["flash"], sub.choices["recover"]):
+    for command in (create, sub.choices["verify"], sub.choices["flash"], sub.choices["recover"], sub.choices["check"]):
         command.add_argument("--zip", type=Path, required=True)
         command.add_argument("--board", choices=BOARDS, required=True)
     args = parser.parse_args()
@@ -260,6 +272,8 @@ def main():
             if args.operation == "flash" and not re.fullmatch(r"[0-9a-fA-F]{64}", args.current_sha):
                 raise ValueError("--current-sha must be the previously read SHA256")
             flash(data, args)
+        elif args.operation == "check":
+            check_record(data, args)
 
 
 if __name__ == "__main__":

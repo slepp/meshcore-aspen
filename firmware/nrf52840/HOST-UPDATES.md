@@ -71,8 +71,22 @@ path; its exclusive peer GATT service does not expose BLE DFU.
 ## Recover an interrupted serial transfer
 
 First check whether the application is running. If `get application` already
-matches the signed manifest, inspect its retained state instead of uploading
-again. If Pine remains in serial DFU, select its exact bootloader USB path and
+matches the signed manifest, finish the original retained-state checks without
+resetting or uploading again:
+
+```sh
+python3 firmware/nrf52840/pine_update.py check \
+  --board xiao-nrf52840-wio-sx1262 \
+  --zip pine-xiao-application.zip \
+  --manifest pine-xiao.json --signature pine-xiao.json.sig \
+  --port /dev/serial/by-id/YOUR_PINE \
+  --record /private/pine-update.json
+```
+
+This verifies the signed package and protected record again, then reads the
+running application hash and retained identities/settings through the selected
+USB port. It does not enter DFU or upload an image.
+If Pine remains in serial DFU, select its exact bootloader USB path and
 use the protected record from that transfer:
 
 ```sh

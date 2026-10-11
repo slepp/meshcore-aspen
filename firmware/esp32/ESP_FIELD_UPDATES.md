@@ -25,6 +25,15 @@ To change an initialized private application to the generic build, first
 This migration adds a setup record without replacing SPIFFS and keeps the same
 verification authority.
 
+## Update from the host
+
+The [application maintenance command](../../tools/hardware/ESP32_MAINTENANCE.md)
+checks an encrypted node backup, reads retained identities/settings, uploads one
+signed application and verifies startup. It saves a private receipt so an
+interrupted attempt can finish without replaying an uncertain upload or restart.
+Use that command for routine maintenance; the wire-level steps below describe
+the same endpoints for integrations.
+
 ## Prepare and upload
 
 The application must be an ESP32S3 image containing the matching embedded field
