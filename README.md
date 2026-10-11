@@ -15,7 +15,7 @@ companion used for RF checks, not a shipped setup.
 
 The project and community documentation are public at
 [ve6slp.ca/projects/meshcore](https://ve6slp.ca/projects/meshcore/).
-Get the [published Aspen release](https://github.com/slepp/meshcore-aspen/releases/latest)
+Get the [published Aspen release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
 for the XIAO ESP32-S3R8 + Wio SX1262, or see
 [other firmware downloads](https://ve6slp.ca/projects/meshcore/#downloads).
 The host/device releases are
