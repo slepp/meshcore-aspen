@@ -11,7 +11,7 @@ and flash its private combined image with the MeshCore flasher. This first
 install erases the board. For setup without the website, use
 [offline USB first-boot setup](PUBLIC_SETUP.md). Both routes supply a private
 per-node SPIFFS record; application-only updates retain that configuration.
-The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
+The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
 requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.

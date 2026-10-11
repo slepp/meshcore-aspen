@@ -23,7 +23,7 @@ application address can overwrite the wrong OTA slot.
 
 The offline USB procedure below provisions a blank board's credentials
 without the website. This ESP32-S3 profile uses `.bin` files with esptool.
-Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/latest)
+Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
 per-node setup image. See the
@@ -54,11 +54,58 @@ Before maintaining an initialized node, download its
 [encrypted logical backup](../../NODE_BACKUP.md) over authenticated WiFi or RF.
 Keep the matching operator seed; an application image is not a state backup.
 
+## Before connecting USB
+
+For the browser route, use Chrome or Edge on a desktop computer with a
+USB data cable. The wizard prepares files; the separate MeshCore flasher
+uses Web Serial to write the board. A phone can read the guides, but use a
+computer for this USB installation. If the flasher reports that Web Serial
+is unavailable, switch to a supported desktop browser or use the Linux
+esptool procedure below. [Chrome’s Web Serial documentation](https://developer.chrome.com/docs/capabilities/serial)
+lists the desktop platforms and explains the browser’s device permission.
+
+Fit the Wio SX1262 and an antenna suitable for your chosen band. Use your
+network’s frequency, bandwidth, spreading factor and coding rate; do not
+copy the example profile unless it is appropriate and permitted where you
+operate. For the app and dashboard, enable WiFi and use a **2.4 GHz**
+network that lets your phone/computer reach the board. A guest network’s
+client isolation can prevent that connection. Aspen does not create a
+setup access point. The Aspen download’s companion connection uses
+**WiFi/TCP port 5000**; it does not provide a BLE or USB companion connection.
+
+Before replacing firmware on any board that has already been used, decide
+whether its existing identities and data must survive. The private setup
+ZIP is a record of initial credentials and operator authority; it is not
+an encrypted node backup. Use [node backup](../../NODE_BACKUP.md) for an
+initialized Aspen. For migration from another MeshCore firmware, read the
+[installation and migration choices](https://ve6slp.ca/projects/meshcore/setup/#migration)
+before using a whole-board erase.
+
+### If USB or the first connection fails
+
+| Symptom | Next action |
+| --- | --- |
+| No board in the port chooser | Try a known USB data cable and a direct USB port. Hold BOOT while connecting, then release BOOT. Select the newly appearing XIAO port. |
+| Port busy, access denied or connection fails | Close serial monitors, other flasher tabs and programs using the port. Check OS serial permissions; on Linux the serial-device group is commonly `dialout` or `uucp`. |
+| No serial data or wrong boot mode | Re-enter ROM bootloader mode with BOOT while connecting USB, and retry the connection. Do not erase storage as a connection fix. |
+| Flash completed but board stays in the bootloader | Release BOOT and press RESET. Select the runtime port again if USB enumerates with a different port name. |
+| `aspen.local` does not resolve | Find the board’s DHCP address in your router or USB boot log; open `http://ADDRESS/` and `http://ADDRESS/admin`. |
+| Dashboard works but app does not connect | Enable the Companion role, choose the app’s WiFi connection, and use the same board address with port `5000`. Check LAN client isolation. |
+| App connects but a separate radio cannot exchange messages | Match the RF profile, send that companion’s advert, then address the bot’s own contact with `!ping`. A local reply through Aspen’s Base alone does not check the RF path. |
+| Setup invalid or RF/administration disabled | Keep the private setup files and inspect the USB error. Follow the recovery procedure below; preserve existing NVS/SPIFFS before considering replacement. |
+
+The XIAO ESP32-S3 uses native USB; do not install a CH340 or CP210x driver
+merely because instructions for another board mention one. If the OS still
+cannot enumerate the device, consult [Seeed’s board guide](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)
+and [Espressif’s serial troubleshooting](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/troubleshooting.html).
+The offline commands below are for Linux; `/dev/serial/by-id/` is not a
+Windows or macOS path.
+
 ## Download and prepare the USB tools
 
 On a Linux host, install Python 3.11 or newer with its `venv` support, `unzip`
 and `tar`. Download the Aspen ZIP, manifest and SHA256SUMS from the
-[GitHub release](https://github.com/slepp/meshcore-aspen/releases/latest) into
+[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11) into
 one new working directory. Extract the ZIP **before** checking SHA256SUMS:
 the checksums cover both the ZIP and its extracted manifest.
 
@@ -67,15 +114,18 @@ WORK="$HOME/aspen-install"
 mkdir -p "$WORK"
 cd "$WORK"
 # Put the three downloaded release files here.
-unzip aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.zip
-sha256sum --check aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12.SHA256SUMS
-APP="$WORK/aspen-v0.1.10-xiao-esp32s3-sx1262-SOURCE12"
+unzip aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399.zip
+sha256sum --check aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399.SHA256SUMS
+APP="$WORK/aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399"
 mkdir "$WORK/source"
 tar -xzf "$APP/source.tar.gz" -C "$WORK/source"
 cd "$WORK/source"
 ```
 
-Replace `SOURCE12` with the suffix in the downloaded filenames. The commands
+These filenames identify Aspen 0.1.11, source `22354d079399`. For another
+Aspen release, use its own filenames and instructions; this repository also
+publishes Birch, Pine, Willow and other builds, so GitHub’s global “Latest”
+release can belong to a different product. The commands
 below run from this extracted source directory; no Git checkout or firmware
 compiler is needed. The release bundle supplies all four initial-install BIN
 files, including `boot_app0.bin`.
