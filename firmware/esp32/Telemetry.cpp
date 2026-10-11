@@ -53,7 +53,9 @@ public:
 };
 }
 size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char *name,
-                       const TelemetryStatus &status, char *body, size_t capacity) {
+                       const TelemetryStatus &status, char *body, size_t capacity,
+                       unsigned *packetRows) {
+  if (packetRows) *packetRows = 0;
   Line out(body, capacity);
   const auto &t = s.totals;
   const auto &r = s.radio;
@@ -163,7 +165,7 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
   unsigned rows = 0;
   for (unsigned slot = 0; slot < 2; ++slot)
     if (r.packet_report_available[slot]) rows += r.packet_reports[slot].row_count;
-  for (unsigned offset = 0; offset < std::min(rows, 1u); ++offset) {
+  for (unsigned offset = 0; offset < rows; ++offset) {
     unsigned index = (s.packetReportCursor + offset) % rows;
     for (unsigned slot = 0; slot < 2; ++slot) {
       if (!r.packet_report_available[slot]) continue;
@@ -178,6 +180,7 @@ size_t encodeTelemetry(const TelemetrySample &s, const char *device, const char 
         out.append("%s%s=%.17g", f ? "," : " ", report.fields[f], report.rows[index].values[f]);
       out.append("\n");
       if (!out.good()) { out.rewind(start); return out.finish(); }
+      if (packetRows) ++*packetRows;
       break;
     }
   }

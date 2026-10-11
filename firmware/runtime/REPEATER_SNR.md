@@ -67,13 +67,18 @@ memory, including rings, histogram and report storage.
 ## Grafana and VictoriaMetrics
 
 Import the [nearby repeater signal dashboard](../../dashboards/grafana/README.md)
-to compare paired SNR/RSSI rings, counts and RF last-heard age. Its Report hold
-default covers a full 16-hop rotation at the normal 60-second upload cadence.
+to compare paired SNR/RSSI rings, counts and RF last-heard age. Report hold
+controls how long an exported ring remains visible without another upload.
 
-With existing telemetry enabled, `meshcore_packet` sends one rotating row per
-successful upload, tagged by `device`, `slot`, `report` and `label`. Sixteen rows
-at a 60-second upload interval take up to 16 minutes to cycle. Failed uploads
-retry the same position with a fresh snapshot. The fields become:
+With existing telemetry enabled, `meshcore_packet` sends all complete rows that
+fit the existing 8192-byte upload after device and remote-repeater metrics,
+tagged by `device`, `slot`, `report` and `label`. A full 16-hop signal report can
+fit one upload; normal device and remote-repeater metrics typically leave room
+to export it in one or two uploads. Larger combined reports continue in the
+next accepted batch.
+Failed uploads retry the same position with a fresh snapshot. Older firmware
+sends one row per upload, taking up to 16 minutes at a 60-second cadence; the
+dashboard's default 20-minute hold also covers those receivers. The fields become:
 
 - `meshcore_packet_mean_db`, `meshcore_packet_p95_db`, `meshcore_packet_rssi_mean_dbm`
 - `meshcore_packet_samples`, `meshcore_packet_window`, `meshcore_packet_heard_total`
@@ -89,5 +94,6 @@ was trusted, otherwise zero. Use it to distinguish a quiet link from fresh data.
 quarter-dB samples, ring wrap, path widths, 24 retained hops and the shared
 `!snr`/`!rssi` prefix matching and reply bounds. It also checks report rollback,
 capability and numeric bounds.
-`make -C firmware/esp32 telemetry-test` checks row rotation and bounded encoding.
+`make -C firmware/esp32 telemetry-test` checks complete-row batches, acknowledgement
+rotation, retry positions and bounded encoding.
 These checks do not transmit or change a connected radio.

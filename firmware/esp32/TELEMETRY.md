@@ -448,7 +448,10 @@ References:
 [VictoriaMetrics Influx ingestion and mapping](https://docs.victoriametrics.com/victoriametrics/integrations/influxdb/),
 [Influx line protocol](https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/).
 
-Packet reports add one rotating `meshcore_packet` row to each successful upload.
+Packet reports add as many complete `meshcore_packet` rows as fit after the
+device and repeater metrics in the existing 8192-byte upload. Remaining rows
+start the next batch after the receiver accepts this one; failed uploads keep
+the same position and collect a fresh snapshot. No extra connection is opened.
 Tags are `device`, `slot`, `report` and `label`; the report's numeric field names
 become metric suffixes. See [Nearby repeater SNR](../runtime/REPEATER_SNR.md) for
 the sample-window semantics, field names and expected refresh interval.

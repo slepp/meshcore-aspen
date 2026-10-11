@@ -66,7 +66,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Select a receiver and hop. These paired SNR/RSSI rings sample the final repeater hop of received flood packets. Direct and empty-path packets are excluded. Different prefix widths remain separate; prefixes can collide.\n\n**Mean and P95 use the last 256 samples.** P95 describes stronger SNR observations. Heard counts restart when a bucket is recreated.\n\n**One hop per upload:** 16 hops at 60 seconds take up to 16 minutes. Report hold carries exported rings for that window, then leaves a gap. RF age uses the observation time; uploads can repeat a quiet ring. The summary stats cover the selected hops; use the table for each hop."
+        "content": "Select a receiver and hop. These paired SNR/RSSI rings sample the final repeater hop of received flood packets. Direct and empty-path packets are excluded. Different prefix widths remain separate; prefixes can collide.\n\n**Mean and P95 use the last 256 samples.** P95 describes stronger SNR observations. Heard counts restart when a bucket is recreated.\n\n**Reports share each upload's 8192-byte budget:** all fitting rows arrive together; remaining rows continue after acceptance. Older firmware sends one hop per upload, taking up to 16 minutes at 16 hops / 60 seconds. Report hold retains exported rings, then leaves a gap. RF age uses the observation time; uploads can repeat a quiet ring. The summary stats cover the selected hops; use the table for each hop."
       }
     },
     {
@@ -148,7 +148,7 @@
         "w": 12,
         "h": 4
       },
-      "description": "Oldest received report among hops retained by Report hold. Expired reports leave the table. Up to 16 minutes is normal at 16 hops / 60 seconds.",
+      "description": "Oldest received report among hops retained by Report hold. Expired reports leave the table. Current firmware batches fitting rows; older firmware can take 16 minutes at 16 hops / 60 seconds.",
       "targets": [
         {
           "refId": "A",

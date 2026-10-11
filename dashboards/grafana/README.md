@@ -148,10 +148,13 @@ Prefixes of different widths remain separate; they can collide and do not
 authenticate a node. Heard counts reset when their bucket is recreated, so
 they are shown as counts rather than `rate()`.
 
-One hop is exported per successful upload. Sixteen hops at a 60-second cadence
-take up to 16 minutes to cycle. **Report hold** defaults to 20 minutes; values
+Older firmware exports one hop per successful upload. Sixteen hops at a
+60-second cadence take up to 16 minutes to cycle. Current firmware batches as
+many complete rows as fit its 8192-byte upload, so a 16-hop signal report can
+arrive in one upload; combined larger reports continue in the next accepted
+batch. **Report hold** defaults to 20 minutes; values
 expire after that window. Increase it if your complete rotation takes longer.
-The hop report-age colours assume this cadence (yellow at 16 minutes, red at
+The hop report-age colours accommodate older receivers (yellow at 16 minutes, red at
 20); adjust them when changing the publisher interval or hold.
 
 **RF last-heard age** subtracts `last_seen_utc` from query time, independently

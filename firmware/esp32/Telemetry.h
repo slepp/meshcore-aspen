@@ -20,6 +20,19 @@ private:
   unsigned cursor_ = 0, count_ = 0;
   uint64_t successes_ = 0;
 };
+class TelemetryPacketCursor {
+public:
+  uint32_t select(uint64_t successes) {
+    if (successes != successes_) cursor_ += encoded_;
+    successes_ = successes;
+    return cursor_;
+  }
+  void encoded(unsigned rows) { encoded_ = rows; }
+private:
+  uint32_t cursor_ = 0;
+  unsigned encoded_ = 0;
+  uint64_t successes_ = 0;
+};
 
 struct TelemetryConfig {
   bool enabled = false;
@@ -92,7 +105,7 @@ struct TelemetryStatus {
 };
 size_t encodeTelemetry(const TelemetrySample &sample, const char *device,
                        const char *name, const TelemetryStatus &status,
-                       char *body, size_t capacity);
+                       char *body, size_t capacity, unsigned *packetRows = nullptr);
 
 class TelemetryPublisher {
 public:

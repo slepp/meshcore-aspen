@@ -350,17 +350,65 @@ static void packetReports() {
   strcpy(report.name, "repeater_snr"); strcpy(report.fields[0], "mean_db"); strcpy(report.fields[1], "p95_db");
   for (unsigned i = 0; i < 3; ++i) { snprintf(report.rows[i].label, MP_REPORT_NAME, "D126%02u", i); report.rows[i].values[0] = -2.25; report.rows[i].values[1] = 4.5; }
   char body[TelemetryBodyLimit + 1];
+  unsigned emitted = 0;
   for (unsigned i = 0; i < 6; ++i) {
     s.packetReportCursor = i;
-    assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+    assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body), &emitted));
+    assert(emitted == 3);
     char expected[80]; snprintf(expected, sizeof(expected), "label=D126%02u mean_db=-2.25,p95_db=4.5", i % 3);
     assert(strstr(body, expected));
+    assert(std::string(body).find(expected) == std::string(body).find("meshcore_packet") +
+           strlen("meshcore_packet,device=device,slot=0,report=repeater_snr,"));
   }
   s.radio.packet_report_available[0] = false;
   const size_t base = encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body));
   s.radio.packet_report_available[0] = true;
-  assert(encodeTelemetry(s, "device", "Aspen", {}, body, base + 2) == base && body[base-1] == '\n' && !strstr(body, "meshcore_packet"));
-  puts("PASS packet report telemetry rotates all rows and preserves base metrics on capacity exhaustion");
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, base + 2, &emitted) == base &&
+         body[base-1] == '\n' && !strstr(body, "meshcore_packet") && emitted == 0);
+  s.packetReportCursor = 0;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body)));
+  const size_t one = std::string(body).find('\n', base) + 1;
+  TelemetryPacketCursor cursor;
+  for (unsigned successes = 0; successes < 6; ++successes) {
+    s.packetReportCursor = cursor.select(successes);
+    assert(encodeTelemetry(s, "device", "Aspen", {}, body, one + 1, &emitted) == one);
+    assert(emitted == 1);
+    char expected[40]; snprintf(expected, sizeof(expected), "label=D126%02u ", successes % 3);
+    assert(strstr(body, expected));
+    cursor.encoded(emitted);
+    assert(cursor.select(successes) == s.packetReportCursor); // Failed/pending upload retries its position.
+  }
+  report.row_count = 16; report.field_count = 8;
+  const char *fields[] = {"mean_db", "p95_db", "rssi_mean_dbm", "samples", "window", "heard_total", "last_seen_ms", "last_seen_utc"};
+  for (unsigned f = 0; f < 8; ++f) strcpy(report.fields[f], fields[f]);
+  for (unsigned i = 0; i < 16; ++i) {
+    snprintf(report.rows[i].label, MP_REPORT_NAME, "D126%02u", i);
+    const double values[] = {-2.25, 4.5, -93.75, 256, 256, 123456, 12345678, 1800000000};
+    for (unsigned f = 0; f < 8; ++f) report.rows[i].values[f] = values[f];
+  }
+  s.packetReportCursor = 0;
+  assert(encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body), &emitted) && emitted == 16);
+  printf("PASS all 16 repeater signal rings fit one bounded upload: %zu/%zu bytes\n", strlen(body), TelemetryBodyLimit);
+  s.radio.packet_report_available[1] = true;
+  s.radio.packet_reports[1] = report;
+  for (unsigned f = 0; f < 8; ++f)
+    for (unsigned i = 0; i < 16; ++i) {
+      report.rows[i].values[f] = std::numeric_limits<double>::max();
+      s.radio.packet_reports[1].rows[i].values[f] = std::numeric_limits<double>::max();
+    }
+  TelemetryPacketCursor bounded;
+  unsigned total = 0;
+  for (unsigned successes = 0; total < 64; ++successes) {
+    s.packetReportCursor = bounded.select(successes);
+    const size_t size = encodeTelemetry(s, "device", "Aspen", {}, body, sizeof(body), &emitted);
+    assert(size && size <= TelemetryBodyLimit && body[size - 1] == '\n' && emitted && emitted < 32);
+    unsigned slot = (total % 32) / 16, row = total % 16;
+    char expected[96]; snprintf(expected, sizeof(expected), "slot=%u,report=repeater_snr,label=D126%02u ", slot, row);
+    assert(strstr(body, expected));
+    bounded.encoded(emitted);
+    total += emitted;
+  }
+  puts("PASS bounded packet batches advance only by acknowledged complete rows across both slots; retries retain position");
 #endif
 }
 int main(int argc, char **argv) {
