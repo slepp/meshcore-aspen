@@ -1,6 +1,9 @@
 import meshproto.observation;
+
 import std.crypto.crypto;
+
 import std.encoding.hex;
+
 import hostlib.events;
 
 pub type Plan {
@@ -49,7 +52,9 @@ pub actor Outbox {
     mailbox 32;
 
     fn changed() {
-        if let .Some(group) = event_group { events.wake(group).expect("wake observer admission driver"); }
+        if let .Some(group) = event_group {
+            events.wake(group).expect("wake observer admission driver");
+        }
     }
     receive fn bind(consume group: events.Group) {
         if event_group.is_none() {
@@ -71,7 +76,9 @@ pub actor Outbox {
             return false;
         }
         match crypto.random_bytes(16) {
-            .Ok(nonce) => { session = hex.encode(nonce); }
+            .Ok(nonce) => {
+                session = hex.encode(nonce);
+            }
             .Err(_) => {
                 closed = true;
                 return false;
@@ -107,7 +114,9 @@ pub actor Outbox {
         var accepted = item;
         accepted.sequence = observed;
         queue.push(accepted);
-        if queue.len() == 1 { changed(); }
+        if queue.len() == 1 {
+            changed();
+        }
         true
     }
 
@@ -124,14 +133,13 @@ pub actor Outbox {
             attempts += 1;
             match observation.event(plan.config, session, item) {
                 .Ok(encoded) => {
-                    let delivery = Delivery {
-                        token: session + "-" + to_string(item.sequence),
-                        payload: encoded.to_bytes(),
-                    };
+                    let delivery = Delivery { token: session + "-" + to_string(item.sequence), payload: encoded.to_bytes() };
                     pending = .Some(delivery);
                     return pending;
                 }
-                .Err(_) => { dropped += 1; }
+                .Err(_) => {
+                    dropped += 1;
+                }
             }
         }
         .None
@@ -142,7 +150,9 @@ pub actor Outbox {
             if delivery.token == token {
                 published += 1;
                 pending = .None;
-                if !queue.is_empty() { changed(); }
+                if !queue.is_empty() {
+                    changed();
+                }
                 return true;
             }
         }
@@ -154,8 +164,7 @@ pub actor Outbox {
     }
 
     receive fn statistics() -> Statistics {
-        Statistics { observed: observed, published: published, dropped: dropped,
-            queued: queue.len(), pending: pending.is_some(), connected: connected, closed: closed }
+        Statistics { observed: observed, published: published, dropped: dropped, queued: queue.len(), pending: pending.is_some(), connected: connected, closed: closed }
     }
 
     receive fn close() {
@@ -176,5 +185,5 @@ pub actor Outbox {
 pub supervisor QueueBranch(plan: Plan) {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child outbox: Outbox(plan: plan);
+    child outbox: Outbox { plan: plan };
 }

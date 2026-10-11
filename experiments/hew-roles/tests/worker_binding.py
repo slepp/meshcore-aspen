@@ -14,7 +14,7 @@ sys.path.insert(0,str(ROOT))
 import build_worker
 from migrate_go import config_file
 from reconcile_go import settings
-from willow import check
+from willow import check, rebind
 
 PROFILE = "c806643690d003000705020000803f000000"
 SECRET = "do-not-print-7f3a"
@@ -206,6 +206,46 @@ class WorkerBinding(unittest.TestCase):
             self.assertNotIn(SECRET[:15],imported.stdout+imported.stderr)
             config = settings((root/"imported/config").read_bytes())
             self.assertEqual((config["admin"],config["room.password"]),(SECRET[:15],"room-"+SECRET[:6]))
+        finally:
+            shutil.rmtree(root)
+
+    def test_initialized_willow_upgrade_keeps_identity_and_native_data(self):
+        root = ROOT/"build"/f"native-upgrade-{os.getpid()}"
+        root.mkdir(mode=0o700)
+        try:
+            source, candidate = root/"source", root/"candidate"
+            completed = init(source)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            config = source/"config"
+            config.write_text(config.read_text().replace(str(ROOT/"build/native-worker"),
+                                                        "/previous/willow/build/native-worker"))
+            retained = source/"native/spiffs/retained-note"
+            retained.write_bytes(b"retained program data")
+            retained.chmod(0o600)
+            before = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+            result = rebind(source, candidate)
+            self.assertEqual(result["mode"], "rebound")
+            self.assertEqual(check(candidate)["worker"], str(ROOT/"build/native-worker"))
+            self.assertFalse((candidate/"migration.json").exists())
+            for name, data in before.items():
+                self.assertEqual((source/name).read_bytes(), data)
+                if name != "config":
+                    self.assertEqual((candidate/name).read_bytes(), data)
+            with self.assertRaisesRegex(ValueError, "NEW and disjoint"):
+                rebind(source, candidate)
+            import willow
+            original_write = willow.write_private
+            def interrupted(path, data):
+                if path.name == "retained-note":
+                    raise OSError("synthetic copy failure")
+                original_write(path, data)
+            failed = root/"interrupted"
+            with patch("willow.write_private", side_effect=interrupted):
+                with self.assertRaisesRegex(OSError, "synthetic copy failure"):
+                    rebind(source, failed)
+            self.assertFalse((failed/"config").exists())
+            with self.assertRaises(FileNotFoundError):
+                check(failed)
         finally:
             shutil.rmtree(root)
 

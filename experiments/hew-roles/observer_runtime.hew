@@ -1,15 +1,27 @@
 import observer_client;
+
 import observer_queue;
+
 import meshproto.observation;
+
 import meshproto.mqtt_endpoint;
+
 import hostlib.binary;
+
 import hostlib.mqtt;
+
 import hostlib.events;
+
 import std.stream;
+
 import session;
+
 import storage;
+
 import transport;
+
 import wire;
+
 import std.string;
 
 pub type Settings {
@@ -43,7 +55,9 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
     var password = bytes.new();
     var audience = "";
     for line in options.split("\n") {
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let at = line.find("=").expect("observer setting requires key=value");
         let key = line.slice(0, at);
         let value = line.slice(at + 1, line.len());
@@ -60,19 +74,45 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
                     _ => panic("observer.format requires internal-v1, observer-v1 or capture-v1"),
                 };
             }
-            "url" => { url = value; }
-            "ca_file" => { ca_file = value; }
-            "client_id" => { client_id = value; }
-            "username" => { username = value; }
-            "password" => { password = value.to_bytes(); }
-            "audience" => { audience = value; }
-            "topic_prefix" => { prefix = value; }
-            "iata" => { iata = value; }
-            "origin" => { origin = value; }
-            "model" => { model = value; }
-            "firmware_version" => { firmware = value; }
-            "radio" => { radio = value; }
-            "queue_size" => { capacity = string.to_int(value).expect("observer.queue_size requires an integer"); }
+            "url" => {
+                url = value;
+            }
+            "ca_file" => {
+                ca_file = value;
+            }
+            "client_id" => {
+                client_id = value;
+            }
+            "username" => {
+                username = value;
+            }
+            "password" => {
+                password = value.to_bytes();
+            }
+            "audience" => {
+                audience = value;
+            }
+            "topic_prefix" => {
+                prefix = value;
+            }
+            "iata" => {
+                iata = value;
+            }
+            "origin" => {
+                origin = value;
+            }
+            "model" => {
+                model = value;
+            }
+            "firmware_version" => {
+                firmware = value;
+            }
+            "radio" => {
+                radio = value;
+            }
+            "queue_size" => {
+                capacity = string.to_int(value).expect("observer.queue_size requires an integer");
+            }
             "packet_filter" => {
                 if !value.is_empty() {
                     filter = .Some(string.to_int(value).expect("observer.packet_filter requires a decimal uint16 mask"));
@@ -107,9 +147,7 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
             panic("observer.ca_file requires an absolute path");
         }
     }
-    let config = observation.Config { identity: wire.public_key(seed), format: format,
-        prefix: prefix, iata: iata, origin: origin, model: model, firmware: firmware,
-        radio: radio, filter: filter };
+    let config = observation.Config { identity: wire.public_key(seed), format: format, prefix: prefix, iata: iata, origin: origin, model: model, firmware: firmware, radio: radio, filter: filter };
     let _ = observation.topic(config).expect("observer topic configuration");
     assert(capacity >= 1 && capacity <= 4096);
     assert(mqtt.text_valid(client_id) && mqtt.text_valid(username) && password.len() <= 65535);
@@ -129,9 +167,7 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
         }
         println("OBSERVER_CONFIGURED topic=" + observation.topic(config).expect("validated observer topic") + " queue_size=" + to_string(capacity));
     }
-    Settings { enabled: enabled, config: config, capacity: capacity, url: url,
-        ca_file: ca_file, client_id: client_id, username: username, password: password,
-        audience: audience, seed: seed }
+    Settings { enabled: enabled, config: config, capacity: capacity, url: url, ca_file: ca_file, client_id: client_id, username: username, password: password, audience: audience, seed: seed }
 }
 
 pub fn observe(outbox: ChildRef<observer_queue.Outbox>, received: session.Reception) {
@@ -139,10 +175,15 @@ pub fn observe(outbox: ChildRef<observer_queue.Outbox>, received: session.Recept
     let reflected = origin == 1;
     let rssi = binary.finite_float32(wire.cut(received.metadata, 0, 4)).expect("receiver RSSI");
     let snr = binary.finite_float32(wire.cut(received.metadata, 4, 8)).expect("receiver SNR");
-    let item = observation.Reception { raw: received.raw, timestamp_ms: transport.now(), sequence: 0,
-        has_signal: origin != 2,
-        snr_quarter: if reflected { -128 } else { (snr * 4.0) as i64 },
-        rssi: if reflected { 127 } else { rssi as i64 } };
+    let item = observation.Reception { raw: received.raw, timestamp_ms: transport.now(), sequence: 0, has_signal: origin != 2, snr_quarter: if reflected {
+        -128
+    } else {
+        (snr * 4.0) as i64
+    }, rssi: if reflected {
+        127
+    } else {
+        rssi as i64
+    } };
     if outbox.observe(item).is_err() {
         println("OBSERVER_DROPPED reason=outbox-actor-unavailable");
     }
@@ -152,10 +193,14 @@ pub actor Lifetime {
     var closing: bool = false;
     var group: Option<events.Group> = .None;
     mailbox 4;
-    receive fn bind(consume value: events.Group) { group = .Some(events.share(value)); }
+    receive fn bind(consume value: events.Group) {
+        group = .Some(events.share(value));
+    }
     receive fn close() {
         closing = true;
-        if let .Some(value) = group { events.wake(value).expect("wake observer driver shutdown"); }
+        if let .Some(value) = group {
+            events.wake(value).expect("wake observer driver shutdown");
+        }
     }
     receive fn ending() -> bool {
         closing
@@ -165,9 +210,10 @@ pub actor Lifetime {
 /// Run as a scoped native task, independently of modem negotiation/reconnect.
 /// Expected broker failures stay values; the stable child reference survives
 /// a publisher panic without replacing its independently owned outbox.
-pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, lifetime: Lifetime,
-    end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
-    if !enabled { return; }
+pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, lifetime: Lifetime, end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
+    if !enabled {
+        return;
+    }
     let shutdown = events.driver(group, input);
     lifetime.bind(events.share(group)).expect("bind observer driver lifetime");
     var previous = "";
@@ -204,10 +250,18 @@ pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<ob
             .Err(_) => {}
         }
         var deadline = transport.monotonic() + 1000;
-        if end > 0 && end < deadline { deadline = end; }
+        if end > 0 && end < deadline {
+            deadline = end;
+        }
         match publisher.wait(events.share(group), transport.monotonic(), transport.now()) {
-            .Ok(value) => { if value < deadline { deadline = value; } }
-            .Err(_) => { deadline = transport.monotonic() + 50; }
+            .Ok(value) => {
+                if value < deadline {
+                    deadline = value;
+                }
+            }
+            .Err(_) => {
+                deadline = transport.monotonic() + 50;
+            }
         }
         if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, deadline) {
             panic(f"observer readiness failed: errno={code}");
@@ -227,7 +281,11 @@ pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<ob
         }
         var deadline = started + 1100;
         match publisher.wait(events.share(group), transport.monotonic(), transport.now()) {
-            .Ok(value) => { if value < deadline { deadline = value; } }
+            .Ok(value) => {
+                if value < deadline {
+                    deadline = value;
+                }
+            }
             .Err(_) => break,
         }
         if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, deadline) {

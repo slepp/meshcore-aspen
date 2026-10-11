@@ -23,7 +23,8 @@ The host/device releases are
 [Pine 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and
 [Willow 0.0.2](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.2).
 Birch includes Linux binaries; Pine is an initialized-node application update;
-Willow is a source-build release requiring the pinned Hew compiler.
+Willow is a source-build release. Current development source uses the Hew
+compiler and matching libraries on `PATH`.
 First-install procedures differ
 from application-only updates that retain an existing node's identities and
 settings. Follow the selected bundle's installation or update procedure.
@@ -34,7 +35,7 @@ settings. Follow the selected bundle's installation or update procedure.
 | --- | --- | --- | --- |
 | Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
 | Birch: WiFi modem + Go host | Configured queued-v1 WiFi/TCP shared modem; Linux x86_64 Debian 12 host | You want host services, filesystem state, external automation or native Lua | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
-| Willow: WiFi modem + Hew host | The same shared modem; Linux x86-64 host and pinned Hew compiler | You want to develop or trial the experimental Hew host, Base companion, MQTT broker and dashboard | [Willow source and setup guide](experiments/hew-roles/README.md) |
+| Willow: WiFi modem + Hew host | The same shared modem; Linux x86-64 host and current Hew compiler | You want to develop or trial the experimental Hew host, Base companion, MQTT broker and dashboard | [Willow source and setup guide](experiments/hew-roles/README.md) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
 | ESP32 role with a remote modem | XIAO ESP32-S3 indoors; ESP32 + SX1262 at the radio site | You want a repeater, room or companion on an indoor board, connected over WiFi | [Remote-radio roles](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) |
 

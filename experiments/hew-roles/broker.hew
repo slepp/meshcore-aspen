@@ -23,7 +23,7 @@ pub type Config {
 }
 
 pub fn configuration(path: string) -> Result<Config, string> {
-    let text = listener.config(path)?;
+    let text = listener.config(path) handle failure { return .Err(failure); };
     var host = "127.0.0.1";
     var port: i64 = 1883;
     var username = bytes.new();
@@ -33,7 +33,7 @@ pub fn configuration(path: string) -> Result<Config, string> {
         if line.is_empty() {
             continue;
         }
-        let at = line.find("=").ok_or("MQTT config requires key=value lines")?;
+        let at = line.find("=").ok_or("MQTT config requires key=value lines") handle failure { return .Err(failure); };
         let key = line.slice(0, at);
         let value = line.slice(at + 1, line.len());
         for previous in keys {
@@ -233,7 +233,7 @@ fn publication_packet(value: Session, item: protocol.Publication, duplicate: boo
         publication.properties.message_expiry
     } else {
         expiry_seconds(expires)
-    })?;
+    }) handle failure { return .Err(failure); };
     if value.version == 5 && value.properties.maximum_packet > 0 && packet.len() > value.properties.maximum_packet {
         return .Err("MQTT client maximum packet size exceeded");
     }
@@ -334,7 +334,7 @@ fn prepare_publication(value: Session, item: protocol.Publication, duplicate: bo
             publication.properties.alias = identifier;
         }
     }
-    let packet = publication_packet(next, publication, duplicate, expires)?;
+    let packet = publication_packet(next, publication, duplicate, expires) handle failure { return .Err(failure); };
     .Ok(Prepared { client: next, packet: packet })
 }
 
@@ -514,7 +514,7 @@ fn establish(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: 
         .Ok(accepted) => accepted,
         .Err(error) => {
             if error == "unsupported MQTT protocol version" {
-                let name = protocol.field(packet.body, 0)?;
+                let name = protocol.field(packet.body, 0) handle failure { return .Err(failure); };
                 let version = packet.body[name.end] as i64;
                 return .Ok(refuse(next, index, version, if version < 3 {
                     1
@@ -526,7 +526,7 @@ fn establish(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: 
                 return .Ok(refuse(next, index, 4, 2));
             }
             if error == "empty MQTT will payload" || error == "empty MQTT password" || error == "invalid MQTT CONNECT flags" {
-                let protocol_name = protocol.field(packet.body, 0)?;
+                let protocol_name = protocol.field(packet.body, 0) handle failure { return .Err(failure); };
                 let version = packet.body[protocol_name.end] as i64;
                 return .Ok(refuse(next, index, version, 130));
             }
@@ -650,7 +650,7 @@ fn establish(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: 
                 -1
             } else {
                 flight.expires
-            })?;
+            }) handle failure { return .Err(failure); };
             client = queue(prepared.client, prepared.packet);
         } else {
             client = acknowledgment(client, 98, flight.publication.identifier, 0, flight.publication.properties);
@@ -684,7 +684,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
     let kind = packet.header >> 4;
     match kind {
         3 => {
-            var item = protocol.publish_version(packet, client.version)?;
+            var item = protocol.publish_version(packet, client.version) handle failure { return .Err(failure); };
             if protocol.ascii_prefix(item.topic, "$sys") {
                 next.sessions[index] = client;
                 return .Ok(next);
@@ -745,7 +745,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             return .Ok(next);
         }
         4 => {
-            let received = protocol.acknowledgment(packet, client.version)?;
+            let received = protocol.acknowledgment(packet, client.version) handle failure { return .Err(failure); };
             let identifier = received.identifier;
             var at: i64 = 0;
             while at < client.outgoing.len() {
@@ -761,7 +761,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             }
         }
         5 => {
-            let received = protocol.acknowledgment(packet, client.version)?;
+            let received = protocol.acknowledgment(packet, client.version) handle failure { return .Err(failure); };
             let identifier = received.identifier;
             var found = false;
             var failed: i64 = -1;
@@ -788,7 +788,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             }
         }
         6 => {
-            let received = protocol.acknowledgment(packet, client.version)?;
+            let received = protocol.acknowledgment(packet, client.version) handle failure { return .Err(failure); };
             let identifier = received.identifier;
             var found = false;
             for at in 0..client.incoming.len() {
@@ -807,7 +807,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             }
         }
         7 => {
-            let received = protocol.acknowledgment(packet, client.version)?;
+            let received = protocol.acknowledgment(packet, client.version) handle failure { return .Err(failure); };
             let identifier = received.identifier;
             for at in 0..client.outgoing.len() {
                 let flight = client.outgoing[at];
@@ -821,7 +821,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             }
         }
         8 => {
-            let request = protocol.subscribe_version(packet.body, client.version)?;
+            let request = protocol.subscribe_version(packet.body, client.version) handle failure { return .Err(failure); };
             var body = protocol.big16(request.identifier);
             if client.version == 5 {
                 body.push(0);
@@ -878,7 +878,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             }
         }
         10 => {
-            let request = protocol.unsubscribe_version(packet.body, client.version)?;
+            let request = protocol.unsubscribe_version(packet.body, client.version) handle failure { return .Err(failure); };
             var body = protocol.big16(request.identifier);
             if client.version == 5 {
                 body.push(0);
@@ -910,7 +910,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
             if client.version == 5 && packet.body.len() > 1 {
                 reason = packet.body[0] as i64;
                 if packet.body.len() > 2 {
-                    let block = properties.decode(packet.body, 1, 14)?;
+                    let block = properties.decode(packet.body, 1, 14) handle failure { return .Err(failure); };
                     if block.properties.session_expiry_set {
                         if block.properties.session_expiry > 0 && client.properties.session_expiry == 0 {
                             return .Err("MQTT session expiry cannot increase from zero");
@@ -936,7 +936,7 @@ fn process(value: State, index: i64, packet: mqtt.Packet, cfg: Config, owner: li
                 return .Err("invalid MQTT AUTH reason");
             }
             if packet.body.len() > 1 {
-                let _ = properties.decode(packet.body, 1, 15)?;
+                let _ = properties.decode(packet.body, 1, 15) handle failure { return .Err(failure); };
             }
         }
         _ => {
@@ -1216,15 +1216,23 @@ type Watch {
 }
 
 fn session_deadline(client: Session, due: i64) -> i64 {
-    if client.token == 0 { return due; }
-    let timeout = if !client.connected { 15000 }
-        else { (client.keepalive + client.keepalive / 2) * 1000 };
-    if timeout > 0 && client.last_packet + timeout < due { client.last_packet + timeout }
-    else { due }
+    if client.token == 0 {
+        return due;
+    }
+    let timeout = if !client.connected {
+        15000
+    } else {
+        (client.keepalive + client.keepalive / 2) * 1000
+    };
+    if timeout > 0 && client.last_packet + timeout < due {
+        client.last_packet + timeout
+    } else {
+        due
+    }
 }
 
 pub fn run(path: string) -> Result<bool, string> {
-    let cfg = configuration(path)?;
+    let cfg = configuration(path) handle failure { return .Err(failure); };
     let host = if cfg.host == "0.0.0.0" || cfg.host.is_empty() {
         "::"
     } else {
@@ -1240,10 +1248,10 @@ pub fn run(path: string) -> Result<bool, string> {
     if port <= 0 {
         return .Err("TCP listener address unavailable");
     }
-    var state = system_topics(empty_state())?;
+    var state = system_topics(empty_state()) handle failure { return .Err(failure); };
     let group = events.open().expect("MQTT readiness group");
     let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(256).expect("MQTT event pipe");
-    let pump = spawn events.Pump(group: events.share(group), output: output);
+    let pump = spawn events.Pump { group: events.share(group), output: output };
     mailbox(pump, on_full: .Wait).run().expect("start MQTT readiness pump");
     let shutdown = events.driver(group, input);
     let accept_watch = listener.watch(owner, 0, group, 1).expect("watch MQTT listener");
@@ -1256,9 +1264,11 @@ pub fn run(path: string) -> Result<bool, string> {
         if now < 0 {
             return .Err("TCP listener monotonic clock failed");
         }
-        if now >= prune_at { state = expire(state, now); }
+        if now >= prune_at {
+            state = expire(state, now);
+        }
         if now >= next_expiry {
-            state = system_topics(state)?;
+            state = system_topics(state) handle failure { return .Err(failure); };
             next_expiry = now + 1000;
         }
         for attempt in 0..16 {
@@ -1297,9 +1307,14 @@ pub fn run(path: string) -> Result<bool, string> {
         var retained: Vec<Watch> = Vec.new();
         for watch in watches {
             var active = false;
-            for client in state.sessions { active = active || client.token == watch.token; }
-            if active { retained.push(watch); }
-            else { events.remove(group, watch.key).expect("retire MQTT client watch"); }
+            for client in state.sessions {
+                active = active || client.token == watch.token;
+            }
+            if active {
+                retained.push(watch);
+            } else {
+                events.remove(group, watch.key).expect("retire MQTT client watch");
+            }
         }
         watches = retained;
         var due = next_expiry;
@@ -1308,13 +1323,24 @@ pub fn run(path: string) -> Result<bool, string> {
         for client in state.sessions {
             due = session_deadline(client, due);
             if client.token == 0 {
-                if client.expires > 0 && client.expires + 1 < cleanup { cleanup = client.expires + 1; }
+                if client.expires > 0 && client.expires + 1 < cleanup {
+                    cleanup = client.expires + 1;
+                }
             } else {
                 active += 1;
                 var key: i64 = 0;
-                for watch in watches { if watch.token == client.token { key = watch.key; } }
-                let interest: i32 = if client.closing || client.writes.len() >= 256 { 2 }
-                    else if client.writes.is_empty() { 1 } else { 3 };
+                for watch in watches {
+                    if watch.token == client.token {
+                        key = watch.key;
+                    }
+                }
+                let interest: i32 = if client.closing || client.writes.len() >= 256 {
+                    2
+                } else if client.writes.is_empty() {
+                    1
+                } else {
+                    3
+                };
                 if key == 0 {
                     key = listener.watch(owner, client.token, group, interest).expect("watch MQTT client");
                     watches.push(Watch { token: client.token, key: key });
@@ -1322,30 +1348,50 @@ pub fn run(path: string) -> Result<bool, string> {
                     events.arm(group, key, interest).expect("rearm MQTT client");
                 }
                 if !client.closing && client.writes.len() < 256 && client.decoder.buffer.len() >= 2 {
-                    if !protocol.feed(client.decoder, bytes.new()).packets.is_empty() { due = now; }
+                    if !protocol.feed(client.decoder, bytes.new()).packets.is_empty() {
+                        due = now;
+                    }
                 }
             }
             for flight in client.outgoing {
-                if !flight.deferred && flight.expires + 1 < cleanup { cleanup = flight.expires + 1; }
-                if flight.created + 86400001 < cleanup { cleanup = flight.created + 86400001; }
+                if !flight.deferred && flight.expires + 1 < cleanup {
+                    cleanup = flight.expires + 1;
+                }
+                if flight.created + 86400001 < cleanup {
+                    cleanup = flight.created + 86400001;
+                }
             }
             for received in client.incoming {
-                if received.expires + 1 < cleanup { cleanup = received.expires + 1; }
+                if received.expires + 1 < cleanup {
+                    cleanup = received.expires + 1;
+                }
             }
         }
         for retained in state.retained {
-            if retained.purge > 0 && retained.purge + 1 < cleanup { cleanup = retained.purge + 1; }
+            if retained.purge > 0 && retained.purge + 1 < cleanup {
+                cleanup = retained.purge + 1;
+            }
         }
-        for will in state.delayed_wills { if will.due < cleanup { cleanup = will.due; } }
+        for will in state.delayed_wills {
+            if will.due < cleanup {
+                cleanup = will.due;
+            }
+        }
         prune_at = cleanup;
-        if cleanup < due { due = cleanup; }
-        if active < 256 { events.arm(group, accept_watch, 1).expect("rearm MQTT listener"); }
+        if cleanup < due {
+            due = cleanup;
+        }
+        if active < 256 {
+            events.arm(group, accept_watch, 1).expect("rearm MQTT listener");
+        }
         match events.wait(shutdown, due) {
             events.Event.Failed(code) => return .Err(f"MQTT socket readiness failed: errno={code}"),
             _ => {}
         }
     }
-    for watch in watches { events.remove(group, watch.key).expect("retire MQTT client watch on shutdown"); }
+    for watch in watches {
+        events.remove(group, watch.key).expect("retire MQTT client watch on shutdown");
+    }
     events.remove(group, accept_watch).expect("retire MQTT listener watch");
     shutdown.close();
     stop(pump);

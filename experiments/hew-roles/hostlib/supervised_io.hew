@@ -24,7 +24,7 @@ pub actor Endpoint {
         if owned.is_some() {
             return .Err(duplex.IoError.InvalidArgument);
         }
-        let connection = duplex.connect(host, port, timeout_ms)?;
+        let connection = duplex.connect(host, port, timeout_ms) handle failure { return .Err(failure); };
         owned = .Some(OwnedConnection { connection: connection });
         .Ok(true)
     }
@@ -81,7 +81,7 @@ pub actor Endpoint {
 pub supervisor Branch {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child endpoint: Endpoint();
+    child endpoint: Endpoint;
 }
 
 pub fn open(endpoint: ChildRef<Endpoint>, host: string, port: i64, timeout_ms: i64) -> Result<bool, duplex.IoError> {

@@ -1,6 +1,7 @@
 //! Bounded MQTT 3.1.1 publisher framing. No network, subscription or RF authority.
 
 import std.encoding.utf8;
+
 import hostlib.binary;
 
 pub enum CodecError {
@@ -81,7 +82,11 @@ fn header_valid(header: i64) -> bool {
         let qos = (flags >> 1) & 3;
         return qos < 3 && (qos != 0 || (flags & 8) == 0);
     }
-    flags == (if kind == 6 || kind == 8 || kind == 10 { 2 } else { 0 })
+    flags == (if kind == 6 || kind == 8 || kind == 10 {
+        2
+    } else {
+        0
+    })
 }
 
 pub fn frame(header: i64, body: bytes) -> Result<bytes, CodecError> {
@@ -97,7 +102,11 @@ pub fn frame(header: i64, body: bytes) -> Result<bytes, CodecError> {
     loop {
         let digit = remaining % 128;
         remaining /= 128;
-        out.push((digit | (if remaining > 0 { 128 } else { 0 })) as u8);
+        out.push((digit | (if remaining > 0 {
+            128
+        } else {
+            0
+        })) as u8);
         if remaining == 0 {
             break;
         }
@@ -107,13 +116,11 @@ pub fn frame(header: i64, body: bytes) -> Result<bytes, CodecError> {
 }
 
 /// Clean session, QoS1 retained last will; credentials are never error text.
-pub fn connect(client: string, username: string, password: bytes, will_topic: string,
-               will_payload: bytes, keepalive: i64) -> Result<bytes, CodecError> {
+pub fn connect(client: string, username: string, password: bytes, will_topic: string, will_payload: bytes, keepalive: i64) -> Result<bytes, CodecError> {
     if !password.is_empty() && username.is_empty() {
         return .Err(CodecError.InvalidCredentials);
     }
-    if !text_valid(client) || !text_valid(username) || password.len() > 65535 ||
-       will_payload.len() > 65535 {
+    if !text_valid(client) || !text_valid(username) || password.len() > 65535 || will_payload.len() > 65535 {
         return .Err(CodecError.InvalidText);
     }
     if !topic_valid(will_topic) {
@@ -159,7 +166,11 @@ pub fn publish(topic: string, payload: bytes, identifier: i64, retained: bool) -
     var body = field(topic.to_bytes());
     body.append(big16(identifier));
     body.append(payload);
-    frame(if retained { 51 } else { 50 }, body)
+    frame(if retained {
+        51
+    } else {
+        50
+    }, body)
 }
 
 pub type Packet {
@@ -233,8 +244,7 @@ pub fn feed(state: Decoder, chunk: bytes) -> Batch {
         if remaining > next.buffer.len() - cursor {
             break;
         }
-        packets.push(Packet { header: header,
-            body: binary.slice(next.buffer, cursor, cursor + remaining).expect("checked MQTT body") });
+        packets.push(Packet { header: header, body: binary.slice(next.buffer, cursor, cursor + remaining).expect("checked MQTT body") });
         at = cursor + remaining;
     }
     next.buffer = if next.failure.is_some() {
@@ -255,7 +265,11 @@ pub enum Reply {
 pub fn reply(packet: Packet) -> Result<Reply, CodecError> {
     let body = packet.body;
     if packet.header == 32 && body.len() == 2 && body[0] == 0 && body[1] <= 5 {
-        return .Ok(if body[1] == 0 { Reply.Connected } else { Reply.Rejected(body[1] as i64) });
+        return .Ok(if body[1] == 0 {
+            Reply.Connected
+        } else {
+            Reply.Rejected(body[1] as i64)
+        });
     }
     if packet.header == 64 && body.len() == 2 {
         let identifier = ((body[0] as i64) << 8) | (body[1] as i64);

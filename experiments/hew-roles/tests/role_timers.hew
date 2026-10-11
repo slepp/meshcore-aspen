@@ -1,9 +1,11 @@
 import roles;
+
 import wire;
+
 import std.encoding.hex;
 
 fn main() {
-    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101");
+    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101").expect("valid hexadecimal");
     let relay = roles.create(seed, 2, "Timer relay", "", "", 3, bytes.new(), bytes.new());
     assert(relay.configure("local_advert_seconds=3\nflood_advert_seconds=5\n").expect("advert configuration"));
     relay.advert_timers(1000, 1000).expect("advert schedule");
@@ -21,9 +23,8 @@ fn main() {
     stopped(relay);
     let room = roles.create(seed, 3, "Timer room", "", "", 3, bytes.new(), bytes.new());
     assert(room.configure("public=1\nlocal_advert_seconds=0\nflood_advert_seconds=0\n").expect("disable room adverts"));
-    assert(room.acl(wire.public_key(hex.decode("0202020202020202020202020202020202020202020202020202020202020202")), 3).expect("room member"));
-    assert(room.next_deadline(1000000).expect("idle room timer") == 9223372036854775807,
-        "a room without pending deliveries must not schedule a 150 ms turn");
+    assert(room.acl(wire.public_key(hex.decode("0202020202020202020202020202020202020202020202020202020202020202").expect("valid hexadecimal")), 3).expect("room member"));
+    assert(room.next_deadline(1000000).expect("idle room timer") == 9223372036854775807, "a room without pending deliveries must not schedule a 150 ms turn");
     stop(room);
     stopped(room);
     println("ROLE_TIMERS_OK");

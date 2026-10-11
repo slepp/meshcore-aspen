@@ -7,7 +7,9 @@ import std.encoding.hex;
 import std.encoding.utf8;
 
 import storage;
+
 import transport;
+
 import release_identity;
 
 import std.string;
@@ -21,7 +23,9 @@ import meshproto.preferences;
 import meshproto.regions;
 
 import meshproto.cli;
+
 import meshproto.packet_log;
+
 import meshproto.radio;
 
 type Held {
@@ -193,9 +197,7 @@ type RXState {
 }
 
 fn rx_state() -> RXState {
-    RXState { seen: Vec.new(), requests: Vec.new(), seen_next: 0, held: Vec.new(),
-        rx_processed: false, received_snr: 0, received_rssi: -32768, received_measured: false,
-        received_packets: 0, decoded_packets: 0, drained_packets: 0 }
+    RXState { seen: Vec.new(), requests: Vec.new(), seen_next: 0, held: Vec.new(), rx_processed: false, received_snr: 0, received_rssi: -32768, received_measured: false, received_packets: 0, decoded_packets: 0, drained_packets: 0 }
 }
 
 type DeliveryState {
@@ -211,8 +213,7 @@ type DeliveryState {
 }
 
 fn delivery_state() -> DeliveryState {
-    DeliveryState { members: Vec.new(), history: Vec.new(), durable_history: false,
-        public_access: false, evict: false, posted: 0, pushed: 0, next_push: 0, next_user: 0 }
+    DeliveryState { members: Vec.new(), history: Vec.new(), durable_history: false, public_access: false, evict: false, posted: 0, pushed: 0, next_push: 0, next_user: 0 }
 }
 
 type ScopeState {
@@ -229,9 +230,7 @@ type ScopeState {
 }
 
 fn scopes_state() -> ScopeState {
-    ScopeState { region: bytes.new(), configured_scopes: false, named_regions: regions.empty(),
-        regions_saved: false, region_load: .None, configured_home: .None, configured_default: .None,
-        configured_wildcard: .None, configured_allowed: .None, wildcard: true }
+    ScopeState { region: bytes.new(), configured_scopes: false, named_regions: regions.empty(), regions_saved: false, region_load: .None, configured_home: .None, configured_default: .None, configured_wildcard: .None, configured_allowed: .None, wildcard: true }
 }
 
 type DiscoveryState {
@@ -244,8 +243,7 @@ type DiscoveryState {
 }
 
 fn discovery_state() -> DiscoveryState {
-    DiscoveryState { discovery_tag: 0, discovery_until: 0, discovery_window: -1,
-        discovery_count: 0, anonymous_window: -1, anonymous_count: 0 }
+    DiscoveryState { discovery_tag: 0, discovery_until: 0, discovery_window: -1, discovery_count: 0, anonymous_window: -1, anonymous_count: 0 }
 }
 
 type Diagnostics {
@@ -263,9 +261,7 @@ type Diagnostics {
 }
 
 fn diagnostics_state() -> Diagnostics {
-    Diagnostics { commands: 0, duplicates: 0, denied: 0, metrics: management.counters(),
-        readings: management.unavailable(), neighbours: Vec.new(), started: -1, logging: false,
-        log_path: "", log_limit: 4194304, erase_log: false }
+    Diagnostics { commands: 0, duplicates: 0, denied: 0, metrics: management.counters(), readings: management.unavailable(), neighbours: Vec.new(), started: -1, logging: false, log_path: "", log_limit: 4194304, erase_log: false }
 }
 
 pub actor Role {
@@ -322,7 +318,9 @@ pub actor Role {
                     delivery.durable_history = value == "durable-replay";
                 }
                 "preference_profile" => {
-                    if value != "native-preferences" && value != "durable-host-preferences" { return false; }
+                    if value != "native-preferences" && value != "durable-host-preferences" {
+                        return false;
+                    }
                     prefs.native_factor = value == "native-preferences";
                     native_factor_override = .Some(prefs.native_factor);
                 }
@@ -345,20 +343,21 @@ pub actor Role {
                     prefs.admin = value;
                 }
                 "default_scope" => {
-                    scopes.region = hex.decode(value);
+                    scopes.region = hex.decode(value) handle _ { return false; };
                     scopes.configured_scopes = true;
                     has_default = true;
                 }
                 "home" => {
-                    let home = hex.decode(value);
+                    let home = hex.decode(value) handle _ { return false; };
                     if !home.is_empty() && home.len() != 16 {
                         return false;
                     }
                     scopes.named_regions.legacy_home = home;
-                    has_home = true; home_value = home;
+                    has_home = true;
+                    home_value = home;
                 }
                 "region_state" => {
-                    scopes.named_regions = match regions.decode(hex.decode(value)) {
+                    scopes.named_regions = match regions.decode(hex.decode(value) handle _ { return false; }) {
                         .Some(table) => table,
                         .None => return false,
                     };
@@ -370,7 +369,7 @@ pub actor Role {
                     scopes.configured_scopes = true;
                     if !value.is_empty() {
                         for item in value.split(",") {
-                            let region_key = hex.decode(item);
+                            let region_key = hex.decode(item) handle _ { return false; };
                             if region_key.len() != 16 || allowed_keys.len() >= 128 {
                                 return false;
                             }
@@ -432,23 +431,42 @@ pub actor Role {
                 .Ok(value) => value,
                 .Err(_) => return false,
             };
-            if has_home && !wire.equal(home_value, regions.home_key(baseline)) { scopes.configured_home = .Some(home_value); }
-            if has_default && !wire.equal(scopes.region, baseline.default_key) { scopes.configured_default = .Some(scopes.region); }
-            if has_wildcard && scopes.wildcard != ((baseline.wildcard & 1) == 0) { scopes.configured_wildcard = .Some(scopes.wildcard); }
+            if has_home && !wire.equal(home_value, regions.home_key(baseline)) {
+                scopes.configured_home = .Some(home_value);
+            }
+            if has_default && !wire.equal(scopes.region, baseline.default_key) {
+                scopes.configured_default = .Some(scopes.region);
+            }
+            if has_wildcard && scopes.wildcard != ((baseline.wildcard & 1) == 0) {
+                scopes.configured_wildcard = .Some(scopes.wildcard);
+            }
             if has_allowed {
-                var actual = bytes.new(); var expected = bytes.new();
-                for key in allowed_keys { actual.append(key); }
-                for key in regions.permitted(baseline) { expected.append(key); }
-                if !wire.equal(actual, expected) { scopes.configured_allowed = .Some(allowed_keys); }
+                var actual = bytes.new();
+                var expected = bytes.new();
+                for key in allowed_keys {
+                    actual.append(key);
+                }
+                for key in regions.permitted(baseline) {
+                    expected.append(key);
+                }
+                if !wire.equal(actual, expected) {
+                    scopes.configured_allowed = .Some(allowed_keys);
+                }
             }
             match regions.override_scopes(baseline, scopes.configured_home, scopes.configured_default, scopes.configured_wildcard, scopes.configured_allowed) {
                 .Ok(value) => adopt_regions(value),
                 .Err(_) => return false,
             }
         } else {
-            if has_allowed { scopes.named_regions.legacy_keys = allowed_keys; }
+            if has_allowed {
+                scopes.named_regions.legacy_keys = allowed_keys;
+            }
             scopes.named_regions.default_key = scopes.region;
-            scopes.named_regions.wildcard = if scopes.wildcard { 0 } else { 1 };
+            scopes.named_regions.wildcard = if scopes.wildcard {
+                0
+            } else {
+                1
+            };
         }
         (role != 3 || (prefs.guest.is_empty() == delivery.public_access)) && !prefs.name.is_empty() && prefs.name.len() <= 31 && prefs.guest.len() <= 63 && prefs.admin.len() <= 63 && (scopes.region.is_empty() || scopes.region.len() == 16) && prefs.flood >= 0 && prefs.flood <= 64 && prefs.unscoped >= 0 && prefs.unscoped <= 64 && prefs.adverts >= 0 && prefs.adverts <= 64 && prefs.local_seconds >= 0 && prefs.local_seconds <= 86400 && prefs.flood_seconds >= 0 && prefs.flood_seconds <= 604800 && txdelay_milli >= 0 && txdelay_milli <= 2000 && direct_txdelay_milli >= 0 && direct_txdelay_milli <= 2000
     }
@@ -504,22 +522,35 @@ pub actor Role {
         ((now / 1000) + (prefs.rtc_offset & 4294967295)) & 4294967295
     }
     fn advertisement(now: i64) -> wire.Packet {
-        clock = if timestamp(now) > clock { timestamp(now) } else { (clock + 1) & 4294967295 };
+        clock = if timestamp(now) > clock {
+            timestamp(now)
+        } else {
+            (clock + 1) & 4294967295
+        };
         wire.advert_location(seed, clock, role, prefs.name, prefs.advert_location != 0, prefs.latitude, prefs.longitude)
     }
     fn capture(raw: bytes, direction: string, local: bool, now: i64, outcome: Option<packet_log.Outcome>) {
-        if !diagnostics.logging { return; }
-        let record = packet_log.entry(raw, direction, local, direction == "RX" && rx.received_measured,
-            rx.received_snr, rx.received_rssi, now, outcome);
+        if !diagnostics.logging {
+            return;
+        }
+        let record = packet_log.entry(raw, direction, local, direction == "RX" && rx.received_measured, rx.received_snr, rx.received_rssi, now, outcome);
         let result = storage.append_private(diagnostics.log_path, record, diagnostics.log_limit);
         if result != 0 {
             diagnostics.logging = false;
-            let condition = if result == 1 { "limit-reached" } else if result == -2 { "write-outcome-unknown" } else { "private-file-write-failed" };
+            let condition = if result == 1 {
+                "limit-reached"
+            } else if result == -2 {
+                "write-outcome-unknown"
+            } else {
+                "private-file-write-failed"
+            };
             println(f"PACKET_LOG_STOPPED path={diagnostics.log_path} condition={condition}; erase or archive the log before restarting capture");
         }
     }
     receive fn logfile(path: string, limit: i64) -> bool {
-        if path.is_empty() || limit < 1024 || limit > 16777216 { return false; }
+        if path.is_empty() || limit < 1024 || limit > 16777216 {
+            return false;
+        }
         diagnostics.log_path = path;
         diagnostics.log_limit = limit;
         if diagnostics.logging {
@@ -540,7 +571,7 @@ pub actor Role {
         if words.len() != 3 {
             return "Err - bad params";
         }
-        let key = hex.decode(words[1]);
+        let key = hex.decode(words[1]) handle _ { return "Err - bad pubkey"; };
         if key.is_empty() || key.len() > 32 {
             return "Err - bad pubkey";
         }
@@ -601,11 +632,15 @@ pub actor Role {
         "OK"
     }
     fn command(input: string, stamp: i64, now: i64, owner: string) -> CommandReply {
-        if diagnostics.started >= 0 { diagnostics.metrics.uptime = (now - diagnostics.started) / 1000; }
+        if diagnostics.started >= 0 {
+            diagnostics.metrics.uptime = (now - diagnostics.started) / 1000;
+        }
         if scopes.region_load.is_some() {
             let result = regions.execute(scopes.named_regions, scopes.region_load, input, owner, timestamp(now));
             scopes.region_load = result.loading;
-            if result.changed { adopt_regions(result.table); }
+            if result.changed {
+                adopt_regions(result.table);
+            }
             return CommandReply { text: result.reply, frames: Vec.new() };
         }
         var command = management.trim_left(input);
@@ -636,7 +671,7 @@ pub actor Role {
             } else {
                 2
             };
-            reply = f"Willow {release_identity.version()} (MeshCore room/repeater protocol level {level}; native Hew 0.6.0-rc7)";
+            reply = f"Willow {release_identity.version()} (MeshCore room/repeater protocol level {level}; native Hew)";
         } else if command == "clock" {
             reply = management.utc(timestamp(now));
         } else if command == "clock sync" || command.starts_with("time ") {
@@ -646,16 +681,27 @@ pub actor Role {
                 let text = string.trim(command.slice(5, command.len()));
                 valid = !text.is_empty();
                 var digits = text;
-                if text.starts_with("+") { digits = text.slice(1, text.len()); }
-                if digits.is_empty() { valid = false; }
+                if text.starts_with("+") {
+                    digits = text.slice(1, text.len());
+                }
+                if digits.is_empty() {
+                    valid = false;
+                }
                 for byte in digits.to_bytes() {
-                    if byte < 48 || byte > 57 { valid = false; }
+                    if byte < 48 || byte > 57 {
+                        valid = false;
+                    }
                 }
                 requested = match string.to_int(digits) {
                     .Ok(value) => value,
-                    .Err(_) => { valid = false; 0 }
+                    .Err(_) => {
+                        valid = false;
+                        0
+                    }
                 };
-                if requested < 0 || requested > 4294967295 { valid = false; }
+                if requested < 0 || requested > 4294967295 {
+                    valid = false;
+                }
             }
             if !valid {
                 reply = "Error, invalid time";
@@ -668,11 +714,21 @@ pub actor Role {
                 reply = "OK - clock set: " + management.utc(requested);
             }
         } else if command == "gps advert" {
-            reply = if prefs.advert_location == 2 { "> prefs" } else { "> none" };
+            reply = if prefs.advert_location == 2 {
+                "> prefs"
+            } else {
+                "> none"
+            };
         } else if command == "gps advert none" || command == "gps advert prefs" {
             var p = settings();
-            p.advert_location = if command == "gps advert prefs" { 2 } else { 0 };
-            if p.local_seconds < 3600 { p.local_seconds = 0; }
+            p.advert_location = if command == "gps advert prefs" {
+                2
+            } else {
+                0
+            };
+            if p.local_seconds < 3600 {
+                p.local_seconds = 0;
+            }
             adopt(p);
             reply = "ok";
         } else if command.starts_with("set prv.key ") {
@@ -686,7 +742,11 @@ pub actor Role {
                 reply = "Error, role restart unavailable";
             }
         } else if command == "log start" {
-            let result = if diagnostics.log_path.is_empty() { -1 } else { storage.append_private(diagnostics.log_path, bytes.new(), diagnostics.log_limit) };
+            let result = if diagnostics.log_path.is_empty() {
+                -1
+            } else {
+                storage.append_private(diagnostics.log_path, bytes.new(), diagnostics.log_limit)
+            };
             if result == 0 {
                 diagnostics.logging = true;
                 reply = "   logging on";
@@ -698,8 +758,12 @@ pub actor Role {
             diagnostics.logging = false;
             reply = "   logging off";
         } else if command == "log erase" {
-            if diagnostics.log_path.is_empty() { reply = "Error, packet log unavailable"; }
-            else { diagnostics.erase_log = true; reply = "   log erased"; }
+            if diagnostics.log_path.is_empty() {
+                reply = "Error, packet log unavailable";
+            } else {
+                diagnostics.erase_log = true;
+                reply = "   log erased";
+            }
         } else if command == "tempradio" || command.starts_with("tempradio ") || command.starts_with("set radio ") || command == "set radio" || command.starts_with("set freq ") || command == "set freq" || command.starts_with("set tx ") || command == "set tx" {
             reply = "Error: mast-admin required for shared radio";
         } else if command.starts_with("password ") {
@@ -740,12 +804,12 @@ pub actor Role {
                 let tag = crypto.random_bytes(4).expect("discovery tag entropy");
                 discovery.discovery_tag = wire.uint(tag);
                 discovery.discovery_until = now + 60000;
-                let data = wire.cat(wire.cat(hex.decode("8004"), tag), wire.le(0, 4));
+                let data = wire.cat(wire.cat(hex.decode("8004").expect("valid hexadecimal"), tag), wire.le(0, 4));
                 frames.push(tx(wire.packet(2, 11, data), 0));
                 reply = "OK - Discover sent";
             }
         } else if role == 2 && command == "neighbors" {
-            let data = management.neighbours(diagnostics.neighbours, hex.decode("002000000004"), timestamp(now)).expect("neighbour display");
+            let data = management.neighbours(diagnostics.neighbours, hex.decode("002000000004").expect("valid hexadecimal"), timestamp(now)).expect("neighbour display");
             reply = "";
             let count = wire.uint(wire.cut(data, 2, 4));
             for index in 0..count {
@@ -765,7 +829,7 @@ pub actor Role {
                 reply = "-none-";
             }
         } else if role == 2 && command.starts_with("neighbor.remove ") {
-            let key = hex.decode(string.trim(command.slice(16, command.len())));
+            let key = hex.decode(string.trim(command.slice(16, command.len()))) handle _ { bytes.new() };
             if key.is_empty() || key.len() > 32 {
                 reply = "ERR: bad pubkey";
             } else {
@@ -781,11 +845,17 @@ pub actor Role {
         } else if command == "region" || command.starts_with("region ") {
             if !scopes.regions_saved {
                 scopes.named_regions.default_key = scopes.region;
-                scopes.named_regions.wildcard = if scopes.wildcard { 0 } else { 1 };
+                scopes.named_regions.wildcard = if scopes.wildcard {
+                    0
+                } else {
+                    1
+                };
             }
             let result = regions.execute(scopes.named_regions, scopes.region_load, command, owner, timestamp(now));
             scopes.region_load = result.loading;
-            if result.changed { adopt_regions(result.table); }
+            if result.changed {
+                adopt_regions(result.table);
+            }
             reply = result.reply;
         } else if role == 3 && (command == "room.post" || command.starts_with("room.post ")) {
             let body = string.trim(command.slice(9, command.len()));
@@ -942,7 +1012,9 @@ pub actor Role {
     receive fn persistent() {
         durable = true;
     }
-    receive fn save(path: string) -> bool { persist(path) }
+    receive fn save(path: string) -> bool {
+        persist(path)
+    }
     fn persist(path: string) -> bool {
         let with_preferences = preferences_changed || scopes.regions_saved;
         var with_attempts = with_preferences;
@@ -987,7 +1059,7 @@ pub actor Role {
                 closed = true;
                 return false;
             }
-            blob.append(hex.decode(note.owner));
+            blob.append(hex.decode(note.owner).expect("valid hexadecimal"));
             blob.append(wire.byte(note.key.to_bytes().len()));
             blob.append(note.key.to_bytes());
             blob.append(wire.byte(note.value.to_bytes().len()));
@@ -1031,7 +1103,9 @@ pub actor Role {
         if with_preferences {
             match preferences.encode(settings()) {
                 .Some(data) => {
-                    if scopes.regions_saved { blob.append(wire.le(data.len(), 2)); }
+                    if scopes.regions_saved {
+                        blob.append(wire.le(data.len(), 2));
+                    }
                     blob.append(data);
                 }
                 .None => {
@@ -1041,8 +1115,14 @@ pub actor Role {
             }
             if scopes.regions_saved {
                 match regions.encode(scopes.named_regions) {
-                    .Some(data) => { blob.append(wire.le(data.len(), 2)); blob.append(data); }
-                    .None => { closed = true; return false; }
+                    .Some(data) => {
+                        blob.append(wire.le(data.len(), 2));
+                        blob.append(data);
+                    }
+                    .None => {
+                        closed = true;
+                        return false;
+                    }
                 }
             }
         }
@@ -1184,10 +1264,15 @@ pub actor Role {
         if with_preferences {
             var end = blob.len();
             if with_regions {
-                if blob.len() < at + 2 { return false; }
+                if blob.len() < at + 2 {
+                    return false;
+                }
                 let size = wire.uint(wire.cut(blob, at, at + 2));
-                at += 2; end = at + size;
-                if end > blob.len() { return false; }
+                at += 2;
+                end = at + size;
+                if end > blob.len() {
+                    return false;
+                }
             }
             loaded_preferences = preferences.decode(wire.cut(blob, at, end));
             if loaded_preferences.is_none() {
@@ -1196,11 +1281,18 @@ pub actor Role {
             at = end;
         }
         if with_regions {
-            if blob.len() < at + 2 { return false; }
-            let size = wire.uint(wire.cut(blob, at, at + 2)); at += 2;
-            if at + size != blob.len() { return false; }
+            if blob.len() < at + 2 {
+                return false;
+            }
+            let size = wire.uint(wire.cut(blob, at, at + 2));
+            at += 2;
+            if at + size != blob.len() {
+                return false;
+            }
             loaded_regions = regions.decode(wire.cut(blob, at, at + size));
-            if loaded_regions.is_none() { return false; }
+            if loaded_regions.is_none() {
+                return false;
+            }
             at += size;
         }
         if at != blob.len() {
@@ -1220,11 +1312,17 @@ pub actor Role {
         }
         if let .Some(value) = loaded_preferences {
             var saved = value;
-            if let .Some(profile) = native_factor_override { saved.native_factor = profile; }
-            if saved.native_factor && saved.airtime_factor > 9.0 { saved.airtime_factor = 9.0; }
+            if let .Some(profile) = native_factor_override {
+                saved.native_factor = profile;
+            }
+            if saved.native_factor && saved.airtime_factor > 9.0 {
+                saved.airtime_factor = 9.0;
+            }
             adopt(saved);
         }
-        if let .Some(value) = loaded_regions { adopt_regions(value); }
+        if let .Some(value) = loaded_regions {
+            adopt_regions(value);
+        }
         scopes.region_load = .None;
         diagnostics.logging = false;
         rx.held = Vec.new();
@@ -1240,8 +1338,7 @@ pub actor Role {
         clock = wire.uint(wire.cut(blob, 36, 40));
         delivery.posted = wire.uint(wire.cut(blob, 40, 44));
         delivery.pushed = wire.uint(wire.cut(blob, 44, 48));
-        if scopes.configured_home.is_some() || scopes.configured_default.is_some() ||
-            scopes.configured_wildcard.is_some() || scopes.configured_allowed.is_some() {
+        if scopes.configured_home.is_some() || scopes.configured_default.is_some() || scopes.configured_wildcard.is_some() || scopes.configured_allowed.is_some() {
             return persist(path);
         }
         true
@@ -1310,12 +1407,17 @@ pub actor Role {
         true
     }
     receive fn ingest(raw: bytes, now: i64, local: bool) -> Vec<Tx> {
-        if closed { return Vec.new(); }
+        if closed {
+            return Vec.new();
+        }
         rx.received_packets += 1;
         rx.decoded_packets += 1;
         let packet = match wire.decode(raw) {
             .Some(value) => value,
-            .None => { diagnostics.denied += 1; return Vec.new(); }
+            .None => {
+                diagnostics.denied += 1;
+                return Vec.new();
+            }
         };
         capture(raw, "RX", local, now, .None);
         var forward = true;
@@ -1326,12 +1428,12 @@ pub actor Role {
             } else if physical_profile.len() != 18 || airtime_table.len() != 1024 || raw.len() > 255 {
                 .Err("receive delay requires verified PHY and airtime")
             } else {
-                radio.receive_delay(prefs.rxdelay,
-                    radio.packet_score(rx.received_snr as f64 / 4.0, physical_profile[8] as i64, raw.len()),
-                    wire.uint(wire.cut(airtime_table, raw.len() * 4, raw.len() * 4 + 4)))
+                radio.receive_delay(prefs.rxdelay, radio.packet_score(rx.received_snr as f64 / 4.0, physical_profile[8] as i64, raw.len()), wire.uint(wire.cut(airtime_table, raw.len() * 4, raw.len() * 4 + 4)))
             };
             match result {
-                .Ok(value) => { hold = radio.receive_hold(value); }
+                .Ok(value) => {
+                    hold = radio.receive_hold(value);
+                }
                 .Err(error) => {
                     println(f"ROLE_RX_DELAY_FAILED role={role} reason={error}; packet processing continues without forwarding");
                     forward = false;
@@ -1379,7 +1481,8 @@ pub actor Role {
             }
             if p.route == 0 {
                 if let .Some(key) = regions.receive_scope(scopes.named_regions, p) {
-                    request_scope = key; scope_known = true;
+                    request_scope = key;
+                    scope_known = true;
                 }
             }
         }
@@ -2135,7 +2238,9 @@ pub actor Role {
                 for frame in answer.frames {
                     out.push(frame);
                 }
-                if restart_requested { return out; }
+                if restart_requested {
+                    return out;
+                }
                 let reply = management.truncate(answer.text, 155);
                 if role != 3 {
                     clock = if timestamp(now) > clock {
@@ -2231,25 +2336,53 @@ pub actor Role {
     }
     receive fn next_deadline(now: i64) -> i64 {
         var due: i64 = 9223372036854775807;
-        if closed { return due; }
-        for packet in rx.held { if packet.deadline < due { due = packet.deadline; } }
-        for job in deferred { if job.deadline < due { due = job.deadline; } }
-        if prefs.local_seconds > 0 && next_local_advert < due { due = next_local_advert; }
-        if prefs.flood_seconds > 0 && next_flood_advert < due { due = next_flood_advert; }
+        if closed {
+            return due;
+        }
+        for packet in rx.held {
+            if packet.deadline < due {
+                due = packet.deadline;
+            }
+        }
+        for job in deferred {
+            if job.deadline < due {
+                due = job.deadline;
+            }
+        }
+        if prefs.local_seconds > 0 && next_local_advert < due {
+            due = next_local_advert;
+        }
+        if prefs.flood_seconds > 0 && next_flood_advert < due {
+            due = next_flood_advert;
+        }
         if role == 3 {
             let stamp = timestamp(now);
             for member in delivery.members {
                 if member.pending != 0 {
-                    let expiry = if member.deadline > delivery.next_push { member.deadline } else { delivery.next_push };
-                    if expiry < due { due = expiry; }
+                    let expiry = if member.deadline > delivery.next_push {
+                        member.deadline
+                    } else {
+                        delivery.next_push
+                    };
+                    if expiry < due {
+                        due = expiry;
+                    }
                 } else if member.active && member.failures < 3 {
                     for post in delivery.history {
                         if post.stamp > member.since && !wire.equal(post.key, member.key) {
                             let eligible = if stamp >= post.stamp + 6 {
                                 now
-                            } else { now + (post.stamp + 6 - stamp) * 1000 - now % 1000 };
-                            let push = if delivery.next_push > eligible { delivery.next_push } else { eligible };
-                            if push < due { due = push; }
+                            } else {
+                                now + (post.stamp + 6 - stamp) * 1000 - now % 1000
+                            };
+                            let push = if delivery.next_push > eligible {
+                                delivery.next_push
+                            } else {
+                                eligible
+                            };
+                            if push < due {
+                                due = push;
+                            }
                         }
                     }
                 }
@@ -2281,9 +2414,13 @@ pub actor Role {
                 rx.drained_packets += 1;
                 match wire.decode(packet.raw) {
                     .Some(decoded) => {
-                        for frame in process(packet.raw, decoded, now, false, true) { out.push(frame); }
+                        for frame in process(packet.raw, decoded, now, false, true) {
+                            out.push(frame);
+                        }
                     }
-                    .None => { diagnostics.denied += 1; }
+                    .None => {
+                        diagnostics.denied += 1;
+                    }
                 }
             }
         }
@@ -2291,7 +2428,9 @@ pub actor Role {
         rx.received_snr = snr;
         rx.received_rssi = rssi;
         rx.received_measured = measured;
-        if closed { return out; }
+        if closed {
+            return out;
+        }
         if (prefs.local_seconds > 0 && now >= next_local_advert) || (prefs.flood_seconds > 0 && now >= next_flood_advert) {
             var advert = advertisement(now);
             advert.pathlen = (prefs.width - 1) << 6;
@@ -2403,8 +2542,7 @@ pub actor Role {
         changed
     }
     receive fn parse_counts() -> bytes {
-        wire.cat(wire.le(rx.received_packets, 8),
-            wire.cat(wire.le(rx.decoded_packets, 8), wire.le(rx.drained_packets, 8)))
+        wire.cat(wire.le(rx.received_packets, 8), wire.cat(wire.le(rx.decoded_packets, 8), wire.le(rx.drained_packets, 8)))
     }
     receive fn cursor(key: bytes) -> string {
         for m in delivery.members {
@@ -2426,15 +2564,10 @@ pub fn create(seed: bytes, role: i64, name: string, password: string, admin: str
     var table = regions.empty();
     table.legacy_keys = keys;
     table.default_key = region;
-    let prefs = preferences.Preferences { name: name, guest: password, admin: admin,
-        owner: "", width: width, repeat: role == 2, read_only: false, multi_acks: 0,
-        loop_mode: 3, flood: 16, unscoped: 16, adverts: 8, local_seconds: 0,
-        flood_seconds: 0, txdelay: 0.0, direct_delay: 0.0, latitude: 0.0,
-        longitude: 0.0, advert_location: 0, rtc_offset: 0, rxdelay: 0.0,
-        airtime_factor: 1.0, native_factor: true };
+    let prefs = preferences.Preferences { name: name, guest: password, admin: admin, owner: "", width: width, repeat: role == 2, read_only: false, multi_acks: 0, loop_mode: 3, flood: 16, unscoped: 16, adverts: 8, local_seconds: 0, flood_seconds: 0, txdelay: 0.0, direct_delay: 0.0, latitude: 0.0, longitude: 0.0, advert_location: 0, rtc_offset: 0, rxdelay: 0.0, airtime_factor: 1.0, native_factor: true };
     var scopes = scopes_state();
     scopes.region = region;
     scopes.named_regions = table;
     scopes.configured_scopes = region.len() == 16;
-    spawn Role(seed: seed, role: role, prefs: prefs, scopes: scopes, channel: channel, airtime_table: bytes.new(), notes: Vec.new(), deferred: Vec.new())
+    spawn Role { seed: seed, role: role, prefs: prefs, scopes: scopes, channel: channel, airtime_table: bytes.new(), notes: Vec.new(), deferred: Vec.new() }
 }

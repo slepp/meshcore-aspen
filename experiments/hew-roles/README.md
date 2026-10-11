@@ -6,9 +6,9 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-**Willow 0.0.2 is an experimental Hew release.** Download its
-[source bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.2)
-and build at the final installation path. The native worker is bound to that
+**Willow 0.0.2 is an experimental Hew release.** Build the
+[current repository source](https://github.com/slepp/meshcore-aspen) at the final
+installation path with the current Hew compiler and matching libraries. The native worker is bound to that
 source/build tree; copying prebuilt binaries alone is not a supported install.
 The running services retain identities, source and data across upgrades and
 restart. Worker recovery and ordinary RF messaging have been exercised.
@@ -27,19 +27,24 @@ identities.
 Enable the native observer with [the private service settings](SERVICE.md#native-mqtt-observer).
 
 ```sh
-cd experiments/hew-roles
-make compiler-version native-worker build/hew-host-release
+git clone https://github.com/slepp/meshcore-aspen.git
+cd meshcore-aspen/experiments/hew-roles
+make -j2 release
 python3 -B willow.py --version
 python3 -B willow.py check --state /path/to/private/willow
 python3 -B willow.py run --release --state /path/to/private/willow
 ```
 
-Expected: `Willow 0.0.2`; the state check reports the retained role identities
+Expected: `Willow 0.0.2`; the state check verifies the retained role identities
 and configuration, and startup connects to the configured shared modem without
-retuning it. Build the optional Base, broker and dashboard with
-`make base-service broker dashboard` when those services are selected.
-For a new lab installation, start with `make demo`; its emulator uses synthetic
-identities and private loopback connections, not your radio.
+retuning it. `make release` builds the host, Base, broker and dashboard with
+the current Hew installation. The launcher defaults to four scheduler workers; set
+`HEW_WORKERS` explicitly to choose another count.
+For a new installation, [create private state](SERVICE.md#start-with-new-identities)
+with `build/hew-host-release init`, then use the state check and launcher above.
+Before connecting a radio, run `make acceptance-test`: it exchanges companion
+messages with private loopback modem emulators, restarts the host and broker,
+and checks native-worker and modem recovery using synthetic identities.
 
 Use the running host's [owner-only DM and inbox commands](SERVICE.md#send-a-dm-and-read-the-owners-inbox)
 to send as its native bot and read authenticated incoming DMs. For a version
@@ -66,11 +71,11 @@ make native-login-test
 ./build/roles selftest
 ```
 
-Requirements: Linux x86-64, `hew 0.6.0-rc7`, a C compiler and OpenSSL development
-headers, libcurl development headers/library, `libcrypto.so.3`, `libsodium.so.23`, Go matching the root `go.mod`, and
-Python with `cryptography` and `PyNaCl`. The full demo additionally needs Clang's wasm32
-target, `wasm-ld`, CMake, Git, patch, PlatformIO's package manager and cJSON
-headers/library. `BOT_JSON_INCLUDE` can select the cJSON header directory;
+Requirements: Linux x86-64, the current `hew` compiler and libraries on `PATH`,
+a C compiler and OpenSSL development headers, libcurl development headers/library, `libcrypto.so.3`, `libsodium.so.23`, Go matching the root `go.mod`, and
+Python with `cryptography` and `PyNaCl`, CMake, Git, patch, PlatformIO's package
+manager and cJSON headers/library. The full demo additionally needs Clang's
+wasm32 target and `wasm-ld`. `BOT_JSON_INCLUDE` can select the cJSON header directory;
 the default is the installed ESP32 SDK. The first native worker build downloads
 pinned public C/C++ dependencies using the existing host-worker recipe.
 Build products and generated test identities stay in ignored
@@ -130,10 +135,10 @@ KISS stream fragments, queued-modem submissions, and time advancement.
 | --- | --- | --- |
 | Identity and crypto | Persistent Ed25519 seed identities; signed adverts; Ed25519-to-X25519 shared secrets; MeshCore AES-128-ECB with zero padding and two-byte HMAC; ACK proofs; group-channel authentication; matching-seed Birch identity migration | Expanded-only active identities without a matching seed require further implementation. Group authentication proves channel-secret possession, not a unique sender. |
 | Frames | MeshCore payload version 0; all four route encodings; ordinary widths 1/2/3, 64-byte path and 184-byte payload limits; TRACE widths 1/2/4/8 with distinct SNR return path; KISS escaping, fragmented receive, malformed-frame recovery; per-port DATA/RX_META pairing and local-reflection classification; CONTROL discovery | TRACE originates/terminates at the retained companion Base; Willow forwards its route and return hops. |
-| Repeater | Flood append, direct next-hop removal, packet dedup, local-reflection suppression, off/minimal/moderate/strict loop policies, configurable hop limits and airtime-based randomized delays, up to eight permitted region keys, independent home/default scope; configurable room forwarding and source airtime factor | 160 dedup hashes; no RX-score delay. Use the [owner region controls](SERVICE.md#configure-a-roles-named-regions) for local region changes, not an RF region editor. |
+| Repeater | Flood append, direct next-hop removal, packet dedup, local-reflection suppression, off/minimal/moderate/strict loop policies, configurable hop limits and airtime-based randomized delays, up to eight permitted region keys, independent home/default scope; configurable room forwarding and source airtime factor | 160 dedup hashes; up to 64 packets waiting for measured-SNR receive delay. Use the [owner region controls](SERVICE.md#configure-a-roles-named-regions) for local region changes, not an RF region editor. |
 | Room login | Authenticated password/admin/ACL login, explicit public-room opt-in, read-only guest mode, permission bits, replay rejection, flood PATH reply, direct/flood response routing, learned paths and multi-ACK policy; full service tables evict the least-active nonadministrator | 20 members; all-administrator tables refuse new identities. |
 | Room delivery | Automatic service ticks; post retry ACK without duplicate history, 150-byte new-post retention, 32-post history, own-author suppression, six-second delay, round-robin pushes, recipient-key delivery ACK, learned paths, three-failure suppression, keepalive proof/count; migrated durable history and subsequent posts survive restart | Existing Go posts up to 151 bytes, including opaque RawText, are preserved. |
-| RF management | Authenticated CLI, durable role settings and ACLs; binary status/telemetry/ACL; relay neighbour/owner and anonymous queries; measured CONTROL discovery; optional modem sampling | [Exact commands and remaining surfaces](MANAGEMENT.md). No RF named-region editor, RTC/location changes, log control or remote identity import/restart. |
+| RF management | Authenticated CLI, durable role settings and ACLs; binary status/telemetry/ACL; relay neighbour/owner and anonymous queries; measured CONTROL discovery; optional modem sampling | [Exact commands and remaining surfaces](MANAGEMENT.md). Saved coordinates, role RTC offset, packet-log controls and role restart are supported. No RF named-region editor or remote identity import. |
 | Default bot extension | Signed contact discovery; authenticated DM/group commands; default Lua commands and private KV; canonical retry dedup; delayed multi-path collection; native RF outcomes; independently persisted Wasm package alongside Lua | Existing C++ runtime, not reimplemented in Hew. Verified commands include ping, calc, remember, recall, mt, air, and Wasm wadd. Native owner administration and package operations use the [service controls](SERVICE.md); inherited commands are not all exercised here. |
 | Native bot regions | Separate home/default keys; known request scope, unscoped flood preservation, explicit fallback, default-scoped adverts and home-only unscoped adverts; serialized Go/native differential plus independent Go policy/code checks | Two registered bot keys, changed through local owner administration. Relay/room use their own permitted keys and explicit defaults. |
 | Worker build binding | Actual worktree native worker built with pinned MeshCore/Lua/WAMR inputs; recorded source fingerprint, compiler commands and input/binary hashes; compiled-in manifest verification before startup/restart | Local build binding, not a signed/reproducible release. Arbitrary installed workers are refused; source/build tree must remain available. |
@@ -273,14 +278,18 @@ contains only generated synthetic identities and fixtures under `build/`.
 The `tests/*.go.in` files are Go test overlays used by the Python differential
 checks, not standalone Go packages.
 
-Build with **Hew 0.6.0-rc7**. Language references:
+Build with the current **Hew compiler and matching libraries** on `PATH`.
+`HEW=/path/to/hew` selects a different installed compiler. Builds record module
+dependencies and track the selected compiler, standard library and runtime
+archives, so ordinary `make release` follows compiler and library upgrades.
+Language references:
 
 * [Actor ownership, tasks, mailboxes and backpressure](https://hew.sh/docs/actors/)
 * [Standard library and file/channel lifetimes](https://hew.sh/docs/stdlib/)
 * [Language specification and explicit FFI](https://hew.sh/docs/language-spec/)
 * [Language tour](https://hew.sh/docs/language-tour/)
 
-The rc7 FFI contract borrows `bytes` inputs as pointers to
+The FFI boundary borrows `bytes` inputs as pointers to
 `{ptr, offset:u32, len:u32}`. Outputs use `hew_bytes_new` and transfer ownership
 to Hew. No foreign pointer is retained after a call. POSIX read/commit and
 blocking event waits use `#[offload]`; socket operations are nonblocking.

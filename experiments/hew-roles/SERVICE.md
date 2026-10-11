@@ -7,7 +7,7 @@ Then run:
 
 ```sh
 python3 -B willow.py check --state /path/to/private/willow
-python3 -B willow.py run --state /path/to/private/willow
+python3 -B willow.py run --release --state /path/to/private/willow
 ```
 
 `check` does not open the modem. `run` verifies state and the native worker,
@@ -40,33 +40,34 @@ See [worker build and verification](#worker-build-and-verification),
 [the interpreter build guide](../../firmware/runtime/WASM_RUNTIME.md).
 The service does not start Go, invoke a shell, or connect to an RPC endpoint.
 
-## Pin the installed build
+## Build and install from source
 
-Build in the final, revision-pinned worktree or installation root after the
-coordinated source commit. Do not deploy from a changing development worktree.
+Build in the final installation directory with the current `hew` compiler and
+matching libraries on `PATH`. Keep each running installation separate from
+your changing development tree.
 Use a short absolute install path: the Go differential reference creates a
 private Unix socket beneath `build/`. On Linux its complete pathname must fit
 107 bytes. The differential checker reports an overlong path before starting
-the reference worker; move the pinned worktree to a shorter path and rebuild
+the reference worker; move the installation tree to a shorter path and rebuild
 there so its native-worker binding remains correct.
 Worker paths and compiler-input hashes are bound to that location; copying
 only a worker or executable to another directory is not sufficient.
 
 ```sh
-cd /path/to/pinned-root/experiments/hew-roles
-make native-worker build/hew-host-release
-make readiness-test migration-test library-test supervision-test
+cd /path/to/willow-source/experiments/hew-roles
+make -j2 release
+make acceptance-test
 python3 -B build_worker.py --verify --worker "$PWD/build/native-worker"
 ```
 
-Run migration from that same pinned root, so the generated private configuration
+Run migration from that same installation tree, so the generated private configuration
 selects its worker. Keep the source/build inputs available and unchanged.
 A service manager can invoke the runner directly:
 
 ```ini
 [Service]
-WorkingDirectory=/path/to/pinned-root/experiments/hew-roles
-ExecStart=/usr/bin/python3 -B /path/to/pinned-root/experiments/hew-roles/willow.py run --release --state /path/to/private-willow
+WorkingDirectory=/path/to/willow-source/experiments/hew-roles
+ExecStart=/usr/bin/python3 -B /path/to/willow-source/experiments/hew-roles/willow.py run --release --state /path/to/private-willow
 Environment=HEW_WORKERS=4
 Restart=on-failure
 RestartSec=5
@@ -267,7 +268,7 @@ Recovered saved contacts alone do not satisfy `fresh-direct-contact-required`,
 which refuses a send without it; this interface does not invent a route or flood.
 
 ```sh
-cd /path/to/pinned-root/experiments/hew-roles
+cd /path/to/willow-source/experiments/hew-roles
 # Keep this ID for later status checks; a new ID is a new transmission request.
 REQUEST_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 printf '%s\n' 'Willow is ready; this message is from the Hew-owned bot.' |
@@ -336,12 +337,12 @@ worker offline and refuses an existing path. It creates new relay, room and bot
 identities, so do not use it to move a Birch node (see [MIGRATION.md](MIGRATION.md)).
 
 ```sh
-make native-worker build/hew-host
-./build/hew-host init /path/to/private/willow \
+make -j2 release
+./build/hew-host-release init /path/to/private/willow \
   --address 127.0.0.1 --port 5000 \
   --profile c806643690d003000705020000803f010000
 python3 -B willow.py check --state /path/to/private/willow
-python3 -B willow.py run --state /path/to/private/willow
+python3 -B willow.py run --release --state /path/to/private/willow
 ```
 
 Init writes `config`, `relay.seed`, `room.seed` and `bot.seed` (mode 0600), and

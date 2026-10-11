@@ -1,5 +1,7 @@
 import std.net;
+
 import std.os;
+
 import std.stream;
 
 actor Reader {
@@ -26,7 +28,7 @@ fn main() {
     let args = os.args();
     let connection = net.connect_timeout("127.0.0.1:" + args[1], 1, 0).expect("connect");
     let (input, output) = connection.split();
-    let reader = spawn Reader(input: input, output: output);
+    let reader = spawn Reader { input: input, output: output };
     reader.cycle().expect("reader cycle");
     stop(reader);
     stopped(reader);

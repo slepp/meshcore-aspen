@@ -60,13 +60,19 @@ pub fn absent(path: string) -> bool {
 }
 
 pub fn append_private(path: string, data: bytes, limit: i64) -> i64 {
-    unsafe { mc_append_private(path.to_bytes(), data, limit) as i64 }
+    unsafe {
+        mc_append_private(path.to_bytes(), data, limit) as i64
+    }
 }
 
 pub fn erase_private(path: string) -> i64 {
-    unsafe { mc_erase_private(path.to_bytes()) as i64 }
+    unsafe {
+        mc_erase_private(path.to_bytes()) as i64
+    }
 }
 
 pub fn remove_private_directory(path: string) -> i64 {
-    unsafe { mc_remove_private_directory(path.to_bytes()) as i64 }
+    unsafe {
+        mc_remove_private_directory(path.to_bytes()) as i64
+    }
 }

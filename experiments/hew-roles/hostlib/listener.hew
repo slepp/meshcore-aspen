@@ -72,8 +72,12 @@ pub fn drop(owner: Listener, token: i64) {
 
 /// Token zero watches accept; other tokens watch admitted client sockets.
 pub fn watch(owner: Listener, token: i64, group: events.Group, flags: i32) -> Result<i64, i64> {
-    let fd = unsafe { hew_listener_descriptor(owner.handle, token) };
-    if fd < 0 { return .Err(-(fd as i64)); }
+    let fd = unsafe {
+        hew_listener_descriptor(owner.handle, token)
+    };
+    if fd < 0 {
+        return .Err(-(fd as i64));
+    }
     events.add(group, fd, flags)
 }
 

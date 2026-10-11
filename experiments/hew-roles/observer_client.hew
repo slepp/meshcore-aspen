@@ -1,13 +1,23 @@
 import observer_queue;
+
 import meshproto.observation;
+
 import meshproto.observer_auth;
+
 import meshproto.mqtt_endpoint;
+
 import hostlib.binary;
+
 import hostlib.mqtt;
+
 import hostlib.outbound;
+
 import hostlib.events;
+
 import hostlib.deadline;
+
 import std.encoding.hex;
+
 import wire;
 
 extern "C" {
@@ -97,14 +107,11 @@ pub actor Publisher {
     var topic: string = "";
     var transport_url: string = "";
     var client_id: string = "";
-    var cycle: ConnectionEpoch = ConnectionEpoch { phase: .Waiting, epoch: 0,
-        connected: false, reason: "", incarnation: "", token: "", identifier: 1,
-        retry_at: 0, last_write: 0, ping_deadline: 0 };
+    var cycle: ConnectionEpoch = ConnectionEpoch { phase: .Waiting, epoch: 0, connected: false, reason: "", incarnation: "", token: "", identifier: 1, retry_at: 0, last_write: 0, ping_deadline: 0 };
     var connection: Option<outbound.Connection> = .None;
     var decoder: mqtt.Decoder = mqtt.decoder(4096).expect("control decoder");
     var write: PendingWrite = PendingWrite { outgoing: bytes.new(), written: 0, deadline: 0 };
-    var authentication: AuthenticationClock = AuthenticationClock {
-        issued: deadline.UTC { at: 0 }, renew: deadline.UTC { at: 0 } };
+    var authentication: AuthenticationClock = AuthenticationClock { issued: deadline.UTC { at: 0 }, renew: deadline.UTC { at: 0 } };
     var last_status_time: i64 = 0;
     var stopping: bool = false;
     var stop_deadline: i64 = 0;
@@ -120,37 +127,66 @@ pub actor Publisher {
             event_group = .Some(events.share(group));
         }
         var next: i64 = 9223372036854775807;
-        if cycle.phase == Phase.Stopped || cycle.phase == Phase.Quarantined { return next; }
-        if stopping { next = stop_deadline; }
-        if cycle.phase == Phase.Waiting {
-            if !stopping && cycle.retry_at < next { next = cycle.retry_at; }
+        if cycle.phase == Phase.Stopped || cycle.phase == Phase.Quarantined {
             return next;
         }
-        if cycle.phase != Phase.Ready && write.deadline < next { next = write.deadline; }
-        if !write.outgoing.is_empty() && write.deadline < next { next = write.deadline; }
-        if cycle.ping_deadline != 0 && cycle.ping_deadline < next { next = cycle.ping_deadline; }
+        if stopping {
+            next = stop_deadline;
+        }
+        if cycle.phase == Phase.Waiting {
+            if !stopping && cycle.retry_at < next {
+                next = cycle.retry_at;
+            }
+            return next;
+        }
+        if cycle.phase != Phase.Ready && write.deadline < next {
+            next = write.deadline;
+        }
+        if !write.outgoing.is_empty() && write.deadline < next {
+            next = write.deadline;
+        }
+        if cycle.ping_deadline != 0 && cycle.ping_deadline < next {
+            next = cycle.ping_deadline;
+        }
         if cycle.phase == Phase.Ready && !stopping {
-            if queued_work { next = now; }
-            if cycle.ping_deadline == 0 && cycle.last_write + 10000 < next { next = cycle.last_write + 10000; }
+            if queued_work {
+                next = now;
+            }
+            if cycle.ping_deadline == 0 && cycle.last_write + 10000 < next {
+                next = cycle.last_write + 10000;
+            }
         }
         if authentication.renew.at != 0 {
-            let renewal = deadline.from_utc(authentication.renew, deadline.UTC { at: utc },
-                deadline.Monotonic { at: now }).at;
-            if renewal < next { next = renewal; }
+            let renewal = deadline.from_utc(authentication.renew, deadline.UTC { at: utc }, deadline.Monotonic { at: now }).at;
+            if renewal < next {
+                next = renewal;
+            }
         }
-        if continuation_at < next { next = continuation_at; }
-        let flags: i32 = if write.outgoing.is_empty() { 1 } else { 3 };
+        if continuation_at < next {
+            next = continuation_at;
+        }
+        let flags: i32 = if write.outgoing.is_empty() {
+            1
+        } else {
+            3
+        };
         let result = match connection {
             .Some(value) => outbound.watch(value, group, flags),
             .None => return next,
         };
         match result {
             .Ok(delay) => {
-                if delay != 9223372036854775807 && now + delay < next { next = now + delay; }
+                if delay != 9223372036854775807 && now + delay < next {
+                    next = now + delay;
+                }
             }
             .Err(error) => {
                 fail(to_string(error), now);
-                next = if stopping { now } else { cycle.retry_at };
+                next = if stopping {
+                    now
+                } else {
+                    cycle.retry_at
+                };
             }
         }
         next
@@ -174,7 +210,11 @@ pub actor Publisher {
         cycle.reason = message;
         stop_connection();
         decoder = mqtt.decoder(4096).expect("fresh control decoder");
-        cycle.phase = if stopping { Phase.Stopped } else { Phase.Waiting };
+        cycle.phase = if stopping {
+            Phase.Stopped
+        } else {
+            Phase.Waiting
+        };
         cycle.retry_at = now + 1000;
     }
 
@@ -205,14 +245,14 @@ pub actor Publisher {
         };
         client_id = if plan.client_id.is_empty() {
             "meshcore-observer-" + hex.encode(plan.config.identity).slice(0, 12)
-        } else { plan.client_id };
+        } else {
+            plan.client_id
+        };
         if !mqtt.text_valid(client_id) || !mqtt.text_valid(plan.username) || plan.password.len() > 65535 {
             quarantine("observer MQTT client identifier or credentials exceed wire limits");
             return false;
         }
-        if !plan.audience.is_empty() &&
-            (!observation.public_format(plan.config.format) || !plan.username.is_empty() ||
-             !plan.password.is_empty() || (plan.seed.len() != 32 && plan.seed.len() != 64)) {
+        if !plan.audience.is_empty() && (!observation.public_format(plan.config.format) || !plan.username.is_empty() || !plan.password.is_empty() || (plan.seed.len() != 32 && plan.seed.len() != 64)) {
             quarantine("observer JWT requires a seed or expanded identity, observer/capture format and no static credentials");
             return false;
         }
@@ -234,11 +274,19 @@ pub actor Publisher {
         write.outgoing = data;
         write.written = 0;
         cycle.phase = target;
-        write.deadline = now + (if stopping { 1000 } else { 3000 });
+        write.deadline = now + (if stopping {
+            1000
+        } else {
+            3000
+        });
     }
 
     fn next_identifier() -> i64 {
-        cycle.identifier = if cycle.identifier >= 65535 { 1 } else { cycle.identifier + 1 };
+        cycle.identifier = if cycle.identifier >= 65535 {
+            1
+        } else {
+            cycle.identifier + 1
+        };
         cycle.identifier
     }
 
@@ -361,7 +409,9 @@ pub actor Publisher {
                     queue_write(mqtt.frame(224, bytes.new()).expect("DISCONNECT"), Phase.Disconnecting, now);
                 }
             }
-            mqtt.Reply.Pong => { cycle.ping_deadline = 0; }
+            mqtt.Reply.Pong => {
+                cycle.ping_deadline = 0;
+            }
         }
     }
 
@@ -406,9 +456,7 @@ pub actor Publisher {
             }
             return;
         }
-        if !stopping && observation.public_format(plan.config.format) &&
-            (utc < 1735689600000 || (authentication.issued.at != 0 && utc < authentication.issued.at) ||
-             (authentication.renew.at != 0 && utc >= authentication.renew.at)) {
+        if !stopping && observation.public_format(plan.config.format) && (utc < 1735689600000 || (authentication.issued.at != 0 && utc < authentication.issued.at) || (authentication.renew.at != 0 && utc >= authentication.renew.at)) {
             fail("observer UTC or identity token requires reconnect", now);
             return;
         }
@@ -450,7 +498,9 @@ pub actor Publisher {
                     return;
                 }
                 outbound.Read.Data(data) => {
-                    if attempt == 7 { continuation_at = now; }
+                    if attempt == 7 {
+                        continuation_at = now;
+                    }
                     let batch = mqtt.feed(decoder, data);
                     decoder = batch.decoder;
                     for packet in batch.packets {
@@ -475,7 +525,11 @@ pub actor Publisher {
                 fail(f"observer MQTT write deadline expired: committed_prefix={write.written}", now);
                 return;
             }
-            let end = if write.outgoing.len() - write.written > 65536 { write.written + 65536 } else { write.outgoing.len() };
+            let end = if write.outgoing.len() - write.written > 65536 {
+                write.written + 65536
+            } else {
+                write.outgoing.len()
+            };
             let suffix = binary.slice(write.outgoing, write.written, end).expect("MQTT write suffix");
             let result = match connection {
                 .Some(stream) => outbound.write_some(stream, suffix),
@@ -500,8 +554,7 @@ pub actor Publisher {
             }
             return;
         }
-        if (cycle.phase == Phase.ConnAck || cycle.phase == Phase.OnlineAck || cycle.phase == Phase.PacketAck ||
-            cycle.phase == Phase.OfflineAck) && now >= write.deadline {
+        if (cycle.phase == Phase.ConnAck || cycle.phase == Phase.OnlineAck || cycle.phase == Phase.PacketAck || cycle.phase == Phase.OfflineAck) && now >= write.deadline {
             fail("observer MQTT acknowledgement deadline expired: " + to_string(cycle.phase), now);
             return;
         }
@@ -536,12 +589,13 @@ pub actor Publisher {
     }
 
     receive fn snapshot() -> Snapshot {
-        Snapshot { phase: cycle.phase, epoch: cycle.epoch, connected: cycle.connected, reason: cycle.reason,
-            writing: write.outgoing.len() - write.written, awaiting_pong: cycle.ping_deadline != 0 }
+        Snapshot { phase: cycle.phase, epoch: cycle.epoch, connected: cycle.connected, reason: cycle.reason, writing: write.outgoing.len() - write.written, awaiting_pong: cycle.ping_deadline != 0 }
     }
 
     receive fn inject_failure() {
-        if unsafe { mc_supervision_testing() == 1 } {
+        if unsafe {
+            mc_supervision_testing() == 1
+        } {
             panic("injected observer publisher failure");
         }
     }
@@ -551,17 +605,18 @@ pub actor Publisher {
         stop_deadline = now + 1000;
         let _ = plan.outbox.close();
         offline();
-        if cycle.phase == Phase.Waiting || cycle.phase == Phase.Connecting || cycle.phase == Phase.ConnAck ||
-            cycle.phase == Phase.Quarantined {
+        if cycle.phase == Phase.Waiting || cycle.phase == Phase.Connecting || cycle.phase == Phase.ConnAck || cycle.phase == Phase.Quarantined {
             stop_connection();
             cycle.phase = Phase.Stopped;
         }
-        if let .Some(group) = event_group { events.wake(group).expect("wake observer publisher shutdown"); }
+        if let .Some(group) = event_group {
+            events.wake(group).expect("wake observer publisher shutdown");
+        }
     }
 }
 
 pub supervisor PublisherBranch(plan: Plan) {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child publisher: Publisher(plan: plan);
+    child publisher: Publisher { plan: plan };
 }

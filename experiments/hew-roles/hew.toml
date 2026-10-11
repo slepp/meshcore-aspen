@@ -1,0 +1,5 @@
+[package]
+name = "willow"
+version = "0.0.2"
+edition = "2026"
+main = "service_main.hew"

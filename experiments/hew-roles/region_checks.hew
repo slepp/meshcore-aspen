@@ -11,7 +11,7 @@ import std.os;
 fn main() {
     let args = os.args();
     if args.len() > 1 {
-        var table = regions.decode(hex.decode(args[1])).expect("region fixture");
+        var table = regions.decode(hex.decode(args[1]).expect("valid hexadecimal")).expect("region fixture");
         var loading: Option<regions.Load> = .None;
         for i in 2..args.len() {
             let value = regions.execute(table, loading, args[i], "host-owner-console", 1234);
@@ -47,8 +47,8 @@ fn main() {
     let committed = regions.execute(table, loading, "", "first", 1234);
     assert(committed.reply == "OK - loaded 1 regions" && committed.table.entries[0].name == "north");
     var private = regions.empty();
-    let first = hex.decode("0102030405060708090a0b0c0d0e0f10");
-    let second = hex.decode("1112131415161718191a1b1c1d1e1f20");
+    let first = hex.decode("0102030405060708090a0b0c0d0e0f10").expect("valid hexadecimal");
+    let second = hex.decode("1112131415161718191a1b1c1d1e1f20").expect("valid hexadecimal");
     private.entries.push(regions.Entry { id: 1, parent: 0, flags: 128, name: "$rotation", keys: [first, second] });
     private.next = 2;
     var packet = wire.packet(0, 15, "rotation fixture".to_bytes());

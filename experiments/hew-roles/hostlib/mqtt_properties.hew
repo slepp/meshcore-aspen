@@ -70,8 +70,8 @@ pub type Field {
 }
 
 pub fn field(data: bytes, start: i64) -> Result<Field, string> {
-    let size = integer(data, start, 2)?;
-    let value = binary.slice(data, size.end, size.end + size.value).ok_or("truncated MQTT property field")?;
+    let size = integer(data, start, 2) handle failure { return .Err(failure); };
+    let value = binary.slice(data, size.end, size.end + size.value).ok_or("truncated MQTT property field") handle failure { return .Err(failure); };
     .Ok(Field { value: value, end: size.end + size.value })
 }
 
@@ -159,7 +159,7 @@ fn allowed(id: i64, kind: i64) -> bool {
 }
 
 pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
-    let size = variable(data, start)?;
+    let size = variable(data, start) handle failure { return .Err(failure); };
     let end = size.end + size.value;
     if end > data.len() {
         return .Err("truncated MQTT property block");
@@ -176,7 +176,7 @@ pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
             return .Err("property is invalid for this MQTT packet");
         }
         if id == 1 || id == 23 || id == 25 {
-            let value = integer(bounded, at, 1)?;
+            let value = integer(bounded, at, 1) handle failure { return .Err(failure); };
             at = value.end;
             if id == 1 {
                 props.payload_format = value.value;
@@ -188,7 +188,7 @@ pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
                 props.response_info = value.value == 1;
             }
         } else if id == 2 || id == 17 || id == 24 || id == 39 {
-            let value = integer(bounded, at, 4)?;
+            let value = integer(bounded, at, 4) handle failure { return .Err(failure); };
             at = value.end;
             if id == 2 {
                 props.message_expiry = value.value;
@@ -204,7 +204,7 @@ pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
                 props.maximum_packet = value.value;
             }
         } else if id == 33 || id == 34 || id == 35 {
-            let value = integer(bounded, at, 2)?;
+            let value = integer(bounded, at, 2) handle failure { return .Err(failure); };
             at = value.end;
             if id == 33 {
                 props.receive_maximum = value.value;
@@ -217,18 +217,18 @@ pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
                 props.alias_set = true;
             }
         } else if id == 11 {
-            let value = variable(bounded, at)?;
+            let value = variable(bounded, at) handle failure { return .Err(failure); };
             at = value.end;
             props.identifiers.push(value.value);
         } else {
-            let value = field(bounded, at)?;
+            let value = field(bounded, at) handle failure { return .Err(failure); };
             at = value.end;
             if id == 9 {
                 props.correlation = value.value;
             } else if id == 22 {
                 props.authentication_data = value.value;
             } else {
-                let decoded = text(value.value)?;
+                let decoded = text(value.value) handle failure { return .Err(failure); };
                 if id == 3 {
                     props.content_type = decoded;
                 }
@@ -239,8 +239,8 @@ pub fn decode(data: bytes, start: i64, kind: i64) -> Result<Block, string> {
                     props.authentication_method = decoded;
                 }
                 if id == 38 {
-                    let second = field(bounded, at)?;
-                    let _ = text(second.value)?;
+                    let second = field(bounded, at) handle failure { return .Err(failure); };
+                    let _ = text(second.value) handle failure { return .Err(failure); };
                     at = second.end;
                     props.user.append(binary.slice(bounded, begin, at).expect("user property range"));
                 }

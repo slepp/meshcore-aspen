@@ -1,6 +1,6 @@
 # Willow host libraries and Hew runtime contracts
 
-These adapters target Hew **0.6.0-rc7**. The checks below exercise the
+These adapters use the current **Hew compiler and matching libraries** on `PATH`. The checks below exercise the
 transport, ownership and failure contracts used by Willow.
 
 Use `hostlib` for bounded framing, owned byte streams and shell-free duplex
@@ -397,8 +397,8 @@ hew check tests/process_pipe_probe.hew
   subprocess. Promotion request: owned stdin/stdout pipes or duplex IPC,
   nonblocking exit observation and explicit termination/reaping ownership.
 
-Run these checks with `hew 0.6.0-rc7`; later releases need their own
-compatibility checks. Public language references:
+Run the focused checks with the current `hew` compiler and its matching
+libraries on `PATH`. Public language references:
 [actors](https://hew.sh/docs/actors/),
 [supervision](https://hew.sh/docs/compare/supervision/),
 [stdlib](https://hew.sh/docs/stdlib/) and

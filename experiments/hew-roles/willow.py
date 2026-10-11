@@ -166,17 +166,20 @@ def rebind(source, destination):
 
     worker = verify()
     with frozen(source, "service.lock") as source:
-        check(source, verify_worker=False)
-        files = inventory(source, retained=("rollback-go",))
+        config = check(source, verify_worker=False)
+        retained = ("rollback-go",) if config.get("imported") == "1" else ()
+        files = inventory(source, retained=retained)
         if any(name.endswith(".pending") for name in files):
             raise ValueError("frozen state contains an unfinished transaction; recover with its owning version first")
         config = settings(files["config"], strict=True)
-        if config.get("imported") != "1" or config.get("worker", "-") == "-":
-            raise ValueError("rebind requires imported native-worker state")
-        record = document(files["migration.json"], "migration record")
-        originals = {name[12:]: raw for name, raw in files.items() if name.startswith("rollback-go/")}
-        if hashes(originals) != record.get("source_files"):
-            raise ValueError("rollback-go differs from its migration source")
+        if config.get("worker", "-") == "-":
+            raise ValueError("rebind requires native-worker state")
+        record = None
+        if config.get("imported") == "1":
+            record = document(files["migration.json"], "migration record")
+            originals = {name[12:]: raw for name, raw in files.items() if name.startswith("rollback-go/")}
+            if hashes(originals) != record.get("source_files"):
+                raise ValueError("rollback-go differs from its migration source")
         if "owner.state" in files:
             owner_ledger(files["owner.state"])
         if "admin.clock" in files:
@@ -185,16 +188,17 @@ def rebind(source, destination):
         config["worker"] = worker["worker"]
         output = dict(files)
         output["config"] = "".join(key+"="+value+"\n" for key, value in sorted(config.items())).encode()
-        record["rebind"] = {
-            "version": 1, "source": str(source),
-            "source_fingerprint": hashlib.sha256(json.dumps(hashes(files), sort_keys=True).encode()).hexdigest(),
-            "previous_worker": old_worker, "previous_worker_sha256": record.get("worker_sha256"),
-            "worker": worker["worker"], "worker_sha256": worker["worker_sha256"]}
-        record["worker_sha256"] = worker["worker_sha256"]
-        record["output_files"]["config"] = hashlib.sha256(output["config"]).hexdigest()
-        encoded = json.dumps(record, indent=2, sort_keys=True).encode()+b"\n"
-        if len(encoded) > 65536:
-            raise ValueError("rebound migration record exceeds 64 KiB")
+        if record is not None:
+            record["rebind"] = {
+                "version": 1, "source": str(source),
+                "source_fingerprint": hashlib.sha256(json.dumps(hashes(files), sort_keys=True).encode()).hexdigest(),
+                "previous_worker": old_worker, "previous_worker_sha256": record.get("worker_sha256"),
+                "worker": worker["worker"], "worker_sha256": worker["worker_sha256"]}
+            record["worker_sha256"] = worker["worker_sha256"]
+            record["output_files"]["config"] = hashlib.sha256(output["config"]).hexdigest()
+            encoded = json.dumps(record, indent=2, sort_keys=True).encode()+b"\n"
+            if len(encoded) > 65536:
+                raise ValueError("rebound migration record exceeds 64 KiB")
         destination = destination.parent.resolve(strict=True)/destination.name
         if os.path.lexists(destination) or destination.is_relative_to(source) or source.is_relative_to(destination):
             raise ValueError("rebind destination must be NEW and disjoint from the frozen source")
@@ -202,15 +206,18 @@ def rebind(source, destination):
         for directory in sorted(p.relative_to(source) for p in source.rglob("*") if p.is_dir()):
             (destination/directory).mkdir(mode=0o700, parents=True, exist_ok=True)
         for name, raw in output.items():
-            if name != "migration.json":
+            if name != "config" and (name != "migration.json" or record is None):
                 write_private(destination/name, raw)
-        if hashes(inventory(source, retained=("rollback-go",))) != hashes(files):
+        if hashes(inventory(source, retained=retained)) != hashes(files):
             raise ValueError("source changed during rebinding; candidate is incomplete and must not run")
         for directory in sorted((p for p in destination.rglob("*") if p.is_dir()), reverse=True)+[destination]:
             fd = os.open(directory, os.O_RDONLY|os.O_DIRECTORY)
             try: os.fsync(fd)
             finally: os.close(fd)
-        write_private(destination/"migration.json", encoded)
+        write_private(destination/"config.pending", output["config"])
+        os.replace(destination/"config.pending", destination/"config")
+        if record is not None:
+            write_private(destination/"migration.json", encoded)
         for directory in (destination, destination.parent):
             fd = os.open(directory, os.O_RDONLY|os.O_DIRECTORY)
             try: os.fsync(fd)
@@ -225,7 +232,7 @@ def main():
     parser.add_argument("--version", action="version", version="Willow " + VERSION)
     parser.add_argument("operation",choices=("check","run","rebind","send","status","inbox","command","health","packet-log"))
     parser.add_argument("--state",type=Path,required=True)
-    parser.add_argument("--source",type=Path,help="rebind: complete stopped/frozen imported state; --state must be NEW")
+    parser.add_argument("--source",type=Path,help="rebind: complete stopped/frozen native-worker state; --state must be NEW")
     parser.add_argument("--release",action="store_true",help="run the optimized build/hew-host-release executable")
     parser.add_argument("--request-id", help="required nonzero UUID/32 hex digits; never automatically replayed")
     parser.add_argument("--to", help="full 32-byte recipient public key in hex; requires a fresh native direct contact")
@@ -309,6 +316,7 @@ def main():
             fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY)
             try: os.fsync(fd)
             finally: os.close(fd)
+        os.environ.setdefault("HEW_WORKERS", "4")
         os.execv(binary,[str(binary),str(root)])
     except (OSError,ValueError,KeyError) as error:
         detail = "; if send may have been submitted, query status with the SAME request ID; do not send a new ID" if args.operation == "send" else (

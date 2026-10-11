@@ -1,5 +1,7 @@
 import meshproto.observation;
+
 import std.encoding.json;
+
 import std.encoding.hex;
 
 pub type Outcome {
@@ -20,8 +22,14 @@ pub fn entry(raw: bytes, direction: string, local: bool, measured: bool, snr_qua
     result.set("raw_packet_hex", json.from_string(hex.encode(raw))).expect("log packet");
     result.set("snr", if measured && !local {
         json.from_float((snr_quarter as f64) / 4.0).expect("measured SNR")
-    } else { json.null() }).expect("log SNR");
-    result.set("rssi", if measured && !local { json.from_int(rssi as i8 as i64) } else { json.null() }).expect("log RSSI");
+    } else {
+        json.null()
+    }).expect("log SNR");
+    result.set("rssi", if measured && !local {
+        json.from_int(rssi as i8 as i64)
+    } else {
+        json.null()
+    }).expect("log RSSI");
     if let .Some(value) = outcome {
         var physical = json.object();
         physical.set("Generation", json.from_int(value.generation)).expect("log generation");

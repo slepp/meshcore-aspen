@@ -103,10 +103,12 @@ fn required_profile(cfg: json.Value) -> bytes {
         }
     }
     if error.is_empty() {
-        let profile = hex.decode(text);
+        let profile = hex.decode(text).expect("valid hexadecimal");
         match radio.validate_profile(profile) {
             .Ok(_) => return profile,
-            .Err(reason) => { error = reason; }
+            .Err(reason) => {
+                error = reason;
+            }
         }
     }
     println(f"BASE_CONFIG_ERROR required_profile: {error}; correct the profile in the Base JSON configuration");
@@ -268,14 +270,16 @@ fn status_response(request: bytes, base: companion.Base, started: i64, connected
     f"HTTP/1.1 {route} {reason}\r\nContent-Type: application/json\r\nContent-Length: {body.to_bytes().len()}\r\nConnection: close\r\n\r\n{body}".to_bytes()
 }
 
-fn serve_status(owner: listener.Listener, var clients: Vec<StatusClient>, group: events.Group,
-    base: companion.Base, started: i64, connected: bool, endpoint: string, role: string, tx: accounting.TX) -> Vec<StatusClient> {
+fn serve_status(owner: listener.Listener, var clients: Vec<StatusClient>, group: events.Group, base: companion.Base, started: i64, connected: bool, endpoint: string, role: string, tx: accounting.TX) -> Vec<StatusClient> {
     let now = listener.now();
     for _ in 0..32 {
         let token = listener.accept(owner).expect("status accept");
-        if token == 0 { break; }
-        if clients.len() == 32 { listener.drop(owner, token); }
-        else {
+        if token == 0 {
+            break;
+        }
+        if clients.len() == 32 {
+            listener.drop(owner, token);
+        } else {
             let watch = listener.watch(owner, token, group, 1).expect("watch Base status client");
             clients.push(StatusClient { id: token, incoming: bytes.new(), outgoing: bytes.new(), written: 0, deadline: now + 100, watch: watch });
         }
@@ -289,29 +293,42 @@ fn serve_status(owner: listener.Listener, var clients: Vec<StatusClient>, group:
                 listener.Read.Idle => {}
                 listener.Read.Data(data) => {
                     client.incoming.append(data);
-                    if client.incoming.len() > 4096 { close = true; }
-                    else if state.cstring(client.incoming).contains("\r\n\r\n") {
+                    if client.incoming.len() > 4096 {
+                        close = true;
+                    } else if state.cstring(client.incoming).contains("\r\n\r\n") {
                         client.outgoing = status_response(client.incoming, base, started, connected, endpoint, role, tx);
                     }
                 }
-                _ => { close = true; }
+                _ => {
+                    close = true;
+                }
             }
         }
         if !close && !client.outgoing.is_empty() {
-            let end = if client.outgoing.len() - client.written > 65536 { client.written + 65536 } else { client.outgoing.len() };
+            let end = if client.outgoing.len() - client.written > 65536 {
+                client.written + 65536
+            } else {
+                client.outgoing.len()
+            };
             match listener.write(owner, client.id, wire.cut(client.outgoing, client.written, end)) {
                 .Ok(count) => {
                     client.written += count;
                     close = client.written == client.outgoing.len();
                 }
-                .Err(_) => { close = true; }
+                .Err(_) => {
+                    close = true;
+                }
             }
         }
         if close {
             events.remove(group, client.watch).expect("retire Base status client watch");
             listener.drop(owner, client.id);
         } else {
-            events.arm(group, client.watch, if client.outgoing.is_empty() { 1 } else { 2 }).expect("rearm Base status client");
+            events.arm(group, client.watch, if client.outgoing.is_empty() {
+                1
+            } else {
+                2
+            }).expect("rearm Base status client");
             retained.push(client);
         }
     }
@@ -373,23 +390,22 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
     let modem_branch = spawn duplex.Branch;
     let fd = modem_branch.endpoint;
     assert(duplex.open(fd, radio_host, radio_port, 3000).is_ok());
-    var decoder = spawn wire.Decoder(buffer: bytes.new());
+    var decoder = spawn wire.Decoder { buffer: bytes.new() };
     let document = json.parse(base.snapshot().expect("state")).expect("document");
     var negotiated = session.negotiate_source(fd, decoder, profile, state.decimal(state.field(document, "Preferences"), "airtime_factor")).expect("ordinary modem source negotiation");
     var modem = session.create(fd, negotiated.generations);
-    let probe = spawn companion_telemetry.Probe(profile: profile);
+    let probe = spawn companion_telemetry.Probe { profile: profile };
     base.enable_physical_provider().expect("cached physical measurement providers");
     let group = events.open().expect("Base readiness group");
     let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(128).expect("Base event pipe");
-    let pump = spawn events.Pump(group: events.share(group), output: output);
+    let pump = spawn events.Pump { group: events.share(group), output: output };
     mailbox(pump, on_full: .Wait).run().expect("start Base readiness pump");
     let shutdown = events.driver(group, input);
     let accept_watch = listener.watch(owner, 0, group, 1).expect("watch companion listener");
     var source_watch = duplex.watch(fd, group).expect("watch companion modem");
-    let recovery_slot = spawn companion_connection.ResultSlot(group: events.share(group));
-    let connector = spawn companion_connection.Connector(endpoint: fd, profile: profile, completed: recovery_slot);
-    var source = SourceState { recovering: false, online: true, retry_at: 0,
-        retry_delay: 500, buffered: negotiated.initial_frames };
+    let recovery_slot = spawn companion_connection.ResultSlot { group: events.share(group) };
+    let connector = spawn companion_connection.Connector { endpoint: fd, profile: profile, completed: recovery_slot };
+    var source = SourceState { recovering: false, online: true, retry_at: 0, retry_delay: 500, buffered: negotiated.initial_frames };
     let rf = companion_radio.create(base);
     rf.set_airtime(negotiated.airtime).expect("airtime table");
     rf.set_spreading(profile[8] as i64).expect("shared spreading factor");
@@ -404,8 +420,11 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
     } else {
         listener.Listener { handle: 0 }
     };
-    let status_watch = if status_owner.handle == 0 { 0 }
-        else { listener.watch(status_owner, 0, group, 1).expect("watch Base status listener") };
+    let status_watch = if status_owner.handle == 0 {
+        0
+    } else {
+        listener.watch(status_owner, 0, group, 1).expect("watch Base status listener")
+    };
     var health_clients: Vec<StatusClient> = Vec.new();
     println(f"BASE_LISTEN port={listener.port(owner)} public_key={hex.encode(base.public_key().expect("identity"))} ordinary_source=1");
     var clients: Vec<Client> = Vec.new();
@@ -464,7 +483,7 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
             stopped(decoder);
             stop(receivers);
             stopped(receivers);
-            decoder = spawn wire.Decoder(buffer: bytes.new());
+            decoder = spawn wire.Decoder { buffer: bytes.new() };
             receivers = session.receivers();
             source.retry_at = now + source.retry_delay;
             println("BASE_SOURCE state=disconnected pending_jobs=uncertain clients=retained");
@@ -774,34 +793,62 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
         }
         events.arm(group, accept_watch, 1).expect("rearm companion listener");
         var due = tick_at;
-        if end > 0 && end < due { due = end; }
-        if !source.recovering && source.retry_at > 0 && source.retry_at < due { due = source.retry_at; }
-        if rx_wake > 0 && rx_wake < due { due = rx_wake; }
+        if end > 0 && end < due {
+            due = end;
+        }
+        if !source.recovering && source.retry_at > 0 && source.retry_at < due {
+            due = source.retry_at;
+        }
+        if rx_wake > 0 && rx_wake < due {
+            due = rx_wake;
+        }
         let metadata_due = receivers.next_deadline().expect("receive metadata deadline");
-        if metadata_due > 0 && metadata_due < due { due = metadata_due; }
+        if metadata_due > 0 && metadata_due < due {
+            due = metadata_due;
+        }
         if source.online {
             let tx_due = modem.next_deadline().expect("transmission outcome deadline");
-            if tx_due > 0 && tx_due < due { due = tx_due; }
+            if tx_due > 0 && tx_due < due {
+                due = tx_due;
+            }
             if control.is_none() {
                 let query_due = probe.next_deadline().expect("physical query deadline");
-                if query_due < due { due = query_due; }
+                if query_due < due {
+                    due = query_due;
+                }
             }
             events.arm(group, source_watch, 1).expect("rearm companion modem");
-        } else if source.retry_at == 0 { again = true; }
+        } else if source.retry_at == 0 {
+            again = true;
+        }
         if let .Some(pending_control) = control {
-            if pending_control.deadline < due { due = pending_control.deadline; }
+            if pending_control.deadline < due {
+                due = pending_control.deadline;
+            }
         }
         for client in health_clients {
-            if client.deadline < due { due = client.deadline; }
+            if client.deadline < due {
+                due = client.deadline;
+            }
         }
         var keep: Vec<Client> = Vec.new();
         for c in clients {
             if c.alive {
-                if c.read_deadline > 0 && c.read_deadline < due { due = c.read_deadline; }
-                if !c.out.is_empty() && c.write_deadline < due { due = c.write_deadline; }
-                if !c.incoming.is_empty() && control.is_none() && !probe.busy().expect("physical query admission") { again = true; }
+                if c.read_deadline > 0 && c.read_deadline < due {
+                    due = c.read_deadline;
+                }
+                if !c.out.is_empty() && c.write_deadline < due {
+                    due = c.write_deadline;
+                }
+                if !c.incoming.is_empty() && control.is_none() && !probe.busy().expect("physical query admission") {
+                    again = true;
+                }
                 if control.is_none() || !c.out.is_empty() {
-                    events.arm(group, c.watch, if c.out.is_empty() { 1 } else { 3 }).expect("rearm companion client");
+                    events.arm(group, c.watch, if c.out.is_empty() {
+                        1
+                    } else {
+                        3
+                    }).expect("rearm companion client");
                 }
                 keep.push(c);
             } else {
@@ -812,7 +859,9 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
             }
         }
         clients = keep;
-        if again { due = now; }
+        if again {
+            due = now;
+        }
         match events.wait(shutdown, due) {
             events.Event.Failed(code) => panic(f"Base readiness failed: errno={code}"),
             _ => {}
@@ -829,12 +878,16 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
     }
     unknown += modem.queued().expect("queued jobs")[0];
     let _ = modem.disconnect().expect("unknown transmissions on shutdown");
-    if source_watch > 0 { events.remove(group, source_watch).expect("retire companion modem watch on shutdown"); }
+    if source_watch > 0 {
+        events.remove(group, source_watch).expect("retire companion modem watch on shutdown");
+    }
     duplex.close(fd);
     stop(connector);
     stopped(connector);
     events.remove(group, accept_watch).expect("retire companion accept watch");
-    if status_watch > 0 { events.remove(group, status_watch).expect("retire Base status accept watch"); }
+    if status_watch > 0 {
+        events.remove(group, status_watch).expect("retire Base status accept watch");
+    }
     shutdown.close();
     stop(pump);
     stopped(pump);

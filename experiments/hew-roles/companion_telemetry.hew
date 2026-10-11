@@ -70,7 +70,11 @@ pub actor Probe {
         pending
     }
     receive fn next_deadline() -> i64 {
-        if pending { deadline } else { next }
+        if pending {
+            deadline
+        } else {
+            next
+        }
     }
     receive fn healthy(now: i64) -> bool {
         !fault && (!pending || now < deadline)

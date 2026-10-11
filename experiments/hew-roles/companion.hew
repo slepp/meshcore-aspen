@@ -115,11 +115,9 @@ pub actor Base {
     var spreading: i64 = 7;
     var coding: i64 = 5;
     var power: i64 = 2;
-    var callbacks: Callbacks = Callbacks { identity_export: false, identity_import: false,
-        restart: false, reset: false, source_policy: false, physical_provider: false };
+    var callbacks: Callbacks = Callbacks { identity_export: false, identity_import: false, restart: false, reset: false, source_policy: false, physical_provider: false };
     var lifecycle_pending: i64 = 0;
-    var measurements: Measurements = Measurements { at: 0, battery: bytes.new(),
-        counters: bytes.new(), usage: bytes.new(), report: "{}" };
+    var measurements: Measurements = Measurements { at: 0, battery: bytes.new(), counters: bytes.new(), usage: bytes.new(), report: "{}" };
     var clients: Vec<Client> = Vec.new();
     var transient: json.Value = json.array();
     var heard: Vec<Heard> = Vec.new();
@@ -170,8 +168,7 @@ pub actor Base {
         callbacks.physical_provider = true;
     }
     receive fn measurements(sample_at: i64, battery_mv: bytes, counters: bytes, usage: bytes, report: string) {
-        measurements = Measurements { at: sample_at, battery: battery_mv, counters: counters,
-            usage: usage, report: report };
+        measurements = Measurements { at: sample_at, battery: battery_mv, counters: counters, usage: usage, report: report };
     }
     fn measurement_fresh() -> bool {
         measurements.at > 0 && transport.monotonic() - measurements.at <= 45000
@@ -1353,5 +1350,5 @@ pub fn open(path: string, key: bytes) -> Result<Base, string> {
     if state.text(document, "Retention").is_empty() {
         document.set("Retention", json.from_string("durable-replay")).expect("retention");
     }
-    .Ok(spawn Base(document: document, authority: authority, key: identity, path: path))
+    .Ok(spawn Base { document: document, authority: authority, key: identity, path: path })
 }

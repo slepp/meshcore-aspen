@@ -1,4 +1,5 @@
 import hostlib.outbound;
+
 import std.os;
 
 extern "C" {
@@ -6,7 +7,9 @@ extern "C" {
 }
 
 fn now() -> i64 {
-    unsafe { mc_monotonic() }
+    unsafe {
+        mc_monotonic()
+    }
 }
 
 actor Healthy {
@@ -90,14 +93,14 @@ type ConnectionPlan {
 supervisor ConnectionBranch(plan: ConnectionPlan) {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child owner: Endpoint(url: plan.url, ca: plan.ca);
+    child owner: Endpoint { url: plan.url, ca: plan.ca };
 }
 
 fn main() {
     let args = os.args();
-    let branch = spawn ConnectionBranch(plan: ConnectionPlan { url: args[2], ca: args[3] });
+    let branch = spawn ConnectionBranch { plan: ConnectionPlan { url: args[2], ca: args[3] } };
     let owner = branch.owner;
-    let healthy = spawn Healthy();
+    let healthy = spawn Healthy;
     let began = now();
     let work = fork owner.exercise(args[1]);
     sleep(100ms);

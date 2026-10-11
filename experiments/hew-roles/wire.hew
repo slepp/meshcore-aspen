@@ -206,7 +206,11 @@ pub fn advert(seed: bytes, stamp: i64, role: i64, name: string) -> Packet {
 
 pub fn advert_location(seed: bytes, stamp: i64, role: i64, name: string, location: bool, latitude: f64, longitude: f64) -> Packet {
     let pubkey = public_key(seed);
-    var app = byte(128 | role | (if location { 16 } else { 0 }));
+    var app = byte(128 | role | (if location {
+        16
+    } else {
+        0
+    }));
     if location {
         app.append(le((latitude * 1000000.0) as i64, 4));
         app.append(le((longitude * 1000000.0) as i64, 4));

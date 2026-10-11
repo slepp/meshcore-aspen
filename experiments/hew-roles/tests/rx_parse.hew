@@ -13,7 +13,7 @@ fn counters(role: roles.Role, received: i64, drained: i64) {
 }
 
 fn main() {
-    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101");
+    let seed = hex.decode("0101010101010101010101010101010101010101010101010101010101010101").expect("valid hexadecimal");
     let relay = roles.create(seed, 2, "Parse relay", "", "", 3, bytes.new(), bytes.new());
     let direct = wire.encode(wire.packet(2, 11, wire.le(0, 2)));
     for i in 0..8 {
@@ -21,7 +21,7 @@ fn main() {
     }
     let _ = relay.ingest(bytes.new(), 1010, false).expect("malformed RX");
     counters(relay, 9, 0);
-    relay.profile(hex.decode("c806643690d003000705020000803f010000")).expect("SF7 readback");
+    relay.profile(hex.decode("c806643690d003000705020000803f010000").expect("valid hexadecimal")).expect("SF7 readback");
     var airtime = bytes.new();
     for _ in 0..256 {
         airtime.append(wire.le(100, 4));
@@ -30,8 +30,8 @@ fn main() {
     assert(relay.owner_command("set rxdelay 20", 1100).expect("RX delay") == "OK");
     relay.signal(-40).expect("quarter-dB SNR");
     // A signal measurement is required even when its packet score is zero.
-    var measurement = hex.decode("0000c8c2");
-    measurement.append(hex.decode("000020c1"));
+    var measurement = hex.decode("0000c8c2").expect("valid hexadecimal");
+    measurement.append(hex.decode("000020c1").expect("valid hexadecimal"));
     measurement.push(0);
     relay.measurement(measurement).expect("measured -10 dB SNR");
     let flood = wire.encode(wire.packet(1, 11, wire.le(0, 2)));

@@ -40,12 +40,16 @@ pub type Connection {
 
 impl Connection {
     fn close(consume self) {
-        unsafe { mc_outbound_close(self.handle); };
+        unsafe {
+            mc_outbound_close(self.handle);
+        };
     }
 }
 
 fn now() -> i64 {
-    unsafe { mc_monotonic() }
+    unsafe {
+        mc_monotonic()
+    }
 }
 
 /// Internal http/https URLs choose plaintext/TLS without an HTTP request.
@@ -54,7 +58,9 @@ fn now() -> i64 {
 /// Proxying is disabled. The native boundary independently enforces the host
 /// allowlist and certificate/hostname verification.
 pub fn start(url: string, ca_file: string) -> Result<Connection, TransportError> {
-    let handle = unsafe { mc_outbound_new(url.to_bytes(), ca_file.to_bytes()) };
+    let handle = unsafe {
+        mc_outbound_new(url.to_bytes(), ca_file.to_bytes())
+    };
     if handle == 0 {
         return .Err(TransportError.InvalidConfiguration);
     }
@@ -62,7 +68,9 @@ pub fn start(url: string, ca_file: string) -> Result<Connection, TransportError>
 }
 
 pub fn progress(connection: Connection) -> Result<bool, TransportError> {
-    let result = unsafe { mc_outbound_step(connection.handle) };
+    let result = unsafe {
+        mc_outbound_step(connection.handle)
+    };
     if result < 0 {
         .Err(TransportError.Native(-(result as i64)))
     } else {
@@ -73,15 +81,21 @@ pub fn progress(connection: Connection) -> Result<bool, TransportError> {
 /// Register libcurl's current interests; return milliseconds to its next timer.
 /// 9223372036854775807 means there is no transport timer.
 pub fn watch(connection: Connection, group: events.Group, flags: i32) -> Result<i64, TransportError> {
-    let result = unsafe { mc_outbound_watch(connection.handle, group.handle, flags) };
-    if result < 0 { .Err(TransportError.Readiness(-result)) } else { .Ok(result) }
+    let result = unsafe {
+        mc_outbound_watch(connection.handle, group.handle, flags)
+    };
+    if result < 0 {
+        .Err(TransportError.Readiness(-result))
+    } else {
+        .Ok(result)
+    }
 }
 
 pub fn connect(url: string, ca_file: string) -> Result<Connection, TransportError> {
-    let connection = start(url, ca_file)?;
+    let connection = start(url, ca_file) handle failure { return .Err(failure); };
     let deadline = now() + 3100;
     while now() < deadline {
-        if progress(connection)? {
+        if (progress(connection) handle failure { return .Err(failure); }) {
             return .Ok(connection);
         }
         sleep(5ms);
@@ -97,7 +111,9 @@ pub enum Read {
 }
 
 pub fn read(connection: Connection) -> Read {
-    let result = unsafe { mc_outbound_read(connection.handle) };
+    let result = unsafe {
+        mc_outbound_read(connection.handle)
+    };
     if result.is_empty() {
         return Read.Failed(TransportError.Native(0));
     }
@@ -107,8 +123,7 @@ pub fn read(connection: Connection) -> Read {
         2 => Read.End,
         _ => {
             if result.len() == 5 {
-                Read.Failed(TransportError.Native(binary.integer(
-                    binary.slice(result, 1, 5).expect("transport error")).expect("transport error scalar")))
+                Read.Failed(TransportError.Native(binary.integer(binary.slice(result, 1, 5).expect("transport error")).expect("transport error scalar")))
             } else {
                 Read.Failed(TransportError.Native(0))
             }
@@ -128,7 +143,9 @@ pub fn write_some(connection: Connection, data: bytes) -> Result<i64, TransportE
     if data.is_empty() {
         return .Ok(0);
     }
-    let result = unsafe { mc_outbound_write(connection.handle, data) };
+    let result = unsafe {
+        mc_outbound_write(connection.handle, data)
+    };
     if result < 0 {
         .Err(TransportError.Native(-(result as i64)))
     } else {
@@ -152,7 +169,11 @@ pub fn write(connection: Connection, data: bytes, timeout_ms: i64) -> Result<i64
         if now() >= deadline {
             return .Err(WriteFailure { error: TransportError.Deadline, committed: committed });
         }
-        let end = if data.len() - committed > 65536 { committed + 65536 } else { data.len() };
+        let end = if data.len() - committed > 65536 {
+            committed + 65536
+        } else {
+            data.len()
+        };
         let chunk = binary.slice(data, committed, end).expect("bounded write suffix");
         let result = match write_some(connection, chunk) {
             .Ok(written) => written,

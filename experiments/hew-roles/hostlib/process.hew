@@ -7,6 +7,7 @@
 import hostlib.binary;
 
 import hostlib.duplex;
+
 import hostlib.events;
 
 extern "C" {
@@ -127,7 +128,7 @@ pub actor Child {
                     return .Err(ProcessError.System(-(result as i64)));
                 }
             }
-            if let .Some(status) = wait_until(process.pid, duplex.monotonic() + 1000)? {
+            if let .Some(status) = (wait_until(process.pid, duplex.monotonic() + 1000) handle failure { return .Err(failure); }) {
                 process.pid = 0;
                 return .Ok(status);
             }
@@ -178,7 +179,7 @@ pub fn start(executable: string, arguments: Vec<string>) -> Result<Child, Proces
     }
     let fd = binary.integer(binary.slice(record, 0, 4).expect("spawn fd")).expect("spawn fd integer") as i32;
     let pid = binary.integer(binary.slice(record, 4, 8).expect("spawn pid")).expect("spawn pid integer") as i32;
-    .Ok(spawn Child(channel: duplex.Descriptor { fd: fd }, process: OwnedProcess { pid: pid }))
+    .Ok(spawn Child { channel: duplex.Descriptor { fd: fd }, process: OwnedProcess { pid: pid } })
 }
 
 pub fn read(child: Child, timeout_ms: i64) -> duplex.Read {
@@ -227,7 +228,7 @@ pub actor WorkerOwner {
         if owned.is_some() {
             return .Err(ProcessError.InvalidArguments);
         }
-        let child = start(executable, arguments)?;
+        let child = start(executable, arguments) handle failure { return .Err(failure); };
         let pid = child.id().expect("owned child PID");
         owned = .Some(OwnedChild { child: child });
         .Ok(pid)
@@ -283,5 +284,5 @@ pub actor WorkerOwner {
 pub supervisor WorkerBranch {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child worker: WorkerOwner();
+    child worker: WorkerOwner;
 }

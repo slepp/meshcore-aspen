@@ -24,14 +24,14 @@ actor Counter {
 supervisor Isolated {
     strategy: one_for_one;
     intensity: 2 within 60s;
-    child worker: Counter();
-    child healthy: Counter();
+    child worker: Counter;
+    child healthy: Counter;
 }
 
 supervisor RoleBranch {
     strategy: one_for_one;
     intensity: 1 within 60s;
-    child role: Counter();
+    child role: Counter;
 }
 
 fn main() {
@@ -64,8 +64,8 @@ fn main() {
         assert(room.next().expect("room after bot budget exhaustion") == 3);
         println("INDEPENDENT_RESTART_BUDGETS");
     } else if mode == "unsupervised" {
-        let bad = spawn Counter();
-        let good = spawn Counter();
+        let bad = spawn Counter;
+        let good = spawn Counter;
         assert(good.next().expect("healthy before") == 1);
         assert(bad.fail().is_err());
         assert(good.next().expect("healthy after") == 2);

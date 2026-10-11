@@ -1,4 +1,5 @@
 import std.encoding.utf8;
+
 import std.string;
 
 pub type Endpoint {
@@ -12,7 +13,11 @@ pub type Endpoint {
 fn lower_ascii(text: string) -> string {
     var data = bytes.new();
     for byte in text.to_bytes() {
-        data.push(if byte >= 65 && byte <= 90 { byte + 32 } else { byte });
+        data.push(if byte >= 65 && byte <= 90 {
+            byte + 32
+        } else {
+            byte
+        });
     }
     utf8.decode(data).expect("ASCII case folding preserves UTF-8")
 }
@@ -43,7 +48,10 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
         return .Err("MQTT URL requires tcp, tls, ssl, ws or wss scheme");
     }
     let rest = text.slice(boundary + 3, text.len());
-    let slash = match rest.find("/") { .Some(value) => value, .None => rest.len() };
+    let slash = match rest.find("/") {
+        .Some(value) => value,
+        .None => rest.len(),
+    };
     let authority = rest.slice(0, slash);
     var path = rest.slice(slash, rest.len());
     if authority.find("@").is_some() {
@@ -59,11 +67,14 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
         suffix = authority.slice(colon, authority.len());
     }
     let normalized = lower_ascii(host);
-    if normalized != "localhost" && normalized != "127.0.0.1" && normalized != "[::1]" &&
-        normalized != "mqtt-meshcore-1.ve6slp.ca" {
+    if normalized != "localhost" && normalized != "127.0.0.1" && normalized != "[::1]" && normalized != "mqtt-meshcore-1.ve6slp.ca" {
         return .Err("MQTT broker must be loopback or mqtt-meshcore-1.ve6slp.ca");
     }
-    var port: i64 = if tls { 443 } else { 80 };
+    var port: i64 = if tls {
+        443
+    } else {
+        80
+    };
     if suffix.is_empty() {
         if !websocket {
             return .Err("MQTT tcp/tls/ssl URL requires an explicit port");
@@ -95,7 +106,14 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
     if path.is_empty() {
         path = "/";
     }
-    let transport = if websocket { scheme } else { if tls { "https" } else { "http" } };
-    .Ok(Endpoint { transport_url: transport + "://" + host + ":" + to_string(port) + path,
-        host: host, port: port, tls: tls, websocket: websocket })
+    let transport = if websocket {
+        scheme
+    } else {
+        if tls {
+            "https"
+        } else {
+            "http"
+        }
+    };
+    .Ok(Endpoint { transport_url: transport + "://" + host + ":" + to_string(port) + path, host: host, port: port, tls: tls, websocket: websocket })
 }

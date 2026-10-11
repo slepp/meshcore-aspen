@@ -1,6 +1,7 @@
 import wire;
 
 import transport;
+
 import meshproto.packet_log;
 
 import std.encoding.hex;
@@ -76,7 +77,11 @@ pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, 
             return bytes.new();
         }
     }
-    let deadline = transport.monotonic() + (if command == 35 { 5000 } else { 2000 });
+    let deadline = transport.monotonic() + (if command == 35 {
+        5000
+    } else {
+        2000
+    });
     var last_reply = bytes.new();
     while transport.running() && transport.monotonic() < deadline {
         let data = transport.modem_read(fd, 50);
@@ -176,7 +181,7 @@ fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profil
     var generations: Vec<i64> = Vec.new();
     var phy_generations: Vec<i64> = Vec.new();
     for port in 0..ports {
-        let hello = request(fd, decoder, port, 32, hex.decode("0100"));
+        let hello = request(fd, decoder, port, 32, hex.decode("0100").expect("valid hexadecimal"));
         if hello.len() != 12 || hello[0] != 1 || hello[1] != 0 {
             return reject("HELLO", port, "12-bytes,version=1,reason=0", hello);
         }
@@ -193,7 +198,7 @@ fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profil
             let capacity = request(fd, decoder, 0, 37, if ports == 1 {
                 wire.byte(1)
             } else {
-                hex.decode("0101")
+                hex.decode("0101").expect("valid hexadecimal")
             });
             if ports == 1 {
                 if capacity.len() != 3 || capacity[0] != 1 || capacity[1] == 0 {
@@ -203,19 +208,25 @@ fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profil
                 return reject("CAPACITY", 0, f"version=1,external-slots>0,logical-ports>={ports},session-granted=1;sidecar-radio_session=per_role", capacity);
             }
         }
-        let config = request(fd, decoder, port, 34, hex.decode("0100"));
+        let config = request(fd, decoder, port, 34, hex.decode("0100").expect("valid hexadecimal"));
         if config.len() != 24 || config[0] != 1 || config[1] != 0 || wire.uint(wire.cut(config, 2, 6)) == 0 || !wire.equal(wire.cut(config, 6, 24), profile) {
             return reject("CONFIG_GET", port, "24-bytes,version=1,reason=0,nonzero-generation,profile=" + hex.encode(profile), config);
         }
         phy_generations.push(wire.uint(wire.cut(config, 2, 6)));
-        let bits = if factors.is_empty() { hex.decode("0000803f") } else { factors[port] };
+        let bits = if factors.is_empty() {
+            hex.decode("0000803f").expect("valid hexadecimal")
+        } else {
+            factors[port]
+        };
         let value = match binary.finite_float32(bits) {
             .Some(value) => value,
             .None => return reject("SOURCE_POLICY", port, "finite-nonnegative-binary32", bits),
         };
-        if value < 0.0 { return reject("SOURCE_POLICY", port, "finite-nonnegative-binary32", bits); }
+        if value < 0.0 {
+            return reject("SOURCE_POLICY", port, "finite-nonnegative-binary32", bits);
+        }
         let factor = request(fd, decoder, port, 35, wire.cat(wire.cat(wire.byte(1), wire.le(generation, 4)), bits));
-        let expected = wire.cat(hex.decode("0100"), bits);
+        let expected = wire.cat(hex.decode("0100").expect("valid hexadecimal"), bits);
         if !wire.equal(factor, expected) {
             return reject("SOURCE_POLICY", port, hex.encode(expected), factor);
         }
@@ -333,14 +344,18 @@ pub type PortState {
 
 pub fn port_state(generation: i64) -> PortState {
     assert(generation > 0 && generation <= 4294967295);
-    PortState { generation: generation, next_id: 0,
-        policy_factor: hex.decode("0000803f"), policy_pending: bytes.new(),
-        policy_deadline: deadline.inactive(), policy_failed: false }
+    PortState { generation: generation, next_id: 0, policy_factor: hex.decode("0000803f").expect("valid hexadecimal"), policy_pending: bytes.new(), policy_deadline: deadline.inactive(), policy_failed: false }
 }
 
 pub fn same_factor(left: bytes, right: bytes) -> bool {
-    let a = match binary.finite_float32(left) { .Some(value) => value, .None => return false };
-    let b = match binary.finite_float32(right) { .Some(value) => value, .None => return false };
+    let a = match binary.finite_float32(left) {
+        .Some(value) => value,
+        .None => return false,
+    };
+    let b = match binary.finite_float32(right) {
+        .Some(value) => value,
+        .None => return false,
+    };
     a == b
 }
 
@@ -373,20 +388,21 @@ pub actor Session {
         }
     }
     fn record(port: i64, raw: bytes, id: i64, state: i64, reason: i64, metrics: bytes) {
-        if state != 0 && state != 3 && state != 4 { return; }
+        if state != 0 && state != 3 && state != 4 {
+            return;
+        }
         if outcomes.len() >= 96 {
             dropped_outcomes += 1;
             failed("TX_LOG_OUTCOMES", "reason=queue-full limit=96; terminal record could not be delivered");
             online = false;
             return;
         }
-        outcomes.push(Outcome { port: port, raw: raw, value: packet_log.Outcome {
-            generation: ports[port].generation, job: id, state: state, reason: reason,
-            queue_ms: wire.uint(wire.cut(metrics, 0, 4)), rf_ms: wire.uint(wire.cut(metrics, 4, 8)),
-            estimated_ms: wire.uint(wire.cut(metrics, 8, 12)) } });
+        outcomes.push(Outcome { port: port, raw: raw, value: packet_log.Outcome { generation: ports[port].generation, job: id, state: state, reason: reason, queue_ms: wire.uint(wire.cut(metrics, 0, 4)), rf_ms: wire.uint(wire.cut(metrics, 4, 8)), estimated_ms: wire.uint(wire.cut(metrics, 8, 12)) } });
     }
     receive fn estimator(table: bytes) -> bool {
-        if table.len() != 1024 { return false; }
+        if table.len() != 1024 {
+            return false;
+        }
         airtime = table;
         true
     }
@@ -397,10 +413,14 @@ pub actor Session {
         0
     }
     fn policy_finish(port: i64, ok: bool, condition: string) {
-        if port < 0 || port >= ports.len() { return; }
+        if port < 0 || port >= ports.len() {
+            return;
+        }
         var state = ports[port];
         let factor = state.policy_pending;
-        if factor.is_empty() { return; }
+        if factor.is_empty() {
+            return;
+        }
         state.policy_pending = bytes.new();
         state.policy_deadline = deadline.inactive();
         if ok {
@@ -413,21 +433,31 @@ pub actor Session {
         policy_events.push(PolicyResult { port: port, factor: factor, ok: ok });
     }
     receive fn apply_policy(port: i64, factor: bytes) -> i64 {
-        if port < 0 || port > 1 || port >= ports.len() || !online || ports[port].policy_failed { return -1; }
+        if port < 0 || port > 1 || port >= ports.len() || !online || ports[port].policy_failed {
+            return -1;
+        }
         let value = match binary.finite_float32(factor) {
             .Some(value) => value,
             .None => return -1,
         };
-        if value < 0.0 { return -1; }
+        if value < 0.0 {
+            return -1;
+        }
         var state = ports[port];
         if !state.policy_pending.is_empty() {
-            return if wire.equal(state.policy_pending, factor) { 0 } else { -1 };
+            return if wire.equal(state.policy_pending, factor) {
+                0
+            } else {
+                -1
+            };
         }
-        if same_factor(state.policy_factor, factor) { return 1; }
+        if same_factor(state.policy_factor, factor) {
+            return 1;
+        }
         state.policy_pending = factor;
         state.policy_deadline = deadline.after(deadline.Monotonic { at: transport.monotonic() }, 5000);
         ports.set(port, state);
-        let request = wire.cat(wire.cat(hex.decode("2301"), wire.le(state.generation, 4)), factor);
+        let request = wire.cat(wire.cat(hex.decode("2301").expect("valid hexadecimal"), wire.le(state.generation, 4)), factor);
         if let .Err(error) = duplex.write(fd, wire.kiss(port, 6, request)) {
             policy_finish(port, false, f"write-failed committed={error.committed} reason={to_string(error.error)}");
             online = false;
@@ -436,20 +466,27 @@ pub actor Session {
         0
     }
     receive fn policy_reply(port: i64, reply: bytes, received_at: i64) {
-        if port < 0 || port > 1 || port >= ports.len() || ports[port].policy_pending.is_empty() { return; }
+        if port < 0 || port > 1 || port >= ports.len() || ports[port].policy_pending.is_empty() {
+            return;
+        }
         let state = ports[port];
         if deadline.reached(state.policy_deadline, deadline.Monotonic { at: received_at }) {
             policy_finish(port, false, "late-response");
             return;
         }
         let valid = reply.len() == 6 && reply[0] == 1 && reply[1] == 0 && wire.equal(wire.cut(reply, 2, 6), state.policy_pending);
-        policy_finish(port, valid, if valid { "confirmed" } else { "invalid-readback actual=" + hex.encode(reply) });
+        policy_finish(port, valid, if valid {
+            "confirmed"
+        } else {
+            "invalid-readback actual=" + hex.encode(reply)
+        });
     }
     receive fn policy_results() -> Vec<PolicyResult> {
         for port in 0..2 {
-            if port >= ports.len() { continue; }
-            if !ports[port].policy_pending.is_empty() && deadline.reached(
-                ports[port].policy_deadline, deadline.Monotonic { at: transport.monotonic() }) {
+            if port >= ports.len() {
+                continue;
+            }
+            if !ports[port].policy_pending.is_empty() && deadline.reached(ports[port].policy_deadline, deadline.Monotonic { at: transport.monotonic() }) {
                 policy_finish(port, false, "response-timeout");
             }
         }
@@ -459,7 +496,9 @@ pub actor Session {
     }
     receive fn policy_busy() -> bool {
         for port in 0..2 {
-            if port < ports.len() && !ports[port].policy_pending.is_empty() { return true; }
+            if port < ports.len() && !ports[port].policy_pending.is_empty() {
+                return true;
+            }
         }
         false
     }
@@ -610,7 +649,9 @@ pub actor Session {
     receive fn next_deadline() -> i64 {
         var due: i64 = 0;
         for item in pending {
-            if item.deadline > 0 && (due == 0 || item.deadline < due) { due = item.deadline; }
+            if item.deadline > 0 && (due == 0 || item.deadline < due) {
+                due = item.deadline;
+            }
         }
         for state in ports {
             if state.policy_deadline.at > 0 && (due == 0 || state.policy_deadline.at < due) {
@@ -621,7 +662,9 @@ pub actor Session {
     }
     receive fn disconnect() -> Vec<bytes> {
         var out: Vec<bytes> = Vec.new();
-        for port in 0..2 { policy_finish(port, false, "connection-closed"); }
+        for port in 0..2 {
+            policy_finish(port, false, "connection-closed");
+        }
         for p in pending {
             println(f"TX port={p.port} generation={ports[p.port].generation} job={p.id} state=4 reason=9");
             record(p.port, p.raw, p.id, 4, 9, wire.cat(wire.le(0, 8), wire.le(p.estimated_ms, 4)));
@@ -657,8 +700,10 @@ pub actor Session {
 pub fn create(fd: ChildRef<duplex.Endpoint>, generations: Vec<i64>) -> Session {
     assert(generations.len() == 1 || generations.len() == 3 || generations.len() == 4);
     var ports: Vec<PortState> = Vec.new();
-    for generation in generations { ports.push(port_state(generation)); }
-    spawn Session(fd: fd, ports: ports, pending: Vec.new())
+    for generation in generations {
+        ports.push(port_state(generation));
+    }
+    spawn Session { fd: fd, ports: ports, pending: Vec.new() }
 }
 
 pub type Reception {
@@ -724,5 +769,5 @@ pub fn receivers() -> Receivers {
         packets.push(bytes.new());
         deadlines.push(0);
     }
-    spawn Receivers(packets: packets, deadlines: deadlines)
+    spawn Receivers { packets: packets, deadlines: deadlines }
 }

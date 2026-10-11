@@ -4,7 +4,7 @@
 #include <openssl/evp.h>
 #include <openssl/crypto.h>
 
-/* Hew rc7 bytes ABI. Inputs are borrowed, outputs use the runtime allocator.
+/* Hew bytes ABI. Inputs are borrowed, outputs use the runtime allocator.
  * No role, routing, framing, or protocol state lives on this side of the ABI. */
 typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
 extern uint8_t *hew_bytes_new(uint32_t capacity);

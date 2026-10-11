@@ -95,7 +95,7 @@ fn main() {
     let args = os.args();
     if args.len() > 1 && args[1] == "network" {
         let connection = duplex.connect("127.0.0.1", string.to_int(args[2]).expect("port"), 1500).expect("connect");
-        let probe = spawn Probe();
+        let probe = spawn Probe;
         let waiting = fork connection.read(100);
         assert(probe.next().expect("unaffected actor") == 1);
         let result = (await waiting).expect("reader actor");
@@ -176,8 +176,8 @@ fn main() {
         let second = binary.integer(binary.slice(pair, 4, 8).expect("pair")).expect("pair") as i32;
         let reader = duplex.Descriptor { fd: second };
         if args[1] == "resource-panic" {
-            let owner = spawn ResourceOwner(socket: duplex.Descriptor { fd: first });
-            let unaffected = spawn Probe();
+            let owner = spawn ResourceOwner { socket: duplex.Descriptor { fd: first } };
+            let unaffected = spawn Probe;
             assert(owner.fail().is_err());
             assert(unaffected.next().expect("healthy sibling") == 1);
             assert(match duplex.read_fd(second, 500) {

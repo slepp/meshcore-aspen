@@ -39,7 +39,7 @@ pub actor Connector {
         let result = if duplex.open(endpoint, host, port, 3000).is_err() {
             .Err("companion modem TCP dial failed")
         } else {
-            let decoder = spawn wire.Decoder(buffer: bytes.new());
+            let decoder = spawn wire.Decoder { buffer: bytes.new() };
             let negotiated: Result<session.Negotiated, string> = match session.negotiate_source(endpoint, decoder, profile, factor) {
                 .Some(value) => .Ok(value),
                 .None => .Err("companion modem ordinary-source negotiation failed"),

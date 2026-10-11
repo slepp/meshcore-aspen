@@ -249,7 +249,7 @@ pub fn connect_with_deadlines(host: string, port: i64, timeout_ms: i64, write_ti
             socket.close();
             return .Err(IoError.System(error as i64));
         }
-        return .Ok(spawn Connection(socket: socket, write_timeout_ms: write_timeout_ms));
+        return .Ok(spawn Connection { socket: socket, write_timeout_ms: write_timeout_ms });
     }
 }
 

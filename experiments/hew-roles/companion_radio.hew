@@ -1268,7 +1268,9 @@ pub actor RF {
         var live: Vec<Connection> = Vec.new();
         var output: Vec<SendPlan> = Vec.new();
         let advert_due = (next_flood > 0 && now > next_flood) || (next_local > 0 && now > next_local);
-        if !advert_due && connections.is_empty() { return output; }
+        if !advert_due && connections.is_empty() {
+            return output;
+        }
         let document = doc();
         let prefs = state.field(document, "Preferences");
         let local_seconds = state.integer(prefs, "local_advert_seconds");
@@ -1285,7 +1287,9 @@ pub actor RF {
             output.push(advert(wall, false));
             next_local = now + local_seconds * 1000;
         }
-        if connections.is_empty() { return output; }
+        if connections.is_empty() {
+            return output;
+        }
         let contacts = json.parse(base.contacts().expect("contacts")).expect("contacts JSON");
         for connection in connections {
             var c = connection;
@@ -1316,5 +1320,5 @@ pub actor RF {
 }
 
 pub fn create(base: companion.Base) -> RF {
-    spawn RF(base: base, key: base.active_key().expect("active companion identity"))
+    spawn RF { base: base, key: base.active_key().expect("active companion identity") }
 }

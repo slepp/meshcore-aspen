@@ -220,7 +220,7 @@ do not overwrite an installation used by a running service. Use that version's
 launcher to rebind a new copy of the complete stopped state:
 
 ```sh
-cd /path/to/new-pinned-root/experiments/hew-roles
+cd /path/to/new-installation/experiments/hew-roles
 python3 -B willow.py rebind --source /path/to/frozen-willow \
   --state /path/to/new-willow
 python3 -B willow.py check --state /path/to/new-willow
@@ -233,14 +233,14 @@ files and unfinished `.pending` transactions. Locks/hash checks do not make
 copying a running tree safe. A clean host shutdown removes `owner.sock`; after
 a crash, recover/stop the original owning version before freezing.
 
-The command never opens the modem or changes its source. Only `config`'s
-absolute `worker` setting and `migration.json`'s binding/config hash change.
+The command accepts native-worker state created by Willow init or imported
+from Birch. It never opens the modem or changes its source. Only `config`'s absolute `worker` setting changes; imported state
+also updates `migration.json`'s binding/config hash.
 Seeds, active expanded observer identity, snapshots, native program/NVS/SPIFFS,
 owner request ledger and `rollback-go/` stay byte-for-byte. It does not require
 the retired installation to remain executable. The new installation's worker
-and inputs must verify. The completion record is `migration.json` with
-`mode="staged"` and `rebind.version=1`; stdout reports `mode="rebound"` only
-after the new state passes `check`. Do not promote an interrupted candidate.
+and inputs must verify. Imported state retains its updated migration record;
+stdout reports `mode="rebound"` only after the new state passes `check`. Do not promote an interrupted candidate.
 
 After validation, point the stopped unit's executable and state path at the
 new installation/candidate, then start that one owner. Keep the old frozen
@@ -253,7 +253,7 @@ Before changing an installed service, check recovery using synthetic state:
 
 ```sh
 python3 -B tests/upgrade.py \
-  --reference /path/to/old-pinned-root/experiments/hew-roles
+  --reference /path/to/old-installation/experiments/hew-roles
 ```
 
 This loopback check creates a new room post, owner DM ledger entry, native note
@@ -278,7 +278,7 @@ timestamps. Even an authenticated read-only query can advance a replay stamp.
 3. Reconcile into a destination that does not exist:
 
    ```sh
-   cd /path/to/current-pinned-root/experiments/hew-roles
+   cd /path/to/current-installation/experiments/hew-roles
    python3 -B reconcile_go.py \
      --source /path/to/frozen-final-willow \
      --go-source /path/to/frozen-current-go \

@@ -4,6 +4,7 @@ import wire;
 import std.crypto.crypto;
 
 import std.encoding.utf8;
+
 import std.encoding.hex;
 
 pub type Entry {
@@ -156,16 +157,21 @@ pub fn first_key(entry: Entry) -> bytes {
 }
 
 pub fn activate(saved: Table) -> Result<Table, string> {
-    var table = match validate(saved) { .Ok(value) => value, .Err(error) => return .Err(error) };
+    var table = match validate(saved) {
+        .Ok(value) => value,
+        .Err(error) => return .Err(error),
+    };
     if table.managed {
-        table.default_key = bytes.new(); table.default_name = "";
+        table.default_key = bytes.new();
+        table.default_name = "";
         for entry in table.entries {
             if entry.id == table.default_id {
                 let key = first_key(entry);
                 if entry.name.starts_with("$") && (key.is_empty() || wire.equal(key, wire.le(0, 16))) {
                     return .Err("private default region has no usable transport key");
                 }
-                table.default_key = key; table.default_name = entry.name;
+                table.default_key = key;
+                table.default_name = entry.name;
             }
         }
     }
@@ -194,74 +200,127 @@ pub fn receive_scope(table: Table, packet: wire.Packet) -> Option<bytes> {
 pub fn permitted(table: Table) -> Vec<bytes> {
     var result: Vec<bytes> = Vec.new();
     for entry in table.entries {
-        if (entry.flags & 1) == 0 { for key in keys(entry) { result.push(key); } }
+        if (entry.flags & 1) == 0 {
+            for key in keys(entry) {
+                result.push(key);
+            }
+        }
     }
-    for key in table.legacy_keys { result.push(key); }
+    for key in table.legacy_keys {
+        result.push(key);
+    }
     result
 }
 
 pub fn home_key(table: Table) -> bytes {
-    for entry in table.entries { if entry.id == table.home { return first_key(entry); } }
+    for entry in table.entries {
+        if entry.id == table.home {
+            return first_key(entry);
+        }
+    }
     table.legacy_home
 }
 
 fn key_index(table: Table, wanted: bytes) -> i64 {
     for i in 0..table.entries.len() {
-        for key in keys(table.entries[i]) { if wire.equal(key, wanted) { return i; } }
+        for key in keys(table.entries[i]) {
+            if wire.equal(key, wanted) {
+                return i;
+            }
+        }
     }
     -1
 }
 
 fn retain_key(var table: Table, key: bytes) -> Result<Table, string> {
-    if key.is_empty() || key_index(table, key) >= 0 { return .Ok(table); }
+    if key.is_empty() || key_index(table, key) >= 0 {
+        return .Ok(table);
+    }
     if key.len() != 16 || table.entries.len() >= 32 || table.next > 65535 {
         return .Err("region table full");
     }
     let name = "$willow-" + hex.encode(key).slice(0, 16);
-    if lookup(table, name) >= 0 { return .Err("generated region name collides with retained name"); }
+    if lookup(table, name) >= 0 {
+        return .Err("generated region name collides with retained name");
+    }
     table.entries.push(Entry { id: table.next, parent: 0, flags: 1, name: name, keys: [key] });
     table.next += 1;
     .Ok(table)
 }
 
-pub fn override_scopes(original: Table, home: Option<bytes>, default: Option<bytes>,
-    wildcard: Option<bool>, allowed: Option<Vec<bytes>>) -> Result<Table, string> {
+pub fn override_scopes(original: Table, home: Option<bytes>, default: Option<bytes>, wildcard: Option<bool>, allowed: Option<Vec<bytes>>) -> Result<Table, string> {
     var table = original;
     if let .Some(wanted) = allowed {
         var ids: Vec<i64> = Vec.new();
         for key in wanted {
-            table = retain_key(table, key)?;
+            table = retain_key(table, key) handle failure { return .Err(failure); };
             let id = table.entries[key_index(table, key)].id;
             var present = false;
-            for previous in ids { present = present || previous == id; }
-            if !present { ids.push(id); }
+            for previous in ids {
+                present = present || previous == id;
+            }
+            if !present {
+                ids.push(id);
+            }
         }
         var ordered: Vec<Entry> = Vec.new();
         for id in ids {
             for item in table.entries {
-                if item.id == id { var entry = item; entry.flags &= ~1; ordered.push(entry); }
+                if item.id == id {
+                    var entry = item;
+                    entry.flags &= ~1;
+                    ordered.push(entry);
+                }
             }
         }
         for item in table.entries {
             var present = false;
-            for id in ids { present = present || id == item.id; }
-            if !present { var entry = item; entry.flags |= 1; ordered.push(entry); }
+            for id in ids {
+                present = present || id == item.id;
+            }
+            if !present {
+                var entry = item;
+                entry.flags |= 1;
+                ordered.push(entry);
+            }
         }
-        table.entries = ordered; table.legacy_keys = Vec.new();
+        table.entries = ordered;
+        table.legacy_keys = Vec.new();
     }
     if let .Some(key) = home {
-        table = retain_key(table, key)?;
-        table.home = if key.is_empty() { 0 } else { table.entries[key_index(table, key)].id };
+        table = retain_key(table, key) handle failure { return .Err(failure); };
+        table.home = if key.is_empty() {
+            0
+        } else {
+            table.entries[key_index(table, key)].id
+        };
         table.legacy_home = bytes.new();
     }
     if let .Some(key) = default {
-        table = retain_key(table, key)?;
-        table.default_id = if key.is_empty() { 0 } else { table.entries[key_index(table, key)].id };
-        table.default_name = if key.is_empty() { "" } else { table.entries[key_index(table, key)].name };
-        table.default_key = key; table.managed = true;
-        if !key.is_empty() && !wire.equal(key, first_key(table.entries[key_index(table, key)])) { table.managed = false; }
+        table = retain_key(table, key) handle failure { return .Err(failure); };
+        table.default_id = if key.is_empty() {
+            0
+        } else {
+            table.entries[key_index(table, key)].id
+        };
+        table.default_name = if key.is_empty() {
+            ""
+        } else {
+            table.entries[key_index(table, key)].name
+        };
+        table.default_key = key;
+        table.managed = true;
+        if !key.is_empty() && !wire.equal(key, first_key(table.entries[key_index(table, key)])) {
+            table.managed = false;
+        }
     }
-    if let .Some(flag) = wildcard { table.wildcard = (table.wildcard & ~1) | if flag { 0 } else { 1 }; }
+    if let .Some(flag) = wildcard {
+        table.wildcard = (table.wildcard & ~1) | if flag {
+            0
+        } else {
+            1
+        };
+    }
     validate(table)
 }
 

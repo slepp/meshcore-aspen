@@ -95,8 +95,7 @@ fn configuration(path: string) -> Configuration {
     assert(result.state.starts_with("/") && result.page.starts_with("/"), "dashboard state and page paths must be absolute");
     assert(result.base_port == 0 || result.base_port != result.port, "Base health port collides with dashboard");
     assert(result.bot_companion_port == 0 || result.bot_companion_port != result.port, "bot companion health port collides with dashboard");
-    assert(result.base_port == 0 || result.bot_companion_port == 0 || result.base_port != result.bot_companion_port,
-        "Base and bot companion health ports must be distinct");
+    assert(result.base_port == 0 || result.bot_companion_port == 0 || result.base_port != result.bot_companion_port, "Base and bot companion health ports must be distinct");
     result
 }
 
@@ -173,7 +172,11 @@ pub actor Rpc {
             }
         }
         if sent {
-            let maximum = if request[1] == 6 { 65536 } else { 4096 };
+            let maximum = if request[1] == 6 {
+                65536
+            } else {
+                4096
+            };
             let received = match connection {
                 .Some(owner) => owner_client.read(owner, maximum),
                 .None => return result,
@@ -189,7 +192,11 @@ pub actor Rpc {
             }
         }
         if result.is_none() {
-            let flags: i32 = if sent { 1 } else { 2 };
+            let flags: i32 = if sent {
+                1
+            } else {
+                2
+            };
             if watch.is_none() {
                 let watched = match connection {
                     .Some(owner) => events.watch(group, owner.fd, flags).expect("watch owner RPC socket"),
@@ -202,7 +209,9 @@ pub actor Rpc {
         }
         result
     }
-    receive fn next_deadline() -> i64 { deadline }
+    receive fn next_deadline() -> i64 {
+        deadline
+    }
 }
 
 fn rearm_rpc(watch: Option<events.Watch>, flags: i32) {
@@ -258,11 +267,9 @@ actor Monitor {
     let label: string;
     var rpc: Option<Rpc> = .None;
     var connection: Option<outbound.Connection> = .None;
-    var fetch: HealthFetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(),
-        deadline: 0, transport_due: 0 };
+    var fetch: HealthFetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(), deadline: 0, transport_due: 0 };
     var next: i64 = 0;
-    var sample: Sample = Sample { value: .None, updated: 0,
-        failure: "health connection has not returned a sample" };
+    var sample: Sample = Sample { value: .None, updated: 0, failure: "health connection has not returned a sample" };
     fn complete(result: Result<json.Value, string>) {
         match result {
             .Ok(value) => {
@@ -282,8 +289,7 @@ actor Monitor {
             request_actor.cancel().expect("retire health RPC");
         }
         connection = .None;
-        fetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(),
-            deadline: 0, transport_due: 0 };
+        fetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(), deadline: 0, transport_due: 0 };
         next = listener.now() + 500;
     }
     receive fn poll() -> Sample {
@@ -297,7 +303,7 @@ actor Monitor {
                     complete(.Err("companion health endpoint is disabled"));
                 } else {
                     if rpc.is_none() {
-                        rpc = .Some(spawn Rpc(root: root, group: events.share(group)));
+                        rpc = .Some(spawn Rpc { root: root, group: events.share(group) });
                     }
                     if let .Some(request_actor) = rpc {
                         request_actor.begin(wire.cat(b"\x01\x06", wire.le(selector, 1)), 1500).expect("begin health RPC");
@@ -379,7 +385,9 @@ actor Monitor {
                                 finished = .Some(.Err("companion health request write failed"));
                             }
                         }
-                        if fetch.sent < request.len() { interest = 2; }
+                        if fetch.sent < request.len() {
+                            interest = 2;
+                        }
                     } else {
                         for _ in 0..17 {
                             let received = match connection {
@@ -387,7 +395,9 @@ actor Monitor {
                                 .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
                             };
                             match received {
-                                .Idle => { break; }
+                                .Idle => {
+                                    break;
+                                }
                                 .Data(data) => {
                                     if fetch.incoming.len() + data.len() > 65536 {
                                         finished = .Some(.Err("companion health response exceeds 64 KiB"));
@@ -409,13 +419,19 @@ actor Monitor {
                 }
             }
         }
-        if let .Some(result) = finished { complete(result); }
+        if let .Some(result) = finished {
+            complete(result);
+        }
         if fetch.deadline > 0 && connection.is_some() {
             let delay = match connection {
                 .Some(owner) => outbound.watch(owner, group, interest).expect("watch companion health socket"),
                 .None => panic("companion health connection unavailable while watching"),
             };
-            fetch.transport_due = if delay == 9223372036854775807 { 0 } else { listener.now() + delay };
+            fetch.transport_due = if delay == 9223372036854775807 {
+                0
+            } else {
+                listener.now() + delay
+            };
         }
         Sample { value: if now - sample.updated <= 3000 {
             sample.value
@@ -432,12 +448,18 @@ actor Monitor {
         connection = .None;
     }
     receive fn next_deadline() -> i64 {
-        if fetch.deadline == 0 { return next; }
+        if fetch.deadline == 0 {
+            return next;
+        }
         var due = fetch.deadline;
-        if fetch.transport_due > 0 && fetch.transport_due < due { due = fetch.transport_due; }
+        if fetch.transport_due > 0 && fetch.transport_due < due {
+            due = fetch.transport_due;
+        }
         if let .Some(request_actor) = rpc {
             let rpc_due = request_actor.next_deadline().expect("health RPC deadline");
-            if rpc_due > 0 && rpc_due < due { due = rpc_due; }
+            if rpc_due > 0 && rpc_due < due {
+                due = rpc_due;
+            }
         }
         due
     }
@@ -461,7 +483,10 @@ fn boolean(value: json.Value, name: string) -> Option<bool> {
 }
 
 fn flag(value: json.Value, name: string, expected: bool) -> bool {
-    match boolean(value, name) { .Some(actual) => actual == expected, .None => false }
+    match boolean(value, name) {
+        .Some(actual) => actual == expected,
+        .None => false,
+    }
 }
 
 fn status_snapshot(samples: Vec<Sample>) -> json.Value {
@@ -683,7 +708,8 @@ fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Au
 pub fn run(path: string) {
     let cfg = configuration(path);
     let enabled = !cfg.token_env.is_empty() || match os.env("MESHCORE_HOST_ADMIN_HTTP") {
-        .Some(value) => value == "1", .None => false,
+        .Some(value) => value == "1",
+        .None => false,
     };
     let secret = match os.env(if cfg.token_env.is_empty() {
         cfg.password_env
@@ -703,16 +729,16 @@ pub fn run(path: string) {
     let owner = listener.open(cfg.address, cfg.port).expect("dashboard loopback listener could not bind");
     let group = events.open().expect("dashboard readiness group");
     let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(128).expect("dashboard event pipe");
-    let pump = spawn events.Pump(group: events.share(group), output: output);
+    let pump = spawn events.Pump { group: events.share(group), output: output };
     mailbox(pump, on_full: .Wait).run().expect("start dashboard readiness pump");
     let shutdown = events.driver(group, input);
     let accept_watch = listener.watch(owner, 0, group, 1).expect("watch dashboard listener");
-    let mut_monitors: Vec<Monitor> = [spawn Monitor(root: cfg.state, group: events.share(group), port: 0, selector: 0, label: "host-status"), spawn Monitor(root: cfg.state, group: events.share(group), port: 0, selector: 1, label: "host-readiness"), spawn Monitor(root: "", group: events.share(group), port: cfg.base_port, selector: 0, label: "Base-status"), spawn Monitor(root: "", group: events.share(group), port: cfg.base_port, selector: 1, label: "Base-readiness"), spawn Monitor(root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 0, label: "bot-companion-status"), spawn Monitor(root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 1, label: "bot-companion-readiness")];
+    let mut_monitors: Vec<Monitor> = [spawn Monitor { root: cfg.state, group: events.share(group), port: 0, selector: 0, label: "host-status" }, spawn Monitor { root: cfg.state, group: events.share(group), port: 0, selector: 1, label: "host-readiness" }, spawn Monitor { root: "", group: events.share(group), port: cfg.base_port, selector: 0, label: "Base-status" }, spawn Monitor { root: "", group: events.share(group), port: cfg.base_port, selector: 1, label: "Base-readiness" }, spawn Monitor { root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 0, label: "bot-companion-status" }, spawn Monitor { root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 1, label: "bot-companion-readiness" }];
     var clients: Vec<Client> = Vec.new();
     var rpc_workers: Vec<Rpc> = Vec.new();
     var available: Vec<Rpc> = Vec.new();
     for _ in 0..32 {
-        let worker = spawn Rpc(root: cfg.state, group: events.share(group));
+        let worker = spawn Rpc { root: cfg.state, group: events.share(group) };
         rpc_workers.push(worker);
         available.push(worker);
     }
@@ -728,7 +754,9 @@ pub fn run(path: string) {
                 .Err(_) => Sample { value: .None, updated: 0, failure: "health monitor actor stopped" },
             });
             let deadline = monitor.next_deadline().expect("health monitor deadline");
-            if deadline < due { due = deadline; }
+            if deadline < due {
+                due = deadline;
+            }
         }
         for _ in 0..32 {
             let token = match listener.accept(owner) {
@@ -840,13 +868,22 @@ pub fn run(path: string) {
                 listener.drop(owner, client.token);
             } else {
                 if client.rpc.is_none() {
-                    events.arm(group, client.watch, if client.outgoing.is_empty() { 1 } else { 2 }).expect("rearm dashboard client");
+                    events.arm(group, client.watch, if client.outgoing.is_empty() {
+                        1
+                    } else {
+                        2
+                    }).expect("rearm dashboard client");
                 } else if let .Some(request_actor) = client.rpc {
                     let deadline = request_actor.next_deadline().expect("owner command deadline");
-                    if deadline == 0 { due = now; }
-                    else if deadline < due { due = deadline; }
+                    if deadline == 0 {
+                        due = now;
+                    } else if deadline < due {
+                        due = deadline;
+                    }
                 }
-                if client.deadline < due { due = client.deadline; }
+                if client.deadline < due {
+                    due = client.deadline;
+                }
                 retained.push(client);
             }
         }

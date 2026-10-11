@@ -32,7 +32,7 @@ fn main() {
     }
     assert(telemetry.operation(stage) == 34);
     let profile = wire.le(0, 18);
-    let probe = spawn telemetry.Probe(profile: profile);
+    let probe = spawn telemetry.Probe { profile: profile };
     let configuration = wire.cat(wire.cat(wire.byte(1), wire.byte(0)), wire.cat(wire.le(17, 4), profile));
     assert(probe.healthy(0).expect("new probe"));
     for i in 0..6 {

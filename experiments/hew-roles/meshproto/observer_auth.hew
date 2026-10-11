@@ -1,8 +1,11 @@
 //! MeshCore observer identity JWT: Ed25519 with a hexadecimal signature.
 
 import std.crypto.sign;
+
 import std.encoding.base64;
+
 import std.encoding.hex;
+
 import std.encoding.json;
 
 fn unpadded(data: bytes) -> string {
@@ -20,13 +23,13 @@ pub fn username(public_key: bytes) -> Result<string, string> {
     .Ok("v1_" + hex.encode_upper(public_key))
 }
 
-pub fn signing_input(public_key: bytes, audience: string, now: i64) -> Result<string, string> {
+pub fn signing_input(public_key: bytes, audience: string, now: i64) -> string fails string {
     let _ = username(public_key)?;
     if audience.is_empty() || now < 1735689600 || now > 9223372036854689407 {
-        return .Err("observer JWT requires an audience and synchronized clock");
+        return error "observer JWT requires an audience and synchronized clock";
     }
     if audience.to_bytes().len() > 4096 {
-        return .Err("observer JWT audience exceeds the credential bound");
+        return error "observer JWT audience exceeds the credential bound";
     }
     var claims = json.object();
     claims.set("publicKey", json.from_string(hex.encode_upper(public_key))).expect("JWT public key");
@@ -35,21 +38,21 @@ pub fn signing_input(public_key: bytes, audience: string, now: i64) -> Result<st
     claims.set("exp", json.from_int(now + 86400)).expect("JWT expiry");
     let payload = match claims.stringify() {
         .Ok(text) => text,
-        .Err(_) => return .Err("observer JWT claims cannot be encoded"),
+        .Err(_) => return error "observer JWT claims cannot be encoded",
     };
     let header = "{\"alg\":\"Ed25519\",\"typ\":\"JWT\"}";
     let input = unpadded(header.to_bytes()) + "." + unpadded(payload.to_bytes());
     if input.len() + 129 > 4096 {
-        return .Err("observer JWT exceeds the verifier's 4096-byte credential bound");
+        return error "observer JWT exceeds the verifier's 4096-byte credential bound";
     }
-    .Ok(input)
+    input
 }
 
 /// Signature creation belongs to the identity owner, not this wire codec.
-pub fn finish(public_key: bytes, audience: string, now: i64, signature: bytes) -> Result<string, string> {
+pub fn finish(public_key: bytes, audience: string, now: i64, signature: bytes) -> string fails string {
     let input = signing_input(public_key, audience, now)?;
     if signature.len() != 64 || !sign.verify(input.to_bytes(), signature, public_key) {
-        return .Err("observer JWT signature does not match its identity");
+        return error "observer JWT signature does not match its identity";
     }
-    .Ok(input + "." + hex.encode_upper(signature))
+    input + "." + hex.encode_upper(signature)
 }

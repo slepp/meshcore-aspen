@@ -20,9 +20,11 @@ python3 -B migrate_base.py stage \
   --destination /path/to/private/base-hew
 ```
 
-The build uses Hew **0.6.0-rc7**, a C compiler, OpenSSL and libsodium. Production
+The build uses the current **Hew compiler and matching libraries** on `PATH`,
+a C compiler, OpenSSL and libsodium. Production
 does not start Go, a shell, or an RPC worker. Go is used by the test oracle only.
-The compiler-version check protects the native byte-return ABI.
+The build tracks the selected compiler and its libraries; native byte-return
+behaviour is covered by the companion checks.
 
 The frozen source and destination parent must be owned directories with mode
 0700. Input files must be owned regular files with mode 0600, without hard links

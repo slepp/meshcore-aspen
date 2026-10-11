@@ -1,18 +1,15 @@
 import observer_queue;
+
 import meshproto.observation;
+
 import std.encoding.hex;
 
 fn config(format: observation.Format) -> observation.Config {
-    observation.Config {
-        identity: hex.decode("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"),
-        format: format, prefix: "meshcore", iata: "YYC", origin: "",
-        model: "", firmware: "", radio: "", filter: .None,
-    }
+    observation.Config { identity: hex.decode("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").expect("valid hexadecimal"), format: format, prefix: "meshcore", iata: "YYC", origin: "", model: "", firmware: "", radio: "", filter: .None }
 }
 
 fn item() -> observation.Reception {
-    observation.Reception { raw: hex.decode("150001"), timestamp_ms: 1735689600000,
-        sequence: 999, has_signal: true, snr_quarter: 42, rssi: -90 }
+    observation.Reception { raw: hex.decode("150001").expect("valid hexadecimal"), timestamp_ms: 1735689600000, sequence: 999, has_signal: true, snr_quarter: 42, rssi: -90 }
 }
 
 actor Producer {
@@ -25,8 +22,7 @@ actor Producer {
 }
 
 fn main() {
-    let branch = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
-        config: config(observation.Format.Internal), capacity: 2, active: false });
+    let branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 2, active: false } };
     let outbox = branch.outbox;
     assert(!outbox.observe(item()).expect("before start"));
     assert(outbox.start().expect("start"));
@@ -52,9 +48,7 @@ fn main() {
     let closed = outbox.statistics().expect("closed statistics");
     assert(closed.observed == 6 && closed.published == 1 && closed.dropped == 5);
     assert(closed.queued == 0 && !closed.pending && !closed.connected && closed.closed);
-
-    let public_branch = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
-        config: config(observation.Format.Observer), capacity: 2, active: true });
+    let public_branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Observer), capacity: 2, active: true } };
     let public_box = public_branch.outbox;
     var reflection = item();
     reflection.snr_quarter = -128;
@@ -68,11 +62,9 @@ fn main() {
     assert(public_box.observe(early).expect("early RF"));
     assert(public_box.next().expect("early result").is_none());
     assert(public_box.statistics().expect("early statistics").dropped == 1);
-
-    let concurrent = spawn observer_queue.QueueBranch(plan: observer_queue.Plan {
-        config: config(observation.Format.Internal), capacity: 64, active: true });
-    let first_producer = spawn Producer(outbox: concurrent.outbox);
-    let second_producer = spawn Producer(outbox: concurrent.outbox);
+    let concurrent = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 64, active: true } };
+    let first_producer = spawn Producer { outbox: concurrent.outbox };
+    let second_producer = spawn Producer { outbox: concurrent.outbox };
     let one = fork first_producer.fill(100);
     let two = fork second_producer.fill(100);
     (await one).expect("first producer");

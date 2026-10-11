@@ -22,7 +22,7 @@ actor Owner {
     var counter: Option<OwnedCounter> = .None;
     fn ensure() -> Counter {
         if counter.is_none() {
-            counter = .Some(OwnedCounter { child: spawn Counter(count: initial) });
+            counter = .Some(OwnedCounter { child: spawn Counter { count: initial } });
         }
         match counter {
             .Some(owned) => owned.child,
@@ -40,7 +40,7 @@ actor Owner {
 supervisor Branch(initial: i64) {
     strategy: one_for_one;
     intensity: 1 within 60s;
-    child owner: Owner(initial: initial);
+    child owner: Owner { initial: initial };
 }
 
 fn current(reference: ChildRef<Owner>) -> Counter {
@@ -48,7 +48,7 @@ fn current(reference: ChildRef<Owner>) -> Counter {
 }
 
 fn main() {
-    let branch = spawn Branch(initial: 7);
+    let branch = spawn Branch { initial: 7 };
     let owner = branch.owner;
     let first = current(owner);
     assert(first.next().expect("initial child") == 8);

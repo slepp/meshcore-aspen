@@ -69,7 +69,7 @@ pub fn decimal(value: json.Value, name: string) -> f64 {
 
 pub fn blob(value: json.Value) -> bytes {
     if value.type_of() == json.Kind.String {
-        return base64.decode(value.get_string().expect("base64 text"));
+        return base64.decode(value.get_string().expect("base64 text")) handle _ { bytes.new() };
     }
     var data = bytes.new();
     if value.type_of() == json.Kind.Array {

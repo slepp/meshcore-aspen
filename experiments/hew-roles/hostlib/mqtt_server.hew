@@ -20,8 +20,8 @@ pub fn uint16(data: bytes, at: i64) -> Result<i64, string> {
 }
 
 pub fn field(data: bytes, at: i64) -> Result<Field, string> {
-    let size = uint16(data, at)?;
-    let value = binary.slice(data, at + 2, at + 2 + size).ok_or("truncated MQTT field")?;
+    let size = uint16(data, at) handle failure { return .Err(failure); };
+    let value = binary.slice(data, at + 2, at + 2 + size).ok_or("truncated MQTT field") handle failure { return .Err(failure); };
     .Ok(Field { value: value, end: at + 2 + size })
 }
 
@@ -153,8 +153,8 @@ pub fn publish(packet: mqtt.Packet) -> Result<Publication, string> {
 }
 
 pub fn publish_version(packet: mqtt.Packet, version: i64) -> Result<Publication, string> {
-    let topic_field = field(packet.body, 0)?;
-    let topic = text(topic_field.value)?;
+    let topic_field = field(packet.body, 0) handle failure { return .Err(failure); };
+    let topic = text(topic_field.value) handle failure { return .Err(failure); };
     if !topic.is_empty() && !mqtt.topic_valid(topic) {
         return .Err("invalid MQTT publication topic");
     }
@@ -165,7 +165,7 @@ pub fn publish_version(packet: mqtt.Packet, version: i64) -> Result<Publication,
     var at = topic_field.end;
     var identifier: i64 = 0;
     if qos > 0 {
-        identifier = uint16(packet.body, at)?;
+        identifier = uint16(packet.body, at) handle failure { return .Err(failure); };
         if identifier == 0 {
             return .Err("zero MQTT packet identifier");
         }
@@ -173,7 +173,7 @@ pub fn publish_version(packet: mqtt.Packet, version: i64) -> Result<Publication,
     }
     var props = properties.empty();
     if version == 5 {
-        let block = properties.decode(packet.body, at, 3)?;
+        let block = properties.decode(packet.body, at, 3) handle failure { return .Err(failure); };
         props = block.properties;
         at = block.end;
     }
@@ -199,7 +199,7 @@ pub fn encode_version(item: Publication, duplicate: bool, version: i64, expiry: 
         body.append(big16(item.identifier));
     }
     if version == 5 {
-        body.append(properties.publication(item.properties, expiry)?);
+        body.append(properties.publication(item.properties, expiry) handle failure { return .Err(failure); });
     }
     body.append(item.payload);
     if body.len() > 268435455 {
@@ -232,11 +232,11 @@ pub type Connect {
 }
 
 pub fn connect(body: bytes) -> Result<Connect, string> {
-    let protocol = field(body, 0)?;
+    let protocol = field(body, 0) handle failure { return .Err(failure); };
     if protocol.end + 4 > body.len() {
         return .Err("truncated MQTT CONNECT");
     }
-    let name = text(protocol.value)?;
+    let name = text(protocol.value) handle failure { return .Err(failure); };
     let version = body[protocol.end] as i64;
     if !((name == "MQTT" && (version == 4 || version == 5)) || (name == "MQIsdp" && version == 3)) {
         return .Err("unsupported MQTT protocol version");
@@ -245,16 +245,16 @@ pub fn connect(body: bytes) -> Result<Connect, string> {
     if (flags & 1) != 0 || ((flags & 4) == 0 && (flags & 32) != 0) || ((flags & 4) != 0 && ((flags >> 3) & 3) == 3) {
         return .Err("invalid MQTT CONNECT flags");
     }
-    let keepalive = uint16(body, protocol.end + 2)?;
+    let keepalive = uint16(body, protocol.end + 2) handle failure { return .Err(failure); };
     var at = protocol.end + 4;
     var props = properties.empty();
     if version == 5 {
-        let block = properties.decode(body, at, 1)?;
+        let block = properties.decode(body, at, 1) handle failure { return .Err(failure); };
         props = block.properties;
         at = block.end;
     }
-    let client_field = field(body, at)?;
-    let client = text(client_field.value)?;
+    let client_field = field(body, at) handle failure { return .Err(failure); };
+    let client = text(client_field.value) handle failure { return .Err(failure); };
     let clean = (flags & 2) != 0;
     if version < 5 && client.is_empty() && !clean {
         return .Err("empty persistent MQTT client identifier");
@@ -264,16 +264,16 @@ pub fn connect(body: bytes) -> Result<Connect, string> {
     if (flags & 4) != 0 {
         var will_props = properties.empty();
         if version == 5 {
-            let block = properties.decode(body, at, 16)?;
+            let block = properties.decode(body, at, 16) handle failure { return .Err(failure); };
             will_props = block.properties;
             at = block.end;
         }
-        let topic_field = field(body, at)?;
-        let topic = text(topic_field.value)?;
+        let topic_field = field(body, at) handle failure { return .Err(failure); };
+        let topic = text(topic_field.value) handle failure { return .Err(failure); };
         if topic.is_empty() {
             return .Err("empty MQTT will payload");
         }
-        let payload_field = field(body, topic_field.end)?;
+        let payload_field = field(body, topic_field.end) handle failure { return .Err(failure); };
         if payload_field.value.is_empty() {
             return .Err("empty MQTT will payload");
         }
@@ -283,12 +283,12 @@ pub fn connect(body: bytes) -> Result<Connect, string> {
     var username = bytes.new();
     var password = bytes.new();
     if (flags & 128) != 0 {
-        let value = field(body, at)?;
+        let value = field(body, at) handle failure { return .Err(failure); };
         username = value.value;
         at = value.end;
     }
     if (flags & 64) != 0 {
-        let value = field(body, at)?;
+        let value = field(body, at) handle failure { return .Err(failure); };
         password = value.value;
         at = value.end;
         if password.is_empty() {
@@ -315,14 +315,14 @@ pub fn subscribe(body: bytes) -> Result<Subscribe, string> {
 }
 
 pub fn subscribe_version(body: bytes, version: i64) -> Result<Subscribe, string> {
-    let identifier = uint16(body, 0)?;
+    let identifier = uint16(body, 0) handle failure { return .Err(failure); };
     if identifier == 0 {
         return .Err("zero MQTT subscription identifier");
     }
     var at: i64 = 2;
     var sub_identifier: i64 = 0;
     if version == 5 {
-        let block = properties.decode(body, at, 8)?;
+        let block = properties.decode(body, at, 8) handle failure { return .Err(failure); };
         at = block.end;
         if !block.properties.identifiers.is_empty() {
             sub_identifier = block.properties.identifiers[0];
@@ -330,8 +330,8 @@ pub fn subscribe_version(body: bytes, version: i64) -> Result<Subscribe, string>
     }
     var subscriptions: Vec<Subscription> = Vec.new();
     while at < body.len() {
-        let value = field(body, at)?;
-        let filter = text(value.value)?;
+        let value = field(body, at) handle failure { return .Err(failure); };
+        let filter = text(value.value) handle failure { return .Err(failure); };
         if value.end >= body.len() {
             return .Err("invalid MQTT subscription");
         }
@@ -363,19 +363,19 @@ pub fn unsubscribe(body: bytes) -> Result<Unsubscribe, string> {
 }
 
 pub fn unsubscribe_version(body: bytes, version: i64) -> Result<Unsubscribe, string> {
-    let identifier = uint16(body, 0)?;
+    let identifier = uint16(body, 0) handle failure { return .Err(failure); };
     if identifier == 0 {
         return .Err("zero MQTT unsubscribe identifier");
     }
     var at: i64 = 2;
     if version == 5 {
-        let block = properties.decode(body, at, 10)?;
+        let block = properties.decode(body, at, 10) handle failure { return .Err(failure); };
         at = block.end;
     }
     var filters: Vec<string> = Vec.new();
     while at < body.len() {
-        let value = field(body, at)?;
-        let filter = text(value.value)?;
+        let value = field(body, at) handle failure { return .Err(failure); };
+        let filter = text(value.value) handle failure { return .Err(failure); };
         filters.push(filter);
         at = value.end;
     }
@@ -386,7 +386,7 @@ pub fn unsubscribe_version(body: bytes, version: i64) -> Result<Unsubscribe, str
 }
 
 pub fn acknowledge(body: bytes) -> Result<i64, string> {
-    let identifier = uint16(body, 0)?;
+    let identifier = uint16(body, 0) handle failure { return .Err(failure); };
     if body.len() != 2 {
         return .Err("invalid MQTT acknowledgment");
     }
@@ -400,13 +400,13 @@ pub type Acknowledgment {
 }
 
 pub fn acknowledgment(packet: mqtt.Packet, version: i64) -> Result<Acknowledgment, string> {
-    let identifier = uint16(packet.body, 0)?;
+    let identifier = uint16(packet.body, 0) handle failure { return .Err(failure); };
     var reason: i64 = 0;
     var props = properties.empty();
     if version == 5 && packet.body.len() > 2 {
         reason = packet.body[2] as i64;
         if packet.body.len() > 3 {
-            let block = properties.decode(packet.body, 3, packet.header >> 4)?;
+            let block = properties.decode(packet.body, 3, packet.header >> 4) handle failure { return .Err(failure); };
             if block.end != packet.body.len() {
                 return .Err("trailing MQTT acknowledgment bytes");
             }
