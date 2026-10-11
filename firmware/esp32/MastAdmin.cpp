@@ -2286,7 +2286,7 @@ void MastAdmin::loop() {
     strcpy(outcome_, enabled ? "WiFi reconnect requested; association not yet confirmed" : "WiFi disabled; RF roles remain active");
   } else if (effect_ == Effect::Reboot) {
     if (!flushRuntimeState()) {
-      strcpy(outcome_, "Error: native state flush failed; reboot cancelled; inspect bot contacts");
+      snprintf(outcome_, sizeof(outcome_), "Error: %s flush failed; reboot cancelled", runtimeFlushError());
       effect_ = Effect::None; return;
     }
     strcpy(outcome_, "Reboot requested");

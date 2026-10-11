@@ -665,18 +665,27 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   if (bootProfile.observer())
     observer.observeRoles(status);
 }
+namespace { char flushError[96]{}; }
+const char *runtimeFlushError() { return flushError; }
+bool runtimeFlushFailed(const char *affected) {
+  if (!flushError[0]) snprintf(flushError, sizeof(flushError), "%s", affected);
+  return false;
+}
 bool flushRuntimeState() {
+  flushError[0] = 0;
   bool ok = true;
   for (unsigned i = 0; i < 3; ++i) {
     const auto role = static_cast<Role>(i);
     if (!bootProfile.has(role)) continue;
-    if (rolePhase(role) != RolePhase::Running) { ok = false; continue; }
+    const char *name = role == Role::Repeater ? "repeater" : role == Role::Room ? "room" : "companion";
+    if (rolePhase(role) != RolePhase::Running) { runtimeFlushFailed(name); ok = false; continue; }
     const bool saved = role == Role::Repeater ? repeaterFlush() :
                        role == Role::Room ? roomFlush() : companionFlush();
+    if (!saved) runtimeFlushFailed(name);
     ok = saved && ok;
   }
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
-  ok = commandBotService().flushLearnedState() && ok;
+  if (!commandBotService().flushLearnedState()) { runtimeFlushFailed("bot learned contacts; inspect bot contacts"); ok = false; }
 #endif
   return ok;
 }

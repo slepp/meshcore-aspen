@@ -9,6 +9,7 @@ inline std::map<std::string, std::vector<uint8_t>> files;
 inline bool failRemove = false, failOpen = false;
 inline bool failReadAfterRename = false;
 inline unsigned directoryReads = 0;
+inline size_t maxPathLength = std::numeric_limits<size_t>::max();
 inline size_t writeLimit = std::numeric_limits<size_t>::max();
 inline std::atomic<size_t> readLimit{std::numeric_limits<size_t>::max()};
 inline unsigned long readDelayMs = 0;
@@ -114,7 +115,7 @@ class Impl : public StorageDriver {
 public:
   fs::FileImplPtr open(const char *path, const char *mode, bool) override {
     checkpoint(mode[0] == 'w' ? "file.before-open-write" : "file.before-open-read");
-    if (failOpen)
+    if (failOpen || strlen(path) > maxPathLength)
       return {};
     const bool writable = mode[0] != 'r' || strchr(mode, '+');
     if (!writable && strcmp(path, "/") && !exists(path))
@@ -137,7 +138,7 @@ public:
     return !failRemove && files.erase(path);
   }
   bool rename(const char *from, const char *to) override {
-    if (!files.count(from))
+    if (strlen(from) > maxPathLength || strlen(to) > maxPathLength || !files.count(from))
       return false;
     files[to] = files[from];
     files.erase(from);

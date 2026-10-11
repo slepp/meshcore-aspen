@@ -79,9 +79,14 @@ inline uint8_t blobRead(fs::FS &fs, const char *path, uint8_t *bytes) {
   return identity.verify(packet.payload + 36, message, 36 + dataSize) &&
       advert.isValid() && advert.hasName() ? size : 0;
 }
+inline void previousPath(const char *path, char (&previous)[72]) {
+  // The scoped ESP32 primary is already 30 characters; SPIFFS permits 31 plus NUL.
+  if (!strncmp(path, "/bl/", 4)) snprintf(previous, sizeof(previous), "/bp/%s", path + 4);
+  else snprintf(previous, sizeof(previous), "%s-prev", path);
+}
 template<class Valid> bool publish(fs::FS &fs, const char *stage, const char *path, Valid valid) {
   if (!valid(stage)) return false;
-  char previous[72]; snprintf(previous, sizeof(previous), "%s-prev", path);
+  char previous[72]; previousPath(path, previous);
   if (fs.exists(path)) {
     if (valid(path)) {
       if (fs.exists(previous) && !fs.remove(previous)) return false;
@@ -94,7 +99,7 @@ template<class Valid> bool publish(fs::FS &fs, const char *stage, const char *pa
 inline uint8_t blobGet(fs::FS &fs, const char *path, uint8_t *bytes) {
   uint8_t size = blobRead(fs, path, bytes);
   if (size) return size;
-  char previous[72]; snprintf(previous, sizeof(previous), "%s-prev", path);
+  char previous[72]; previousPath(path, previous);
   return blobRead(fs, previous, bytes);
 }
 inline bool blobPut(fs::FS &fs, const char *path, const uint8_t *bytes, uint8_t size) {
@@ -107,14 +112,14 @@ inline bool blobPut(fs::FS &fs, const char *path, const uint8_t *bytes, uint8_t 
   if (ok) ok = publish(fs, stage, path, [&](const char *name) { return blobRead(fs, name, check) != 0; });
   if (!ok) fs.remove(stage);
   else {
-    char previous[72]; snprintf(previous, sizeof(previous), "%s-prev", path);
+    char previous[72]; previousPath(path, previous);
     if (fs.exists(previous) && !fs.remove(previous)) return false;
   }
   return ok;
 }
 inline void blobDelete(fs::FS &fs, const char *path) {
   fs.remove(path);
-  char previous[72]; snprintf(previous, sizeof(previous), "%s-prev", path); fs.remove(previous);
+  char previous[72]; previousPath(path, previous); fs.remove(previous);
 }
 } // namespace companion_persistence
 } // namespace onchip

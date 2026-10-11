@@ -384,9 +384,10 @@ bool {cls}::onchipAdvertise(bool zeroHop) {{
                                         "      if (saveChannels()) writeOKFrame();\n      else writeErrFrame(ERR_CODE_FILE_IO_ERROR);")
                     text += """
 bool OnchipCompanion::onchipFlush() {
-  if (!_store->savePrefs(_prefs)) return false;
-  if (!_store->saveContacts(this, save_filter)) return false;
-  if (!_store->saveChannels(this)) return false;
+  if (!_store->savePrefs(_prefs)) return onchip::runtimeFlushFailed("companion preferences");
+  if (!pending_adverts.flush(*_store)) return onchip::runtimeFlushFailed("companion advert blob");
+  if (!_store->saveContacts(this, save_filter)) return onchip::runtimeFlushFailed("companion contact metadata");
+  if (!_store->saveChannels(this)) return onchip::runtimeFlushFailed("companion channels");
   dirty_contacts_expiry = 0;
   return true;
 }
@@ -447,8 +448,6 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                                     "  dirty_contacts_expiry = 0; return true;\n}")
                 text = replace_once(text, "    saveContacts();\n    dirty_contacts_expiry = 0;",
                                     "    if (!saveContacts()) dirty_contacts_expiry = millis() + 300000;")
-                text = replace_once(text, "  if (!_store->saveContacts(this, save_filter)) return false;",
-                                    "  if (!saveContacts()) return false;")
             if role == "companion" and path.name == "DataStore.cpp":
                 text = body(text, "bool DataStore::formatFileSystem()", "  return false;")
                 start = text.index("void DataStore::saveContacts(")

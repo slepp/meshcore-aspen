@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "CompanionPersistence.h"
+#include "ScopedFS.h"
 static void companion_checkpoint() {
+  const auto oldMaxPathLength = filesystem_test::maxPathLength;
+  filesystem_test::maxPathLength = 31; // ESP32 SPIFFS CONFIG_SPIFFS_OBJ_NAME_LEN=32 includes NUL.
   const auto records = identity_test::durable;
   const auto files = filesystem_test::files;
   assert(saveRoleProfile({7}) && saveBotEnabled(true) && saveAutomaticAdverts(false));
@@ -33,10 +37,34 @@ static void companion_checkpoint() {
     const auto failed = filesystem_test::files;
     filesystem_test::writeLimit = std::numeric_limits<size_t>::max();
     f.step(100); assert(filesystem_test::files == failed);
-    assert(companionFlush()); // Explicit force persists the pending latest blob+metadata.
+    filesystem_test::writeLimit = 0;
+    assert(!companionFlush()); // Failed explicit checkpoint identifies the affected native store.
+    assert(!strcmp(runtimeFlushError(), "companion preferences"));
+    filesystem_test::writeLimit = std::numeric_limits<size_t>::max();
+    // Failure after the old blob moves aside still leaves its verified signed bytes recoverable.
+    char prefix[17]; mesh::Utils::toHex(prefix, caller.self_id.pub_key, 8);
+    const std::string primary = std::string("/companion/bl/") + prefix;
+    const auto oldBlob = filesystem_test::files.at(primary);
+    filesystem_test::failReadAfterRename = true;
+    MastAdmin::Reply reboot;
+    f.management.admin().execute("reboot", reboot);
+    assert(strstr(reboot.text, "Accepted reboot"));
+    f.management.admin().acknowledged(reboot.ticket, true);
+    f.step(70);
+    assert(f.action("job").find("companion advert blob flush failed; reboot cancelled") != std::string::npos);
+    filesystem_test::readLimit = std::numeric_limits<size_t>::max();
+    assert(filesystem_test::files.at(std::string("/companion/bp/") + prefix) == oldBlob);
+    filesystem_test::files[primary].resize(3);
+    onchip::ScopedFS companionFiles(SPIFFS, "/companion");
+    uint8_t fallback[255]{};
+    const std::string local = std::string("/bl/") + prefix;
+    const auto recovered = onchip::companion_persistence::blobGet(companionFiles, local.c_str(), fallback);
+    assert(Bytes(fallback, fallback + recovered) == oldBlob);
+    assert(companionFlush()); // Explicit force updates an existing 30-character blob path.
+    assert(filesystem_test::files.at(primary) == lastAdvert);
     committed = filesystem_test::files;
     for (const auto &entry : committed)
-      assert(entry.first.rfind("/companion/bl/", 0) != 0 || entry.first.find("-prev") == std::string::npos);
+      assert(entry.first.size() <= 31 && entry.first.rfind("/companion/bp/", 0) != 0);
   }
   {
     BetaFixture restarted(true);
@@ -72,6 +100,7 @@ static void companion_checkpoint() {
     assert(!companionContactAdvert(caller.self_id.pub_key, cursor, key, raw, size));
   }
   identity_test::durable = records; filesystem_test::files = files;
+  filesystem_test::maxPathLength = oldMaxPathLength;
   assert(reloadAutomaticAdverts());
   puts("PASS companion checkpoint: latest pending signed export without per-advert writes, first-dirty300s bounded checkpoint, idle suppression, failed-write retry, forced flush, full restart DM and corrupt primary fallback");
 }

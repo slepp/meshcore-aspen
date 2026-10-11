@@ -215,7 +215,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   if (authorized) memcpy(updateDigest, digest, sizeof(updateDigest));
   if (authorized && !flushForUpdate()) {
     busy = false;
-    return response(request, "503 Service Unavailable", "{\"error\":\"Native state flush failed before update; inspect bot contacts\"}");
+    return response(request, "503 Service Unavailable", "{\"error\":\"Native state flush failed before update; inspect native role storage and bot contacts\"}");
   }
   if (!update.start(adapter, request->content_len, adapter.partition ? adapter.partition->size : 0, authorized)) {
     busy = false;
@@ -300,7 +300,7 @@ void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
     } else if (const auto flush = flushRuntime.load(); !flush || flush()) ESP.restart();
     else {
       rebootRequested = false; rebootAt = 0;
-      recovery = "Native state flush failed; application reboot cancelled; inspect bot contacts";
+      recovery = "Native state flush failed; application reboot cancelled; inspect native role storage and bot contacts";
     }
   }
 }
