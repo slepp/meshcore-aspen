@@ -72,6 +72,7 @@ public-update-test:
 		-o "$(TEST_BUILD)/public-update"
 	ulimit -c 0; "$(TEST_BUILD)/public-update"
 	ulimit -c 0; "$(TEST_BUILD)/public-update" different-owner
+	ulimit -c 0; "$(TEST_BUILD)/public-update" different-owner recovery
 .PHONY: public-provisioning-test
 .PHONY: cloudroom-preferences-test
 cloudroom-preferences-test:

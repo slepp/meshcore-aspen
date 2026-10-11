@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from firmware.esp32.esp_update_manifest import sign
@@ -72,6 +73,20 @@ def save_receipt(path, record):
             os.close(directory)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def response_failure(error, client):
+    result = {"type": type(error).__name__}
+    if isinstance(error, urllib.error.HTTPError):
+        result["status"] = error.code
+        try:
+            value = json.loads(error.read(4096))
+            message = value.get("error", "") if isinstance(value, dict) else ""
+            if isinstance(message, str):
+                result["error"] = "".join(c for c in message if c.isprintable())[:512].replace(client.token, "[session]")
+        except (OSError, ValueError):
+            pass
+    return result
 
 
 def json_request(client, route, body=None, headers=None):
@@ -197,6 +212,8 @@ def artifact(args):
             applications[0].get("bytes") != len(image)):
         raise ValueError("Application differs from build manifest; no upload")
     backup = private_file(args.backup, node_backup.FILE_LIMIT)
+    if args.allow_unsaved_state and not 0 <= time.time() - args.backup.stat().st_mtime <= 3600:
+        raise ValueError("Unsaved-state recovery requires an encrypted backup downloaded within the last hour")
     _, files = node_backup.entries(node_backup.decrypt(backup, seed))
     return image, signed, {"path": str(args.backup.resolve()), "sha256": digest(backup),
                             "bytes": len(backup), "records": len(files)}, digest(raw)
@@ -289,7 +306,8 @@ def maintain_locked(args):
                       "application": signed, "backup": backup, "build_manifest_sha256": build_hash,
                       "expected_current_sha256": args.expected_current_sha256,
                       "commands": list(DEFAULT_COMMANDS) + args.retain_command,
-                      "legacy_no_cache_flush": args.legacy_no_cache_flush}
+                      "legacy_no_cache_flush": args.legacy_no_cache_flush,
+                      "allow_unsaved_state": args.allow_unsaved_state}
             write_new_file(args.receipt, b"{}\n", 0o600)
             receipt_owned = True
             save_receipt(args.receipt, record)
@@ -298,6 +316,8 @@ def maintain_locked(args):
             if (not running(status, args.expected_current_sha256) or
                     status.get("state") != "idle" or status.get("boot_health") != "healthy"):
                 raise ValueError("Running application differs, is unhealthy or update active; no upload")
+            if args.allow_unsaved_state and status.get("unsaved_state_supported") is not True:
+                raise ValueError("Radio does not support unsaved-state application recovery; no upload")
             no_pending_identities(client)
             record.update(before_update=status, before=radio_state(client),
                           retained_before=retained(client, record["commands"]))
@@ -314,18 +334,30 @@ def maintain_locked(args):
                 if paused["enabled"] or paused["budget"] != record["sampler"]["budget"]:
                     raise ValueError("Packet sampler did not pause; no upload")
             if not args.legacy_no_cache_flush:
-                flushed = paced_command(client, "bot contacts flush")
-                if not re.fullmatch(r"Saved learned contacts; dirty=0(?: .*)?", flushed):
+                try:
+                    flushed = paced_command(client, "bot contacts flush")
+                except ValueError:
+                    if not args.allow_unsaved_state:
+                        raise
+                    flushed = ""
+                contacts_saved = bool(re.fullmatch(r"Saved learned contacts; dirty=0(?: .*)?", flushed))
+                if not contacts_saved and not args.allow_unsaved_state:
                     raise ValueError("Learned contacts were not flushed; no upload")
-                record["contacts_flushed"] = True
+                record["contacts_flushed"] = contacts_saved
+            if args.allow_unsaved_state:
+                print("Warning: unsaved-state application recovery selected; recent unsaved state may be lost.", file=sys.stderr)
             record["upload_attempted"] = True
             save_receipt(args.receipt, record)
             try:
                 record["upload_response"] = json_request(client, "/admin/update", image, {
                     "Content-Type": "application/octet-stream", "X-Mast-Target": signed["target"],
-                    "X-Mast-SHA256": signed["sha256"], "X-Mast-Signature": signed["signature"]})
+                    "X-Mast-SHA256": signed["sha256"], "X-Mast-Signature": signed["signature"],
+                    **({"X-Mast-Allow-Unsaved-State": "1"} if args.allow_unsaved_state else {})})
             except (OSError, ValueError) as error:
                 record["upload_response_unavailable"] = type(error).__name__
+                record["upload_failure"] = response_failure(error, client)
+                if record["upload_failure"].get("status"):
+                    print(f'Application upload HTTP {error.code}: {record["upload_failure"].get("error", "inspect update status")}', file=sys.stderr)
             save_receipt(args.receipt, record)
         else:
             record = json.loads(private_file(args.receipt, 256 * 1024))
@@ -386,6 +418,8 @@ def main():
     update.add_argument("--retain-command", action="append", default=[], help="Additional read-only stable setting to compare")
     update.add_argument("--sampler-slot", type=int, help="Known read-only Wasm sampler to pause for flash writes")
     update.add_argument("--sampler-sha256", help="Exact hash of that read-only sampler")
+    update.add_argument("--allow-unsaved-state", action="store_true",
+                        help="Recover with one signed application update despite failed state saves; recent unsaved state may be lost (backup must be less than one hour old)")
     update.add_argument("--legacy-no-cache-flush", action="store_true",
                         help="First upgrade from firmware without bot contacts flush; RAM-only contacts may be lost")
     args = parser.parse_args()

@@ -87,6 +87,32 @@ int main(int argc, char **) {
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);
   assert(begins == 0 && switches == 0 && request.status == "503 Service Unavailable" && flushes == 1);
+  if (argc > 2) {
+    request = candidate(authority == 1 ? 0 : 1);
+    request.headers["X-Mast-Allow-Unsaved-State"] = "1";
+    onchip::uploadEspUpdate(&request);
+    assert(begins == 0 && request.status == "403 Forbidden");
+    request = candidate(authority);
+    request.headers["X-Mast-Allow-Unsaved-State"] = "1";
+    request.data.clear(); // failed transfer must not retain the exception
+    onchip::uploadEspUpdate(&request);
+    assert(request.response.find("\"allow_unsaved_state\":false") != std::string::npos);
+    const unsigned before = begins;
+    request = candidate(authority);
+    onchip::uploadEspUpdate(&request);
+    assert(begins == before && request.status == "503 Service Unavailable");
+    request = candidate(authority);
+    request.headers["X-Mast-Allow-Unsaved-State"] = "1";
+    onchip::uploadEspUpdate(&request);
+    assert(switches == 1 && request.status == "200 OK");
+    assert(request.response.find("\"state_flush_failed\":true") != std::string::npos);
+    onchip::rebootEspUpdate(&request);
+    onchip::serviceEspUpdate(true, false, false); testMillis += 1500;
+    onchip::serviceEspUpdate(true, false, false);
+    assert(ESP.restarts == 1);
+    puts("Signed application recovery survives failed upload, activation and reboot flushes; exception clears after failed upload");
+    return 0;
+  }
   flushOk = true;
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);

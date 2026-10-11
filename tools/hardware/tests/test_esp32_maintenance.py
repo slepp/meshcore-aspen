@@ -5,6 +5,8 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
+import os
+import time
 from pathlib import Path
 import socket
 import struct
@@ -128,7 +130,11 @@ class RadioHandler(BaseHTTPRequestHandler):
             record = json.loads(radio.receipt.read_text())
             assert record["upload_attempted"] is True
             assert record.get("sampler_restore_pending", False) == record.get("sampler", {}).get("enabled", False)
+            assert bool(self.headers.get("X-Mast-Allow-Unsaved-State")) == record["allow_unsaved_state"]
             radio.uploads += 1
+            if radio.http_flush_failure:
+                self.reply({"error": "Native state flush failed before update; inspect native role storage and bot contacts"}, 503)
+                return
             radio.uploaded = True
             radio.digest = self.headers["X-Mast-SHA256"]
             radio.size = len(body)
@@ -163,13 +169,15 @@ class Radio:
         self.reboot_started = threading.Event()
         self.reboot_release = None
         self.flush_failure = self.lost_upload = self.lost_reboot = self.stuck_reboot = False
+        self.unsaved_supported = True
+        self.http_flush_failure = False
         self.changed_identity = self.changed_source = self.bundled = self.pending_identity = False
 
     def status(self):
         return {"running_sha256": self.digest if self.booted else self.current,
                 "running_size": self.size if self.booted else 100, "running_hash_error": "",
                 "state": "idle" if self.booted or not self.uploaded else "verified",
-                "boot_health": "healthy", "reboot_ready": self.uploaded and not self.booted,
+                "unsaved_state_supported": self.unsaved_supported, "boot_health": "healthy", "reboot_ready": self.uploaded and not self.booted,
                 "sha256": self.digest, "received": self.size}
 
 
@@ -191,7 +199,7 @@ class MaintenanceTests(unittest.TestCase):
                                     key_file=root / "operator.seed", backup=root / "backup.mcb",
                                     expected_current_sha256="0" * 64, target="xiao-esp32s3",
                                     retain_command=[], sampler_slot=0, sampler_sha256="b" * 64,
-                                    legacy_no_cache_flush=False)
+                                    legacy_no_cache_flush=False, allow_unsaved_state=False)
         seed = bytes(range(32))
         for path, raw in ((self.args.password_file, b"password"), (self.args.key_file, seed),
                           (self.args.backup, backup(seed)), (self.args.image, image())):
@@ -328,6 +336,38 @@ class MaintenanceTests(unittest.TestCase):
         self.assertLess(commands.index(b"packet 0 enable off"), commands.index(b"bot contacts flush"))
         self.assertLess(commands.index(b"bot contacts flush"), commands.index(b"packet 0 enable on"))
         self.assertFalse(self.receipt()["sampler_restore_pending"])
+
+    def test_explicit_unsaved_state_recovery_records_intent_before_upload(self):
+        self.args.allow_unsaved_state = True
+        self.radio.flush_failure = True
+        maintenance.maintain(self.args)
+        self.assertTrue(self.receipt()["allow_unsaved_state"])
+        self.assertFalse(self.receipt()["contacts_flushed"])
+        self.assertEqual(self.radio.uploads, 1)
+
+    def test_unsaved_recovery_refuses_old_backup(self):
+        self.args.allow_unsaved_state = True
+        old = time.time() - 3601
+        os.utime(self.args.backup, (old, old))
+        with self.assertRaisesRegex(ValueError, "last hour"):
+            maintenance.maintain(self.args)
+        self.assertEqual(self.radio.posts, [])
+
+    def test_unsaved_recovery_refuses_unsupported_radio(self):
+        self.args.allow_unsaved_state = True
+        self.radio.unsaved_supported = False
+        with self.assertRaisesRegex(ValueError, "does not support"):
+            maintenance.maintain(self.args)
+        self.assertEqual(self.radio.uploads, 0)
+
+    def test_http_failure_records_actionable_error_without_replaying_upload(self):
+        self.radio.http_flush_failure = True
+        with self.assertRaisesRegex(ValueError, "Upload is not verified"):
+            maintenance.maintain(self.args)
+        self.assertEqual(self.receipt()["upload_failure"]["status"], 503)
+        self.assertIn("Native state flush failed", self.receipt()["upload_failure"]["error"])
+        self.assertEqual(self.radio.uploads, 1)
+        self.assertNotIn("reboot_attempted", self.receipt())
 
     def test_explicit_legacy_mode_is_recorded_and_does_not_issue_flush(self):
         self.args.legacy_no_cache_flush = True

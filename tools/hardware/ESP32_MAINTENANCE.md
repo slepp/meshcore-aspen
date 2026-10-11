@@ -75,6 +75,18 @@ RAM-only learned contacts may be lost at restart; a companion may need to send
 its signed advert over RF before the bot can answer its messages again. Do not
 use this option to bypass a checkpoint error on firmware that supports flushing.
 
+If storage errors prevent saving native state, an authenticated signed
+application update can recover firmware with `--allow-unsaved-state`. Download
+and validate a fresh encrypted backup first; this option requires its local
+download file to be less than one hour old. Recent unsaved state may be lost
+when the radio restarts. The receipt records the exception before upload.
+The radio must report `unsaved_state_supported: true`; older firmware cannot
+use this option. `allow_unsaved_state` reports the selection and
+`state_flush_failed` reports a failed native save. The exception covers only
+this application upload, boot selection and its requested restart. Ordinary
+updates still require successful saves. Inspect an upload HTTP error and its
+private `upload_failure` receipt field before deciding on recovery.
+
 If a known read-only packet sampler must pause during flash writes, add both
 `--sampler-slot SLOT` and `--sampler-sha256 EXACT_HASH`. The command verifies its
 hash, Wasm runtime, saved/live enable state and budget before pausing it, then

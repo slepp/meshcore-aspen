@@ -25,13 +25,17 @@ std::atomic<bool> busy{false}, rebootRequested{false}, rollbackRequested{false},
 std::atomic<bool> rollbackObserved{false};
 std::atomic<bool (*)()> flushRuntime{nullptr};
 std::atomic<uint32_t> flushRequested{0}, flushCompleted{0};
-std::atomic<bool> flushResult{false};
+std::atomic<bool> flushResult{false}, allowUnsavedState{false}, stateFlushFailed{false};
+bool acceptFlush(bool saved) {
+  if (!saved) stateFlushFailed = true;
+  return saved || allowUnsavedState.load();
+}
 bool flushForUpdate() {
   if (!flushRuntime.load()) return true;
   const uint32_t ticket = flushRequested.fetch_add(1) + 1;
   const uint32_t started = millis();
   while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 10000) delay(1);
-  return flushCompleted.load() == ticket && flushResult.load();
+  return acceptFlush(flushCompleted.load() == ticket && flushResult.load());
 }
 uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0;
 bool automaticRollbackAttempted = false;
@@ -161,10 +165,12 @@ esp_err_t statusLocked(httpd_req_t *request, const char *code) {
   snprintf(text, sizeof(text),
     "{\"state\":\"%s\",\"received\":%u,\"size\":%u,\"error\":\"%s\","
     "\"target\":\"%s\",\"boot_health\":\"%s\",\"recovery\":\"%s\","
+    "\"unsaved_state_supported\":true,\"allow_unsaved_state\":%s,\"state_flush_failed\":%s,"
     "\"reboot_ready\":%s,\"rollback_supported\":%s,\"rollback_ready\":%s,"
     "\"sha256\":\"%s\",\"running_sha256\":\"%s\",\"running_size\":%u,\"running_hash_error\":\"%s\"}",
     names[update.state()], unsigned(update.received()), unsigned(update.size()), update.error(),
     ONCHIP_UPDATE_TARGET, healthy ? "healthy" : "pending", recovery.load(),
+    allowUnsavedState ? "true" : "false", stateFlushFailed ? "true" : "false",
     update.state() == EspUpdate::Verified ? "true" : "false",
     rollbackObserved ? "true" : "false",
     !healthy && rollbackObserved && esp_ota_check_rollback_is_possible() ? "true" : "false",
@@ -184,6 +190,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
     return response(request, "409 Conflict", "{\"error\":\"Application update already active; inspect status\"}");
   std::lock_guard<std::mutex> lock(updateMutex);
   updateDigest[0] = 0;
+  allowUnsavedState = false; stateFlushFailed = false;
   Adapter adapter;
   adapter.partition = esp_ota_get_next_update_partition(nullptr);
   if (!adapter.partition || adapter.partition == esp_ota_get_running_partition()) {
@@ -212,12 +219,22 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
                               ONCHIP_UPDATE_TARGET, unsigned(request->content_len), authorized ? digest : "");
   authorized = authorized && length > 0 && size_t(length) < sizeof(manifest) &&
     mesh::Identity(key).verify(sig, reinterpret_cast<uint8_t *>(manifest), length);
+  char unsaved[8]{};
+  if (httpd_req_get_hdr_value_len(request, "X-Mast-Allow-Unsaved-State")) {
+    if (httpd_req_get_hdr_value_str(request, "X-Mast-Allow-Unsaved-State", unsaved, sizeof(unsaved)) != ESP_OK ||
+        strcmp(unsaved, "1")) {
+      busy = false;
+      return response(request, "400 Bad Request", "{\"error\":\"X-Mast-Allow-Unsaved-State must be 1\"}");
+    }
+  }
+  allowUnsavedState = authorized && unsaved[0];
   if (authorized) memcpy(updateDigest, digest, sizeof(updateDigest));
   if (authorized && !flushForUpdate()) {
     busy = false;
     return response(request, "503 Service Unavailable", "{\"error\":\"Native state flush failed before update; inspect native role storage and bot contacts\"}");
   }
   if (!update.start(adapter, request->content_len, adapter.partition ? adapter.partition->size : 0, authorized)) {
+    allowUnsavedState = false;
     busy = false;
     return statusLocked(request, authorized ? "400 Bad Request" : "403 Forbidden");
   }
@@ -239,6 +256,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   }
   if (update.state() == EspUpdate::Receiving) update.finish();
   busy = update.state() == EspUpdate::Verified;
+  if (!busy) allowUnsavedState = false;
   return statusLocked(request, busy ? "200 OK" : "400 Bad Request");
 }
 esp_err_t rebootEspUpdate(httpd_req_t *request) {
@@ -297,7 +315,7 @@ void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
       esp_ota_mark_app_invalid_rollback_and_reboot();
       rollbackRequested = false; rebootRequested = false; rebootAt = 0;
       recovery = "Application rollback failed; use retained USB recovery";
-    } else if (const auto flush = flushRuntime.load(); !flush || flush()) ESP.restart();
+    } else if (const auto flush = flushRuntime.load(); acceptFlush(!flush || flush())) ESP.restart();
     else {
       rebootRequested = false; rebootAt = 0;
       recovery = "Native state flush failed; application reboot cancelled; inspect native role storage and bot contacts";
