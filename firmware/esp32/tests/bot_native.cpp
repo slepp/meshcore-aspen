@@ -278,6 +278,35 @@ struct Peer : PeerState, mesh::Mesh {
 };
 static void native_channel_policy() {
   assert(saveBotEnabled(true) && saveBotRadioPolicy({}));
+  {
+    const auto stored = identity_test::durable;
+    const auto files = filesystem_test::files;
+    const auto freeEntries = identity_test::freeEntries;
+    identity_test::durable.erase({"mc-onchip", "bot-radio"});
+    BotRadioPolicy boundary, loaded;
+    char reply[162]{}; bool changed = false;
+    assert(botRadioPolicyCommand(boundary, "membership 1 #boundary", reply, sizeof(reply), changed) && changed);
+    const auto absent = identity_test::durable;
+    identity_test::freeEntries = BotKvPublicEntries + 4;
+    assert(!saveBotRadioPolicy(boundary));
+    assert(identity_test::durable == absent && filesystem_test::files == files);
+    assert(loadBotRadioPolicy(loaded) && !loaded.extended());
+    identity_test::freeEntries++;
+    assert(saveBotRadioPolicy(boundary));
+    assert(loadBotRadioPolicy(loaded) && !strcmp(loaded.membership(1).name, "#boundary"));
+    const auto authority = identity_test::durable;
+    const auto publishedFiles = filesystem_test::files;
+    assert(botRadioPolicyCommand(boundary, "access 1 default 0", reply, sizeof(reply), changed) && changed);
+    identity_test::freeEntries = BotKvPublicEntries - 1;
+    assert(!saveBotRadioPolicy(boundary));
+    assert(identity_test::durable == authority && filesystem_test::files == publishedFiles);
+    assert(loadBotRadioPolicy(loaded) && loaded.access[2] != boundary.access[2]);
+    identity_test::freeEntries++;
+    assert(saveBotRadioPolicy(boundary));
+    assert(loadBotRadioPolicy(loaded) && loaded.access[2] == boundary.access[2]);
+    identity_test::durable = stored; filesystem_test::files = files;
+    identity_test::freeEntries = freeEntries;
+  }
   Fixture f; f.start(); Peer peer;
   static std::string audit;
   audit.clear();
@@ -354,6 +383,18 @@ static void native_channel_policy() {
     return peer.groupReplies(f.radio, 3, name, key);
   };
   assert(group("operator: !ping", "#first") == std::vector<std::string>{"Pong"});
+  {
+    const auto stored = identity_test::durable;
+    const auto files = filesystem_test::files;
+    const auto freeEntries = identity_test::freeEntries;
+    identity_test::freeEntries = BotKvPublicEntries - 1;
+    f.bot.radioPolicyCommand("access 0 default 0", reply, sizeof(reply));
+    assert(!strncmp(reply, "Error:", 6));
+    identity_test::freeEntries = freeEntries;
+    assert(identity_test::durable == stored && filesystem_test::files == files);
+    assert(loadBotRadioPolicy(saved) && saved.access[1] != 0);
+    assert(group("operator: !ping", "#first") == std::vector<std::string>{"Pong"});
+  }
   assert(audit.find("phase=accepted") != std::string::npos &&
          audit.find("phase=started") != std::string::npos &&
          audit.find("phase=completed") != std::string::npos);

@@ -561,7 +561,7 @@ bool saveBotRadioPolicy(const BotRadioPolicy &policy) {
         next.slot = 1 - previous[4];
     }
     nvs_stats_t stats{};
-    const size_t required = BotCoreNvsReserveEntries + BotNvsMutationEntries + (present ? 0u : 5u);
+    const size_t required = BotKvPublicEntries + (present ? 0u : 5u);
     result = nvs_get_stats(nullptr, &stats);
     if (result != ESP_OK) return failed("radio policy NVS headroom read", result);
     if (stats.free_entries < required) {
