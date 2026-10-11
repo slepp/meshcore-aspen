@@ -457,7 +457,7 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `node.packet_report([slot[, label_prefix]])` | Yielded read-only `{name, row_count, rows}` snapshot or `nil` | Aspen packet slot 0 or 1; optional case-insensitive label prefix, at most 23 bytes; each row has `label` and field-name-indexed numeric `values`; see [packet reports](PACKET_ENGINES.md#numeric-reports-shared-with-commands) |
 | `node.admin(command)` | Yielded bounded backend result text | Authenticated trusted-owner private DM only; limited bot admin operations |
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
-| `tostring(number)` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; not Lua's general-purpose `tostring` |
+| `tostring(number[, places])` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; optional 0..6 decimal places, rounded half away from zero; not Lua's general-purpose `tostring` |
 | `ping()`, `test()`, `path()`, `mt()`, `help(...)` | Composable bundled diagnostic text | Current invocation context; nested calls share quotas and do not independently reply |
 
 Utilities require authenticated DM or verified selected-channel context and

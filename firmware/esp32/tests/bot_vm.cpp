@@ -2033,6 +2033,12 @@ int main(int argc, char **argv) {
       "if i+1~=-9223372036854775807-1 or 9007199254740992.0+1.0~=9007199254740992.0 "
       "then reply('numeric mismatch') else reply(tostring(i)) end"), event("!custom")).text,
       "9223372036854775807"));
+  assert(!strcmp(run(program(
+      "reply(tostring(-2.625,2)..' '..tostring(2.625,2)..' '..tostring(-0.001,2)..' '.."
+      "tostring(-115.25,1)..' '..tostring(1.5,0)..' '..tostring(1000000000,6))"),
+      event("!custom")).text, "-2.63 2.63 0.00 -115.3 2 1000000000.000000"));
+  for (const char *value : {"1,7", "1,-1", "1,1.5", "1000000001,2", "0/0,2", "1/0,2", "'1',2"})
+    run(program(std::string("reply(tostring(") + value + "))"), event("!custom"), false);
   assert(!strcmp(run(BotDefaultSource, event("!path")).text, "1:a1b2"));
   assert(!strcmp(run(BotDefaultSource, event("!test")).text,
                  "Connected: SNR 5 dB; RSSI -90 dBm; path 1:a1b2"));

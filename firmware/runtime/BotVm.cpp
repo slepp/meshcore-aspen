@@ -243,7 +243,22 @@ bool rfText(const char *value, size_t limit) {
 }
 int stringInteger(lua_State *s) {
   char value[32];
-  if (lua_isinteger(s, 1))
+  if (!lua_isnoneornil(s, 2)) {
+    const lua_Integer places = luaL_checkinteger(s, 2);
+    if (places < 0 || places > 6 || lua_type(s, 1) != LUA_TNUMBER ||
+        !std::isfinite(lua_tonumber(s, 1)) || std::abs(lua_tonumber(s, 1)) > 1e9)
+      return luaL_error(s, "Decimal text requires a finite number within 1e9 and 0..6 places");
+    uint64_t scale = 1;
+    for (lua_Integer i = 0; i < places; ++i) scale *= 10;
+    const double number = lua_tonumber(s, 1);
+    const uint64_t rounded = uint64_t(std::abs(number) * scale + 0.5);
+    const char *sign = number < 0 && rounded ? "-" : "";
+    if (places)
+      snprintf(value, sizeof(value), "%s%llu.%0*llu", sign,
+               static_cast<unsigned long long>(rounded / scale), int(places),
+               static_cast<unsigned long long>(rounded % scale));
+    else snprintf(value, sizeof(value), "%s%llu", sign, static_cast<unsigned long long>(rounded));
+  } else if (lua_isinteger(s, 1))
     snprintf(value, sizeof(value), "%lld", static_cast<long long>(lua_tointeger(s, 1)));
   else if (lua_type(s, 1) == LUA_TNUMBER && std::isfinite(lua_tonumber(s, 1)) &&
            std::abs(lua_tonumber(s, 1)) <= 1e9)
