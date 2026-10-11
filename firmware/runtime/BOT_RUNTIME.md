@@ -454,6 +454,7 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `node.report(name[, page])` | Read-only diagnostic text | `about`, `version`, `uptime`, `status`, `signal`, `air`, `mt`; only air has pages 1..4 |
 | `node.plugins([page])` | Manifest/module summary text | Current source generation, not per-package installation |
 | `node.neighbors([page])` | Yielded bounded observation text | Pages 1..16; cached signed contacts/routes, not live adjacency |
+| `node.packet_report([slot])` | Yielded read-only `{name, row_count, rows}` snapshot or `nil` | Aspen packet slot 0 or 1; each row has `label` and field-name-indexed numeric `values`; see [packet reports](PACKET_ENGINES.md#numeric-reports-shared-with-commands) |
 | `node.admin(command)` | Yielded bounded backend result text | Authenticated trusted-owner private DM only; limited bot admin operations |
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
 | `tostring(number)` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; not Lua's general-purpose `tostring` |
