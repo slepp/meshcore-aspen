@@ -81,6 +81,7 @@ pub type Config {
 type ConnectionTurn {
     healthy: bool;
     config_deadline: i64;
+    config_retry_at: i64;
     next_config: i64;
     next_stats: i64;
     next_health: i64;
@@ -1876,7 +1877,7 @@ pub fn run(root: string) {
             worker_key = native_watch(worker_fd, event_group);
             native_ok = native_ok && worker_key != 0;
         }
-        var connection = ConnectionTurn { healthy: true, config_deadline: 0, next_config: transport.monotonic() + 2000, next_stats: transport.monotonic(), next_health: transport.monotonic() };
+        var connection = ConnectionTurn { healthy: true, config_deadline: 0, config_retry_at: 0, next_config: transport.monotonic() + 2000, next_stats: transport.monotonic(), next_health: transport.monotonic() };
         var sensors = radio.create();
         var telemetry = TelemetryCache { revision: -1, reported: false };
         var worker_progress = WorkerProgress { deadline: transport.monotonic() + 30000, last: transport.monotonic(), retry: 0, backoff: 500 };
@@ -1976,6 +1977,8 @@ pub fn run(root: string) {
                             if use_native && native_ok && !result.is_empty() {
                                 native_ok = native_ok && transport.native_send(worker_fd, result);
                             }
+                        } else if port == 0 && session.hardware_busy(frame) && connection.config_deadline != 0 {
+                            connection.config_retry_at = received_at + 100;
                         } else if port == 0 && frame[1] == 162 && connection.config_deadline != 0 {
                             let valid = frame.len() == 26 && frame[2] == 1 && frame[3] == 0 && wire.equal(wire.cut(frame, 8, 26), cfg.profile);
                             if connection.healthy && !valid {
@@ -1984,6 +1987,7 @@ pub fn run(root: string) {
                             }
                             connection.healthy = connection.healthy && valid;
                             connection.config_deadline = 0;
+                            connection.config_retry_at = 0;
                         } else if use_native && native_ok && port == 2 && frame[1] == 164 {
                             let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
                             if !stats.is_empty() {
@@ -2121,6 +2125,10 @@ pub fn run(root: string) {
                 }
                 connection.healthy = false;
             }
+            if connection.healthy && connection.config_retry_at != 0 && now >= connection.config_retry_at {
+                connection.config_retry_at = 0;
+                connection.healthy = control_write(fd, wire.kiss(0, 6, hex.decode("220100").expect("valid hexadecimal")), "CONFIG_GET", incarnation.epoch);
+            }
             if now >= connection.next_stats {
                 connection.healthy = connection.healthy && control_write(fd, wire.kiss(2, 6, hex.decode("2401").expect("valid hexadecimal")), "STATS", incarnation.epoch);
                 connection.next_stats = now + 1000;
@@ -2181,6 +2189,7 @@ pub fn run(root: string) {
                 deadline = earlier(deadline, connection.next_health);
                 deadline = earlier(deadline, connection.next_stats);
                 deadline = earlier(deadline, connection.config_deadline);
+                deadline = earlier(deadline, connection.config_retry_at);
                 let policy_busy = link.policy_busy().expect("source policy deadline state");
                 if connection.config_deadline == 0 && sensors.expected == 0 && !policy_busy {
                     deadline = earlier(deadline, connection.next_config);

@@ -1,6 +1,8 @@
 //! Serialized read-only physical modem queries; samples never invent measurements.
 import wire;
 
+import session;
+
 import std.encoding.json;
 
 pub enum Stage {
@@ -49,6 +51,7 @@ pub actor Probe {
     var draft_counters: bytes = bytes.new();
     var stage: Stage = .Configuration;
     var pending: bool = false;
+    var retrying: bool = false;
     var deadline: i64 = 0;
     var next: i64 = 0;
     var fault: bool = false;
@@ -63,6 +66,7 @@ pub actor Probe {
         counters = bytes.new();
         stage = .Configuration;
         pending = false;
+        retrying = false;
         next = 0;
         fault = false;
     }
@@ -77,7 +81,7 @@ pub actor Probe {
         }
     }
     receive fn healthy(now: i64) -> bool {
-        !fault && (!pending || now < deadline)
+        !fault && (!(pending || retrying) || now < deadline)
     }
     receive fn snapshot(now: i64) -> bytes {
         if fault || sample_at == 0 || now - sample_at > 45000 {
@@ -140,8 +144,14 @@ pub actor Probe {
         if fault || pending || now < next {
             return bytes.new();
         }
+        if retrying && now >= deadline {
+            fault = true;
+            return bytes.new();
+        }
         pending = true;
-        deadline = now + 3000;
+        if !retrying {
+            deadline = now + 3000;
+        }
         var command = wire.byte(operation(stage));
         if stage == Stage.Configuration {
             command.append(wire.cat(wire.byte(1), wire.byte(0)));
@@ -157,6 +167,12 @@ pub actor Probe {
             return false;
         }
         pending = false;
+        if session.hardware_busy(frame) {
+            retrying = true;
+            next = now + 100;
+            return true;
+        }
+        retrying = false;
         let unavailable = frame.len() == 3 && frame[1] == 241 && (frame[2] == 3 || frame[2] == 5);
         let data = wire.cut(frame, 2, frame.len());
         if stage == Stage.Configuration {

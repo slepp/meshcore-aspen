@@ -65,6 +65,10 @@ fn command_name(command: i64) -> string {
     }
 }
 
+pub fn hardware_busy(frame: bytes) -> bool {
+    frame.len() == 3 && (frame[0] & 15) == 6 && frame[1] == 241 && frame[2] == 7
+}
+
 pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, command: i64, body: bytes) -> bytes {
     let stage = command_name(command);
     let response = response_command(command);
@@ -80,10 +84,22 @@ pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, 
     let deadline = transport.monotonic() + (if command == 35 {
         5000
     } else {
-        2000
+        3000
     });
+    var retry_at: i64 = 0;
     var last_reply = bytes.new();
     while transport.running() && transport.monotonic() < deadline {
+        if retry_at > 0 && transport.monotonic() >= retry_at {
+            retry_at = 0;
+            match duplex.write(fd, wire.kiss(port, 6, wire.cat(wire.byte(command), body))) {
+                .Ok(_) => {}
+                .Err(error) => {
+                    let at = transport.now();
+                    println(f"MODEM_REQUEST_FAILED stage={stage} port={port} expected_opcode={expected} actual=write-failed committed={error.committed} at_ms={at} reason={to_string(error.error)}");
+                    return bytes.new();
+                }
+            }
+        }
         let data = transport.modem_read(fd, 50);
         if data[0] == 2 {
             let at = transport.now();
@@ -97,6 +113,10 @@ pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, 
                     last_reply = wire.cut(packet, 1, packet.len());
                     if packet[1] as i64 == response {
                         matching = .Some(wire.cut(packet, 2, packet.len()));
+                    }
+                    if hardware_busy(packet) {
+                        retry_at = transport.monotonic() + 100;
+                        continue;
                     }
                     if packet[1] == 241 {
                         let at = transport.now();
@@ -234,52 +254,17 @@ fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profil
     var airtime = wire.le(0, 4);
     if need_worker {
         var previous: i64 = 0;
-        for batch in 0..32 {
-            let size = 1 + batch * 8;
-            let count = if size + 8 <= 256 {
-                8
-            } else {
-                256 - size
-            };
-            var queries = bytes.new();
-            for i in 0..count {
-                queries.append(wire.kiss(0, 6, wire.cat(wire.byte(15), wire.byte(size + i))));
+        for size in 1..256 {
+            let value = request(fd, decoder, 0, 15, wire.byte(size));
+            if value.len() != 4 {
+                return reject("GET_AIRTIME", 0, f"size={size},4-byte-airtime", value);
             }
-            if duplex.write(fd, queries).is_err() {
-                return reject("GET_AIRTIME", 0, f"write-batch-first-size={size},count={count}", bytes.new());
+            let ms = wire.uint(value);
+            if ms == 0 || ms > 3600000 || ms < previous {
+                return reject("GET_AIRTIME", 0, f"size={size},1..3600000ms,previous={previous}", value);
             }
-            let deadline = transport.monotonic() + 2000;
-            var received: i64 = 0;
-            while received < count && transport.running() && transport.monotonic() < deadline {
-                let data = transport.modem_read(fd, 50);
-                if data[0] == 2 {
-                    return reject("GET_AIRTIME", 0, f"connected,first-size={size},count={count},received={received}", bytes.new());
-                }
-                if data[0] == 1 {
-                    for reply in decoder.feed(wire.cut(data, 1, data.len())).expect("airtime decoder") {
-                        if reply.len() >= 2 && reply[0] == 6 && reply[1] == 143 {
-                            if reply.len() != 6 || received >= count {
-                                return reject("GET_AIRTIME", 0, f"6-byte-frame,remaining={count - received}", reply);
-                            }
-                            let value = wire.cut(reply, 2, 6);
-                            let ms = wire.uint(value);
-                            if ms == 0 || ms > 3600000 || ms < previous {
-                                return reject("GET_AIRTIME", 0, f"size={size + received},1..3600000ms,previous={previous}", value);
-                            }
-                            previous = ms;
-                            airtime.append(value);
-                            received = received + 1;
-                        } else if reply.len() >= 2 && reply[0] == 6 && reply[1] == 241 {
-                            return reject("GET_AIRTIME", 0, f"size={size + received},response=8f,not-hardware-error", reply);
-                        } else if !decoder.defer_native(reply).expect("airtime RF backlog") {
-                            return reject("GET_AIRTIME", 0, "negotiation RF backlog below 512 frames", reply);
-                        }
-                    }
-                }
-            }
-            if received != count {
-                return reject("GET_AIRTIME", 0, f"first-size={size},count={count},received={received},deadline=2000ms", bytes.new());
-            }
+            previous = ms;
+            airtime.append(value);
         }
     }
     .Some(Negotiated { generations: generations, phy_generations: phy_generations, airtime: airtime, initial_frames: decoder.take_native().expect("negotiation RF backlog"), parser: decoder.parser_state().expect("negotiation parser state") })

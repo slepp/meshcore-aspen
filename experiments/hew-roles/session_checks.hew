@@ -1,5 +1,13 @@
 import session;
 
+import companion_telemetry;
+
+import std.os;
+
+import std.encoding.hex;
+
+import std.string;
+
 import hostlib.supervised_io as duplex;
 
 import hostlib.deadline;
@@ -24,6 +32,38 @@ fn policy_ports(generations: Vec<i64>) -> Vec<session.PortState> {
 }
 
 fn main() {
+    let args = os.args();
+    if args.len() == 2 {
+        let branch = spawn duplex.Branch;
+        let endpoint = branch.endpoint;
+        assert(duplex.open(endpoint, "127.0.0.1", string.to_int(args[1]).expect("test port"), 3000).is_ok());
+        let decoder = spawn wire.Decoder { buffer: bytes.new() };
+        let value = session.request(endpoint, decoder, 0, 15, wire.byte(64));
+        println(f"MODEM_BUSY_RESULT value={hex.encode(value)}");
+        duplex.close(endpoint);
+        return;
+    }
+    let profile = hex.decode("c806643690d003000705020000803f010000").expect("profile");
+    let probe = spawn companion_telemetry.Probe { profile: profile };
+    let first = probe.query(100).expect("initial telemetry query");
+    let busy = hex.decode("06f107").expect("busy");
+    assert(probe.response(busy, 150).expect("busy reply"));
+    assert(probe.query(249).expect("retry pacing").is_empty());
+    assert(wire.equal(probe.query(250).expect("same query retry"), first));
+    let configuration = wire.cat(hex.decode("06a2010001000000").expect("configuration"), profile);
+    assert(probe.response(configuration, 300).expect("valid retry response"));
+    assert(probe.query(300).expect("battery stage")[0] == 19);
+    assert(probe.response(hex.decode("06f103").expect("unsupported"), 310).expect("unsupported measurement"));
+    assert(probe.query(310).expect("noise stage")[0] == 16);
+    let exhausted = spawn companion_telemetry.Probe { profile: profile };
+    exhausted.query(100).expect("bounded query");
+    exhausted.response(busy, 3000).expect("late busy");
+    assert(!exhausted.healthy(3100).expect("original deadline retained"));
+    assert(exhausted.query(3100).expect("no reset deadline").is_empty());
+    let malformed = spawn companion_telemetry.Probe { profile: profile };
+    malformed.query(100).expect("malformed query");
+    malformed.response(hex.decode("06f10700").expect("malformed busy"), 150).expect("malformed reply");
+    assert(!malformed.healthy(150).expect("malformed busy remains a fault"));
     let due = deadline.after(deadline.Monotonic { at: 10 }, 5);
     assert(!deadline.reached(due, deadline.Monotonic { at: 14 }));
     assert(deadline.reached(due, deadline.Monotonic { at: 15 }));

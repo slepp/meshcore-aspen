@@ -188,6 +188,7 @@ class Emulator:
                 except socket.timeout: continue
                 except OSError: return
                 self.connection=connection; self.epoch+=1; epoch=self.epoch
+                connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 connection.settimeout(.1); buffer=bytearray(); escaped=False
                 connected = True
                 while not self.stop and connected:

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -213,6 +214,10 @@ int32_t mc_dial_start(const Bytes *host, int32_t port) {
     if (inet_pton(AF_INET, address, &addr.sin_addr) != 1) return -EINVAL;
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0) return -errno;
+    const int no_delay = 1;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof no_delay)) {
+        int error = errno; close(fd); return -error;
+    }
     if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0 && errno != EINPROGRESS) {
         int error = errno; close(fd); return -error;
     }

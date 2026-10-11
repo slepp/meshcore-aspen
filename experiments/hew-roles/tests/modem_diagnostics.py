@@ -1,4 +1,4 @@
-"""Differentiate modem failures without changing deadlines or retry behavior."""
+"""Differentiate modem failures and retry explicit hardware-busy replies."""
 import os
 import re
 import socket
@@ -8,7 +8,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from service_demo import Emulator, RunningService, ROOT, PROFILE
+from service_demo import Emulator, RunningService, ROOT, PROFILE, kiss
+from firmware_negotiation import Decoder
+import threading
 
 
 class ControlledModem(Emulator):
@@ -22,6 +24,9 @@ class ControlledModem(Emulator):
             self.profile_fault = ""
             if fault == "drop":
                 self.send(0, 6, b"\xf9\x12\xb7", connection)
+                return
+            if fault == "busy":
+                self.send(0, 6, b"\xf1\x07", connection)
                 return
             if fault == "short":
                 self.send(0, 6, b"\xa2\x01\x00", connection)
@@ -85,6 +90,54 @@ class ModemDiagnostics(unittest.TestCase):
     def test_profile_deadline_with_unrelated_metadata(self): self.exercise("drop")
     def test_profile_mismatch(self): self.exercise("mismatch")
     def test_truncated_profile(self): self.exercise("short")
+
+    def test_periodic_profile_busy_keeps_connection(self):
+        with patch("service_demo.Emulator", ControlledModem):
+            with RunningService() as service:
+                service.emulator.profile_fault = "busy"
+                deadline = time.monotonic()+5
+                while service.emulator.profile_fault:
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(.02)
+                time.sleep(2.5)
+                self.assertEqual(service.emulator.epoch, 1)
+                self.assertFalse(any("MODEM_CONTROL_FAILED" in line for line in service.logs), service.logs)
+
+    def test_busy_request_retries_same_read_with_original_deadline(self):
+        binary = os.environ.get("MESHCORE_HEW_SESSION_CHECKS", str(ROOT / "build/session-checks"))
+        for mode in ("recover", "exhaust", "malformed"):
+            with self.subTest(mode=mode), socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0)); listener.listen(1)
+                received = []
+                def serve():
+                    with listener.accept()[0] as connection:
+                        decoder = Decoder()
+                        while data := connection.recv(4096):
+                            for frame in decoder.feed(data):
+                                received.append((time.monotonic(), frame))
+                                answer = (b"\x8f" + struct.pack("<I", 74) if mode == "recover" and len(received) > 2
+                                          else b"\xf1\x07\x00" if mode == "malformed" else b"\xf1\x07")
+                                connection.sendall(kiss(answer, cmd=6))
+                worker = threading.Thread(target=serve, daemon=True); worker.start()
+                began = time.monotonic()
+                result = subprocess.run([binary, str(listener.getsockname()[1])], capture_output=True,
+                                        text=True, timeout=6, env={**os.environ, "HEW_WORKERS": "4"})
+                elapsed = time.monotonic() - began
+                worker.join(timeout=1)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(all(frame == b"\x06\x0f\x40" for _, frame in received), received)
+                if mode == "recover":
+                    self.assertEqual(len(received), 3)
+                    self.assertIn("MODEM_BUSY_RESULT value=4a000000", result.stdout)
+                    self.assertTrue(all(b[0]-a[0] >= .08 for a, b in zip(received, received[1:])))
+                elif mode == "exhaust":
+                    self.assertGreaterEqual(elapsed, 2.9)
+                    self.assertLess(elapsed, 4.5)
+                    self.assertLessEqual(len(received), 31)
+                    self.assertIn("reason=timeout", result.stdout)
+                else:
+                    self.assertEqual(len(received), 1)
+                    self.assertIn("reason=hardware-error", result.stdout)
 
     def test_session_write_and_outcome_failure_are_bounded(self):
         binary = os.environ.get("MESHCORE_HEW_SESSION_CHECKS", str(ROOT / "build/session-checks"))
