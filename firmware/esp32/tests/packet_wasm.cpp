@@ -361,13 +361,24 @@ static void repeater_snr() {
   assert(signalCommand("!rssi D1", matching, 90) == combined);
   assert(signalCommand("!snr d1", matching, 60) == "2 hops match D1; use a longer prefix");
   assert(signalCommand("!snr d126", matching, 60).find("SNR avg/P95") == 0);
+  matching.row_count = 7;
+  for (unsigned i = 0; i < matching.row_count; ++i) {
+    snprintf(matching.rows[i].label, MP_REPORT_NAME, "D%X", i);
+    matching.rows[i].values[2] = matching.rows[i].values[3] = matching.rows[i].values[4] = 0;
+  }
+  const auto seven = signalCommand("!snr d", matching);
+  assert(seven.find("D0 0.00/0.00 0.0") != std::string::npos && seven.find("D6 0.00/0.00 0.0") != std::string::npos);
+  assert(signalCommand("!snr d", matching, seven.size()) == seven);
+  assert(signalCommand("!snr d", matching, seven.size() - 1) == "7 hops match D; use a longer prefix");
+  matching.rows[7] = matching.rows[0]; strcpy(matching.rows[7].label, "D7"); matching.row_count = 8;
+  assert(signalCommand("!snr d", matching) == "8 hops match D; use a longer prefix");
   const char *snapshotSource =
       "command('snapshot','','Snapshot') function snapshot() "
-      "local old=node.packet_report().rows[1].values "
+      "local previous=node.packet_report() local old=previous.rows[1].values "
       "local new=node.packet_report() "
       "if new.rows[0]~=nil or new.rows[17]~=nil or new.rows[1.5]~=nil then return 'bad bounds' end "
       "if new.unknown~=nil or new.rows[1].unknown~=nil or old.unknown~=nil then return 'bad keys' end "
-      "return tostring(old.samples|0)..' '..tostring(new.rows[1].values.samples|0) end";
+      "return previous:format('{samples:0}','',1)..' '..new:format('{samples:0}','',1) end";
   BotSession snapshots;
   assert(snapshots.load(snapshotSource, strlen(snapshotSource), 1, stats, error, sizeof(error)));
   BotEvent snapshotEvent{};
@@ -388,7 +399,20 @@ static void repeater_snr() {
   assert(snapshots.poll(snapshotResult));
   if (!snapshotResult.ok) fprintf(stderr, "report snapshot: %s\n", snapshotResult.error);
   assert(snapshotResult.ok && !strcmp(snapshotResult.action.text, "11 99"));
-  for (const char *target : {"r.name", "r.rows[1]", "r.rows[1].label", "r.rows[1].values.samples"}) {
+  for (const char *expression : {"r:format('{missing:2}')", "r:format('{mean_db:7}')",
+       "r:format('{mean_db}')", "r:format('{label')", "r:format('label}')",
+       "r:format('{label}\\0')", "r:format('{label}','\\n')", "r:format('{label}','',17)",
+       "r:format('{label}','',1,163)", "r:format('{label}','',1,-1)"}) {
+    const auto source = std::string("command('bad','','Bad format') function bad() local r=node.packet_report() return ") + expression + " end";
+    BotSession invalid;
+    assert(invalid.load(source.data(), source.size(), 1, stats, error, sizeof(error)));
+    BotEvent e{}; assert(parseBotCommand("!bad", 4, e, error, sizeof(error)));
+    assert(invalid.start(1, e, error, sizeof(error)) && invalid.nextIo(snapshotRequest));
+    snapshotCompletion = {}; snapshotCompletion.token = snapshotRequest.token;
+    snapshotCompletion.ok = snapshotCompletion.found = true; snapshotCompletion.packetReport = report;
+    assert(invalid.complete(snapshotCompletion) && invalid.poll(snapshotResult) && !snapshotResult.ok);
+  }
+  for (const char *target : {"r.name", "r.format", "r.rows[1]", "r.rows[1].label", "r.rows[1].values.samples"}) {
     const std::string source = std::string("command('write','','Write') function write() local r=node.packet_report() ") + target + "='changed' return 'bad' end";
     BotSession immutable;
     assert(immutable.load(source.data(), source.size(), 1, stats, error, sizeof(error)));

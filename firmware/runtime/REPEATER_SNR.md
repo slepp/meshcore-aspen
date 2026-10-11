@@ -6,6 +6,9 @@ average RSSI, sample count, total heard and last-heard age. `!snr` lists the
 three most frequently heard reported hops; `!rssi` is an alias that shows the
 same SNR and RSSI measurements together.
 
+The example uses the shared report text formatter and bounded decimal helper;
+use firmware that supports `report:format(...)` and `tostring(number, places)`.
+
 Use any case-insensitive hex prefix of one to six digits: `!snr d1` can match
 `D12600`. A single match shows its measurements and last-heard age. Multiple
 matches are all included when their compact measurements fit the reply;

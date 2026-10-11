@@ -169,6 +169,7 @@ struct PacketReportView {
   enum Kind { Rows, Row, Values } kind;
 };
 int packetReportViewIndex(lua_State *s);
+int packetReportFormat(lua_State *s);
 void packetReportMetatable(lua_State *s, const char *name, lua_CFunction index) {
   if (luaL_newmetatable(s, name)) {
     lua_pushcfunction(s, index); lua_setfield(s, -2, "__index");
@@ -199,6 +200,7 @@ int packetReportIndex(lua_State *s) {
   if (key && !strcmp(key, "name")) lua_pushstring(s, report->name);
   else if (key && !strcmp(key, "row_count")) lua_pushinteger(s, report->row_count);
   else if (key && !strcmp(key, "rows")) packetReportView(s, report, 0, PacketReportView::Rows, true);
+  else if (key && !strcmp(key, "format")) lua_pushcfunction(s, packetReportFormat);
   else lua_pushnil(s);
   return 1;
 }
@@ -241,23 +243,27 @@ bool rfText(const char *value, size_t limit) {
     if (*p < 32 || *p > 126) return false;
   return true;
 }
+bool decimalText(double number, int places, char *value, size_t capacity) {
+  if (places < 0 || places > 6 || !std::isfinite(number) || std::abs(number) > 1e9)
+    return false;
+  uint64_t scale = 1;
+  for (int i = 0; i < places; ++i) scale *= 10;
+  const uint64_t rounded = uint64_t(std::abs(number) * scale + 0.5);
+  const char *sign = number < 0 && rounded ? "-" : "";
+  if (places)
+    snprintf(value, capacity, "%s%llu.%0*llu", sign,
+             static_cast<unsigned long long>(rounded / scale), int(places),
+             static_cast<unsigned long long>(rounded % scale));
+  else snprintf(value, capacity, "%s%llu", sign, static_cast<unsigned long long>(rounded));
+  return true;
+}
 int stringInteger(lua_State *s) {
   char value[32];
   if (!lua_isnoneornil(s, 2)) {
     const lua_Integer places = luaL_checkinteger(s, 2);
     if (places < 0 || places > 6 || lua_type(s, 1) != LUA_TNUMBER ||
-        !std::isfinite(lua_tonumber(s, 1)) || std::abs(lua_tonumber(s, 1)) > 1e9)
+        !decimalText(lua_tonumber(s, 1), int(places), value, sizeof(value)))
       return luaL_error(s, "Decimal text requires a finite number within 1e9 and 0..6 places");
-    uint64_t scale = 1;
-    for (lua_Integer i = 0; i < places; ++i) scale *= 10;
-    const double number = lua_tonumber(s, 1);
-    const uint64_t rounded = uint64_t(std::abs(number) * scale + 0.5);
-    const char *sign = number < 0 && rounded ? "-" : "";
-    if (places)
-      snprintf(value, sizeof(value), "%s%llu.%0*llu", sign,
-               static_cast<unsigned long long>(rounded / scale), int(places),
-               static_cast<unsigned long long>(rounded % scale));
-    else snprintf(value, sizeof(value), "%s%llu", sign, static_cast<unsigned long long>(rounded));
   } else if (lua_isinteger(s, 1))
     snprintf(value, sizeof(value), "%lld", static_cast<long long>(lua_tointeger(s, 1)));
   else if (lua_type(s, 1) == LUA_TNUMBER && std::isfinite(lua_tonumber(s, 1)) &&
@@ -2217,6 +2223,85 @@ int pluginInfo(lua_State *s) {
   if (strlen(output) > call.event->replyLimit) return luaL_error(s, "Plugin info exceeds RF capacity");
   lua_pushstring(s, output); return 1;
 }
+#if !ONCHIP_BOT_COMPACT_PROFILE
+int packetReportFormat(lua_State *s) {
+  const auto &report = *static_cast<const mp_report *>(luaL_checkudata(s, 1, "onchip.bot.packet_report"));
+  auto &call = context(s);
+  if (call.initializing || !call.event || lua_gettop(s) > 5)
+    return luaL_error(s, "Report format requires an invocation and template, separator, rows, bytes");
+  size_t size = 0, separatorSize = 0;
+  const char *pattern = luaL_checklstring(s, 2, &size);
+  const char *separator = lua_isnoneornil(s, 3) ? "; " : luaL_checklstring(s, 3, &separatorSize);
+  if (lua_isnoneornil(s, 3)) separatorSize = 2;
+  const auto printable = [](const char *text, size_t size) {
+    for (size_t i = 0; i < size; ++i) if (text[i] < 32 || text[i] > 126) return false;
+    return true;
+  };
+  if (!size || size > onchip::BotReplyLimit || separatorSize > 8 ||
+      !printable(pattern, size) || !printable(separator, separatorSize))
+    return luaL_error(s, "Report template requires 1..162 printable bytes; separator at most 8");
+  const lua_Integer rows = lua_isnoneornil(s, 4) ? report.row_count : luaL_checkinteger(s, 4);
+  const lua_Integer limit = lua_isnoneornil(s, 5) ? call.event->replyLimit : luaL_checkinteger(s, 5);
+  if (rows < 0 || rows > MP_REPORT_ROWS || limit < 0 || limit > onchip::BotReplyLimit || limit > call.event->replyLimit)
+    return luaL_error(s, "Report format rows require 0..16; bytes must fit the current reply");
+  struct Part { uint16_t offset, size; int8_t field; uint8_t places; } parts[onchip::BotReplyLimit / 2 + 1];
+  unsigned count = 0;
+  for (size_t at = 0; at < size;) {
+    const size_t start = at;
+    if (pattern[at] == '}') return luaL_error(s, "Report template has unmatched brace");
+    if (pattern[at] != '{') {
+      while (at < size && pattern[at] != '{' && pattern[at] != '}') ++at;
+      parts[count++] = {uint16_t(start), uint16_t(at - start), -2, 0};
+      continue;
+    }
+    while (++at < size && pattern[at] != '}') {}
+    if (at == size) return luaL_error(s, "Report template has unmatched brace");
+    const size_t length = at - start - 1;
+    int field = -1, places = 0;
+    if (length != 5 || memcmp(pattern + start + 1, "label", 5)) {
+      if (length < 3 || pattern[at - 2] != ':' || pattern[at - 1] < '0' || pattern[at - 1] > '6')
+        return luaL_error(s, "Report token requires {label} or {field:0..6}");
+      field = -2; places = pattern[at - 1] - '0';
+      for (unsigned f = 0; f < report.field_count; ++f)
+        if (strlen(report.fields[f]) == length - 2 && !memcmp(report.fields[f], pattern + start + 1, length - 2))
+          field = int(f);
+      if (field < 0) return luaL_error(s, "Report template names an unknown numeric field");
+    }
+    parts[count++] = {0, 0, int8_t(field), uint8_t(places)};
+    ++at;
+  }
+  const unsigned selected = unsigned(std::min<lua_Integer>(rows, report.row_count));
+  for (unsigned row = 0; row < selected; ++row)
+    for (unsigned p = 0; p < count; ++p)
+      if (parts[p].field >= 0) {
+        const double value = report.rows[row].values[parts[p].field];
+        if (!std::isfinite(value) || std::abs(value) > 1e9)
+          return luaL_error(s, "Report decimal requires a finite number within 1e9");
+      }
+  char output[onchip::BotReplyLimit + 1];
+  size_t used = 0;
+  const auto append = [&](const char *text, size_t length) {
+    if (length > size_t(limit) - used) return false;
+    memcpy(output + used, text, length); used += length; return true;
+  };
+  for (unsigned row = 0; row < selected; ++row) {
+    if (row && !append(separator, separatorSize)) { lua_pushnil(s); return 1; }
+    for (unsigned p = 0; p < count; ++p) {
+      const auto &part = parts[p];
+      char number[32];
+      const char *text = part.field == -2 ? pattern + part.offset : report.rows[row].label;
+      size_t length = part.field == -2 ? part.size : strlen(text);
+      if (part.field >= 0) {
+        decimalText(report.rows[row].values[part.field], part.places, number, sizeof(number));
+        text = number; length = strlen(number);
+      }
+      if (!append(text, length)) { lua_pushnil(s); return 1; }
+    }
+  }
+  lua_pushlstring(s, output, used);
+  return 1;
+}
+#endif
 int nodePacketReport(lua_State *s) {
 #if ONCHIP_BOT_COMPACT_PROFILE
   return luaL_error(s, "Packet reports are unavailable in this compact profile");

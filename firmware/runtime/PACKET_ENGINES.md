@@ -516,6 +516,24 @@ ESP32 profile. The dashboard exports the same data as `packet_reports` with
 `slot`, `name`, `fields` and `rows` (`label` and numeric `values` arrays).
 Telemetry exports one rotating row per accepted upload as `meshcore_packet`.
 
+Use `report:format(template[, separator[, max_rows[, bytes]]])` to assemble a
+bounded text reply without allocating a Lua object for each field. For example:
+
+```lua
+local text=report:format("{label} {mean_db:2}/{p95_db:2} {rssi_mean_dbm:1}","; ",16,130)
+```
+
+Templates support `{label}` and `{field:places}`, where `field` names a numeric
+report field and `places` is 0..6 decimal places, rounded half away from zero.
+Numbers must have magnitude at most 1e9. Other printable text is copied literally;
+braces are reserved for tokens. The template permits 1..162 printable bytes and
+the separator at most eight (default `; `). Rows default to the snapshot's count
+and permit 0..16. Bytes default to the current reply limit and can only reduce it.
+The method returns `nil` if all selected rows do not fit, or an empty string for
+zero rows. Invalid templates, fields or bounds raise an error. It requires an
+active command/event; a retained snapshot still uses the current invocation's
+reply limit. The snapshot and published report remain unchanged.
+
 See [Nearby repeater SNR](REPEATER_SNR.md) for a complete Wasm sampler and Lua
 command using this shared report.
 
