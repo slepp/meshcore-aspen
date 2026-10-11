@@ -9,6 +9,7 @@
 #include "NodeBackup.h"
 #endif
 #include "BotVm.h"
+#include "BotComputeBudget.h"
 #include "BotUtilities.h"
 #include <array>
 #include "BotStore.h"
@@ -20,12 +21,16 @@
 #include <algorithm>
 #include <memory>
 #include <string.h>
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_timer.h>
+#endif
 #if !defined(ARDUINO_ARCH_ESP32) && !defined(NRF52_PLATFORM)
 #include <chrono>
 #endif
 
 namespace onchip {
 struct BotWorker::Control {
+  BotComputeBudget compute;
   BotSignal<State> state{Idle};
   BotSignal<bool> stopping{false}, stopped{true}, ioStopped{true}, netStopped{true},
                     sharedState{false}, homeAccess{false};
@@ -186,6 +191,16 @@ struct BotWorker::Storage {
 const size_t BotWorker::StorageBytes = sizeof(Storage) + sizeof(Control);
 namespace {
 std::atomic<uint32_t> publicationSequence{0};
+uint32_t computeClockUs() {
+#ifdef ARDUINO_ARCH_ESP32
+  return uint32_t(esp_timer_get_time());
+#elif defined(NRF52_PLATFORM)
+  return uint32_t(uint64_t(xTaskGetTickCount()) * 1000000u / configTICK_RATE_HZ);
+#else
+  return uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
+}
 void pauseWorker() {
 #if defined(ARDUINO_ARCH_ESP32) || defined(NRF52_PLATFORM)
   vTaskDelay(1);
@@ -238,7 +253,11 @@ bool BotWorker::begin(const uint8_t botKey[32], BotHttpsTransport *transport,
   if (!networkOnly) {
     control_->stopped = false;
 #ifdef ARDUINO_ARCH_ESP32
+#if !CONFIG_FREERTOS_UNICORE && ARDUINO_RUNNING_CORE == 1
+    if (xTaskCreatePinnedToCore(entry, "mesh-command", 16384, this, 1, &task_, 0) != pdPASS) {
+#else
     if (xTaskCreate(entry, "mesh-command", 16384, this, 1, &task_) != pdPASS) {
+#endif
 #elif defined(NRF52_PLATFORM)
     if (xTaskCreate(entry, "mesh-command", 4096, this, 1, &task_) != pdPASS) {
 #endif
@@ -1458,6 +1477,19 @@ void BotWorker::cancelJobs(uint32_t except) {
 }
 void BotWorker::pumpJobs() {
   auto &s = *storage_;
+  const auto ready = [&] { return control_->compute.ready(computeClockUs()); };
+  const auto execute = [&](auto operation) {
+    const uint32_t started = computeClockUs();
+    const bool result = operation();
+    control_->compute.charge(started, computeClockUs());
+    return result;
+  };
+  const auto harvest = [&](BotSession *vm, BotSession::Result &result) {
+    const uint32_t started = computeClockUs();
+    if (!vm->poll(result)) return false;
+    control_->compute.charge(started, computeClockUs());
+    return true;
+  };
   if (control_->cancelRequested.exchange(false)) {
     const auto except = control_->cancelExcept.load();
     for (auto *vm : s.sessions()) vm->cancel(except);
@@ -1478,7 +1510,69 @@ void BotWorker::pumpJobs() {
   control_->runtimeSubscriptions[Wasm] = s.wasmActive.subscriptions();
 #endif
   control_->scheduleSeconds = s.active.manifest().scheduleSeconds;
-  for (auto &job : s.jobs) if (job.state->load() == Pending) {
+  for (auto &timer : s.timers) if (timer.used && int32_t(millis() - timer.due) >= 0 && ready()) {
+    BotIoResult result{};
+    result.token = timer.token;
+    result.ok = true;
+    if (auto *vm = s.session(timer.runtime)) execute([&] { return vm->complete(result); });
+    timer = {};
+  }
+  for (auto &io : s.io) if (io.state->load() == Done && ready()) {
+    if (!botEventCurrent(io.request, &control_->eventEpoch)) {
+      io.result.ok = false; strcpy(io.result.error, "Event epoch revoked; admitted effects may have committed");
+    }
+    if (io.request.sharedScope() &&
+        (!control_->sharedState || io.request.grant != control_->sharedGrant.load())) {
+      io.result.ok = false;
+      io.result.value[0] = 0; io.result.keys = {}; io.result.found = false;
+      strcpy(io.result.error, "Shared storage grant revoked before resumption; mutation may have committed");
+    }
+    if (io.request.kind == BotIoRequest::ReminderSet &&
+        (!control_->reminderAccess || io.request.grant != control_->reminderGrant.load())) {
+      io.result.ok = false;
+      strcpy(io.result.error, "Reminder grant revoked before resumption; reminder may have committed");
+    }
+    if (io.request.kind == BotIoRequest::TimerWait && io.result.ok &&
+        !botTimerClaimCurrent(io.result.deadlineUtc, io.result.error, sizeof(io.result.error))) {
+      io.result.ok = false;
+      Serial.printf("On-chip bot timer: %s\n", io.result.error);
+    }
+    if (auto *vm = s.session(io.runtime)) execute([&] { return vm->complete(io.result); });
+    *io.state = Idle;
+  }
+  for (auto &io : s.radio) if (io.state->load() == Done && ready()) {
+    if (auto *vm = s.session(io.runtime)) execute([&] { return vm->complete(io.result); });
+    *io.state = Idle;
+  }
+#if ONCHIP_BOT_HTTPS
+  for (auto &io : s.network) {
+    State pending = Pending;
+    if (int32_t(millis() - io.request.deadline) >= 0 &&
+        io.state->compare_exchange_strong(pending, Expiring)) {
+      io.result = {}; io.result.token = io.request.token;
+      strcpy(io.result.rpcCode, "timeout");
+      strcpy(io.result.error, "HTTPS request expired while waiting for shared socket");
+      *io.state = Done;
+    }
+  }
+  for (auto &io : s.network) if (io.state->load() == Done && ready()) {
+    if (!control_->homeAccess || io.request.grant != control_->homeGrant.load() ||
+        io.request.networkEpoch != botNetworkEpoch()) {
+      const bool uncertain = io.result.networkSubmitted;
+      io.result.ok = false;
+      io.result.json[0] = 0;
+      io.result.value[0] = io.result.country[0] = io.result.source[0] = io.result.observedAt[0] = 0;
+      io.result.temperatureC = 0; io.result.weatherCode = 0; io.result.sourceAgeSeconds = 0;
+      strcpy(io.result.rpcCode, uncertain ? "unknown" : "permission_denied");
+      strcpy(io.result.error, uncertain ?
+          "HTTPS grant/configuration revoked after submission; remote outcome unknown" :
+          "HTTPS grant/configuration revoked before submission");
+    }
+    if (auto *vm = s.session(io.runtime)) execute([&] { return vm->complete(io.result); });
+    *io.state = Idle;
+  }
+#endif
+  for (auto &job : s.jobs) if (job.state->load() == Pending && ready()) {
     *job.state = Running;
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
     if (job.result.runtimes & (1u << Diagnostics)) {
@@ -1499,7 +1593,7 @@ void BotWorker::pumpJobs() {
         if (!(job.result.runtimes & bit)) return;
         if (job.result.incarnations[owner] != control_->incarnations[owner].load() ||
             job.event.eventEpoch != control_->eventEpoch.load() ||
-            !runtime.start(job.result.job, job.event, job.result.error, sizeof(job.result.error))) {
+            !execute([&] { return runtime.start(job.result.job, job.event, job.result.error, sizeof(job.result.error)); })) {
           job.result.ok = false;
           if (!job.result.error[0]) strcpy(job.result.error, "Event generation/grant revoked before admission");
         } else job.runningRuntimes |= bit;
@@ -1521,92 +1615,29 @@ void BotWorker::pumpJobs() {
     auto *vm = s.session(runtime);
     if (!resultCurrent(job.result) || !vm ||
         (job.event.eventEpoch && job.event.eventEpoch != control_->eventEpoch.load()) ||
-        !vm->start(job.result.job, job.event, job.result.error, sizeof(job.result.error))) {
+        !execute([&] { return vm->start(job.result.job, job.event, job.result.error, sizeof(job.result.error)); })) {
       if (!job.result.error[0]) strcpy(job.result.error, "Command runtime incarnation changed before admission");
       *job.state = Done;
     }
   }
-  for (auto &timer : s.timers) if (timer.used && int32_t(millis() - timer.due) >= 0) {
-    BotIoResult result{};
-    result.token = timer.token;
-    result.ok = uint32_t(millis() - timer.due) < 1000;
-    if (!result.ok) strcpy(result.error, "Timer completion too late");
-    if (auto *vm = s.session(timer.runtime)) vm->complete(result);
-    timer = {};
-  }
-  for (auto &io : s.io) if (io.state->load() == Done) {
-    if (!botEventCurrent(io.request, &control_->eventEpoch)) {
-      io.result.ok = false; strcpy(io.result.error, "Event epoch revoked; admitted effects may have committed");
-    }
-    if (io.request.sharedScope() &&
-        (!control_->sharedState || io.request.grant != control_->sharedGrant.load())) {
-      io.result.ok = false;
-      io.result.value[0] = 0; io.result.keys = {}; io.result.found = false;
-      strcpy(io.result.error, "Shared storage grant revoked before resumption; mutation may have committed");
-    }
-    if (io.request.kind == BotIoRequest::ReminderSet &&
-        (!control_->reminderAccess || io.request.grant != control_->reminderGrant.load())) {
-      io.result.ok = false;
-      strcpy(io.result.error, "Reminder grant revoked before resumption; reminder may have committed");
-    }
-    if (io.request.kind == BotIoRequest::TimerWait && io.result.ok &&
-        !botTimerClaimCurrent(io.result.deadlineUtc, io.result.error, sizeof(io.result.error))) {
-      io.result.ok = false;
-      Serial.printf("On-chip bot timer: %s\n", io.result.error);
-    }
-    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
-    *io.state = Idle;
-  }
-  for (auto &io : s.radio) if (io.state->load() == Done) {
-    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
-    *io.state = Idle;
-  }
-#if ONCHIP_BOT_HTTPS
-  for (auto &io : s.network) {
-    State pending = Pending;
-    if (int32_t(millis() - io.request.deadline) >= 0 &&
-        io.state->compare_exchange_strong(pending, Expiring)) {
-      io.result = {}; io.result.token = io.request.token;
-      strcpy(io.result.rpcCode, "timeout");
-      strcpy(io.result.error, "HTTPS request expired while waiting for shared socket");
-      *io.state = Done;
-    }
-  }
-  for (auto &io : s.network) if (io.state->load() == Done) {
-    if (!control_->homeAccess || io.request.grant != control_->homeGrant.load() ||
-        io.request.networkEpoch != botNetworkEpoch()) {
-      const bool uncertain = io.result.networkSubmitted;
-      io.result.ok = false;
-      io.result.json[0] = 0;
-      io.result.value[0] = io.result.country[0] = io.result.source[0] = io.result.observedAt[0] = 0;
-      io.result.temperatureC = 0; io.result.weatherCode = 0; io.result.sourceAgeSeconds = 0;
-      strcpy(io.result.rpcCode, uncertain ? "unknown" : "permission_denied");
-      strcpy(io.result.error, uncertain ?
-          "HTTPS grant/configuration revoked after submission; remote outcome unknown" :
-          "HTTPS grant/configuration revoked before submission");
-    }
-    if (auto *vm = s.session(io.runtime)) vm->complete(io.result);
-    *io.state = Idle;
-  }
-#endif
   BotIoRequest request;
   auto providers = s.sessions();
 #if ONCHIP_BOT_WASM
   if (s.eventWasmFirst) std::swap(providers[0], providers[1]);
 #endif
   for (unsigned round = 0; round < BotJobLimit; ++round)
-  for (BotSession *vm : providers) if (vm->nextIo(request)) {
+  for (BotSession *vm : providers) if (ready() && vm->nextIo(request)) {
     const Runtime runtime = s.runtimeOf(vm);
     bool admitted = false;
     if (runtime == RuntimeCount || request.token.generation != control_->incarnations[runtime].load()) {
       BotIoResult failed{}; failed.token = request.token;
       strcpy(failed.error, "Runtime incarnation revoked before I/O admission");
-      vm->complete(failed); continue;
+      execute([&] { return vm->complete(failed); }); continue;
     }
     if (!botEventCurrent(request, &control_->eventEpoch)) {
       BotIoResult failed{}; failed.token = request.token;
       strcpy(failed.error, "Event epoch revoked before I/O admission");
-      vm->complete(failed); continue;
+      execute([&] { return vm->complete(failed); }); continue;
     }
     if (request.kind == BotIoRequest::Sleep) {
       for (auto &timer : s.timers) if (!timer.used) {
@@ -1669,11 +1700,11 @@ void BotWorker::pumpJobs() {
           request.kind == BotIoRequest::HttpPost)
         strcpy(failed.rpcCode, request.networkEpoch &&
                request.networkEpoch != botNetworkEpoch() ? "permission_denied" : "unavailable");
-      vm->complete(failed);
+      execute([&] { return vm->complete(failed); });
     }
   }
   BotSession::Result result;
-  for (BotSession *vm : s.sessions()) while (vm->poll(result)) {
+  for (BotSession *vm : s.sessions()) while (harvest(vm, result)) {
     for (auto &job : s.jobs)
       if (job.state->load() == Running && job.result.job == result.job) {
         const uint8_t bit = vm == &s.active ? 1 :
@@ -1827,6 +1858,7 @@ void BotWorker::run() {
         if (io.state->load() == Pending) botEarlier(wait, now, io.request.deadline);
 #endif
       for (auto *vm : storage_->sessions()) if (vm->hasPendingIo()) wait = 0;
+      if (const auto delay = control_->compute.waitUs(computeClockUs())) wait = (delay + 999) / 1000;
       BotWake::shared().wait(revision, wait);
 #else
       pauseWorker();

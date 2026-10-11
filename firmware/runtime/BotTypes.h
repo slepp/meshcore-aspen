@@ -291,8 +291,8 @@ struct BotVmLimits {
   uint32_t instructions = 10000, parserSteps = 16384;
   // Every retained custom source also loads the bundled command environment.
   uint64_t loadWallUs = ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs;
-  uint64_t wallUs = 20000;
-  uint64_t initWallUs = 50000;
+  uint64_t wallUs = ONCHIP_BOT_COMPACT_PROFILE ? 20000 : 100000;
+  uint64_t initWallUs = ONCHIP_BOT_COMPACT_PROFILE ? 50000 : 100000;
 };
 
 // No MeshCore objects, secrets or borrowed packet buffers cross this boundary.

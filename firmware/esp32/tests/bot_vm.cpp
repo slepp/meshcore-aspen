@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "BotVm.h"
+#include "BotComputeBudget.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -460,8 +461,26 @@ static void manifestLifetimes() {
   puts("PASS manifest lifetimes: owned copies/aliases, custom/native suspended jobs, cancellation, swap/destruction, rollback and failed init");
 }
 static void initializationBudgets() {
+  {
+    BotComputeBudget shared;
+    assert(shared.ready(0));
+    shared.charge(0,100000);
+    assert(!shared.ready(100000) && shared.waitUs(100000)==1);
+    assert(shared.ready(100004));
+    shared.charge(100004,200004);
+    assert(!shared.ready(200004) && shared.waitUs(200004)==299997);
+    assert(!shared.ready(500000) && shared.ready(500001));
+    assert(shared.ready(4000000));
+    shared.charge(4000000,4100000);
+    assert(!shared.ready(4100000));
+    BotComputeBudget wrapped;
+    assert(wrapped.ready(UINT32_MAX-49999));
+    wrapped.charge(UINT32_MAX-49999,50000);
+    assert(!wrapped.ready(50000) && wrapped.ready(50001));
+  }
   static_assert(BotVmLimits{}.loadWallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs) &&
-                BotVmLimits{}.initWallUs == 50000 && BotVmLimits{}.wallUs == 20000);
+                BotVmLimits{}.initWallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 50000 : 100000) &&
+                BotVmLimits{}.wallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 20000 : 100000));
   static_assert(BotVmLimits{}.instructions == 10000 && BotVmLimits{}.parserSteps == 16384);
   static_assert(BotVmLimits{}.heapBytes == (ONCHIP_BOT_COMPACT_PROFILE ? 48 : 96) * 1024);
   BotSession vm;
@@ -470,6 +489,7 @@ static void initializationBudgets() {
   char error[128]{};
   const std::string source =
       "local n=0 for i=1,500 do n=n+i end "
+      "function comfortable() local n=0 for i=1,800 do n=n+i end return 'ok' end "
       "function busy() local n=0 for i=1,4000 do n=n+i end return tostring(n) end "
       "function delayed() sleep(1000) return 'awake' end";
   fakeTime = 1000; fakeStep = 20;
@@ -478,6 +498,8 @@ static void initializationBudgets() {
   assert(loaded && stats.initUs > 20000 && stats.initUs < 50000);
   assert(stats.loadUs < limits.loadWallUs && stats.peakBytes <= limits.heapBytes);
   BotSession::Result result;
+  assert(vm.start(7, event("!comfortable"), error, sizeof(error)));
+  assert(vm.poll(result) && result.ok && result.stats.invokeUs>20000 && result.stats.invokeUs<limits.wallUs);
   assert(vm.start(1, event("!busy"), error, sizeof(error)));
   assert(vm.poll(result) && !result.ok && strstr(result.error, "invocation"));
   assert(result.stats.invokeUs >= limits.wallUs && result.stats.instructions < limits.instructions);
@@ -490,12 +512,15 @@ static void initializationBudgets() {
   assert(vm.complete(completion) && vm.poll(result) && result.ok);
   assert(!strcmp(result.action.text, "awake") && result.stats.invokeUs < limits.wallUs);
   assert(result.stats.loadUs == 0 && result.stats.initUs == 0);
-  const std::string excessive = "local n=0 for i=1,1500 do n=n+i end function custom() return n end";
+  const std::string comfortable = "local n=0 for i=1,1500 do n=n+i end function custom() return n end";
+  assert(vm.load(comfortable.data(), comfortable.size(), 2, stats, error, sizeof(error)));
+  assert(stats.initUs > 50000 && stats.initUs < limits.initWallUs);
+  const std::string excessive = "local n=0 for i=1,4000 do n=n+i end function custom() return n end";
   assert(!vm.load(excessive.data(), excessive.size(), 2, stats, error, sizeof(error)));
-  assert(strstr(error, "Init deadline ") && strstr(error, "/50000us peak="));
+  assert(strstr(error, "Init deadline ") && strstr(error, "/100000us peak="));
   assert(stats.initUs >= limits.initWallUs && stats.instructions < limits.instructions);
   fakeStep = 0;
-  puts("PASS separate budgets: 20..50ms Init accepted, >50ms Init and >20ms invocation rejected, suspended I/O excluded");
+  puts("PASS separate budgets: normal initialization headroom, 100ms runaway bounds and suspended I/O excluded");
 }
 static void retained() {
   BotSession vm;
@@ -1943,6 +1968,7 @@ int main(int argc, char **argv) {
     assert(strstr(error, "initialization") && action.kind == BotAction::None);
     limits = {};
     const auto busy = program("local n=0 for i=1,4000 do n=n+i end reply(tostring(n))");
+    limits.wallUs = 20000;
     assert(!BotVm::invoke(busy.data(), busy.size(), event("!custom"), action,
                           phases, error, sizeof(error), limits));
     assert(strstr(error, "invocation") && phases.instructions < limits.instructions &&
@@ -1960,8 +1986,8 @@ int main(int argc, char **argv) {
     assert(strstr(error, "Load deadline ") && strstr(error, "/100000us peak="));
     assert(phases.loadUs >= limits.loadWallUs && phases.peakBytes < limits.heapBytes);
     limits = {};
-    assert(limits.loadWallUs == BotBundledLoadWallUs && limits.initWallUs == 50000 &&
-           limits.wallUs == 20000 && limits.heapBytes == 96 * 1024 &&
+    assert(limits.loadWallUs == BotBundledLoadWallUs && limits.initWallUs == 100000 &&
+           limits.wallUs == 100000 && limits.heapBytes == 96 * 1024 &&
            limits.instructions == 10000 && limits.parserSteps == 16384);
     const auto full = large + std::string(BotSourceLimit - large.size(), ' ');
     for (const std::string &source : {std::string(BotDefaultSource), full}) {

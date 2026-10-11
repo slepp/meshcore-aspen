@@ -503,10 +503,10 @@ recovery remain separate. Source is text-only, at most **4096 B including its
 metadata**, with eight custom commands and eight declared modules.
 
 Four job slots include one reserved native diagnostic slot. Each invocation
-has at most eight native I/O operations, a 10,000-instruction bound and 20 ms
+has at most eight native I/O operations, a 10,000-instruction bound and 100 ms
 cumulative active execution budget across resumes. The source generation has a 96 KiB allocator budget
 and a 16,384-step parser bound; installed-source loading is limited to one second
-and initialization to 50 ms. Compact profiles retain a 330 ms installed-source
+and initialization to 100 ms. Compact profiles retain 20 ms invocation, 50 ms initialization and a 330 ms installed-source
 load limit; exactly matching bundled Lua bytes have a one-second recovery
 allowance. Explicit nondefault loader limits remain authoritative.
 Suspended storage/radio/network/timer time is separate
@@ -1274,22 +1274,37 @@ limit and allocator failure. The existing source/fault response reports the
 deadline's elapsed/limit microseconds and peak Lua allocation, or the failed
 heap/allocator category and peak/cap bytes; a deadline-induced allocation
 refusal is not reported as generic Lua "not enough memory".
-Retained compilation/initialization have cumulative **one-second load and 50 ms
-initialization** (330 ms load on compact profiles) limits across bundled and installed code. Each invocation has
-**20 ms cumulative active wall time**, excluding suspended I/O time, and retains
+Retained compilation/initialization have cumulative **one-second load and 100 ms
+initialization** (330 ms load and 50 ms initialization on compact profiles) limits across bundled and installed code. Each invocation has
+**100 ms cumulative active wall time** (20 ms on compact profiles), excluding suspended I/O time, and retains
 its instruction count across yields. Runnable loops cannot evade the limits by
-yielding. The legacy one-shot test interface retains its separate 20 ms cleanup
+yielding. The legacy one-shot test interface retains its separate invocation-sized cleanup
 limit and combined initialization/invocation instruction counter; production
 does not compile/close a state for each request. Retained state teardown frees
 bounded native allocations without script finalizers. Native allocator/NVS
 calls cannot be preempted mid-call; this is not a hard real-time guarantee.
 No phase disables preemption or raises the worker above the radio task.
+On dual-core ESP32 builds whose Arduino radio loop runs on core 1, the priority-1
+command worker runs on core 0. Other builds retain the existing task placement.
+Lua, Wasm and native diagnostics share one worker allowance targeting a quarter
+of elapsed time, with 100 ms burst credit. Actual VM start/resume and result
+cleanup time is charged conservatively, including pre-emption. An entry can
+borrow credit; later entries remain queued until it refills. A dual-runtime
+event can finish both handlers before the next entry waits. Ready continuations
+run before new jobs; cancellation and native I/O remain responsive. Quota waits
+occur outside the VM and do not consume invocation time or discard completions.
+Relative `sleep` resumes after at least its requested delay; worker scheduling
+does not turn a late wake into an error. Durable timer claims retain their own
+expiry rules. Source compilation is a separate, explicitly requested maintenance
+operation with the loader bounds below. Packet hooks retain their separate
+fuel and microsecond limits and execute on the radio dispatch path.
+
 The aggregate load allowance covers the bundled source plus up to 4,096
 editable bytes; it does not relax invocation execution. `bot-vm-test` includes
 a 20-us synthetic-clock regression for the bundle plus a maximum-size editable
 fixture. Its timings model budget consumption, not physical ESP32 execution.
 The source byte count and peak allocations depend on the selected bundle.
-Load has a one-second limit (330 ms on compact profiles), independent of the 20 ms active execution,
+Load has a one-second limit (330 ms on compact profiles), independent of the active execution,
 96 KiB heap and 16,384 parser-step limits.
 
 `BotVmLimits.initWallUs` selects initialization headroom independently of
@@ -1302,8 +1317,8 @@ does not grant longer-running commands or additional I/O authority.
 | --- | --- |
 | Download, upload and source-file copy | Transport/storage deadlines, outside the VM phase counters |
 | Compile/load installed source | One second aggregate; `loadUs`; compact profiles use 330 ms for installed sources |
-| Initialize declarations, modules and source state | 50 ms aggregate; `initUs` |
-| Invoke cached handlers and resume runnable work | 20 ms cumulative per command; `invokeUs`; no recompile |
+| Initialize declarations, modules and source state | 100 ms aggregate (50 ms compact); `initUs` |
+| Invoke cached handlers and resume runnable work | 100 ms cumulative per command (20 ms compact); `invokeUs`; no recompile |
 | Wait for native storage, network, timer or radio I/O | Suspended time is excluded from active execution; native operation deadlines still apply |
 | RF transmission | Shared scheduler airtime/admission and TX completion, not VM execution time or recipient delivery |
 
@@ -2906,7 +2921,7 @@ digest, and rejects incomplete reads, changed content, growth, and late
 results. A separate 100 ms source-read deadline covers opening, reading,
 closing and hashing; individual SDK filesystem calls are not preemptible.
 Compilation then uses the same independent phase budgets as RAM staging:
-one-second aggregate load (330 ms on compact profiles) followed by at most 50 ms initialization; retained
+one-second aggregate load (330 ms on compact profiles) followed by at most 100 ms initialization (50 ms compact); retained
 teardown runs no script finalizers.
 Activation uses the verified RAM snapshot, so subsequent file edits/removal
 cannot change its code. Filesystem access is never exposed to Lua.

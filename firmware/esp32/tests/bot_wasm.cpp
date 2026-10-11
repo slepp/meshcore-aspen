@@ -86,8 +86,8 @@ static void initializationBudgets() {
   assert(initTicks > 0 && initTicks < 30000);
   fakeStep = 30000 / initTicks;
   assert(vm.load(source.data(), source.size(), 2, stats, error, sizeof(error)));
-  assert(stats.initUs > limits.wallUs && stats.initUs < limits.initWallUs);
-  fakeStep = 60000 / initTicks;
+  assert(stats.initUs > 20000 && stats.initUs < limits.initWallUs);
+  fakeStep = 150000 / initTicks;
   assert(!vm.load(source.data(), source.size(), 3, stats, error, sizeof(error)));
   assert(strstr(error, "initialization wall deadline") && stats.initUs >= limits.initWallUs);
   fakeStep = 1;
@@ -107,7 +107,7 @@ static void initializationBudgets() {
   assert(vm.complete(completion) && vm.poll(result) && result.ok);
   assert(result.stats.invokeUs < limits.wallUs && result.stats.loadUs == 0 && result.stats.initUs == 0);
   fakeStep = 0;
-  puts("PASS Wasm separate 50ms Init/20ms invocation budgets, unchanged fuel and uncharged suspended I/O");
+  puts("PASS Wasm 100ms command headroom, bounded runaway execution and uncharged suspended I/O");
 }
 static void homeArguments() {
   BotSession vm; load(vm, bytes("c-rpc-args"));
