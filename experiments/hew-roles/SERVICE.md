@@ -62,6 +62,11 @@ python3 -B build_worker.py --verify --worker "$PWD/build/native-worker"
 
 Run migration from that same installation tree, so the generated private configuration
 selects its worker. Keep the source/build inputs available and unchanged.
+For an update, build a new installation first, then follow the
+[stopped-state upgrade procedure](MIGRATION.md#upgrade-a-frozen-willow-state).
+It keeps the current identities and saved traffic while changing the worker
+binding. Keep the previous installation for rollback using the latest stopped
+state.
 A service manager can invoke the runner directly:
 
 ```ini

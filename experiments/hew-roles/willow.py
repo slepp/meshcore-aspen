@@ -4,10 +4,12 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import socket
 import stat
 import struct
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -202,27 +204,33 @@ def rebind(source, destination):
         destination = destination.parent.resolve(strict=True)/destination.name
         if os.path.lexists(destination) or destination.is_relative_to(source) or source.is_relative_to(destination):
             raise ValueError("rebind destination must be NEW and disjoint from the frozen source")
-        destination.mkdir(mode=0o700)
-        for directory in sorted(p.relative_to(source) for p in source.rglob("*") if p.is_dir()):
-            (destination/directory).mkdir(mode=0o700, parents=True, exist_ok=True)
-        for name, raw in output.items():
-            if name != "config" and (name != "migration.json" or record is None):
-                write_private(destination/name, raw)
-        if hashes(inventory(source, retained=retained)) != hashes(files):
-            raise ValueError("source changed during rebinding; candidate is incomplete and must not run")
-        for directory in sorted((p for p in destination.rglob("*") if p.is_dir()), reverse=True)+[destination]:
-            fd = os.open(directory, os.O_RDONLY|os.O_DIRECTORY)
-            try: os.fsync(fd)
-            finally: os.close(fd)
-        write_private(destination/"config.pending", output["config"])
-        os.replace(destination/"config.pending", destination/"config")
-        if record is not None:
-            write_private(destination/"migration.json", encoded)
-        for directory in (destination, destination.parent):
-            fd = os.open(directory, os.O_RDONLY|os.O_DIRECTORY)
-            try: os.fsync(fd)
-            finally: os.close(fd)
-        check(destination)
+        private(destination.parent, True)
+        staging = Path(tempfile.mkdtemp(prefix="."+destination.name+".rebind-", dir=destination.parent))
+        try:
+            for directory in sorted(p.relative_to(source) for p in source.rglob("*") if p.is_dir()):
+                (staging/directory).mkdir(mode=0o700, parents=True, exist_ok=True)
+            for name, raw in output.items():
+                if name != "config" and (name != "migration.json" or record is None):
+                    write_private(staging/name, raw)
+            if record is not None:
+                write_private(staging/"migration.json", encoded)
+            if hashes(inventory(source, retained=retained)) != hashes(files):
+                raise ValueError("source changed during rebinding; stop its writer and retry from frozen state")
+            write_private(staging/"config", output["config"])
+            check(staging)
+            for directory in sorted((p for p in staging.rglob("*") if p.is_dir()), reverse=True)+[staging]:
+                fd = os.open(directory, os.O_RDONLY|os.O_DIRECTORY)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+            if os.path.lexists(destination):
+                raise ValueError("rebind destination appeared while copying; choose a NEW destination")
+            os.rename(staging, destination)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        fd = os.open(destination.parent, os.O_RDONLY|os.O_DIRECTORY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
         return {"state": str(destination), "worker": worker["worker"],
                 "worker_sha256": worker["worker_sha256"], "mode": "rebound"}
 

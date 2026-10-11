@@ -216,18 +216,25 @@ enabled.
 ## Upgrade a frozen Willow state
 
 Build the new release and worker in a **new final installation directory**;
-do not overwrite an installation used by a running service. Use that version's
-launcher to rebind a new copy of the complete stopped state:
+use the current `hew` compiler and matching libraries on `PATH`:
 
 ```sh
 cd /path/to/new-installation/experiments/hew-roles
+make -j2 release
+```
+
+Keep the running installation unchanged. Stop the service that owns Willow's
+identities and wait for its native worker and all NVS/SPIFFS writers to exit.
+A service manager's stop command must leave the unit stopped while copying;
+do not restart it alongside the candidate. Use the new installation's launcher
+to copy and rebind that complete stopped state:
+
+```sh
 python3 -B willow.py rebind --source /path/to/frozen-willow \
   --state /path/to/new-willow
 python3 -B willow.py check --state /path/to/new-willow
 ```
 
-First stop Willow, disable automatic restart, and wait for its native worker
-and all NVS/SPIFFS writers to exit. Freeze the whole private tree only then.
 Rebinding checks the available service lock and rejects sockets, nonprivate
 files and unfinished `.pending` transactions. Locks/hash checks do not make
 copying a running tree safe. A clean host shutdown removes `owner.sock`; after
@@ -240,14 +247,26 @@ Seeds, active expanded observer identity, snapshots, native program/NVS/SPIFFS,
 owner request ledger and `rollback-go/` stay byte-for-byte. It does not require
 the retired installation to remain executable. The new installation's worker
 and inputs must verify. Imported state retains its updated migration record;
-stdout reports `mode="rebound"` only after the new state passes `check`. Do not promote an interrupted candidate.
+the helper writes and checks a private sibling directory, then renames it to
+the requested destination. The final destination appears complete; copy or
+validation failures leave it absent. Stdout reports `mode="rebound"` after
+the checked copy and its parent directory have been synced to disk.
 
 After validation, point the stopped unit's executable and state path at the
 new installation/candidate, then start that one owner. Keep the old frozen
 state and installation. No extra FFI environment settings are required.
-Base-only Go and the independent observer broker need not restart for a
-Willow-only upgrade. After new activity, rolling back must reconcile that
-latest state; restoring the pre-upgrade state loses durable writes.
+An independent Base or observer broker need not restart for a Willow-only
+upgrade. When also upgrading Hew Base, stop its identity owner and use
+`migrate_base.py stage` on its latest stopped state to create a new private
+directory before switching that service's executable, configuration and state
+paths. Keep companion listener settings, dashboard endpoints and broker
+configuration with the services that use them.
+
+To roll back to an earlier Willow installation after new traffic, stop the
+current owner and run the earlier installation's `willow.py rebind` on the
+**latest** complete stopped state into another new directory. Start only the
+earlier owner with that copy. Apply the same latest-state copy rule to Base;
+restoring pre-upgrade state loses messages, settings and replay stamps.
 
 Before changing an installed service, check recovery using synthetic state:
 

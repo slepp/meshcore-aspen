@@ -220,7 +220,8 @@ def ensure():
         # This shared helper explicitly delegates build-tree verification to
         # its caller. Keep its parser hooks and c_stack_limit=40 unchanged.
         prepare_bot.stage_lua(lua, output/"bot")
-        run(make+["bot-lua", "bot-prepare-phy", output/"bot/bot-native-worker"], log, env)
+        run(make+["bot-lua", "bot-prepare-phy"], log, env)
+        run(make+[output/"bot/bot-native-worker"], log, env)
         compiled = output/"bot/bot-native-worker"
         shutil.copyfile(compiled, WORKER)
         WORKER.chmod(0o755)

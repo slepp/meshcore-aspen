@@ -1,4 +1,5 @@
 """Worker verification uses private synthetic inputs, never edits the real manifest."""
+import fcntl
 import hashlib
 import json
 import os
@@ -222,6 +223,7 @@ class WorkerBinding(unittest.TestCase):
             retained = source/"native/spiffs/retained-note"
             retained.write_bytes(b"retained program data")
             retained.chmod(0o600)
+            (source/"service.lock").touch(mode=0o600)
             before = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob("*") if p.is_file()}
             result = rebind(source, candidate)
             self.assertEqual(result["mode"], "rebound")
@@ -233,6 +235,11 @@ class WorkerBinding(unittest.TestCase):
                     self.assertEqual((candidate/name).read_bytes(), data)
             with self.assertRaisesRegex(ValueError, "NEW and disjoint"):
                 rebind(source, candidate)
+            with (source/"service.lock").open("rb") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+                with self.assertRaisesRegex(ValueError, "locked; stop the writer"):
+                    rebind(source, root/"locked")
+            self.assertFalse((root/"locked").exists())
             import willow
             original_write = willow.write_private
             def interrupted(path, data):
@@ -243,9 +250,25 @@ class WorkerBinding(unittest.TestCase):
             with patch("willow.write_private", side_effect=interrupted):
                 with self.assertRaisesRegex(OSError, "synthetic copy failure"):
                     rebind(source, failed)
-            self.assertFalse((failed/"config").exists())
-            with self.assertRaises(FileNotFoundError):
-                check(failed)
+            self.assertFalse(failed.exists())
+            original_check = willow.check
+            def invalid_candidate(path, **kwargs):
+                if path != source.resolve():
+                    raise ValueError("synthetic candidate validation failure")
+                return original_check(path, **kwargs)
+            with patch("willow.check", side_effect=invalid_candidate):
+                with self.assertRaisesRegex(ValueError, "synthetic candidate validation failure"):
+                    rebind(source, failed)
+            self.assertFalse(failed.exists())
+            with patch("willow.os.rename", side_effect=OSError("synthetic rename failure")):
+                with self.assertRaisesRegex(OSError, "synthetic rename failure"):
+                    rebind(source, failed)
+            self.assertFalse(failed.exists())
+            self.assertFalse(list(root.glob(".*.rebind-*")))
+            for name, data in before.items():
+                self.assertEqual((source/name).read_bytes(), data)
+            rebind(source, failed)
+            self.assertEqual(check(failed)["worker"], str(ROOT/"build/native-worker"))
         finally:
             shutil.rmtree(root)
 
