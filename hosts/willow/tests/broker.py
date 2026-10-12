@@ -578,7 +578,8 @@ class BrokerTest(unittest.TestCase):
                 value.close(graceful=True)
 
     def test_standard_mosquitto_clients(self):
-        self.assertTrue(shutil.which("mosquitto_sub") and shutil.which("mosquitto_pub"))
+        self.assertTrue(shutil.which("mosquitto_sub") and shutil.which("mosquitto_pub"),
+                        "Install mosquitto-clients for the broker's standard-client checks")
         for binary in self.binaries:
             with self.subTest(binary=binary.name), endpoint(binary) as (port, _):
                 for version in ("mqttv31", "mqttv311", "mqttv5"):

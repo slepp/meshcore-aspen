@@ -120,6 +120,9 @@ pinned public C/C++ dependencies using the existing host-worker recipe.
 Build products and generated test identities stay in ignored
 `build/`.
 
+`make check` also needs `mosquitto_pub` and `mosquitto_sub` from
+`mosquitto-clients` for the broker's standard-client checks.
+
 `make demo` runs ten TCP service scenarios and then compares the bot's
 serialized RF inputs and replies with the actual Go/native host. Results are
 written to `build/service-results.json`. See [running the service](docs/SERVICE.md)
