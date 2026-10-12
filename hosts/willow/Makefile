@@ -1,5 +1,6 @@
 HEW ?= hew
 WASM_CC ?= clang
+WASM_OPT ?= wasm-opt
 HEW_BINARIES = $(patsubst %.d,%,$(wildcard build/*.d)) build/roles build/roles-release build/hew-host build/hew-host-release build/hew-base build/hew-base-release build/hew-dashboard build/hew-dashboard-release build/hew-broker build/hew-broker-release
 $(HEW_BINARIES): .EXTRA_PREREQS = build/toolchain.json
 build/toolchain.json: FORCE | build
@@ -373,7 +374,9 @@ build/arithmetic.wasm: ../../firmware/runtime/wasm/examples/arithmetic.c ../../f
 	TMPDIR=$(CURDIR)/build $(WASM_CC) --target=wasm32 -Oz -nostdlib -fno-builtin \
 	  -mno-bulk-memory -mno-reference-types -mno-multivalue \
 	  -Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
-	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@
+	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@.tmp
+	$(WASM_OPT) $@.tmp -Oz -o $@.tmp
+	mv $@.tmp $@
 demo: all build/oracle build/arithmetic.wasm
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/service_demo.py
 	TMPDIR=$(CURDIR)/build BOT_NATIVE_WORKER=$${BOT_NATIVE_WORKER:-$(CURDIR)/build/native-worker} \
@@ -430,4 +433,6 @@ build/repeater-snr.wasm: ../../firmware/runtime/wasm/examples/repeater_snr.c ../
 	TMPDIR=$(CURDIR)/build $(WASM_CC) --target=wasm32 -Oz -nostdlib -fno-builtin -I../../firmware/shared \
 	  -mno-bulk-memory -mno-reference-types -mno-multivalue \
 	  -Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
-	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@
+	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@.tmp
+	$(WASM_OPT) $@.tmp -Oz -o $@.tmp
+	mv $@.tmp $@

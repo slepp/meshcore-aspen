@@ -16,8 +16,11 @@ python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
   source install snr firmware/runtime/plugins/examples/snr.lua
 ```
 
-Set `WASM_CC=/path/to/clang` on the Make command when several LLVM installations
-are on PATH. Install the selected compiler's matching `wasm-ld` as well.
+Install Clang, its matching `wasm-ld` and Binaryen's `wasm-opt` before building
+these examples. On Debian or Ubuntu, use `sudo apt install clang lld binaryen`.
+Set `WASM_CC=/path/to/clang` or `WASM_OPT=/path/to/wasm-opt` on the Make command
+when several installations are on PATH. The explicit optimization step removes
+unused linker tables that the packet ABI does not permit.
 
 The named source operation retains the main Lua source and other named modules.
 It refuses a conflicting command namespace. Existing channel access rules still

@@ -30,7 +30,7 @@ jobs:
       - name: Install host dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld pkg-config zlib1g-dev libzstd-dev
+          sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld binaryen pkg-config zlib1g-dev libzstd-dev
           python3 -m pip install --require-hashes -r requirements-linux.lock
           python3 -m pip install platformio
       # The published rc7 SDK predates Willow's actor syntax. Build current
@@ -60,6 +60,7 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: '2'
           WASM_CC: /usr/bin/clang
         run: |
+          wasm-opt --version
           "$WASM_CC" --version
           "$("$WASM_CC" --target=wasm32 -print-prog-name=wasm-ld)" --version
           make -C hosts/willow -j2 check
