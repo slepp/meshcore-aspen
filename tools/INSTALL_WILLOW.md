@@ -39,7 +39,8 @@ with `systemctl --user show UNIT --property=MainPID,ExecStart` first.
       "kind": "dashboard",
       "current_install": "/srv/willow/install/dashboard-old",
       "config": "/srv/willow/private/dashboard.conf",
-      "next_config": "/srv/willow/private/dashboard-new.conf"
+      "next_config": "/srv/willow/private/dashboard-new.conf",
+      "next_page": "/srv/willow/install/new/internal/app/admin_page.html"
     },
     {
       "unit": "willow-host.service",
@@ -83,6 +84,11 @@ For a host or Base upgrade, add `state` and `next_state`. The host kind uses
 companion journal. A selected host launches `willow.py run --release --state
 NEXT_STATE`. Other kinds use their corresponding release binary and the copied
 `next_config`. `base`, `dashboard` and `broker` need `config` and `next_config`.
+Set the dashboard-only `next_page` when its current `page=` refers to another
+retained installation. The tool replaces that one setting and saves the
+original page path for rollback; missing or duplicate `page=` settings refuse
+the upgrade before stopping services. Without `next_page`, ordinary install-path
+substitution preserves existing behaviour.
 
 List services in **stop order**, with consumers before their owners; the tool
 starts them in reverse order. For the usual full stack, stop dashboard, host,

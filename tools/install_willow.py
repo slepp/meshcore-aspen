@@ -52,6 +52,12 @@ def validate(plan):
         if item["kind"] not in BINARIES:
             raise ValueError("Service kind must be host, base, dashboard or broker")
         absolute(item["current_install"])
+        if "next_page" in item:
+            if item["kind"] != "dashboard":
+                raise ValueError("next_page is only supported for dashboard services")
+            absolute(item["next_page"])
+            if "=" in item["next_page"]:
+                raise ValueError("Dashboard page paths cannot contain =")
         if item.get("selected", True) and item["kind"] in ("host", "base"):
             for key in ("state", "next_state"):
                 absolute(item[key])
@@ -328,6 +334,12 @@ def switch(plan, workspace, items, build_result=None):
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise ValueError(item["unit"] + ": configuration must be an owned private regular file")
             raw = path.read_bytes()
+            if "next_page" in item:
+                pages = re.findall(rb"(?m)^page=([^\n]*)$", raw)
+                if len(pages) != 1:
+                    raise ValueError(item["unit"] + ": dashboard configuration needs exactly one page= setting")
+                item["previous_page"] = os.fsdecode(pages[0])
+                absolute(item["previous_page"])
             if item["kind"] == "base" and json.loads(raw).get("state_dir") != item["state"]:
                 raise ValueError(item["unit"] + ": state differs from configuration state_dir")
     keys = snapshot(plan)
@@ -387,6 +399,9 @@ def switch(plan, workspace, items, build_result=None):
                     substitutions = {**replacements, item["current_install"]: item["target_install"]}
                     for old, new in sorted(substitutions.items(), key=lambda x: -len(x[0])):
                         raw = raw.replace(old.encode(), new.encode())
+                    if "next_page" in item:
+                        raw = re.sub(rb"(?m)^page=[^\n]*$",
+                                     lambda _: b"page=" + os.fsencode(item["next_page"]), raw)
                     destination = Path(item["next_config"])
                     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                     destination.write_bytes(raw)
@@ -446,6 +461,8 @@ def rollback_plan(receipt, workspace):
     items = []
     for item in receipt["items"]:
         new = dict(item, current_install=item["target_install"], target_install=item["current_install"])
+        if "next_page" in item:
+            new["next_page"] = item["previous_page"]
         for key in ("state", "config"):
             if key in item:
                 new[key] = item["next_" + key]

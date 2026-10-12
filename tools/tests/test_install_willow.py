@@ -107,9 +107,13 @@ class Install(unittest.TestCase):
         self.assertIn("EnvironmentFile=/private/references\nEnvironment=HEW_WORKERS=4\nMemoryMax=1G", new)
         self.assertEqual(new.count("ExecStart="), 2)
 
-    def switch(self, fail=False, stop_failure=False, launcher_checks=0, wrong_owner=False):
+    def switch(self, fail=False, stop_failure=False, launcher_checks=0, wrong_owner=False, next_page=False):
         item = self.item()
         Path(item["config"]).write_text("state=/existing/host\npassword_env=PRIVATE_REFERENCE\n")
+        if next_page:
+            item["next_page"] = item["target_install"] + "/internal/app/admin_page.html"
+            with Path(item["config"]).open("a") as config:
+                config.write("page=/retained-third-install/internal/app/admin_page.html\n")
         override = self.root / ".config/systemd/user/dashboard.service.d/70-willow-current.conf"
         override.parent.mkdir(parents=True)
         original = b"[Service]\nExecStart=\nExecStart=/old/dashboard /old/config\nEnvironmentFile=/private/env\n"
@@ -164,7 +168,17 @@ class Install(unittest.TestCase):
             else:
                 installer.switch(plan, workspace, [item])
                 self.assertEqual(len(candidate_checks), launcher_checks+1)
-                self.assertEqual(Path(item["next_config"]).read_bytes(), Path(item["config"]).read_bytes())
+                original_config = Path(item["config"]).read_bytes()
+                expected_config = original_config
+                if next_page:
+                    expected_config = expected_config.replace(
+                        b"page=/retained-third-install/internal/app/admin_page.html",
+                        b"page=" + os.fsencode(item["next_page"]))
+                    receipt = json.loads((workspace / "receipt.json").read_text())
+                    rollback = installer.rollback_plan(receipt, self.root / "rollback")[0]
+                    self.assertEqual(rollback["next_page"], "/retained-third-install/internal/app/admin_page.html")
+                    self.assertEqual((workspace / "dashboard.service.config.before").read_bytes(), original_config)
+                self.assertEqual(Path(item["next_config"]).read_bytes(), expected_config)
                 with self.assertRaisesRegex(ValueError, "Receipt exists"):
                     installer.switch(plan, workspace, [item])
         self.assertTrue(any(args[-2:] == ["start", "dashboard.service"] for args in commands))
@@ -178,6 +192,33 @@ class Install(unittest.TestCase):
 
     def test_mixed_install_dashboard_switch_preserves_unselected_host(self):
         self.switch()
+
+    def test_dashboard_page_from_another_install_is_explicitly_rebound_and_restored(self):
+        self.switch(next_page=True)
+
+    def test_missing_or_duplicate_dashboard_page_refuses_before_stopping(self):
+        item = self.item()
+        item["next_page"] = "/new/page.html"
+        workspace = self.root / "operation"
+        workspace.mkdir()
+        for raw in ("state=/existing/host\n", "page=/first.html\npage=/second.html\n"):
+            with self.subTest(raw=raw):
+                Path(item["config"]).write_text(raw)
+                with patch.object(installer, "owners", return_value={}), \
+                     patch.object(installer, "run") as run, \
+                     self.assertRaisesRegex(ValueError, "exactly one page="):
+                    installer.switch({"services": []}, workspace, [item])
+                run.assert_not_called()
+
+    def test_next_page_requires_a_dashboard_and_absolute_path(self):
+        item = self.item()
+        plan = {"source": str(ROOT), "revision": "a" * 40,
+                "install": item["target_install"], "workspace": str(self.root / "operation"),
+                "services": [item]}
+        for kind, page in (("dashboard", "relative.html"), ("broker", "/absolute.html"),
+                           ("dashboard", "/page=name.html")):
+            with self.subTest(kind=kind, page=page), self.assertRaises(ValueError):
+                installer.validate({**plan, "services": [{**item, "kind": kind, "next_page": page}]})
 
     def test_failed_staging_restores_original_owner_without_switch_replay(self):
         self.switch(fail=True)
