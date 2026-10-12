@@ -423,10 +423,10 @@ def switch(plan, workspace, items, build_result=None):
     save()
     for item in reversed(items):
         run(["systemctl", "--user", "start", item["unit"]])
-    owners(items, candidate=True)
     deadline = time.monotonic() + 45
     while True:
         try:
+            owners(items, candidate=True)
             if snapshot(plan) == keys:
                 break
         except (OSError, ValueError):

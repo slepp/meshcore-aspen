@@ -107,7 +107,7 @@ class Install(unittest.TestCase):
         self.assertIn("EnvironmentFile=/private/references\nEnvironment=HEW_WORKERS=4\nMemoryMax=1G", new)
         self.assertEqual(new.count("ExecStart="), 2)
 
-    def switch(self, fail=False, stop_failure=False):
+    def switch(self, fail=False, stop_failure=False, launcher_checks=0, wrong_owner=False):
         item = self.item()
         Path(item["config"]).write_text("state=/existing/host\npassword_env=PRIVATE_REFERENCE\n")
         override = self.root / ".config/systemd/user/dashboard.service.d/70-willow-current.conf"
@@ -123,7 +123,13 @@ class Install(unittest.TestCase):
             commands.append(args)
             if stop_failure and args[-2:] == ["stop", "dashboard.service"]:
                 raise OSError("uncertain stop")
+        candidate_checks = []
+        clock = [0.0]
         def owners(items, candidate=False):
+            if candidate:
+                candidate_checks.append(clock[0])
+                if wrong_owner or len(candidate_checks) <= launcher_checks:
+                    raise ValueError("dashboard.service: running executable differs from the plan")
             return {x["unit"]: os.getpid() for x in items}
         real_atomic = installer.atomic
         def atomic(path, data):
@@ -134,7 +140,16 @@ class Install(unittest.TestCase):
         with patch.object(Path, "home", return_value=self.root), patch.object(installer, "owners", side_effect=owners), \
              patch.object(installer, "snapshot", return_value={"bot": "key"}), patch.object(installer, "run", side_effect=run), \
              patch.object(installer, "prop", side_effect=lambda u,k: "0" if k == "MainPID" else "inactive"), \
-             patch.object(installer, "atomic", side_effect=atomic):
+             patch.object(installer, "atomic", side_effect=atomic), \
+             patch.object(installer.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(installer.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0]+seconds)):
+            if wrong_owner:
+                with self.assertRaisesRegex(ValueError, "Candidate readiness/identity check failed"):
+                    installer.switch(plan, workspace, [item])
+                self.assertEqual(clock[0], 45)
+                self.assertEqual(json.loads((workspace / "receipt.json").read_text())["stage"], "starting-candidate")
+                self.assertEqual(sum(args[-2:] == ["start", "dashboard.service"] for args in commands), 1)
+                return
             if stop_failure:
                 with self.assertRaisesRegex(OSError, "uncertain stop"):
                     installer.switch(plan, workspace, [item])
@@ -148,11 +163,18 @@ class Install(unittest.TestCase):
                 self.assertEqual(json.loads((workspace / "receipt.json").read_text())["stage"], "staging-failed-original-owners-started")
             else:
                 installer.switch(plan, workspace, [item])
+                self.assertEqual(len(candidate_checks), launcher_checks+1)
                 self.assertEqual(Path(item["next_config"]).read_bytes(), Path(item["config"]).read_bytes())
                 with self.assertRaisesRegex(ValueError, "Receipt exists"):
                     installer.switch(plan, workspace, [item])
         self.assertTrue(any(args[-2:] == ["start", "dashboard.service"] for args in commands))
         self.assertFalse(any("host.service" in args for args in commands))
+
+    def test_candidate_launcher_can_handoff_within_existing_startup_deadline(self):
+        self.switch(launcher_checks=2)
+
+    def test_permanent_wrong_candidate_owner_expires_without_replaying_start(self):
+        self.switch(wrong_owner=True)
 
     def test_mixed_install_dashboard_switch_preserves_unselected_host(self):
         self.switch()
