@@ -47,8 +47,49 @@ exchange; `sessions=0` does not permit a competing client to take over a
 connection. Already admitted work with an uncertain RF result remains unknown
 and must not be replayed. Direct KISS clients retain their existing socket
 behavior. TCP keepalive detects unreachable peers, not a responsive but
-stalled application; the Go host's normal heartbeat handles application
+stalled application; the host's application heartbeat handles application
 health.
+
+### Diagnose an application stall without changing connections
+
+Set `MODEM` to the modem's configured IP address or hostname, then read its
+public dashboard status while the existing host connections continue their
+normal work:
+
+```sh
+curl --fail --silent --show-error --max-time 3 "http://$MODEM/api/status"
+```
+
+Compare successive `publication` and `uptime_ms` values. Both belong to the
+radio loop's published snapshot, normally updated every 500 ms. HTTP can
+serve an older snapshot while the radio loop is delayed; a successful HTTP
+response alone does not establish current radio-loop progress. Also retain
+`scheduler`, `kiss`, `totals` and `publications_skipped` to distinguish queued
+work, disconnected clients, RF results and missed snapshot publications.
+
+If the host reports delayed controls, a short passive capture can show whether
+the existing TCP connections still acknowledge data. Substitute the modem's
+address; this prints packet headers without opening another KISS connection:
+
+```sh
+sudo timeout 60 tcpdump -i any -nn -tt -l "host $MODEM and tcp port 8001"
+```
+
+Keep the header log and timestamped status samples private. Compare outgoing
+commands, incoming TCP acknowledgements and incoming packets with nonzero
+`length`; an acknowledgement confirms TCP receipt, not command execution.
+
+| Observation during the delay | Next useful check |
+| --- | --- |
+| TCP acknowledgements continue; application replies and publication stop | Inspect radio-loop scheduling and synchronous calls; the capture does not identify which call blocked |
+| Publication advances; application replies stop | Inspect KISS command routing, pending responses and output queues |
+| Modem replies continue; one host reports an outage | Inspect that host's socket processing and heartbeat |
+| Status and TCP both stop responding | Check the network and device reachability before attributing the failure to dispatch |
+
+Retain the configured PHY, identities and existing clients during diagnosis.
+Do not replay uncertain transmissions or extend host deadlines to conceal the
+delay. Record the physical board and exact running firmware build before
+planning a firmware update.
 
 The negotiated socket carries KISS ports 0 through 3. Port 0 retains its
 ordinary HELLO reply, owner lease, CAPACITY and legacy controls. Ports 1–3
