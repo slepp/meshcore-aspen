@@ -166,7 +166,7 @@ class Outbound(TLSFixture):
 
     def test_tls_backpressure_reports_prefix_without_actor_failure(self):
         output = self.exercise(tls=True, backpressure=True)
-        self.assertIn("deadline expired; committed_prefix=", output)
+        self.assertRegex(output, r"OUTBOUND_WRITE_FAILED reason=observer transport (?:deadline expired|failed: curl_status=55); committed_prefix=\d+\n")
 
     def test_endpoint_policy_rejects_before_dial(self):
         for url in (
