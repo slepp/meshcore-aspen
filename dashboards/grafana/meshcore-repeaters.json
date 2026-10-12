@@ -1546,7 +1546,7 @@
       "id": 27,
       "type": "stat",
       "title": "Approximate time to selected voltage limit",
-      "description": "Linear voltage projection at the stable 30-minute rate: falling voltage to Empty voltage, rising voltage to Full voltage. Set limits for the selected battery; 0 disables that direction. Voltage is not state of charge or usable energy. Solar, load, chemistry and temperature can change the result. At the limit: zero; stale, sparse, flat or changing trends: no estimate.",
+      "description": "Linear voltage projection at the stable 30-minute rate: falling voltage to Low battery voltage, rising voltage to Full voltage. Defaults are 3.3 V low and 4.2 V full for 1S parallel Li-ion packs. Set limits for the selected battery; 0 disables that direction. The low limit is not empty or zero state of charge. Voltage is not state of charge or usable energy. Solar, load, chemistry and temperature can change the result. At the limit: zero; stale, sparse, flat or changing trends: no estimate.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1561,7 +1561,7 @@
         {
           "refId": "A",
           "expr": "clamp_min(((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) - ${battery_empty_v}) / (-(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]))), 0) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) < 0) and on() (vector(${battery_empty_v}) > 0)",
-          "legendFormat": "{{device}} · {{peer}} · empty voltage",
+          "legendFormat": "{{device}} · {{peer}} · low battery voltage",
           "instant": true
         },
         {
@@ -1716,17 +1716,17 @@
       },
       {
         "name": "battery_empty_v",
-        "label": "Empty voltage (V; 0 off)",
+        "label": "Low battery voltage (V; 0 off)",
         "type": "textbox",
-        "query": "0",
+        "query": "3.3",
         "current": {
-          "text": "0",
-          "value": "0"
+          "text": "3.3",
+          "value": "3.3"
         },
         "options": [
           {
-            "text": "0",
-            "value": "0",
+            "text": "3.3",
+            "value": "3.3",
             "selected": true
           }
         ]
@@ -1735,15 +1735,15 @@
         "name": "battery_full_v",
         "label": "Full voltage (V; 0 off)",
         "type": "textbox",
-        "query": "0",
+        "query": "4.2",
         "current": {
-          "text": "0",
-          "value": "0"
+          "text": "4.2",
+          "value": "4.2"
         },
         "options": [
           {
-            "text": "0",
-            "value": "0",
+            "text": "4.2",
+            "value": "4.2",
             "selected": true
           }
         ]

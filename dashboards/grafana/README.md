@@ -26,16 +26,19 @@ sampler. This feed needs no status polls or extra RF transmissions.
 The repeater dashboard shows a **30-minute mean** and a **V/hour** trend from
 time-weighted voltage: one-minute steps hold an RF reading for at most six
 minutes. These two panels display the last 30 minutes. A trend needs fresh
-status and at least four distinct RF samples spanning 20 minutes. Both 15-minute halves must agree in direction;
+status and at least four distinct RF samples spanning 20 minutes. Both
+15-minute halves must agree in direction;
 movement must exceed sample scatter and 0.005 V/hour. Paused, missing, stale,
 flat or reversing readings leave the estimate blank.
 
-Select one repeater, then set **Empty voltage** and **Full voltage** for its
-battery and operating load. Both default to `0`, which disables that estimate.
-These inputs apply to every selected repeater; select batteries with the same
+Select one repeater, then set **Low battery voltage** and **Full voltage** for
+its battery and operating load. Defaults are **3.3 V low** and **4.2 V full**
+for a 1S Li-ion pack, including parallel 18650 cells. Set either input to `0`
+to disable that estimate. The low limit is not an empty battery or zero state
+of charge. These inputs apply to every selected repeater; select batteries with the same
 limits when comparing several. **Approximate time to selected voltage limit**
-projects the current linear trend to the empty limit while falling or the full
-limit while rising. A reached limit shows zero. This is a voltage projection,
+projects the current linear trend to the low battery limit while falling or
+the full limit while rising. A reached limit shows zero. This is a voltage projection,
 not measured state of charge, remaining energy or a charging completion time.
 Solar input, load, battery chemistry and temperature can change the estimate.
 Repeated uploads do not increase the observation count or smoothing weight.
