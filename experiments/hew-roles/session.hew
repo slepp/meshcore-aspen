@@ -183,7 +183,6 @@ pub fn negotiate_factors(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, p
 
 /// One ordinary KISS source, without requesting an aggregate logical-port session.
 pub fn negotiate_source(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, factor: f64) -> Option<Negotiated> {
-    decoder.buffer_native().expect("ordinary source RF backlog");
     let encoded = match binary.float32(factor) {
         .Some(value) => value,
         .None => {
@@ -198,6 +197,7 @@ pub fn negotiate_source(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, pr
 
 fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
     assert(factors.is_empty() || factors.len() == ports);
+    decoder.buffer_native().expect("negotiation RF backlog");
     var generations: Vec<i64> = Vec.new();
     var phy_generations: Vec<i64> = Vec.new();
     for port in 0..ports {

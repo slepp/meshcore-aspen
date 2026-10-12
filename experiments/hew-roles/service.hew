@@ -1795,6 +1795,12 @@ pub fn run(root: string) {
             session.announce(fd, decoder, 3, negotiated.generations[3], observer_settings.config.identity);
             println(f"OBSERVER_READY epoch={incarnation.epoch + 1} port=3 identity={hex.encode(observer_settings.config.identity)}");
         }
+        var initial_frames = negotiated.initial_frames;
+        for frame in decoder.take_native().expect("presence RF backlog") {
+            initial_frames.push(frame);
+        }
+        var initial_at: i64 = 0;
+        var initial_deferred = false;
         if use_native && !native_configured {
             if !configure_worker(bot_seed, cfg, negotiated.airtime, root + "/native") {
                 duplex.close(fd);
@@ -1956,65 +1962,108 @@ pub fn run(root: string) {
                 }
             }
             var receptions: Vec<session.Reception> = Vec.new();
-            let incoming = transport.modem_read(fd, 0);
+            var modem_frames: Vec<bytes> = Vec.new();
             let received_at = transport.monotonic();
-            if incoming[0] == 2 {
-                connection.healthy = false;
+            if initial_deferred && (native_ready || !native_ok) {
+                var remaining: Vec<bytes> = Vec.new();
+                for index in initial_at..initial_frames.len() {
+                    remaining.push(initial_frames[index]);
+                }
+                for frame in decoder.take_native().expect("native startup RF backlog") {
+                    if remaining.len() >= 1024 {
+                        println("OFFLINE negotiation RF backlog exceeded 1024 frames");
+                        connection.healthy = false;
+                        break;
+                    }
+                    remaining.push(frame);
+                }
+                initial_frames = remaining;
+                initial_at = 0;
+                initial_deferred = false;
             }
-            if incoming[0] == 1 {
-                for frame in decoder.feed(wire.cut(incoming, 1, incoming.len())).expect("modem decoder") {
-                    if frame.is_empty() {
-                        continue;
+            if initial_at < initial_frames.len() && (!use_native || native_ready || !native_ok) {
+                for i in 0..8 {
+                    if initial_at < initial_frames.len() {
+                        modem_frames.push(initial_frames[initial_at]);
+                        initial_at += 1;
                     }
-                    let port = (frame[0] as i64) >> 4;
-                    let command = (frame[0] as i64) & 15;
-                    if port >= (if observer_settings.enabled {
-                        4
-                    } else {
-                        3
-                    }) {
-                        continue;
-                    }
-                    if command == 6 && frame.len() >= 2 {
-                        sensors = radio.accept(sensors, frame, transport.monotonic());
-                        if frame[1] == 163 || frame[1] == 241 {
-                            let _ = link.policy_reply(port, wire.cut(frame, 2, frame.len()), received_at);
-                        }
-                        if frame[1] == 250 {
-                            let result = link.event(port, wire.cut(frame, 2, frame.len())).expect("TX outcome");
-                            for event in link.confirmed().expect("confirmed TX accounting") {
-                                if event.port == 0 {
-                                    let _ = relay_worker.confirmed(event.raw);
-                                } else if event.port == 1 {
-                                    let _ = room_worker.confirmed(event.raw);
-                                } else if !use_native {
-                                    let _ = bot_worker.confirmed(event.raw);
-                                }
+                }
+                if initial_at == initial_frames.len() {
+                    initial_frames = Vec.new();
+                    initial_at = 0;
+                }
+            } else {
+                let incoming = transport.modem_read(fd, 0);
+                if incoming[0] == 2 {
+                    connection.healthy = false;
+                }
+                if incoming[0] == 1 {
+                    for frame in decoder.feed(wire.cut(incoming, 1, incoming.len())).expect("modem decoder") {
+                        let native_frame = frame.len() >= 2 && ((frame[0] & 15) == 0 || ((frame[0] & 15) == 6 && frame[1] == 249));
+                        if initial_at < initial_frames.len() && native_frame {
+                            if !decoder.defer_native(frame).expect("native startup RF buffer") {
+                                println("OFFLINE native startup RF backlog exceeded 512 frames");
+                                connection.healthy = false;
                             }
-                            if use_native && native_ok && !result.is_empty() {
-                                native_ok = native_ok && transport.native_send(worker_fd, result);
-                            }
-                        } else if port == 0 && session.hardware_busy(frame) && connection.config_deadline != 0 {
-                            connection.config_retry_at = received_at + 100;
-                        } else if port == 0 && frame[1] == 162 && connection.config_deadline != 0 {
-                            let valid = frame.len() == 26 && frame[2] == 1 && frame[3] == 0 && wire.equal(wire.cut(frame, 8, 26), cfg.profile);
-                            if connection.healthy && !valid {
-                                let at = transport.now();
-                                println(f"MODEM_CONTROL_FAILED epoch={incarnation.epoch} stage=CONFIG_GET at_ms={at} reason=invalid-readback expected=26-bytes,version=1,reason=0,profile={hex.encode(cfg.profile)} actual={hex.encode(frame)}");
-                            }
-                            connection.healthy = connection.healthy && valid;
-                            connection.config_deadline = 0;
-                            connection.config_retry_at = 0;
-                        } else if use_native && native_ok && port == 2 && frame[1] == 164 {
-                            let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
-                            if !stats.is_empty() {
-                                native_ok = native_ok && transport.native_send(worker_fd, stats);
-                            }
+                            initial_deferred = true;
+                        } else {
+                            modem_frames.push(frame);
                         }
                     }
-                    for reception in receivers.feed(frame, transport.monotonic()).expect("RX metadata") {
-                        receptions.push(reception);
+                }
+            }
+            for frame in modem_frames {
+                if frame.is_empty() {
+                    continue;
+                }
+                let port = (frame[0] as i64) >> 4;
+                let command = (frame[0] as i64) & 15;
+                if port >= (if observer_settings.enabled {
+                    4
+                } else {
+                    3
+                }) {
+                    continue;
+                }
+                if command == 6 && frame.len() >= 2 {
+                    sensors = radio.accept(sensors, frame, transport.monotonic());
+                    if frame[1] == 163 || frame[1] == 241 {
+                        let _ = link.policy_reply(port, wire.cut(frame, 2, frame.len()), received_at);
                     }
+                    if frame[1] == 250 {
+                        let result = link.event(port, wire.cut(frame, 2, frame.len())).expect("TX outcome");
+                        for event in link.confirmed().expect("confirmed TX accounting") {
+                            if event.port == 0 {
+                                let _ = relay_worker.confirmed(event.raw);
+                            } else if event.port == 1 {
+                                let _ = room_worker.confirmed(event.raw);
+                            } else if !use_native {
+                                let _ = bot_worker.confirmed(event.raw);
+                            }
+                        }
+                        if use_native && native_ok && !result.is_empty() {
+                            native_ok = native_ok && transport.native_send(worker_fd, result);
+                        }
+                    } else if port == 0 && session.hardware_busy(frame) && connection.config_deadline != 0 {
+                        connection.config_retry_at = received_at + 100;
+                    } else if port == 0 && frame[1] == 162 && connection.config_deadline != 0 {
+                        let valid = frame.len() == 26 && frame[2] == 1 && frame[3] == 0 && wire.equal(wire.cut(frame, 8, 26), cfg.profile);
+                        if connection.healthy && !valid {
+                            let at = transport.now();
+                            println(f"MODEM_CONTROL_FAILED epoch={incarnation.epoch} stage=CONFIG_GET at_ms={at} reason=invalid-readback expected=26-bytes,version=1,reason=0,profile={hex.encode(cfg.profile)} actual={hex.encode(frame)}");
+                        }
+                        connection.healthy = connection.healthy && valid;
+                        connection.config_deadline = 0;
+                        connection.config_retry_at = 0;
+                    } else if use_native && native_ok && port == 2 && frame[1] == 164 {
+                        let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
+                        if !stats.is_empty() {
+                            native_ok = native_ok && transport.native_send(worker_fd, stats);
+                        }
+                    }
+                }
+                for reception in receivers.feed(frame, transport.monotonic()).expect("RX metadata") {
+                    receptions.push(reception);
                 }
             }
             policy_results(link, relay_worker, room_worker);
@@ -2118,8 +2167,10 @@ pub fn run(root: string) {
                     println("TELEMETRY " + radio.error_text(error));
                 }
             }
-            for reception in receivers.flush(now).expect("RX metadata deadline") {
-                receptions.push(reception);
+            if initial_frames.is_empty() {
+                for reception in receivers.flush(now).expect("RX metadata deadline") {
+                    receptions.push(reception);
+                }
             }
             if connection.healthy {
                 let received_ok = receive_packets(receptions, link, relay_worker, room_worker, bot_worker, use_native, native_ready && native_ok, worker_fd, observer_queue_branch.outbox, observer_settings.enabled);
@@ -2224,6 +2275,9 @@ pub fn run(root: string) {
                     } else {
                         deadline = earlier(deadline, worker_progress.retry);
                     }
+                }
+                if !initial_frames.is_empty() && (!use_native || native_ready || !native_ok) {
+                    deadline = wait_at;
                 }
                 events.arm(event_group, modem_key, 1).expect("arm host modem socket");
                 if worker_key != 0 {
