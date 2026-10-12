@@ -2,20 +2,17 @@
 [platformio]
 data_dir = onchip-data
 
-[env:public_aspen]
-extends = Xiao_S3_WIO
+[aspen_public]
 board_build.filesystem = spiffs
 build_unflags = -std=gnu++11
 lib_deps =
-  ${Xiao_S3_WIO.lib_deps}
   densaugeo/base64 @ ~1.4.0
-build_src_filter = ${Xiao_S3_WIO.build_src_filter}
+build_src_filter =
   +<../examples/kiss_modem/*.cpp>
   +<../examples/kiss_modem/onchip/*.cpp>
   +<../examples/kiss_modem/onchip/cloudroom/*.cpp>
   +<../examples/kiss_modem/onchip/cloudroom/third_party/coreJSON/*.c>
 build_flags =
-  ${Xiao_S3_WIO.build_flags}
   -I examples/kiss_modem
   -I examples/kiss_modem/onchip
   -std=gnu++17
@@ -31,7 +28,6 @@ build_flags =
   -D ONCHIP_CLOUD_ROOM_CONNECTIONS=2
   -D JSON_MAX_DEPTH=8
   -D ONCHIP_COMMAND_BOT_DEFAULT_ENABLED=1
-  -D ONCHIP_UPDATE_TARGET='"xiao-esp32s3"'
   -D KISS_HOSTNAME='"aspen"'
   -D WIFI_SSID='""'
   -D WIFI_PWD='""'
@@ -57,3 +53,40 @@ build_flags =
   -D MAX_NEIGHBOURS=16
   -D MAX_UNSYNCED_POSTS=32
   -D MAX_GROUP_CHANNELS=8
+
+[env:public_aspen]
+extends = Xiao_S3_WIO, aspen_public
+lib_deps =
+  ${Xiao_S3_WIO.lib_deps}
+  ${aspen_public.lib_deps}
+build_src_filter = ${Xiao_S3_WIO.build_src_filter}
+  ${aspen_public.build_src_filter}
+build_flags =
+  ${Xiao_S3_WIO.build_flags}
+  ${aspen_public.build_flags}
+  -D ONCHIP_UPDATE_TARGET='"xiao-esp32s3"'
+
+[env:public_aspen_heltec_v4_r8]
+extends = Heltec_v4_r8, aspen_public
+lib_deps =
+  ${Heltec_v4_r8.lib_deps}
+  ${aspen_public.lib_deps}
+build_src_filter = ${Heltec_v4_r8.build_src_filter}
+  ${aspen_public.build_src_filter}
+build_flags =
+  ${Heltec_v4_r8.build_flags}
+  ${aspen_public.build_flags}
+  -D ONCHIP_UPDATE_TARGET='"heltec-v4-r8"'
+
+[env:public_aspen_tbeam_supreme_sx1262]
+extends = T_Beam_S3_Supreme_SX1262, aspen_public
+lib_deps =
+  ${T_Beam_S3_Supreme_SX1262.lib_deps}
+  ${aspen_public.lib_deps}
+build_src_filter = ${T_Beam_S3_Supreme_SX1262.build_src_filter}
+  ${aspen_public.build_src_filter}
+build_flags =
+  ${T_Beam_S3_Supreme_SX1262.build_flags}
+  ${aspen_public.build_flags}
+  -D BOARD_HAS_PSRAM
+  -D ONCHIP_UPDATE_TARGET='"tbeam-supreme-sx1262"'

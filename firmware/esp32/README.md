@@ -1,7 +1,8 @@
 # Standalone ESP32 setup and operation
 
 Run a repeater, room, companion/base and optional Lua bot directly on a
-Seeed XIAO ESP32-S3R8 with PSRAM and Wio SX1262. Each role owns its key and
+[supported ESP32-S3 radio](BOARDS.md), including the Seeed XIAO ESP32-S3R8
+with Wio SX1262. Each role owns its key and
 state; all share one LoRa profile, transmit queue and airtime budget.
 Repeater, room, management and bot RF work can continue without a Go host or
 WiFi. WiFi provides KISS, companion TCP, the dashboard and optional networking.
@@ -68,6 +69,10 @@ roles/clients may need direct sockets. Socket capacity and local role capacity
 are different limits. All selected services still share the same physical radio.
 
 ## Configure and build
+
+For Heltec WiFi LoRa 32 V4 R8 or LilyGO T-Beam Supreme SX1262, use the
+[board-specific source build and first-install instructions](BOARDS.md).
+The private profile below selects the XIAO wiring.
 
 From the repository root:
 

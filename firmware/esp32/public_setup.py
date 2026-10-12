@@ -170,13 +170,20 @@ def storage_partitions(content):
         if name in entries or flags:
             raise ValueError("Unsupported or duplicate partition")
         entries[name] = (kind, subtype, start, size)
-    if (entries.get("app0") != (0, 16, 0x10000, 0x330000) or
-            entries.get("app1") != (0, 17, 0x340000, 0x330000) or
-            entries.get("nvs") != (1, 2, 0x9000, 0x5000) or
-            entries.get("spiffs", ())[:3] != (1, 130, 0x670000) or
-            entries["spiffs"][3] != 0x180000 or
-            entries.get("coredump") != (1, 3, 0x7f0000, 0x10000)):
-        raise ValueError("Expected Aspen 8 MiB dual-slot partition layout")
+    layouts = []
+    for app_size, spiffs_start, spiffs_size, coredump_start in (
+            (0x330000, 0x670000, 0x180000, 0x7f0000),
+            (0x640000, 0xc90000, 0x360000, 0xff0000)):
+        layouts.append({
+            "nvs": (1, 2, 0x9000, 0x5000),
+            "otadata": (1, 0, 0xe000, 0x2000),
+            "app0": (0, 16, 0x10000, app_size),
+            "app1": (0, 17, 0x10000 + app_size, app_size),
+            "spiffs": (1, 130, spiffs_start, spiffs_size),
+            "coredump": (1, 3, coredump_start, 0x10000),
+        })
+    if entries not in layouts:
+        raise ValueError("Expected Aspen 8 or 16 MiB dual-slot partition layout")
     return entries
 
 

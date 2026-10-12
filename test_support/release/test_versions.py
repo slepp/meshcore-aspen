@@ -103,15 +103,32 @@ class VersionTests(unittest.TestCase):
     def test_public_aspen_includes_unconfigured_native_https(self):
         config = configparser.ConfigParser(interpolation=None)
         config.read(ROOT / "firmware/esp32/platformio.public.ini.example")
-        flags = {line.strip() for line in config["env:public_aspen"]["build_flags"].splitlines()}
-        self.assertIn("-D ONCHIP_BOT_HTTPS=1", flags)
-        self.assertIn("-D KISS_MAX_TCP_CLIENTS=1", flags)
-        self.assertIn("-D ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1", flags)
-        self.assertIn("-D ONCHIP_CLOUD_ROOM_CONNECTIONS=2", flags)
-        self.assertIn("-D MESHCORE_PUBLIC_PROVISIONING=1", flags)
-        for name in ("ONCHIP_OPERATOR_HEADER", "ONCHIP_BOT_HOME_ADDRESS", "ONCHIP_BOT_HOME_TOKEN",
-                     "ONCHIP_BOT_HOME_CA", "ONCHIP_MQTT_URI"):
-            self.assertFalse(any(name in flag for flag in flags), name)
+
+        def resolve(section, key):
+            def expand(match):
+                parent, option = match.groups()
+                return resolve(parent, option) if config.has_option(parent, option) else match.group(0)
+            return re.sub(r"\$\{([^}]+)\.([^}.]+)\}", expand, config[section][key])
+
+        self.assertIn("env:public_aspen", config)
+        targets = set()
+        for section in config.sections():
+            if not section.startswith("env:public_aspen"):
+                continue
+            with self.subTest(profile=section):
+                flags = {line.strip() for line in resolve(section, "build_flags").splitlines()}
+                self.assertIn("-D ONCHIP_BOT_HTTPS=1", flags)
+                self.assertIn("-D KISS_MAX_TCP_CLIENTS=1", flags)
+                self.assertIn("-D ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1", flags)
+                self.assertIn("-D ONCHIP_CLOUD_ROOM_CONNECTIONS=2", flags)
+                self.assertIn("-D MESHCORE_PUBLIC_PROVISIONING=1", flags)
+                target = [flag for flag in flags if flag.startswith("-D ONCHIP_UPDATE_TARGET=")]
+                self.assertEqual(len(target), 1)
+                self.assertNotIn(target[0], targets)
+                targets.add(target[0])
+                for name in ("ONCHIP_OPERATOR_HEADER", "ONCHIP_BOT_HOME_ADDRESS", "ONCHIP_BOT_HOME_TOKEN",
+                             "ONCHIP_BOT_HOME_CA", "ONCHIP_MQTT_URI"):
+                    self.assertFalse(any(name in flag for flag in flags), name)
 
 
 class CandidateTests(unittest.TestCase):

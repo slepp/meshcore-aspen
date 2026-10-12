@@ -53,9 +53,11 @@ image. Start with [host installation](../HOST_GUIDE.md#install-the-birch-host-do
 
 These are protocol versions, independent of product SemVer. The current base is
 `companion-v1.17.1` at `d92964352441e53b93e8667b802e04f6e072b39e`.
-Aspen supports the documented XIAO ESP32-S3R8/PSRAM plus Wio SX1262 setup.
+The published Aspen image targets XIAO ESP32-S3R8 plus Wio SX1262. Additional
+[Heltec V4 R8 and T-Beam Supreme SX1262 source profiles](../firmware/esp32/BOARDS.md)
+build the full application; physical boot, RF and OTA testing remain to be done.
 Birch's initial host target is Linux x86_64 with its matching WiFi/TCP modem.
-Versioning alone does not qualify a different board, protocol or upstream base.
+Choose the exact board variant and its update target before installing.
 
 ## Build an unpublished candidate
 

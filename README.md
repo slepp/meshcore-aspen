@@ -33,7 +33,7 @@ settings. Follow the selected bundle's installation or update procedure.
 
 | Setup | Supported hardware | Use it when | Next step |
 | --- | --- | --- | --- |
-| Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
+| Aspen: standalone ESP32 | XIAO ESP32-S3R8 + Wio SX1262; [Heltec V4 R8 and T-Beam Supreme SX1262 source ports](firmware/esp32/BOARDS.md) | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
 | Willow: WiFi modem + Hew host | Configured queued-v1 WiFi/TCP shared modem; Linux x86-64 host and current Hew compiler | You want host roles, filesystem state, a Lua/Wasm bot, Base companion, MQTT broker and browser dashboard | [Build and run Willow](hosts/willow/README.md), or [retain an existing Birch node](hosts/willow/docs/MIGRATION.md) |
 | Birch: WiFi modem + Go host | The same shared modem; Linux x86_64 Debian 12 host | You need the existing prebuilt Go host download | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
@@ -89,12 +89,14 @@ Additional role instances can run on a host, but each enabled built-in ESP32
 role runs at most once. A second repeater can duplicate forwarding and consume
 extra airtime; choose placement deliberately.
 
-The ESP32 roles share firmware and runtime code, but the documented combined
-image requires PSRAM. The regular Heltec WiFi LoRa 32 V3 has no PSRAM:
-start with the [build-only shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.md)
-and keep the roles on a host. Its credential-free image is for build checks,
-not flashing a lab radio. A full Aspen port or a V4 image still needs its own
-wiring, TCXO, memory layout and feature selection.
+The full Aspen image requires PSRAM and room for two OTA application slots.
+The [ESP32 board guide](firmware/esp32/BOARDS.md) provides complete source
+profiles for Heltec V4 **R8** and LilyGO T-Beam Supreme **SX1262**, including
+board-specific setup and update targets. Both ports compile; physical boot,
+RF and OTA testing remain to be done. The regular Heltec WiFi LoRa 32 V3 has
+no PSRAM: use its [shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.md)
+with host roles. The published Aspen firmware and browser installer remain
+for the XIAO ESP32-S3R8 + Wio SX1262.
 Willow sources are included in `hosts/willow`. Willow is the primary
 host implementation; it remains beta software and currently requires a source
 build. Check the [supported services and limits](hosts/willow/README.md)

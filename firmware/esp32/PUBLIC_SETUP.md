@@ -3,6 +3,9 @@
 Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
 Aspen application. The application needs your **private setup record in SPIFFS
 before it starts RF or administration**.
+For Heltec V4 R8 or LilyGO T-Beam Supreme SX1262, follow the
+[board-specific source build and USB install](BOARDS.md); the published ZIP
+and browser installer select XIAO hardware.
 
 For a new board, use the
 [browser setup wizard](https://ve6slp.ca/projects/meshcore/install/):
