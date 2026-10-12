@@ -12,6 +12,7 @@ constexpr unsigned MALLOC_CAP_8BIT = 1 << 2;
 namespace psram_test {
 inline std::map<void *, size_t> allocations;
 inline int failAfter = -1;
+inline bool failRealloc = false;
 inline unsigned attempts = 0, released = 0;
 inline bool (*freeOther)(void *) = nullptr;
 #ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
@@ -43,6 +44,23 @@ inline void *heap_caps_calloc(size_t count, size_t size, unsigned capabilities) 
   while (live > peak && !psram_test::requestedPeak.compare_exchange_weak(peak, live)) {}
 #endif
   return memory;
+}
+inline void *heap_caps_realloc(void *memory, size_t size, unsigned capabilities) {
+  assert(capabilities == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  auto entry = psram_test::allocations.find(memory);
+  assert(entry != psram_test::allocations.end() && size && size <= entry->second);
+  if (psram_test::failRealloc) return nullptr;
+  const size_t previous = entry->second;
+  void *resized = std::realloc(memory, size);
+  if (!resized) return nullptr;
+  psram_test::allocations.erase(entry);
+  psram_test::allocations.emplace(resized, size);
+#ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
+  psram_test::requestedLive.fetch_sub(previous - size);
+#else
+  (void)previous;
+#endif
+  return resized;
 }
 inline void heap_caps_free(void *memory) {
   if (psram_test::freeOther && psram_test::freeOther(memory)) return;

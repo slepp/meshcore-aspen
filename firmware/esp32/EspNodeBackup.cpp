@@ -288,6 +288,11 @@ public:
     if (memcmp(pending_.digest, expected, 32)) {
       snprintf(error, capacity, "Volatile backup checksum readback failed"); return false;
     }
+    // Keep only the encrypted bytes after capture; a failed shrink leaves the
+    // original allocation usable and must not discard a completed backup.
+    if (auto *bytes = static_cast<uint8_t *>(heap_caps_realloc(
+            pending_.bytes, pending_.size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)))
+      pending_.bytes = bytes;
     saved_.clear();
     saved_ = pending_;
     pending_ = {};

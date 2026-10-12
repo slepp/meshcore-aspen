@@ -179,6 +179,17 @@ int main(int argc, char **argv) {
   const auto memory = snapshot(true);
   filesystem_test::writeLimit = SIZE_MAX;
   assert(memory == disk);
+  assert(psram_test::allocations.size() == 1);
+  assert(psram_test::allocations.begin()->second == onchip::nodeBackup().bytes());
+  assert(onchip::nodeBackup().bytes() < onchip::NodeBackup::FileLimit);
+  psram_test::failRealloc = true;
+  assert(snapshot(true) == memory); // failed optional shrink still publishes valid bytes
+  psram_test::failRealloc = false;
+  assert(psram_test::allocations.size() == 1);
+  assert(psram_test::allocations.begin()->second == onchip::NodeBackup::FileLimit);
+  assert(snapshot(true) == memory);
+  assert(psram_test::allocations.size() == 1);
+  assert(psram_test::allocations.begin()->second == onchip::nodeBackup().bytes());
   assert(identity_test::durable == retainedDurable && filesystem_test::files == retainedFiles);
   if (argc == 2) {
     const auto id = memory.substr(6, 16);
@@ -234,5 +245,6 @@ int main(int argc, char **argv) {
   puts("PASS ESP backup: reordered inventories, settings/content/size/path/add/remove changes, staging exclusion, replay counters and retained saved snapshot");
   puts("PASS immutable capture: live changes during output retain captured bytes; allocation failures and empty files release scrubbed PSRAM");
   puts("PASS archive boundaries: 512 records accepted; extra records and oversized data rejected without replacing saved backup");
+  puts("PASS volatile buffer: published allocation matches encrypted size; failed shrink preserves valid snapshot and later replacement shrinks");
   puts("PASS volatile backup: no filesystem writes, identical container, failed replacement retains RAM snapshot, cleared RAM does not replace saved flash");
 }
