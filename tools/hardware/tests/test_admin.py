@@ -269,6 +269,35 @@ class MastClientTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "private socket"):
                     mast_cli.UnixClient(path)
 
+    def test_willow_seqpacket_framing_and_no_protocol_fallback(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            path = Path(directory) / "admin.sock"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as server:
+                server.bind(str(path)); server.listen(1); path.chmod(0o600)
+                client = mast_cli.WillowClient(path, 2)
+                for text in ("", "a" * 161, "source hash\nreboot", "non-ascii é"):
+                    with self.assertRaises(ValueError):
+                        client.command(text)
+                for response in (b"\x01\x00SHA256 saved", b"\x01\x08", b"\x02\x00bad", b"\x01", b"\x01\x00"+b"x"*4096):
+                    received = []
+                    def answer():
+                        with server.accept()[0] as connection:
+                            received.append(connection.recv(162)); connection.sendall(response)
+                    thread = threading.Thread(target=answer); thread.start()
+                    try:
+                        if response == b"\x01\x00SHA256 saved":
+                            self.assertEqual(client.command("source hash"), "SHA256 saved")
+                        else:
+                            with self.assertRaises(ValueError):
+                                client.command("source hash")
+                    finally:
+                        thread.join(3)
+                    self.assertFalse(thread.is_alive())
+                    self.assertEqual(received, [b"\x01\x04source hash"])
+                path.chmod(0o666)
+                with self.assertRaisesRegex(ValueError, "private socket"):
+                    mast_cli.WillowClient(path)
+
     @staticmethod
     def identity_fixture():
         seed = bytes(range(32))

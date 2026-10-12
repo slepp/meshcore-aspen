@@ -9,7 +9,7 @@ upstream base and is recorded separately.
 | Aspen | As needed | `aspen-v0.1.12` | `aspen-v0.1.13` |
 | Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
 | Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental series | `willow-v0.0.3` | `willow-v0.0.4` |
+| Willow | Experimental series | `willow-v0.0.4` | `willow-v0.0.5` |
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;
@@ -210,6 +210,16 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Willow 0.0.4
+
+Use the shared administration tool with `--willow-socket` to install, export
+and roll back Lua sources or Wasm packages through Willow's private owner
+socket. Named Lua updates retain bundled commands and unrelated sources;
+hash-conditional commits reject a stale source set. Wasm remains independently
+installed alongside Lua. Event grants are explicit owner settings and are
+not enabled by installing a script. See the
+[Willow service controls](../experiments/hew-roles/SERVICE.md).
 
 ## Aspen 0.1.12 and Willow 0.0.3
 

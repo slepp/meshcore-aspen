@@ -409,6 +409,33 @@ class UnixClient:
         return response
 
 
+class WillowClient(UnixClient):
+    """Willow's explicit version-1 SEQPACKET owner administration transport."""
+    def command(self, text):
+        data = text.encode("ascii")
+        if not 1 <= len(data) <= 160 or any(byte < 32 or byte > 126 for byte in data):
+            raise ValueError("Willow command requires 1..160 printable ASCII bytes")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as connection:
+            connection.settimeout(self.timeout)
+            connection.connect(str(self.path))
+            _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != os.geteuid():
+                raise ValueError("Willow administration server belongs to another user")
+            connection.sendall(b"\x01\x04" + data)
+            response, _, flags, _ = connection.recvmsg(4096)
+        if flags & socket.MSG_TRUNC or len(response) < 2 or response[0] != 1:
+            raise ValueError("Incomplete or invalid Willow administration response; outcome unknown")
+        if response[1]:
+            errors = {1: "Command denied or malformed", 2: "Native worker or modem unavailable",
+                      8: "Command outcome unknown; inspect affected state before another write",
+                      9: "Administration request IDs exhausted"}
+            raise ValueError(errors.get(response[1], "Willow administration request failed"))
+        return response[2:].decode("ascii")
+
+    def import_identity(self, role, native, expected):
+        raise ValueError("Willow source administration does not import identities")
+
+
 class WebClient:
     def __init__(self, url, password):
         if not re.fullmatch(r"https?://[^/?#]+", url):
@@ -891,7 +918,8 @@ def main():
     parser.add_argument("--seed-file", type=Path, help="disposable/trusted companion Ed25519 seed")
     parser.add_argument("--password-file", type=Path, help="0600 password file; omit for trusted-key RF login")
     parser.add_argument("--web", help="authenticated HTTP base URL instead of RF")
-    parser.add_argument("--unix-socket", type=Path, help="private native host bot owner socket")
+    parser.add_argument("--unix-socket", type=Path, help="private Go native host bot STREAM owner socket")
+    parser.add_argument("--willow-socket", type=Path, help="private Willow SEQPACKET admin.sock; no RF/web credentials")
     parser.add_argument("--timeout", type=float, default=20)
     parser.add_argument("--untagged", action="store_true",
                         help="native repeater console without host-style command tags, including Pine")
@@ -1052,14 +1080,16 @@ def main():
         return
     client = None
     try:
-        if args.action == "cloudroom" and args.cloudroom_action == "configure" and (args.web or args.unix_socket):
+        if args.action == "cloudroom" and args.cloudroom_action == "configure" and (args.web or args.unix_socket or args.willow_socket):
             raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
         if args.action == "role-password":
-            if args.web or args.unix_socket:
+            if args.web or args.unix_socket or args.willow_socket:
                 raise ValueError("Role administrator password changes require authenticated encrypted Management RF; web/Unix denied")
             new_password = private_file(args.new_password_file, 15)
             check_role_password(new_password)
         if args.action == "key-import":
+            if args.willow_socket:
+                raise ValueError("Willow source administration does not import identities")
             if args.web:
                 raise ValueError("Identity import requires encrypted Management RF or the Go bot owner socket; web denied")
             native = private_file(args.native_key_file, 64)
@@ -1073,7 +1103,11 @@ def main():
                                           words[3:] not in (["pending"], ["rotate"], ["cancel"], ["apply"]))
             if private_key:
                 raise ValueError("Use key-import with --native-key-file; private identities must not appear in command arguments")
-        if args.unix_socket:
+        if args.willow_socket:
+            if args.unix_socket or args.web or args.gateway or args.target or args.seed_file or args.password_file:
+                raise ValueError("Willow administration does not use Go Unix/RF/web targets or credentials")
+            client = WillowClient(args.willow_socket, args.timeout)
+        elif args.unix_socket:
             if args.web or args.gateway or args.target or args.seed_file or args.password_file:
                 raise ValueError("Unix management does not use RF/web targets or credentials")
             client = UnixClient(args.unix_socket, args.timeout)

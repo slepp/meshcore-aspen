@@ -148,6 +148,9 @@ build/admin-checks: admin_checks.hew host_admin.hew | build
 	$(HEW) build --emit-deps $@.d $< -o $@
 build/admin-checks-release: admin_checks.hew host_admin.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
+.PHONY: source-workflow-test
+source-workflow-test: build/hew-host-release build/arithmetic.wasm
+	HEW_WORKERS=4 MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/source_workflow.py
 owner-service-test: build/hew-host-release build/oracle build/owner-client-checks build/owner-client-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/owner_service.py
 owner-isolation-test: build/owner-isolation-checks build/owner-isolation-checks-release build/owner-client-checks

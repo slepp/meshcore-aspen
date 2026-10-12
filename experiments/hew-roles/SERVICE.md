@@ -143,6 +143,54 @@ including when the selected source is unavailable but management is running.
 Keep commands on stdin or in an owned mode-0600 `--message-file`. They are not
 logged, published to MQTT or sent over RF.
 
+### Install Lua and Wasm programs
+
+From `experiments/hew-roles`, use the shared operator tool with Willow's explicit
+socket transport. Set `STATE` to the running service's private state directory.
+The socket must belong to your user and be private. Willow uses SEQPACKET;
+`--unix-socket` selects the separate Go host's STREAM protocol.
+
+```sh
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source list
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source install station-status station-status.lua
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source export station-status station-status.saved.lua
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" command 'source api grants'
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" command 'help grants'
+```
+
+Named Lua installation retains bundled commands and other named files. It
+checks the selected generation before committing; a concurrent change refuses
+the install and asks you to download and reconcile. Named files share one Lua
+namespace, so duplicate commands or definitions can reject activation. Use
+`source rollback` to restore the previous complete Lua source set; bot data
+stays unchanged. `install FILE` replaces the complete selected source set.
+
+Install a portable Wasm module alongside Lua, then export or roll it back
+independently:
+
+```sh
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" install program.wasm
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm download program.saved.wasm
+python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm rollback
+```
+
+The tool detects Wasm installation from its binary or package runtime. Use
+`--runtime wasm` for reads, removal and rollback. Exports create new private
+files and verify their hashes. Installed Lua, Wasm and grants survive a service
+restart. After an interrupted mutation, inspect `source status` and
+`source hash` for the selected runtime before trying another change.
+
+Packages do not grant themselves storage, reminder or event access. Inspect
+`source api storage`, `source api events`, `source api board` and
+`source api grants` for available APIs and current grants. Existing owner
+controls are `bot shared on|off`, `bot reminders on|off` and `bot events MASK`;
+each has a `status` readback. Event bits are `1` startup, `2` connectivity,
+`4` message, `8` node status and `16` scheduled; `0` disables them. Enable only
+the access your program needs. Administration requests use local worker IPC.
+Activated programs retain their configured grants and radio policy; event
+handlers can send RF packets when permitted.
+
+
 An error reply exits 2; a transport failure exits 1 and may leave the outcome
 unknown. Do not repeat a write after an uncertain outcome. Inspect the setting
 first. `admin.clock` durably reserves request IDs before submission and is
@@ -573,9 +621,10 @@ setup never invents a transmission result. The active worker then reads the
 saved settings. Imported `native_setup=preserve` skips this setup worker and
 keeps saved source, packages, grants, channel/path/airtime policy and data.
 A private `HNM1` name file makes a name-only policy update before source startup.
-No management socket is exposed. Owner source deployment,
-grants and data inspection are outside this service's CLI; the demo's
-offline provisioning helper is a synthetic fixture, not a network admin API.
+The running service exposes private same-user `admin.sock` administration.
+Use the [source deployment commands](#install-lua-and-wasm-programs) to install
+programs, inspect grants and transfer scoped data through the native worker.
+The offline provisioning helper remains a test fixture.
 Before either worker starts, the host atomically writes its private `SCP1`
 home/default scope file. The worker rejects malformed, nonprivate or symlinked
 scope files; this file extends host-worker configuration, not the IPC version.
