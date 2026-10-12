@@ -507,9 +507,9 @@ restart the modem or RF roles. Modem reconnect does not restart MQTT. Queued
 observations survive publisher replacement. Pending and queued observations are
 checkpointed in private `observer.outbox` after 30 seconds of dirty state; clean
 state causes no writes. A separate writer keeps disk saves outside RF admission.
-A controlled stop flushes the backlog. Abrupt failure can lose the latest
-30 seconds of admissions, or replay recently acknowledged events until their
-removal is checkpointed. Restored observations keep their exact event ID,
+A controlled stop flushes the backlog. Abrupt failure can lose admissions since
+the last completed checkpoint, or replay recently acknowledged events until
+their removal is checkpointed. Restored observations keep their exact event ID,
 timestamp and payload. The observer identity remains in its retained identity
 file and the `observer.initialized` identity guard.
 
