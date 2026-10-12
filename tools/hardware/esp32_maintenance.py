@@ -221,6 +221,7 @@ def artifact(args):
 
 def finish(client, record, receipt, connect, deadline, interval):
     signed = record["application"]
+    candidate = client
     try:
         status = json_request(client, "/admin/update")
         record["last_update"] = status
@@ -238,11 +239,9 @@ def finish(client, record, receipt, connect, deadline, interval):
             except (OSError, ValueError) as error:
                 record["reboot_response_unavailable"] = type(error).__name__
             save_receipt(receipt, record)
-    finally:
-        client.close()
-    # Keep one session for status polling; reconnect only after a connection fails.
-    candidate = None
-    try:
+            candidate.close()
+            candidate = None
+        # Reuse the authenticated session unless reboot or a failed connection invalidates it.
         while True:
             try:
                 if candidate is None:

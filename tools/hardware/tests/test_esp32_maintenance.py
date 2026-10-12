@@ -89,6 +89,11 @@ class RadioHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         radio.posts.append((self.path, body))
         if self.path == "/admin/login":
+            now = time.monotonic()
+            if now - radio.last_login < radio.min_login_interval:
+                self.reply({"error": "Administrator login rate limit; try later"}, 429)
+                return
+            radio.last_login = now
             self.reply("a" * 32)
         elif self.path == "/admin/logout":
             self.reply("OK")
@@ -161,6 +166,7 @@ class RadioHandler(BaseHTTPRequestHandler):
 class Radio:
     def __init__(self):
         self.posts = []
+        self.last_login = self.min_login_interval = 0
         self.uploads = self.reboots = 0
         self.uploaded = self.booted = False
         self.digest, self.size = "", 0
@@ -252,6 +258,40 @@ class MaintenanceTests(unittest.TestCase):
         self.assertTrue(self.receipt()["complete"])
         self.assertTrue(self.radio.sampler_enabled)
         self.assertEqual((self.radio.uploads, self.radio.reboots), (1, 1))
+
+    def test_resume_reuses_session_under_login_rate_limit(self):
+        self.radio.stuck_reboot = True
+        with self.assertRaises(TimeoutError):
+            maintenance.maintain(self.args)
+        self.radio.booted = True
+        self.radio.last_login = 0
+        self.radio.min_login_interval = 60
+        self.radio.posts.clear()
+        self.args.action = "resume"
+        maintenance.maintain(self.args)
+        self.assertTrue(self.receipt()["complete"])
+        self.assertTrue(self.radio.sampler_enabled)
+        paths = [path for path, _ in self.radio.posts]
+        self.assertEqual(paths.count("/admin/login"), 1)
+        self.assertEqual(paths.count("/admin/logout"), 1)
+        self.assertNotIn("/admin/update/reboot", paths)
+        self.assertNotIn("/admin/update", paths)
+
+    def test_finish_initial_failure_closes_session_once(self):
+        maintenance.maintain(self.args)
+        record = self.receipt()
+        record.pop("reboot_attempted")
+        self.radio.booted = False
+        self.radio.current = "f" * 64
+        self.radio.posts.clear()
+        client = node_backup.HttpClient(self.args.url, b"password")
+        with self.assertRaisesRegex(ValueError, "Running application changed"):
+            maintenance.finish(client, record, self.args.receipt,
+                               lambda: self.fail("Initial failure must not reconnect"),
+                               time.monotonic() + 1, .1)
+        paths = [path for path, _ in self.radio.posts]
+        self.assertEqual(paths.count("/admin/login"), 1)
+        self.assertEqual(paths.count("/admin/logout"), 1)
 
     def test_resume_after_verified_upload_sends_one_unattempted_reboot(self):
         with patch.object(maintenance, "finish", side_effect=TimeoutError("interrupted before reboot")):
