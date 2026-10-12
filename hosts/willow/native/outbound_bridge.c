@@ -265,7 +265,7 @@ Bytes mc_outbound_read(int64_t handle) {
             } else if (meta->offset < 0 || meta->bytesleft < 0 ||
                        meta->offset > 1048576 || received > (size_t)(1048576 - meta->offset) ||
                        meta->bytesleft > 1048576 - meta->offset - (curl_off_t)received) {
-                received = 0; code = CURLE_TOO_LARGE;
+                received = 0; code = CURLE_FILESIZE_EXCEEDED;
             }
         }
     } else if (out && out->ready) {

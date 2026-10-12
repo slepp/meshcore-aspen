@@ -390,7 +390,9 @@ class ObserverClient(TLSFixture):
     def test_websocket_publisher_panic_retains_pending_event(self): self.exercise("panic", tls=True, websocket=True)
     def test_wrong_websocket_subprotocol_rejected_before_mqtt(self): self.exercise("bad-upgrade", websocket=True)
     def test_websocket_text_is_rejected_without_settling_pending_packet(self): self.exercise("ws-text", websocket=True)
-    def test_websocket_oversize_is_rejected_without_buffering_entire_frame(self): self.exercise("ws-oversize", websocket=True)
+    def test_websocket_oversize_is_rejected_without_buffering_entire_frame(self):
+        _, output = self.exercise("ws-oversize", websocket=True)
+        self.assertIn("curl_status=63", output)
 
     def test_secure_websocket_backpressure_returns_partial_count(self):
         broker = Broker("ws-backpressure", self.tls, websocket=True)
