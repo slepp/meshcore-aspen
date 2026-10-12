@@ -44,6 +44,8 @@ import std.string;
 
 import std.fs;
 
+import std.net.ipnet;
+
 fn control_write(fd: ChildRef<duplex.Endpoint>, packet: bytes, stage: string, epoch: i64) -> bool {
     match duplex.write(fd, packet) {
         .Ok(_) => true,
@@ -229,7 +231,7 @@ fn config(root: string) -> Config {
             }
         }
     }
-    config_require(!address.is_empty(), "address is required");
+    config_require(ipnet.is_v4(address), "address must be a numeric IPv4 address");
     config_require(port > 0 && port <= 65535, "port must be 1..65535");
     config_require(profile.len() == 18, "profile must be 18 bytes of hex");
     config_require(width >= 1 && width <= 3, "width must be 1..3");
@@ -252,7 +254,15 @@ fn config(root: string) -> Config {
     if let .Err(error) = radio.validate_profile(profile) {
         panic(f"invalid shared modem profile: {error}");
     }
+    config_require(roles.validate_options(relay_options, 2, "Willow-Relay", password, admin, width, region), "invalid relay settings");
+    config_require(roles.validate_options(room_options, 3, "Willow-Room", password, admin, width, region), "invalid room settings");
     Config { address: address, port: port, profile: profile, worker: worker, password: password, admin: admin, width: width, region: region, channel: channel, run_ms: run_ms, native_airtime: native_airtime, bot_home: bot_home, bot_default: bot_default, relay_options: relay_options, room_options: room_options, bot_name: bot_name, channel_name: channel_name, native_preserve: native_preserve, imported: imported, observer_options: observer_options }
+}
+
+pub fn check_config(root: string) {
+    let cfg = config(root);
+    let _ = observer_runtime.validate(root, cfg.observer_options);
+    println("Willow configuration checks passed; no connections opened");
 }
 
 fn verify_native(executable: string) {
@@ -1583,10 +1593,10 @@ fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay
 
 pub fn run(root: string) {
     assert(root.starts_with("/") && transport.directory(root));
+    let cfg = config(root);
     let lock = storage.lock(root + "/service");
     assert(lock >= 0);
     transport.signals();
-    let cfg = config(root);
     let observer_settings = observer_runtime.configure(root, cfg.observer_options, lock);
     assert(storage.recover(root + "/roles.initialized", lock));
     let initialized = !storage.absent(root + "/roles.initialized");

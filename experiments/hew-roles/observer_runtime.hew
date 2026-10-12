@@ -37,7 +37,15 @@ pub type Settings {
     seed: bytes;
 }
 
+pub fn validate(root: string, options: string) -> Settings {
+    settings(root, options, -1, false)
+}
+
 pub fn configure(root: string, options: string, lock: i32) -> Settings {
+    settings(root, options, lock, true)
+}
+
+fn settings(root: string, options: string, lock: i32, apply: bool) -> Settings {
     var enabled = false;
     var format = observation.Format.Internal;
     var prefix = "meshcore";
@@ -123,14 +131,18 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
     }
     var seed = wire.le(0, 32);
     if enabled {
-        assert(storage.recover(root + "/observer.expanded", lock));
+        if apply {
+            assert(storage.recover(root + "/observer.expanded", lock));
+        }
         if !storage.absent(root + "/observer.expanded") {
             seed = storage.read(root + "/observer.expanded");
             if seed.len() != 64 {
                 panic("observer.expanded invalid; restore the authoritative observer identity");
             }
         } else {
-            assert(storage.recover(root + "/observer.seed", lock));
+            if apply {
+                assert(storage.recover(root + "/observer.seed", lock));
+            }
             seed = storage.read(root + "/observer.seed");
             if seed.len() != 32 {
                 panic("observer identity missing or invalid; migrate the Go observer identity before enabling observer");
@@ -149,7 +161,9 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
     }
     let config = observation.Config { identity: wire.public_key(seed), format: format, prefix: prefix, iata: iata, origin: origin, model: model, firmware: firmware, radio: radio, filter: filter };
     let _ = observation.topic(config).expect("observer topic configuration");
-    assert(capacity >= 1 && capacity <= 4096);
+    if capacity < 1 || capacity > 4096 {
+        panic("observer.queue_size must be 1..4096");
+    }
     assert(mqtt.text_valid(client_id) && mqtt.text_valid(username) && password.len() <= 65535);
     if !password.is_empty() && username.is_empty() {
         panic("observer.password requires observer.username");
@@ -159,13 +173,19 @@ pub fn configure(root: string, options: string, lock: i32) -> Settings {
     }
     if enabled {
         let identity_path = root + "/observer.initialized";
-        assert(storage.recover(identity_path, lock));
+        if apply {
+            assert(storage.recover(identity_path, lock));
+        }
         if storage.absent(identity_path) {
-            assert(storage.commit(identity_path, config.identity) == 0);
+            if apply {
+                assert(storage.commit(identity_path, config.identity) == 0);
+            }
         } else if !wire.equal(storage.read(identity_path), config.identity) {
             panic("observer identity changed; restore the retained observer identity file");
         }
-        println("OBSERVER_CONFIGURED topic=" + observation.topic(config).expect("validated observer topic") + " queue_size=" + to_string(capacity));
+        if apply {
+            println("OBSERVER_CONFIGURED topic=" + observation.topic(config).expect("validated observer topic") + " queue_size=" + to_string(capacity));
+        }
     }
     Settings { enabled: enabled, config: config, capacity: capacity, url: url, ca_file: ca_file, client_id: client_id, username: username, password: password, audience: audience, seed: seed }
 }

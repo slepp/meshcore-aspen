@@ -8,6 +8,7 @@ import shutil
 import socket
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -15,7 +16,7 @@ import uuid
 from pathlib import Path
 
 from build_worker import HERE, verify
-from migrate_go import private, write_private, observer_config, identity_public
+from migrate_go import private, write_private, identity_public
 from reconcile_go import settings
 from release_identity import VERSION
 
@@ -110,11 +111,30 @@ def packet_log(root, role):
         return data
 
 
+def check_configuration(root, release=False):
+    private(root, True)
+    private(root/"config")
+    names = ("hew-host-release",) if release else ("hew-host-release", "hew-host")
+    binary = next((HERE/"build"/name for name in names if (HERE/"build"/name).is_file()), None)
+    if binary is None:
+        raise ValueError("configuration checker unavailable; run make release in this installation")
+    environment = os.environ.copy()
+    environment.pop("HEW_PPROF", None)
+    environment.pop("HEW_OTEL_ENDPOINT", None)
+    try:
+        result = subprocess.run([str(binary), "check-config", str(root)], capture_output=True,
+                                text=True, timeout=10, env=environment)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("configuration checker timed out; rebuild the host with make release") from error
+    if result.returncode:
+        raise ValueError("Willow configuration rejected: " + (result.stderr.strip() or result.stdout.strip()))
+
+
 def check(root, verify_worker=True):
     private(root,True)
     private(root/"config")
-    config=settings((root/"config").read_bytes())
-    observing = observer_config(config)
+    config = dict(line.split("=", 1) for line in (root/"config").read_text().splitlines() if "=" in line)
+    observing = config.get("observer.enabled") == "1"
     if observing:
         observer_path = root/("observer.expanded" if (root/"observer.expanded").exists() else "observer.seed")
         private(observer_path)
@@ -311,9 +331,10 @@ def main():
             if result["phase"] in ("failed", "unknown") or (args.wait and result["phase"] != "native-rf-ack"):
                 raise SystemExit(2)
             return
+        check_configuration(root, release=args.release)
         config=check(root)
         if args.operation=="check":
-            print("Willow state and worker checks passed; no modem connection opened")
+            print("Willow configuration, state and worker checks passed; no modem connection opened")
             return
         binary=HERE/"build"/("hew-host-release" if args.release else "hew-host")
         if not binary.is_file() or not os.access(binary,os.X_OK):

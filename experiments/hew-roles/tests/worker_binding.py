@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import unittest
@@ -32,6 +33,59 @@ def init(state, *extra):
 
 
 class WorkerBinding(unittest.TestCase):
+    def test_offline_check_reuses_startup_validation_without_connections_or_writes(self):
+        root = ROOT/"build"/f"offline-config-{os.getpid()}"
+        root.mkdir(mode=0o700)
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(0.05)
+        try:
+            for role in ("relay", "room", "bot", "observer"):
+                seed = root/(role+".seed")
+                seed.write_bytes(bytes(range(32)))
+                seed.chmod(0o600)
+            pending = root/"observer.initialized.pending"
+            pending.write_bytes(b"retained unfinished marker")
+            pending.chmod(0o600)
+            base = (f"address=127.0.0.1\nport={listener.getsockname()[1]}\nprofile={PROFILE}\n"
+                    f"worker=-\npassword={SECRET}\nobserver.enabled=1\n"
+                    f"observer.url=tcp://127.0.0.1:{listener.getsockname()[1]}\n")
+            cases = (
+                (base, None),
+                (base.replace("127.0.0.1", "localhost", 1), "numeric IPv4"),
+                (base.replace(f"port={listener.getsockname()[1]}", "port=70000"), "port must be 1..65535"),
+                (base+"width=4\n", "width must be 1..3"),
+                (base.replace(PROFILE, "00"*18), "invalid shared modem profile"),
+                (base+"relay.bogus=1\n", "invalid relay settings"),
+                (base+"room.preference_profile=bogus\n", "invalid room settings"),
+                (base+"observer.queue_size=0\n", "observer"),
+            )
+            for text, error in cases:
+                with self.subTest(error=error):
+                    config = root/"config"
+                    config.write_text(text)
+                    config.chmod(0o600)
+                    before = {path.name: (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns)
+                              for path in root.iterdir()}
+                    commands = ([sys.executable, "-B", str(ROOT/"willow.py"), "check", "--state", str(root)],
+                                [host(), "check-config", str(root)])
+                    for command in commands:
+                        completed = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                        output = completed.stdout+completed.stderr
+                        self.assertEqual(completed.returncode == 0, error is None, output)
+                        if error:
+                            self.assertIn(error, output)
+                        self.assertNotIn(SECRET, output)
+                        self.assertNotIn("ONLINE", output)
+                        self.assertEqual(before, {path.name: (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns)
+                                                 for path in root.iterdir()})
+                        with self.assertRaises(socket.timeout):
+                            listener.accept()
+        finally:
+            listener.close()
+            shutil.rmtree(root)
+
     def test_manifest_binding_and_changed_input(self):
         root = ROOT/"build"/f"worker-check-{os.getpid()}"
         root.mkdir(mode=0o700)
