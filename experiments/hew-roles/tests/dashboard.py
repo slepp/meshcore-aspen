@@ -127,6 +127,42 @@ class Dashboard(unittest.TestCase):
             time.sleep(.03)
         self.fail("native dashboard condition timed out")
 
+    def test_ipv6_wildcard_listener(self):
+        try:
+            with socket.socket(socket.AF_INET6) as probe:
+                probe.bind(("::1", 0))
+        except OSError:
+            self.skipTest("IPv6 loopback is unavailable")
+        for binary in ("hew-dashboard", "hew-dashboard-release"):
+            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
+                root = Path(name)
+                configuration = root/"dashboard.conf"
+                configuration.write_text(f"address=::\nport=0\nstate={root}\n"
+                    f"page={ROOT.parents[1]/'internal/app/admin_page.html'}\n"
+                    "base_port=0\nbot_companion_port=0\n")
+                configuration.chmod(0o600)
+                environment = os.environ.copy()
+                environment.pop("MESHCORE_HOST_ADMIN_HTTP", None)
+                process = subprocess.Popen([str(ROOT/"build"/binary), str(configuration)],
+                    env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    line = process.stdout.readline().strip()
+                    self.assertIn("DASHBOARD_LISTEN address=:: ", line)
+                    port = int(line.split("port=")[1].split()[0])
+                    for address in ("::1", "127.0.0.1"):
+                        connection = http.client.HTTPConnection(address, port, timeout=4)
+                        try:
+                            for path in ("/", "/admin"):
+                                connection.request("GET", path)
+                                response = connection.getresponse()
+                                self.assertEqual(response.status, 404)
+                                self.assertIn(b"Host route not found", response.read())
+                        finally:
+                            connection.close()
+                finally:
+                    process.terminate()
+                    process.communicate(timeout=6)
+
     def test_unknown_write_is_not_replayed_and_health_remains_available(self):
         for binary in ("hew-dashboard", "hew-dashboard-release"):
             with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
@@ -322,7 +358,7 @@ class Dashboard(unittest.TestCase):
                 token = ""
                 try:
                     configuration = root/"dashboard.conf"
-                    configuration.write_text(f"port=0\nstate={service.root}\n"
+                    configuration.write_text(f"address=0.0.0.0\nport=0\nstate={service.root}\n"
                         f"page={ROOT.parents[1]/'internal/app/admin_page.html'}\n"
                         f"base_port={base.server.server_port}\n"
                         f"bot_companion_port={secondary.server.server_port}\n"
@@ -333,7 +369,7 @@ class Dashboard(unittest.TestCase):
                             "MESHCORE_DASHBOARD_FIXTURE_PASSWORD": "private-fixture-password"},
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     line = process.stdout.readline().strip()
-                    self.assertIn("DASHBOARD_LISTEN", line)
+                    self.assertIn("DASHBOARD_LISTEN address=0.0.0.0 ", line)
                     port = int(line.split("port=")[1].split()[0])
 
                     def request(path, body=b"", method="POST", headers=None):
@@ -349,6 +385,8 @@ class Dashboard(unittest.TestCase):
                     code, body, headers = request("/admin", method="GET")
                     self.assertEqual(code, 200)
                     self.assertIn(b"MeshCore", body)
+                    root_code, root_body, root_headers = request("/", method="GET")
+                    self.assertEqual((root_code, root_body, root_headers), (code, body, headers))
                     self.assertEqual(headers["Cache-Control"], "no-store")
                     self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
                     self.assertEqual(request("/admin/status")[0], 401)

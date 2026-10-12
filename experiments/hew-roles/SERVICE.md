@@ -200,7 +200,7 @@ health samples, DM status or inbox reads at `STATE/owner.sock`.
 HTTP dashboard deployment is separate; these local commands do not open a
 TCP listener.
 
-## Run the local host dashboard
+## Run the host dashboard
 
 Build the native HTTP service with `make dashboard`. It reads the running
 Hew host's private sockets and the Base and bot companion health endpoints;
@@ -221,11 +221,21 @@ password_env=MESHCORE_LAB_ADMIN_PASSWORD
 Save this configuration in an owned mode-0600 file. Run
 `MESHCORE_HOST_ADMIN_HTTP=1 ./build/hew-dashboard-release /path/to/dashboard.conf`
 with the role admin password already supplied by the service environment.
-Open `http://127.0.0.1:9080/admin` and log in. Do not put the password in a
+Open `http://127.0.0.1:9080/` and log in. `/admin` opens the same page. Do not put the password in a
 command argument or the dashboard configuration. Alternatively, set
 `token_env` to the name of an environment variable holding an explicit
 32-256-character admin token. Password login requires 12-256 printable
 non-space ASCII characters; sessions expire after ten minutes.
+
+The default `address=127.0.0.1` accepts connections only from this host. For
+LAN access, set `address=0.0.0.0`, restart only the dashboard service and open
+`http://HOST_LAN_ADDRESS:9080/`. Public state is at `/status` and readiness
+at `/readyz`. To listen on IPv6 and IPv4, use `address=::`; an IPv6 URL uses
+brackets, for example `http://[HOST_IPV6_ADDRESS]:9080/`. A specific local
+address restricts which local address accepts connections. The dashboard serves HTTP;
+use a trusted LAN or a TLS reverse proxy to protect login credentials. Changing
+the listen address does not enable admin access or change its authentication,
+intent-header or session requirements.
 
 `GET /status` returns public operational state. `GET /readyz` returns HTTP
 503 when a role or its health connection is unavailable. Health requests share

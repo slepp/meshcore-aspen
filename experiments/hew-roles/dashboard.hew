@@ -1,4 +1,4 @@
-//! Loopback HTTP dashboard, backed by live host actors and companion services.
+//! HTTP dashboard, backed by live host actors and companion services.
 import host_admin;
 
 import owner_client;
@@ -91,7 +91,6 @@ fn configuration(path: string) -> Configuration {
             _ => panic("unknown dashboard configuration setting"),
         }
     }
-    assert(result.address == "127.0.0.1" || result.address == "::1", "dashboard listener must be loopback");
     assert(result.state.starts_with("/") && result.page.starts_with("/"), "dashboard state and page paths must be absolute");
     assert(result.base_port == 0 || result.base_port != result.port, "Base health port collides with dashboard");
     assert(result.bot_companion_port == 0 || result.bot_companion_port != result.port, "bot companion health port collides with dashboard");
@@ -651,12 +650,12 @@ fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Au
         client.health = 2;
         return client;
     }
-    if !enabled || !request.path.starts_with("/admin") {
-        client.outgoing = text(404, "Host route not found");
+    if enabled && request.method == "GET" && (request.path == "/" || request.path == "/admin") {
+        client.outgoing = host_admin.response(200, "text/html; charset=utf-8", page);
         return client;
     }
-    if request.path == "/admin" && request.method == "GET" {
-        client.outgoing = host_admin.response(200, "text/html; charset=utf-8", page);
+    if !enabled || !request.path.starts_with("/admin") {
+        client.outgoing = text(404, "Host route not found");
         return client;
     }
     if request.method != "POST" {
@@ -755,7 +754,10 @@ pub fn run(path: string) {
         ""
     };
     assert(page.to_bytes().len() <= 65536, "dashboard page asset exceeds 64 KiB");
-    let owner = listener.open(cfg.address, cfg.port).expect("dashboard loopback listener could not bind");
+    let owner = match listener.open(cfg.address, cfg.port) {
+        .Ok(value) => value,
+        .Err(code) => panic(f"dashboard could not bind {cfg.address}:{cfg.port} (OS error {code}); check the address and whether the port is already in use"),
+    };
     let group = events.open().expect("dashboard readiness group");
     let (output, input): (stream.Sink<events.Event>, stream.Stream<events.Event>) = stream.pipe(128).expect("dashboard event pipe");
     let pump = spawn events.Pump { group: events.share(group), output: output };

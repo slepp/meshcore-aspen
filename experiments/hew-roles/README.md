@@ -55,6 +55,13 @@ to send as its native bot and read authenticated incoming DMs. For a version
 upgrade, [rebind a complete frozen state copy](MIGRATION.md#upgrade-a-frozen-willow-state)
 with the newly installed launcher; do not replace a running installation.
 
+For the browser dashboard, follow [the host dashboard setup](SERVICE.md#run-the-host-dashboard).
+It defaults to `http://127.0.0.1:9080/`; set `address=0.0.0.0` in its private
+configuration for LAN access at `http://HOST_LAN_ADDRESS:9080/`. `/admin` opens
+the same login page.
+`/status` shows public state and `/readyz` reports readiness. Restarting only the
+dashboard leaves the host roles, identities and companion listeners running.
+
 For an isolated modem-to-broker trial, run `make observer-service-test`. It uses
 localhost only and checks broker reconnect, modem reconnect and room login in
 the production process. Other development checks are:

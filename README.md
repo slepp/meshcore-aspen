@@ -8,9 +8,9 @@ Other MeshCore radios exchange adverts, encrypted messages and routes with
 these roles over RF.
 
 Aspen is both the project name and its lead standalone ESP32 firmware.
-Birch runs the roles off-chip on a Go host connected over WiFi to the shared
-modem. Willow implements that host arrangement in Hew. Pine is the nRF52840
-variation of Aspen, with a smaller repeater/bot feature set. Cedar is a lab
+Willow runs the roles off-chip on a Hew host connected over WiFi to the shared
+modem. Birch is the Go host implementation, with downloadable Linux binaries.
+Pine is the nRF52840 variation of Aspen, with a smaller repeater/bot feature set. Cedar is a lab
 companion used for RF checks, not a shipped setup.
 
 The project and community documentation are public at
@@ -21,10 +21,10 @@ for the XIAO ESP32-S3R8 + Wio SX1262, or see
 The host/device releases are
 [Birch 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.1),
 [Pine 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and
-[Willow 0.0.2](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.2).
+[Willow 0.0.4](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.4).
 Birch includes Linux binaries; Pine is an initialized-node application update;
-Willow is a source-build release. Current development source uses the Hew
-compiler and matching libraries on `PATH`.
+Willow is a source-build release. Current Willow 0.0.5 development source uses
+the Hew compiler and matching libraries on `PATH`.
 First-install procedures differ
 from application-only updates that retain an existing node's identities and
 settings. Follow the selected bundle's installation or update procedure.
@@ -34,8 +34,8 @@ settings. Follow the selected bundle's installation or update procedure.
 | Setup | Supported hardware | Use it when | Next step |
 | --- | --- | --- | --- |
 | Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
-| Birch: WiFi modem + Go host | Configured queued-v1 WiFi/TCP shared modem; Linux x86_64 Debian 12 host | You want host services, filesystem state, external automation or native Lua | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
-| Willow: WiFi modem + Hew host | The same shared modem; Linux x86-64 host and current Hew compiler | You want to develop or trial the experimental Hew host, Base companion, MQTT broker and dashboard | [Willow source and setup guide](experiments/hew-roles/README.md) |
+| Willow: WiFi modem + Hew host | Configured queued-v1 WiFi/TCP shared modem; Linux x86-64 host and current Hew compiler | You want host roles, filesystem state, a Lua/Wasm bot, Base companion, MQTT broker and browser dashboard | [Build and run Willow](experiments/hew-roles/README.md), or [retain an existing Birch node](experiments/hew-roles/MIGRATION.md) |
+| Birch: WiFi modem + Go host | The same shared modem; Linux x86_64 Debian 12 host | You need the existing prebuilt Go host download | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
 | ESP32 role with a remote modem | XIAO ESP32-S3 indoors; ESP32 + SX1262 at the radio site | You want a repeater, room or companion on an indoor board, connected over WiFi | [Remote-radio roles](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) |
 
@@ -95,10 +95,11 @@ start with the [build-only shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.
 and keep the roles on a host. Its credential-free image is for build checks,
 not flashing a lab radio. A full Aspen port or a V4 image still needs its own
 wiring, TCXO, memory layout and feature selection.
-Willow sources are included in `experiments/hew-roles`. Its event-driven
-runtime is experimental; check your selected services before replacing an
-existing installation. For a fresh host, the native Hew `hew-host init`
-command creates private role identities and generated or imported admin and
+Willow sources are included in `experiments/hew-roles`. Willow is the primary
+host implementation; it remains beta software and currently requires a source
+build. Check the [supported services and limits](experiments/hew-roles/README.md)
+before replacing an existing installation. For a fresh host, the native Hew
+`hew-host init` command creates private role identities and generated or imported admin and
 room credentials, with the native worker enabled. Initialization stays
 offline; it neither connects to nor retunes the modem. Follow the
 [Willow service guide](experiments/hew-roles/SERVICE.md) for its required radio
