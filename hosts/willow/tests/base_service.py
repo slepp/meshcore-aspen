@@ -728,7 +728,11 @@ class BaseScenario(unittest.TestCase):
             source.next(2)
             radio_port = source.port
             source.close()
+            deadline = time.monotonic()+5
             offline = fetch("readyz", True)
+            while offline["ready"] and time.monotonic() < deadline:
+                time.sleep(.025)
+                offline = fetch("readyz", True)
             self.assertFalse(offline["ready"])
             self.assertIn("disconnected", offline["not_ready"]["bot_companion"])
             # Local commands continue while the detached connector retries.
