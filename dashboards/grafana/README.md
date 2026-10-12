@@ -21,6 +21,13 @@ counts and last-heard age in one table, with separate signal histories. See
 [Nearby repeater SNR](../../firmware/runtime/REPEATER_SNR.md) to install the
 sampler. This feed needs no status polls or extra RF transmissions.
 
+Import [`meshcore-willow-host.json`](meshcore-willow-host.json) for the native
+Hew host's role transitions, connections, observer queue/publications,
+companion TX outcomes and shared-modem measurements. Configure an existing
+collector to scrape the Willow dashboard's `/metrics` endpoint; see
+[Willow host metrics](../../experiments/hew-roles/METRICS.md). This feed is
+separate from the ESP32 and Python panels above.
+
 ## Battery trends and voltage limits
 
 The repeater dashboard overlays reported RF voltage and a **30-minute mean**,

@@ -14,7 +14,6 @@ import time
 import unittest
 
 from parity import ROOT, public
-from service_demo import RunningService
 
 
 class CompanionHealth:
@@ -39,7 +38,8 @@ class CompanionHealth:
                     code = 200
                 elif self.path == "/status":
                     body = json.dumps({fixture.role: {"public_key": public(9).hex(),
-                        "state": "running", "radio_connected": True, "listener_active": True}}).encode()
+                        "state": "running", "radio_connected": True, "listener_active": True,
+                        "role_tx": {"available": True, "accepted": 7, "succeeded": 6, "unknown": 1, "reported_rf_airtime_ns": 250000000}}}).encode()
                     code = 200
                 else:
                     body = json.dumps({"ready": fixture.ready,
@@ -76,6 +76,13 @@ class OwnerHealth:
         self.threads = []
         roles = {name: {"state": "running", "radio_connected": True}
                  for name in ("bot", "repeater", "room", "observer")}
+        roles["observer"]["observer_stats"] = {"observed": 13, "published": 11, "dropped": 1, "queued": 1, "dirty": True, "saving": False, "save_failures": 2, "save_error": -1, "restored": 4, "expired": 3}
+        roles["observer"]["mqtt_connected"] = True
+        for name in roles:
+            roles[name]["telemetry"] = {"has_counters": True,
+                "counters": {"PacketsRecv": 42, "PacketsSent": 12, "PacketsErrors": 1},
+                "has_mcu_temperature": True, "mcu_temperature_c": 31.5,
+                "has_battery": False, "battery_mv": 0}
         ready = {"ready": True, "not_ready": {}, "mqtt_connection_checked": True}
         for name in ("owner.sock", "admin.sock"):
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -274,9 +281,9 @@ class Dashboard(unittest.TestCase):
                     self.assertEqual(request("/admin/status", authorized=False)[0], 401)
                     self.assertEqual(counts(), (0, 0, 0))
                     base.resume.clear()
-                    with ThreadPoolExecutor(max_workers=12) as pool:
+                    with ThreadPoolExecutor(max_workers=16) as pool:
                         pending = [pool.submit(request, path) for path in
-                                   ("/status", "/readyz", "/admin/status")*4]
+                                   ("/status", "/readyz", "/admin/status", "/metrics")*4]
                         self.until(base.blocked.is_set)
                         self.until(lambda: owner.health_requests == 2 and secondary.requests == 2)
                         self.assertFalse(any(item.done() for item in pending))
@@ -285,6 +292,21 @@ class Dashboard(unittest.TestCase):
                     self.assertTrue(all(code == 200 for code, _ in results))
                     self.assertTrue(json.loads(results[1][1])["ready"])
                     self.assertEqual(counts(), (2, 2, 2))
+                    code, metrics = request("/metrics", authorized=False)
+                    self.assertEqual(code, 200)
+                    self.assertIn(b'willow_role_health_available{role="companion"} 1', metrics)
+                    self.assertIn(b'willow_observer_observed_total{role="observer"} 13', metrics)
+                    self.assertIn(b'willow_role_tx_accepted_total{role="companion"} 7', metrics)
+                    self.assertIn(b'willow_role_tx_reported_airtime_seconds_total{role="companion"} 0.25', metrics)
+                    self.assertIn(b'willow_observer_dirty{role="observer"} 1', metrics)
+                    self.assertIn(b'willow_observer_save_error{role="observer"} -1', metrics)
+                    self.assertIn(b'willow_observer_expired_total{role="observer"} 3', metrics)
+                    self.assertNotIn(b'public_key', metrics)
+                    self.assertNotIn(b'fixture-token', metrics)
+                    self.assertNotIn(b'\nwillow_modem_battery_volts ', metrics)
+                    self.assertEqual(metrics.count(b'\nwillow_modem_received_packets_total '), 1)
+                    self.assertIn(b'\nwillow_modem_received_packets_total 42', metrics)
+                    self.assertIn(b'\nwillow_modem_temperature_celsius 31.5', metrics)
                     request("/status")
                     request("/readyz")
                     self.assertEqual(counts(), (2, 2, 2))
@@ -319,6 +341,12 @@ class Dashboard(unittest.TestCase):
                     completed = counts()
                     self.assertEqual(request("/readyz")[0], 503)
                     self.assertEqual(counts(), completed)
+                    code, metrics = request("/metrics", authorized=False)
+                    self.assertEqual(code, 200)
+                    self.assertIn(b'willow_role_health_available{role="companion"} 0', metrics)
+                    self.assertNotIn(b'willow_companion_listener_active{role="companion"}', metrics)
+                    self.assertNotIn(b'willow_role_tx_accepted_total{role="companion"}', metrics)
+                    self.assertEqual(counts(), completed)
                     # Resetting the last waiter cancels its refresh; quiet time must
                     # not start retries or turn the expired success into a reply.
                     time.sleep(.6)
@@ -348,6 +376,7 @@ class Dashboard(unittest.TestCase):
                     secondary.close()
 
     def test_http_owner_health_and_restart(self):
+        from service_demo import RunningService
         for binary in ("hew-dashboard", "hew-dashboard-release"):
             with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
                 root = Path(name)

@@ -1,5 +1,6 @@
 //! HTTP dashboard, backed by live host actors and companion services.
 import host_admin;
+import host_metrics;
 
 import owner_client;
 
@@ -642,6 +643,10 @@ fn serialized(code: i64, value: json.Value) -> bytes {
 }
 
 fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Authentication, enabled: bool, page: string) -> Client {
+    if request.method == "GET" && request.path == "/metrics" {
+        client.health = 4;
+        return client;
+    }
     if request.method == "GET" && request.path == "/status" {
         client.health = 1;
         return client;
@@ -722,7 +727,19 @@ fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Au
 
 
 fn health_response(var client: Client, samples: Vec<Sample>) -> Client {
-    if client.health == 2 {
+    if client.health == 4 {
+        var metrics = "# TYPE willow_health_source_available gauge\n# TYPE willow_health_source_age_seconds gauge\n";
+        let sources = ["host_status", "host_readiness", "companion_status", "companion_readiness", "bot_companion_status", "bot_companion_readiness"];
+        for i in 0..6 {
+            metrics += f"willow_health_source_available\{source=\"{sources[i]}\"\} {if samples[i].value.is_some() { 1 } else { 0 }}\n";
+            if samples[i].value.is_some() {
+                let age = (listener.now() - samples[i].updated) as f64 / 1000.0;
+                metrics += f"willow_health_source_age_seconds\{source=\"{sources[i]}\"\} {age}\n";
+            }
+        }
+        metrics += host_metrics.render(status_snapshot(samples), readiness(samples));
+        client.outgoing = host_admin.response(200, "text/plain; version=0.0.4; charset=utf-8", metrics);
+    } else if client.health == 2 {
         let value = readiness(samples);
         client.outgoing = serialized(if flag(value, "ready", true) { 200 } else { 503 }, value);
     } else {

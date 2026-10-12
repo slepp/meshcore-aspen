@@ -1,0 +1,1136 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_VM",
+      "label": "VictoriaMetrics (Prometheus)",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "meshcore-willow-host-vm",
+  "title": "MeshCore · Willow host",
+  "description": "Native Hew host health, observer delivery, companion TX and shared-modem measurements.",
+  "tags": [
+    "meshcore",
+    "willow",
+    "victoriametrics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Read this host view",
+      "type": "text",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "description": "",
+      "targets": [],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Select a **Willow host**. These metrics come from the native Hew dashboard, separate from Aspen and Python bot feeds. State timelines show sampled transitions; missing scrapes remain gaps. A failed health source reports unavailable and omits its measurements.\n\nObserver rates count MQTT PUBACK-confirmed publications, not RF delivery. Companion TX outcomes describe those roles. Physical modem traffic appears once for the shared radio. CPU/RSS and native-worker process counters are not exported by this endpoint; bot readiness reports the existing bot health boundary."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Collector connection",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 5
+      },
+      "description": "Collector scrape result. No series means this job has no samples in the selected range.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available / up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Health source availability",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 6
+      },
+      "description": "A bounded refresh requests all six health sources together. Zero means that source failed; its old measurements are omitted.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_health_source_available{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{source}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available / up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Role readiness",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 7
+      },
+      "description": "Reported operational readiness. Missing status/readiness is unknown, not ready. Bot readiness includes the existing native-worker health boundary.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_role_ready{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available / up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Radio connections",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_radio_connected{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available / up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Companion listeners and observer MQTT",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_companion_listener_active{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · listener",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "willow_observer_mqtt_connected{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · MQTT",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Unavailable / down",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Available / up",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 7,
+      "title": "Observer admissions, publications and drops",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Reset-aware rates; publications advance only on broker PUBACK. Dropped is actual outbox admission loss, not an absent sample.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(willow_observer_observed_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · observed",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(willow_observer_published_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · published",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(willow_observer_dropped_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · dropped",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Observer queue",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Current queued observations. Observer queue is separate from modem and companion TX queues.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_observer_queued{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Companion TX outcomes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 24,
+        "h": 8
+      },
+      "description": "Role-scoped outcomes. Accepted is admission; unknown is an uncertain send. Counter restarts use rate() reset handling.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(willow_role_tx_accepted_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · accepted",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(willow_role_tx_succeeded_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · succeeded",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(willow_role_tx_failed_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · failed",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "D",
+          "expr": "rate(willow_role_tx_rejected_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · rejected",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "E",
+          "expr": "rate(willow_role_tx_unknown_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · unknown",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Shared modem packet traffic",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Physical modem counters exported once from the repeater health snapshot. Role copies are not summed. Missing hardware callbacks leave gaps.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(willow_modem_received_packets_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · received_packets",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(willow_modem_sent_packets_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · sent_packets",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(willow_modem_errors_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · errors",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "pps",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Shared modem signal",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_modem_noise_dbm{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · noise",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "willow_modem_rssi_dbm{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · current RSSI",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Shared modem MCU temperature",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_modem_temperature_celsius{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Health snapshot age",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 7
+      },
+      "description": "Age of the successful demand refresh, not RF last-heard age. Idle periods trigger no refresh; each scrape requests fresh health or reuses at most 500 ms of cache.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_health_source_age_seconds{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{source}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Observer persistence state",
+      "type": "state-timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 7
+      },
+      "description": "Dirty means accepted changes await a save. Saving is current work. Save error: 0 none; -1 commit failed; -2 directory sync failed after rename; -3 restore invalid/unreadable.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_observer_dirty{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · dirty",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "willow_observer_saving{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · saving",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "C",
+          "expr": "willow_observer_save_error{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}} · save result",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "spanNulls": false,
+            "lineWidth": 0
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Idle / clear",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Active",
+                  "color": "blue"
+                },
+                "-1": {
+                  "text": "Commit failed",
+                  "color": "red"
+                },
+                "-2": {
+                  "text": "Directory sync failed",
+                  "color": "red"
+                },
+                "-3": {
+                  "text": "Restore failed",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto"
+      }
+    },
+    {
+      "id": 15,
+      "title": "Observer save failures and expirations",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(willow_observer_save_failures_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · save_failures",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(willow_observer_expired_total{job=\"meshcore-willow\",instance=~\"${instance:regex}\"}[$__rate_interval]) and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · expired",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Observer entries restored at startup",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 67,
+        "w": 12,
+        "h": 7
+      },
+      "description": "Gauge of loaded entries, not a counter or delivery rate.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "willow_observer_restored{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · {{role}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No current sample",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Willow host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "query": {
+          "query": "label_values(willow_role_health_available, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(willow_role_health_available, instance)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      }
+    ]
+  }
+}
