@@ -50,8 +50,8 @@ jobs:
           channel=$(awk -F '"' '/^channel =/ {print $2; exit}' .tmp/hew/rust-toolchain.toml)
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
-          RUSTUP_TOOLCHAIN="$channel" make -C .tmp/hew -j2 hew-native
-          echo "$GITHUB_WORKSPACE/.tmp/hew/target/debug" >> "$GITHUB_PATH"
+          RUSTUP_TOOLCHAIN="$channel" make -C .tmp/hew -j2 hew
+          echo "$GITHUB_WORKSPACE/.tmp/hew/build/bin" >> "$GITHUB_PATH"
           echo "HEW_STD=$GITHUB_WORKSPACE/.tmp/hew/std" >> "$GITHUB_ENV"
           echo "Hew source: $(git -C .tmp/hew rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - name: Build and test Willow
