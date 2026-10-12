@@ -176,7 +176,7 @@ int64_t mc_outbound_new(const Bytes *url, const Bytes *ca) {
     int ok = out->easy && out->multi;
 #define SET(option, value) do { if (ok && curl_easy_setopt(out->easy, option, value) != CURLE_OK) ok = 0; } while (0)
     SET(CURLOPT_URL, address);
-    SET(CURLOPT_PROTOCOLS_STR, "http,https,ws,wss");
+    SET(CURLOPT_PROTOCOLS_STR, out->websocket ? "ws,wss" : "http,https");
     SET(CURLOPT_PROXY, "");
     SET(CURLOPT_CONNECT_ONLY, out->websocket ? 2L : 1L);
     SET(CURLOPT_CONNECTTIMEOUT_MS, 3000L);
