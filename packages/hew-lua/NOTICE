@@ -1,0 +1,13 @@
+hew.lua package code: Apache-2.0.
+
+Lua 5.5.1, Copyright (C) 1994-2026 Lua.org, PUC-Rio.
+Source: https://www.lua.org/ftp/lua-5.5.1.tar.gz
+Archive SHA-256: 1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
+The included core and base/math/string/table libraries retain their MIT notices.
+Local changes: llex.c invokes hlua_parser_step for each consumed character;
+luaconf.h supplies missing old-newlib integer limits and a configurable
+HLUA_C_STACK_LIMIT (default 40; Pine uses 32).
+
+native/hew.h is the public Hew byte C ABI header from hew-cabi/include/hew.h.
+Copyright (c) 2026 Stephen Olesen, The Hew Project Developers. Licensed under MIT or Apache-2.0;
+this package distributes it under the included MIT licence.

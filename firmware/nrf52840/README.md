@@ -59,8 +59,7 @@ administration entry points. WiFi commands report that this platform has no
 WiFi rather than exposing nonfunctional configuration.
 
 ```sh
-make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua \
-  LUA_ARCHIVE=/path/in/your/project/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 ```
 
 The other `nrfmast{,_rx,_fleet}` images retain the small native note bot.

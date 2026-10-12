@@ -248,12 +248,11 @@ reception.
 ## Build and validate without a device
 
 Stage Pine with its existing `prepare.py` using a **new** output beneath
-`firmware/nrf52840/.build`, then select `nrfmast_solar_lua`. Supply the same
-verified Lua 5.5.1 source archive used by the production Lua build:
+`firmware/nrf52840/.build`, then select `nrfmast_solar_lua`. Preparation uses the bundled Lua 5.5.1 sources:
 
 ```sh
 python3 firmware/nrf52840/prepare.py --source /path/to/pinned-MeshCore \
-  --output firmware/nrf52840/.build/solar-check --lua-archive /path/to/lua-5.5.1.tar.gz
+  --output firmware/nrf52840/.build/solar-check
 pio run -d firmware/nrf52840/.build/solar-check -e nrfmast_solar_lua -t buildprog
 ```
 

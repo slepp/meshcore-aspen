@@ -1,0 +1,220 @@
+//! Owned Lua sessions. Host operations yield copied scalar requests explicitly.
+import std.encoding.utf8;
+
+#[opaque]
+type Handle {
+}
+
+extern "C" {
+    fn hlua_ffi_open(heap: i64, fuel: i64, parser: i64, us: i64, source: i64, value: i64, hosts: i64) -> Handle;
+    fn hlua_ffi_valid(handle: Handle) -> i32;
+    fn hlua_close(handle: Handle);
+    fn hlua_ffi_load(handle: Handle, source: bytes) -> i32;
+    fn hlua_ffi_call(handle: Handle, name: bytes) -> i32;
+    fn hlua_ffi_argument(handle: Handle, kind: i32, integer: i64, number: f64, data: bytes) -> i32;
+    fn hlua_prepare_arguments(handle: Handle, token: u64, resume: i32) -> i32;
+    fn hlua_resume(handle: Handle, token: u64) -> i32;
+    fn hlua_cancel(handle: Handle);
+    fn hlua_token(handle: Handle) -> u64;
+    fn hlua_count(handle: Handle) -> u64;
+    fn hlua_ffi_kind(handle: Handle, index: i64) -> i32;
+    fn hlua_ffi_integer(handle: Handle, index: i64) -> i64;
+    fn hlua_ffi_number(handle: Handle, index: i64) -> f64;
+    fn hlua_ffi_bytes(handle: Handle, index: i64) -> bytes;
+    fn hlua_ffi_operation(handle: Handle) -> bytes;
+    fn hlua_ffi_error(handle: Handle) -> bytes;
+    fn hlua_peak(handle: Handle) -> u64;
+    fn hlua_instructions(handle: Handle) -> u64;
+    fn hlua_parser_steps(handle: Handle) -> u64;
+}
+
+pub type Limits {
+    heap_bytes: i64;
+    instructions: i64;
+    parser_steps: i64;
+    active_us: i64;
+    source_bytes: i64;
+    value_bytes: i64;
+    host_calls: i64;
+}
+
+pub fn default_limits() -> Limits {
+    Limits { heap_bytes: 1048576, instructions: 100000, parser_steps: 262144, active_us: 100000, source_bytes: 65536, value_bytes: 16384, host_calls: 32 }
+}
+
+pub enum Value {
+    Nil;
+    Bool(bool);
+    Integer(i64);
+    Number(f64);
+    Bytes(bytes);
+}
+
+pub type Request {
+    token: u64;
+    operation: bytes;
+    arguments: Vec<Value>;
+}
+
+pub enum Step {
+    Complete(Vec<Value>);
+    Host(Request);
+}
+
+#[resource]
+pub type Session {
+    handle: Handle;
+}
+
+pub fn open(limits: Limits) -> Result<Session, string> {
+    let h = unsafe {
+        hlua_ffi_open(limits.heap_bytes, limits.instructions, limits.parser_steps, limits.active_us, limits.source_bytes, limits.value_bytes, limits.host_calls)
+    };
+    if unsafe {
+        hlua_ffi_valid(h)
+    } == 0 {
+        return .Err("Lua session limits are invalid or allocation failed");
+    }
+    .Ok(Session { handle: h })
+}
+
+fn error_text(h: Handle) -> string {
+    match utf8.decode(unsafe {
+        hlua_ffi_error(h)
+    }) {
+        .Ok(text) => text,
+        .Err(_) => "Lua execution failed",
+    }
+}
+
+fn arguments(h: Handle, values: Vec<Value>) -> Result<bool, string> {
+    if values.len() > 8 {
+        return .Err("Lua accepts at most eight scalar arguments");
+    }
+    for value in values {
+        let ok = match value {
+            Value.Nil => unsafe {
+                hlua_ffi_argument(h, 0, 0, 0.0, bytes.new())
+            }
+            Value.Bool(v) => unsafe {
+                hlua_ffi_argument(h, 1, if v {
+                    1
+                } else {
+                    0
+                }, 0.0, bytes.new())
+            }
+            Value.Integer(v) => unsafe {
+                hlua_ffi_argument(h, 2, v, 0.0, bytes.new())
+            }
+            Value.Number(v) => unsafe {
+                hlua_ffi_argument(h, 3, 0, v, bytes.new())
+            }
+            Value.Bytes(v) => unsafe {
+                hlua_ffi_argument(h, 4, 0, 0.0, v)
+            }
+        };
+        if ok == 0 {
+            return .Err(error_text(h));
+        }
+    }
+    .Ok(true)
+}
+
+fn step(h: Handle, status: i32) -> Result<Step, string> {
+    if status != 1 && status != 2 {
+        return .Err(error_text(h));
+    }
+    var values: Vec<Value> = Vec.new();
+    let count = unsafe {
+        hlua_count(h)
+    } as i64;
+    for i in 0..count {
+        let kind = unsafe {
+            hlua_ffi_kind(h, i)
+        };
+        let value = match kind {
+            1 => Value.Bool(unsafe {
+                hlua_ffi_integer(h, i)
+            } != 0),
+            2 => Value.Integer(unsafe {
+                hlua_ffi_integer(h, i)
+            }),
+            3 => Value.Number(unsafe {
+                hlua_ffi_number(h, i)
+            }),
+            4 => Value.Bytes(unsafe {
+                hlua_ffi_bytes(h, i)
+            }),
+            _ => Value.Nil,
+        };
+        values.push(value);
+    }
+    if status == 1 {
+        .Ok(Step.Complete(values))
+    } else {
+        .Ok(Step.Host(Request { token: unsafe {
+            hlua_token(h)
+        }, operation: unsafe {
+            hlua_ffi_operation(h)
+        }, arguments: values }))
+    }
+}
+
+impl Session {
+    pub fn close(consume self) {
+        unsafe {
+            hlua_close(self.handle);
+        };
+    }
+    pub fn load(self, source: bytes) -> Result<bool, string> {
+        if unsafe {
+            hlua_ffi_load(self.handle, source)
+        } != 0 {
+            .Err(error_text(self.handle))
+        } else {
+            .Ok(true)
+        }
+    }
+    pub fn call(self, name: string, values: Vec<Value>) -> Step fails string {
+        if unsafe {
+            hlua_prepare_arguments(self.handle, 0, 0)
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        arguments(self.handle, values)?;
+        step(self.handle, unsafe {
+            hlua_ffi_call(self.handle, name.to_bytes())
+        })?
+    }
+    pub fn resume(self, token: u64, values: Vec<Value>) -> Step fails string {
+        if unsafe {
+            hlua_prepare_arguments(self.handle, token, 1)
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        arguments(self.handle, values)?;
+        step(self.handle, unsafe {
+            hlua_resume(self.handle, token)
+        })?
+    }
+    pub fn cancel(self) {
+        unsafe {
+            hlua_cancel(self.handle);
+        };
+    }
+    pub fn peak_bytes(self) -> u64 {
+        unsafe {
+            hlua_peak(self.handle)
+        }
+    }
+    pub fn instructions(self) -> u64 {
+        unsafe {
+            hlua_instructions(self.handle)
+        }
+    }
+    pub fn parser_steps(self) -> u64 {
+        unsafe {
+            hlua_parser_steps(self.handle)
+        }
+    }
+}

@@ -9,8 +9,7 @@ identities, Lua source selections, notes and other QSPI data.
 Build the application without uploading:
 
 ```sh
-make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua \
-  LUA_ARCHIVE=/path/in/your/project/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 ```
 
 Use the existing Pine application-only update procedure and a verified private

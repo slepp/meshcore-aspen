@@ -51,10 +51,10 @@ struct PacketLua::Impl : VmHeap {
   const Metadata *metadata = nullptr;
   Call *call = nullptr;
   mp_report reportScratch{};
-  explicit Impl(PacketLuaStats &s) : stats(s) { parserStep = compileStep; }
-  static void compileStep(lua_State *state, VmHeap &heap) {
+  explicit Impl(PacketLuaStats &s) : stats(s) { parserStep = compileStep; instructionStep = hook; }
+  static void compileStep(lua_State *state, hlua::Heap &heap) {
     auto &s = static_cast<Impl &>(heap);
-    if (++s.stats.parserSteps > PacketLuaSourceLimit * 4 || s.expired())
+    if (!hlua::charge(s.stats.parserSteps, PacketLuaSourceLimit * 4) || s.expired())
       luaL_error(state, "Packet Lua compile/time budget exceeded");
   }
   static Impl &self(lua_State *state) { return **static_cast<Impl **>(lua_getextraspace(state)); }
@@ -64,10 +64,10 @@ struct PacketLua::Impl : VmHeap {
     if (size && s.running && s.expired()) return nullptr;
     return s.resize(pointer, oldSize, size, s.stats.heapLimit, s.stats.peakBytes);
   }
-  static void hook(lua_State *state, lua_Debug *) {
+  static void hook(lua_State *state, hlua::Heap &) {
     auto &s = self(state);
-    ++s.stats.instructions;
-    if (s.call ? !s.call->consume() : s.stats.instructions > s.initFuel || s.expired())
+    const bool withinFuel = hlua::charge(s.stats.instructions, s.initFuel);
+    if (s.call ? !s.call->consume() : !withinFuel || s.expired())
       luaL_error(state, "Packet Lua instruction/time budget exceeded");
   }
   int fail(lua_State *state, const char *message, Fault fault = Fault::Execution) {
@@ -337,10 +337,10 @@ bool PacketLua::load(const char *source, size_t size, char *error, size_t capaci
   stats_.sourceBytes = uint32_t(size); stats_.sessionBytes = sizeof(Impl); stats_.heapLimit = heapBytes;
   s.source = source; s.size = size; s.initFuel = fuel;
   const auto started = nowUs(); s.deadline = started + initUs;
-  s.state = lua_newstate(Impl::allocate, static_cast<VmHeap *>(&s), luaL_makeseed(nullptr));
+  s.state = hlua::newState(Impl::allocate, s);
   if (!s.state) return failed("Packet Lua heap allocation/time budget exceeded");
   *static_cast<Impl **>(lua_getextraspace(s.state)) = &s;
-  lua_sethook(s.state, Impl::hook, LUA_MASKCOUNT, 1);
+  lua_sethook(s.state, hlua::instructionHook, LUA_MASKCOUNT, 1);
   lua_pushcfunction(s.state, Impl::initialize);
   const int result = lua_pcall(s.state, 0, 0, 0);
   stats_.loadUs = nowUs() - started; stats_.liveBytes = uint32_t(s.live);

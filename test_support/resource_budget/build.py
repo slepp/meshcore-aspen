@@ -12,7 +12,6 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = "d92964352441e53b93e8667b802e04f6e072b39e"
 EPOCH = "1790798400"
-LUA_SHA = "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce"
 WAMR_SHA = "c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e"
 PROFILES = {
     "modem": ("Xiao_S3_WIO_kiss_wifi", 0),
@@ -108,10 +107,10 @@ def verify_source(root, reference="HEAD"):
         ["git", "rev-parse", "--verify", "--end-of-options", reference + "^{commit}"],
         cwd=root, text=True).strip()
     subprocess.run(["git", "diff", "--exit-code", revision, "--", "firmware",
-                    "Makefile", ":(exclude)**/*.md"], cwd=root, check=True,
+                    "packages/hew-lua", "Makefile", ":(exclude)**/*.md"], cwd=root, check=True,
                    stdout=subprocess.DEVNULL)
     untracked = subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard", "--", "firmware"],
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "firmware", "packages/hew-lua"],
         cwd=root, text=True).splitlines()
     if any(Path(path).suffix != ".md" for path in untracked):
         raise ValueError("Untracked firmware inputs differ from the selected baseline")
@@ -122,7 +121,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--libdeps", type=Path, required=True)
-    parser.add_argument("--lua-archive", type=Path, required=True)
     parser.add_argument("--wamr-archive", type=Path, required=True)
     parser.add_argument("--baseline", default="HEAD",
                         help="Local source revision to verify build inputs against (default: HEAD)")
@@ -138,7 +136,6 @@ def main():
     if not source.exists():
         subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(args.upstream), str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "checkout", "--quiet", "--detach", UPSTREAM], check=True)
-    copy_archive(args.lua_archive, ROOT / ".tmp/onchip-lua/lua-5.5.1.tar.gz", LUA_SHA)
     copy_archive(args.wamr_archive, ROOT / ".cache/meshcore-wamr/wamr.tar.gz", WAMR_SHA)
     config = (ROOT / "firmware/esp32/platformio.ini.example").read_text()
     config = config.replace("MAX_CONTACTS=256", "MAX_CONTACTS=350")
@@ -205,7 +202,8 @@ def main():
             "baseline": baseline, "report_revision": report_revision,
             "upstream": UPSTREAM, "profile": name,
             "environment": target_env, "wasm": wasm, "source_date_epoch": EPOCH,
-            "lua_archive_sha256": LUA_SHA, "wamr_archive_sha256": WAMR_SHA,
+            "lua_package_manifest_sha256": sha(ROOT / "packages/hew-lua/hew.toml"),
+            "wamr_archive_sha256": WAMR_SHA,
             "profile_sha256": sha(profile),
             "dependencies_sha256": dependency_inputs(deps),
             "toolchain": toolchain_inputs(),

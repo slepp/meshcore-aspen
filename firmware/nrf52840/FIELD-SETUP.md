@@ -36,8 +36,7 @@ owners must use their board's established app-only update and recovery path.
 For an unreleased source build, use the normal XIAO profile:
 
 ```sh
-make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua \
-  LUA_ARCHIVE=/path/to/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 ```
 
 The resulting app-only `firmware.zip` is in

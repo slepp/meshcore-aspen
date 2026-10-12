@@ -21,8 +21,7 @@ UPLOAD_ENV = $(if $(filter upload-rf,$@),$(if $(filter nrfmast_rx,$(ENV)),nrfmas
 
 .PHONY: prepare baseline build size test native-test
 prepare:
-	$(PYTHON) prepare.py --source "$(SOURCE)" --output "$(UPSTREAM)" $(if $(LUA_ARCHIVE),--lua-archive "$(LUA_ARCHIVE)")
-	@if test "$(ENV)" = nrfmast_fleet_lua || test "$(ENV)" = nrfmast_solar_lua; then test -f "$(UPSTREAM)/lib/OnchipLua/lua.h" || { echo "Set LUA_ARCHIVE to the verified Lua 5.5.1 archive." >&2; exit 1; }; fi
+	$(PYTHON) prepare.py --source "$(SOURCE)" --output "$(UPSTREAM)"
 
 baseline: prepare
 	$(PIO) run -d "$(UPSTREAM)" -e nrfmast_baseline
@@ -177,7 +176,7 @@ $(NATIVE)/lua/%.o: $(LUA_NATIVE)/%.c $(LUA_NATIVE)/luaconf.h $(LUA_NATIVE)/lua.h
 	TMPDIR="$(NATIVE)" $(CC) -std=c11 $(LUA_TEST_FLAGS) -c "$<" -o "$@"
 production-lua-test: $(LUA_TEST_OBJECTS)
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DONCHIP_BOT_VM_TEST=1 -DONCHIP_BOT_HEAP_MODEL=1 \
-		tests/lua_vm.cpp ../runtime/BotVm.cpp ../runtime/LuaRuntime.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
+		tests/lua_vm.cpp ../runtime/BotVm.cpp $(LUA_NATIVE)/hlua_core.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
 		$(LUA_TEST_OBJECTS) -Wl,--gc-sections -lm -pthread -o "$(NATIVE)/lua-vm"
 	"$(NATIVE)/lua-vm"
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DNRFMAST_PRODUCTION_LUA=1 \
@@ -185,7 +184,7 @@ production-lua-test: $(LUA_TEST_OBJECTS)
 		-I$(CRYPTO) -I$(UPSTREAM)/lib/ed25519 -I$(FRAMEWORK)/libraries/Adafruit_LittleFS/src \
 		tests/lua_storage.cpp PineFilesystem.cpp PineMetadata.cpp \
 		../runtime/BotWorker.cpp ../runtime/BotStore.cpp ../runtime/BotTimers.cpp ../runtime/BotReminders.cpp \
-		../runtime/BotVm.cpp ../runtime/LuaRuntime.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
+		../runtime/BotVm.cpp $(LUA_NATIVE)/hlua_core.cpp ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp \
 		../runtime/BotSettings.cpp ../runtime/BotNetworkConfig.cpp ../runtime/BotHttps.cpp \
 		$(UPSTREAM)/src/Utils.cpp $(CRYPTO)/SHA256.cpp $(CRYPTO)/Hash.cpp $(CRYPTO)/Crypto.cpp \
 		$(LUA_TEST_OBJECTS) $(NATIVE)/lua-lfs.o $(NATIVE)/lua-lfs-util.o -Wl,--gc-sections,--wrap=calloc -lm -pthread -o "$(NATIVE)/lua-storage"
@@ -202,13 +201,12 @@ production-lua-radio-test: $(NATIVE)/crypto/SHA256.o $(NATIVE)/crypto/Hash.o $(N
 .PHONY: packet-lua-test
 packet-lua-test: $(LUA_TEST_OBJECTS)
 	TMPDIR="$(NATIVE)" $(CXX) -std=c++17 $(LUA_TEST_FLAGS) -DONCHIP_BOT_VM_TEST=1 \
-		-I../esp32/tests tests/packet_lua.cpp ../runtime/PacketLua.cpp ../runtime/LuaRuntime.cpp \
+		-I../esp32/tests tests/packet_lua.cpp ../runtime/PacketLua.cpp $(LUA_NATIVE)/hlua_core.cpp \
 		$(LUA_TEST_OBJECTS) -Wl,--gc-sections -lm -pthread -o "$(NATIVE)/packet-lua"
 	"$(NATIVE)/packet-lua"
 production-lua-source-parser-test:
 	$(MAKE) -C ../esp32 lifecycle-test BOT_INTEGRATION=1 ADMIN_INTEGRATION=1 ONCHIP_BOT_WASM=0 \
-		UPSTREAM="$(SOURCE)" BOT_LUA="$(BUILD)/lua-5.5.1" BOT_LUA_NATIVE="$(LUA_NATIVE)" \
-		$(if $(LUA_ARCHIVE),BOT_LUA_ARCHIVE="$(LUA_ARCHIVE)") \
+		UPSTREAM="$(SOURCE)" BOT_LUA_NATIVE="$(LUA_NATIVE)" BOT_LUA_C_STACK_LIMIT=32 \
 		TEST_FLAGS='-DONCHIP_BOT_COMPACT_PROFILE=1 -DONCHIP_BOT_JOB_LIMIT=2 -DPINE_PARSER_STACK_TEST=1 -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_MAST_WEB_TEST=1'
 $(NATIVE)/lua-lfs.o: $(FRAMEWORK)/libraries/Adafruit_LittleFS/src/littlefs/lfs.c
 	@mkdir -p "$(@D)"

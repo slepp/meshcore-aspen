@@ -368,7 +368,6 @@ No credentials/environment files are required.
 python3 test_support/resource_budget/build.py \
   --upstream PATH_TO_PINNED_UPSTREAM \
   --libdeps PATH_TO_CACHED_ESP_LIBDEPS \
-  --lua-archive PATH_TO_LUA_5_5_1_ARCHIVE \
   --wamr-archive PATH_TO_PINNED_WAMR_ARCHIVE
 
 python3 test_support/resource_budget/inspect.py \

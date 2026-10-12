@@ -179,6 +179,7 @@ def generate(upstream, target):
     for obsolete in ("CompanionServer.cpp", "CompanionServer.h",
                      "OnchipStatsFormatHelper.h"):
         (dest / obsolete).unlink(missing_ok=True)
+    (dest / "LuaRuntime.cpp").unlink(missing_ok=True)
     for directory in (source, source.parent / "runtime"):
         for path in directory.iterdir():
             if path.suffix in (".h", ".cpp") and path.name != "wifi_kiss_main.cpp":

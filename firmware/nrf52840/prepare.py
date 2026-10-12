@@ -42,7 +42,7 @@ def stage_field_dfu(output, framework=None):
     (output / "examples/nrfmast/PineDfuService.cpp").write_text(native)
 
 
-def prepare(source, output, lua_archive=None):
+def prepare(source, output):
     source, output = pathlib.Path(source).resolve(), pathlib.Path(output).resolve()
     if not output.is_relative_to(HERE / ".build"):
         raise ValueError("Build output must be inside firmware/nrf52840/.build")
@@ -90,7 +90,8 @@ def prepare(source, output, lua_archive=None):
     shutil.copytree(HERE / "platform", dest / "platform", dirs_exist_ok=True)
     shared = dest / "onchip"
     shared.mkdir(exist_ok=True)
-    units = ("BotVm LuaRuntime BotWorker BotTypes BotRegistry BotStore BotTimers BotReminders BotUtilities "
+    (shared / "LuaRuntime.cpp").unlink(missing_ok=True)
+    units = ("BotVm BotWorker BotTypes BotRegistry BotStore BotTimers BotReminders BotUtilities "
              "BotSettings BotHttps BotNetworkConfig BotHttpsProbe MastSource CommandBot NodeBackup FirmwareNodeBackup "
              "PacketLua PacketPrograms").split()
     for directory in ("esp32", "runtime"):
@@ -124,16 +125,9 @@ def prepare(source, output, lua_archive=None):
             raise ValueError("Pinned BLE carrier ACK hook changed")
         text = text.replace(callback, callback + "\n      if (!shouldAckMessage((const char*)&data[5])) return;")
         chat_source.write_text(text)
-    if lua_archive:
-        archive = pathlib.Path(lua_archive).resolve()
-        expected = "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce"
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
-            raise ValueError("Lua 5.5.1 archive SHA-256 mismatch")
-        with tarfile.open(archive) as tree:
-            tree.extractall(HERE / ".build", filter="data")
-        sys.path.insert(0, str(HERE.parent / "esp32"))
-        from prepare_bot import stage_lua
-        stage_lua(HERE / ".build/lua-5.5.1", output, c_stack_limit=32)
+    sys.path.insert(0, str(HERE.parent / "esp32"))
+    from prepare_bot import stage_lua
+    stage_lua(output, c_stack_limit=32)
     protocol = (output / "examples/companion_radio/MyMesh.cpp").read_text()
     definitions = re.findall(
         r"^#define (?:CMD_|RESP_CODE_|PUSH_CODE_|ERR_CODE_)[A-Z0-9_]+\s+\S+",
@@ -236,6 +230,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--lua-archive")
     args = parser.parse_args()
-    prepare(args.source, args.output, args.lua_archive)
+    prepare(args.source, args.output)

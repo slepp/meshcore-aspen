@@ -10,10 +10,9 @@ export ONCHIP_BOT_WASM
 BOT_BUILD := $(ROOT)/.tmp/onchip-bot-$(TEST_VARIANT)-wasm$(ONCHIP_BOT_WASM)
 PLUGIN_SCHEMA ?= none
 PLUGIN_ROLLBACK ?= none
-BOT_LUA := $(ROOT)/.tmp/onchip-lua/lua-5.5.1
-BOT_LUA_ARCHIVE := $(ROOT)/.tmp/onchip-lua/lua-5.5.1.tar.gz
-BOT_LUA_SHA := 1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
 BOT_LUA_NATIVE := $(BOT_BUILD)/lib/OnchipLua
+BOT_LUA_C_STACK_LIMIT ?= 40
+BOT_LUA_STAMP = $(BOT_LUA_NATIVE)/.staged-$(BOT_LUA_C_STACK_LIMIT)
 BOT_WAMR := $(ROOT)/.cache/meshcore-wamr
 BOT_WAMR_LIB := $(BOT_WAMR)/host/libmeshcore_wamr.a
 BOT_WAMR_INCLUDES := -I$(BOT_WAMR)/source/core/iwasm/include
@@ -217,23 +216,15 @@ BOT_LIFECYCLE_SOURCES := ../runtime/CommandBot.cpp ../runtime/BotWorker.cpp ../r
 	../runtime/BotSettings.cpp
 BOT_LIFECYCLE_SOURCES += tests/support/BotNativeHarness.cpp
 endif
-$(BOT_LUA_ARCHIVE):
-	@mkdir -p $(dir $@)
-	curl --fail --location --retry 2 --silent --show-error \
-		https://www.lua.org/ftp/lua-5.5.1.tar.gz -o $@.partial
-	echo '$(BOT_LUA_SHA)  $@.partial' | sha256sum -c -
-	mv $@.partial $@
-$(BOT_LUA)/src/lua.h: $(BOT_LUA_ARCHIVE)
-	echo '$(BOT_LUA_SHA)  $<' | sha256sum -c -
-	tar -xzf $< -C $(dir $(BOT_LUA))
-$(BOT_LUA_NATIVE)/llex.c: $(BOT_LUA)/src/lua.h prepare_bot.py bot.mk
-	python3 -B prepare_bot.py --lua $(BOT_LUA) --target $(BOT_BUILD)
-$(BOT_BUILD)/lua/%.o: $(BOT_LUA_NATIVE)/llex.c
+BOT_LUA_PACKAGE := $(ROOT)/packages/hew-lua/native
+$(BOT_LUA_STAMP): $(wildcard $(BOT_LUA_PACKAGE)/lua/*) $(BOT_LUA_PACKAGE)/hlua_core.hpp $(BOT_LUA_PACKAGE)/hlua_core.cpp prepare_bot.py bot.mk
+	python3 -B prepare_bot.py --target $(abspath $(BOT_LUA_NATIVE)/../..) --c-stack-limit $(BOT_LUA_C_STACK_LIMIT)
+$(BOT_BUILD)/lua/%.o: $(BOT_LUA_STAMP)
 	@mkdir -p $(BOT_BUILD)/lua
 	$(CC) -std=c11 -O2 -g -ffunction-sections -fdata-sections $(TEST_FLAGS) \
 		-I$(BOT_LUA_NATIVE) -c $(BOT_LUA_NATIVE)/$*.c -o $@
 BOT_LUA_OBJECTS := $(addprefix $(BOT_BUILD)/lua/,$(addsuffix .o,$(BOT_LUA_C)))
-$(BOT_BUILD)/lua-runtime.o: ../runtime/LuaRuntime.cpp ../runtime/VmHeap.h $(BOT_LUA_NATIVE)/llex.c
+$(BOT_BUILD)/lua-runtime.o: $(BOT_LUA_PACKAGE)/hlua_core.cpp $(BOT_LUA_PACKAGE)/hlua_core.hpp $(BOT_LUA_STAMP)
 	$(CXX) $(BOT_FLAGS) -I$(BOT_LUA_NATIVE) -c $< -o $@
 BOT_LUA_OBJECTS += $(BOT_BUILD)/lua-runtime.o
 BOT_LUA_OBJECTS += $(BOT_WAMR_LIB)
@@ -644,8 +635,8 @@ bot-native-https-test: prepare bot-lua bot-prepare-phy
 		$(BOT_LUA_OBJECTS) $(PHY_BUILD)/crypto/*.o $(BOT_JSON_LIBS) -lm -lssl -lcrypto -o $(BOT_BUILD)/bot-native-https
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/https_loopback.py \
 		--service $(BOT_BUILD)/bot-service --client $(BOT_BUILD)/bot-native-https --faults
-bot-prepare: prepare $(BOT_LUA)/src/lua.h
-	python3 -B prepare_bot.py --lua $(BOT_LUA) --target $(BUILD)
+bot-prepare: prepare
+	python3 -B prepare_bot.py --target $(BUILD)
 	TMPDIR=$(ROOT)/.tmp python3 -B prepare_wasm.py --target $(BUILD) --enabled $(ONCHIP_BOT_WASM)
 bot-firmware: bot-prepare
 	cd $(BUILD) && TMPDIR=$(ROOT)/.tmp pio run -e $(ENV)

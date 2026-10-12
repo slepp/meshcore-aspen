@@ -11,7 +11,7 @@
     "aspen": {"version": "0.1.12"},
     "birch": {"version": "0.1.1"},
     "pine": {"version": "0.1.0"},
-    "willow": {"version": "0.0.4"}
+    "willow": {"version": "0.0.5"}
   },
   "compatibility": {
     "queued_phy": 1,

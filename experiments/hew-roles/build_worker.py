@@ -61,11 +61,11 @@ def inventory(directories):
 
 
 def local_inputs():
-    result = inventory([ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
+    result = inventory([ROOT/"packages/hew-lua", ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
                         ROOT/"internal/nativebot", ROOT/"test_support/phy_parity",
                         ROOT/"test_support/parity"])
     for path in (ROOT/"Makefile", ROOT/"release/source.json",
-                 HERE/"build_worker.py", HERE/"compiler_capture.py"):
+                 ROOT/"packages/hew-lua/hew.toml", HERE/"build_worker.py", HERE/"compiler_capture.py"):
         result[str(path)] = digest(path)
     return result
 
@@ -173,7 +173,6 @@ def ensure():
         overrides = shared + [
             f"UPSTREAM={upstream}", f"ONCHIP_UPSTREAM={relative(upstream)}",
             f"BUILD={output/'mesh'}", f"PHY_BUILD={output/'phy'}", f"BOT_BUILD={output/'bot'}",
-            f"BOT_LUA={NATIVE/'lua/lua-5.5.1'}", f"BOT_LUA_ARCHIVE={NATIVE/'lua/lua-5.5.1.tar.gz'}",
             f"BOT_WAMR={wasm.CACHE}", f"CRYPTO={NATIVE/'deps/Crypto'}",
             f"LPP={NATIVE/'deps/CayenneLPP/src'}", f"BASE64={NATIVE/'usb-deps/base64/src'}",
             f"BOT_JSON_INCLUDE={json_include}", "ONCHIP_BOT_WASM=1",
@@ -215,21 +214,19 @@ def ensure():
                          "#pragma once\n#ifndef ONCHIP_CLOCK_BUILD_EPOCH\n"
                          f"#define ONCHIP_CLOCK_BUILD_EPOCH {baseline}u\n#endif\n"
                          f'#define ONCHIP_NATIVE_REVISION "{PIN[:12]}"\n')
-        lua = NATIVE/"lua/lua-5.5.1"
-        run(make+[lua/"src/lua.h"], log, env)
         # This shared helper explicitly delegates build-tree verification to
         # its caller. Keep its parser hooks and c_stack_limit=40 unchanged.
-        prepare_bot.stage_lua(lua, output/"bot")
+        prepare_bot.stage_lua(output/"bot")
         run(make+["bot-lua", "bot-prepare-phy"], log, env)
         run(make+[output/"bot/bot-native-worker"], log, env)
         compiled = output/"bot/bot-native-worker"
         shutil.copyfile(compiled, WORKER)
         WORKER.chmod(0o755)
-        inputs = local | inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps", NATIVE/"lua",
+        inputs = local | inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps",
                                     wasm.CACHE/"source", output/"mesh", output/"bot/lib"])
         for path in [WORKER, compiler_log, wasm.CACHE/"host/compile_commands.json",
                      wasm.CACHE/"host/CMakeCache.txt",
-                     NATIVE/"lua/lua-5.5.1.tar.gz", wasm.CACHE/"wamr.tar.gz", json_include/"cJSON.h"]:
+                     wasm.CACHE/"wamr.tar.gz", json_include/"cJSON.h"]:
             inputs[str(path)] = digest(path)
         for directory in (output, wasm.CACHE/"host"):
             for path in directory.rglob("*"):
@@ -249,7 +246,7 @@ def ensure():
         INPUTS.write_text("".join(value+"\t"+path+"\n" for path, value in sorted(inputs.items())))
         spec = {"format": 1, "base": source_commit, "source_date_epoch": source_epoch,
                 "worker": str(WORKER), "worker_sha256": digest(WORKER), "source_fingerprint": fingerprint,
-                "upstream": PIN, "lua_archive_sha256": digest(NATIVE/"lua/lua-5.5.1.tar.gz"),
+                "upstream": PIN, "lua_package_sha256": digest(ROOT/"packages/hew-lua/hew.toml"),
                 "wamr_revision": wasm.REVISION, "wamr_archive_sha256": wasm.SHA256,
                 "compiler": compiler, "compiler_commands": str(compiler_log),
                 "inputs_sha256": digest(INPUTS), "inputs": inputs, "local_inputs": local}

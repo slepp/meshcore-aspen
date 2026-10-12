@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "willow_build_worker", Path(__file__).resolve().parents[1] / "build_worker.py")
@@ -42,6 +43,24 @@ class SourceIdentity(unittest.TestCase):
             self.assertEqual(worker.source_identity(extracted), expected)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             self.assertEqual(worker.source_identity(extracted), expected)
+
+    def test_package_core_and_manifest_are_worker_binding_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = ["Makefile", "release/source.json", "packages/hew-lua/hew.toml",
+                     "packages/hew-lua/native/hlua_core.hpp", "packages/hew-lua/native/lua/llex.c"]
+            for name in paths:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("initial")
+            with patch.object(worker, "ROOT", root):
+                before = worker.local_inputs()
+                for name in paths[2:]:
+                    path = root / name
+                    path.write_text("changed")
+                    after = worker.local_inputs()
+                    self.assertNotEqual(before[str(path)], after[str(path)])
+                    before = after
 
     def test_invalid_archive_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

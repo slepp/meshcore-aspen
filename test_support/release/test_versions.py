@@ -83,6 +83,7 @@ class VersionTests(unittest.TestCase):
         changed["products"]["willow"]["version"] = "0.0.2"
         self.assertIn('"0.0.2"', versions.generated(changed)["experiments/hew-roles/release_identity.hew"])
         self.assertIn('"0.0.2"', versions.generated(changed)["experiments/hew-roles/release_identity.py"])
+        self.assertIn('version = "0.0.2"', versions.generated(changed)["experiments/hew-roles/hew.toml"])
 
     def test_validation_rejects_overlong_and_ambiguous_versions(self):
         for version in ("01.1.0", "0.1", "0.1.0-rc.0", "0.1.0-rc1", "10000.10000.10000"):

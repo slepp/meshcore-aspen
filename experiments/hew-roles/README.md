@@ -6,7 +6,7 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-**Willow 0.0.4 is an experimental Hew release.** Build the
+**Willow 0.0.5 is an experimental Hew release.** Build the
 [current repository source](https://github.com/slepp/meshcore-aspen) at the final
 installation path with the current Hew compiler and matching libraries. The native worker is bound to that
 source/build tree; copying prebuilt binaries alone is not a supported install.
@@ -35,7 +35,7 @@ python3 -B willow.py check --state /path/to/private/willow
 python3 -B willow.py run --release --state /path/to/private/willow
 ```
 
-Expected: `Willow 0.0.4`; the state check verifies the retained role identities
+Expected: `Willow 0.0.5`; the state check verifies the retained role identities
 and configuration, and startup connects to the configured shared modem without
 retuning it. `make release` builds the host, Base, broker and dashboard with
 the current Hew installation. The launcher defaults to four scheduler workers; set

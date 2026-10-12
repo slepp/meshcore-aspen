@@ -63,6 +63,7 @@ onchip::BotVmLimits luaSourceLimits(const char *source, size_t size, onchip::Bot
     limits.loadWallUs = onchip::BotBundledLoadWallUs;
   return limits;
 }
+void hook(lua_State *, hlua::Heap &);
 struct Budget : onchip::VmHeap {
   enum Phase { Load, Init, Invoke, Cleanup };
   onchip::BotVmLimits limits;
@@ -75,11 +76,11 @@ struct Budget : onchip::VmHeap {
   Budget *active = nullptr;
   bool running = true;
   explicit Budget(onchip::BotVmLimits selected = {})
-      : limits(selected), started(clockUs()), phaseStarted(started) { parserStep = compileStep; }
-  static void compileStep(lua_State *state, onchip::VmHeap &heap) {
+      : limits(selected), started(clockUs()), phaseStarted(started) { parserStep = compileStep; instructionStep = hook; }
+  static void compileStep(lua_State *state, hlua::Heap &heap) {
     auto &owner = static_cast<Budget &>(heap);
     auto &b = owner.active ? *owner.active : owner;
-    if (++b.stats.parserSteps > b.limits.parserSteps || b.expired())
+    if (!hlua::charge(b.stats.parserSteps, b.limits.parserSteps) || b.expired())
       luaL_error(state, "command compile/time budget exceeded");
   }
   uint64_t phaseLimit() const {
@@ -123,9 +124,9 @@ void *allocate(void *context, void *pointer, size_t oldSize, size_t size) {
     return nullptr;
   return b.resize(pointer, oldSize, size, b.limits.heapBytes, b.stats.peakBytes);
 }
-void hook(lua_State *state, lua_Debug *) {
+void hook(lua_State *state, hlua::Heap &) {
   auto &b = budget(state);
-  if (++b.stats.instructions > b.limits.instructions || b.expired())
+  if (!hlua::charge(b.stats.instructions, b.limits.instructions) || b.expired())
     luaL_error(state, "command instruction/time budget exceeded");
 }
 int readonly(lua_State *state) {
@@ -2614,7 +2615,7 @@ bool run(const char *source, size_t size, const onchip::BotEvent *event,
     return false;
   }
   Budget b{luaSourceLimits(source, size, limits)};
-  lua_State *s = lua_newstate(allocate, static_cast<onchip::VmHeap *>(&b), luaL_makeseed(nullptr));
+  lua_State *s = hlua::newState(allocate, b);
   if (!s) {
     snprintf(error, errorSize, "Command VM allocation/time budget exceeded");
     b.transition(Budget::Cleanup);
@@ -2631,7 +2632,7 @@ bool run(const char *source, size_t size, const onchip::BotEvent *event,
   call.manifest = ownedManifest.get();
   call.budget = &b;
   *static_cast<Call **>(lua_getextraspace(s)) = &call;
-  lua_sethook(s, hook, LUA_MASKCOUNT, 1);
+  lua_sethook(s, hlua::instructionHook, LUA_MASKCOUNT, 1);
   call.installed = installed;
   call.bundled = bundledSource(source, size);
   lua_pushcfunction(s, execute);
@@ -2931,7 +2932,7 @@ struct BotSession::Impl {
       job.thread = lua_newthread(s);
       *static_cast<Call **>(lua_getextraspace(job.thread)) = &job.call;
       job.reference = luaL_ref(s, LUA_REGISTRYINDEX);
-      lua_sethook(job.thread, hook, LUA_MASKCOUNT, 1);
+      lua_sethook(job.thread, hlua::instructionHook, LUA_MASKCOUNT, 1);
       lua_getglobal(s, self.loader.manifest->events[index]);
       lua_xmove(s, job.thread, 1);
       return 0;
@@ -2952,7 +2953,7 @@ struct BotSession::Impl {
     job.thread = lua_newthread(s);
     *static_cast<Call **>(lua_getextraspace(job.thread)) = &job.call;
     job.reference = luaL_ref(s, LUA_REGISTRYINDEX);
-    lua_sethook(job.thread, hook, LUA_MASKCOUNT, 1);
+    lua_sethook(job.thread, hlua::instructionHook, LUA_MASKCOUNT, 1);
     if (entry == self.natives.find(job.event.name)) {
       lua_rawgeti(s, LUA_REGISTRYINDEX, self.loader.originalReference);
       lua_getfield(s, -1, entry->name); lua_remove(s, -2);
@@ -3101,10 +3102,10 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
   s.loader = {source, size, nullptr, nullptr};
   s.loader.manifest = &s.program;
   s.loader.budget = &s.heap; s.loader.retained = true;
-  s.state = lua_newstate(allocate, static_cast<onchip::VmHeap *>(&s.heap), luaL_makeseed(nullptr));
+  s.state = hlua::newState(allocate, s.heap);
   if (!s.state) { snprintf(error, errorSize, "Retained Lua heap unavailable"); clear(); return false; }
   *static_cast<Call **>(lua_getextraspace(s.state)) = &s.loader;
-  lua_sethook(s.state, hook, LUA_MASKCOUNT, 1);
+  lua_sethook(s.state, hlua::instructionHook, LUA_MASKCOUNT, 1);
   lua_pushcfunction(s.state, Impl::initialize); lua_pushlightuserdata(s.state, &s);
   const int result = lua_pcall(s.state, 1, 0, 0);
   s.heap.transition(Budget::Init);

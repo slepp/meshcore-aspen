@@ -54,12 +54,11 @@ separate from its last reported error.
 Build the `nrfmast_fleet_lua` image for the XIAO nRF52840/Wio SX1262:
 
 ```sh
-make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua \
-  LUA_ARCHIVE=/path/in/your/project/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 ```
 
-Preparation verifies Lua 5.5.1 SHA-256
-`1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce`.
+Preparation stages the Lua 5.5.1 sources from
+[`hew.lua`](../../packages/hew-lua/README.md), with Pine's C-stack limit of 32.
 The build uses MeshCore companion-v1.17.1,
 `d92964352441e53b93e8667b802e04f6e072b39e`.
 The measured build uses Nordic PlatformIO 11.0.0 and
@@ -286,7 +285,7 @@ make -C firmware/nrf52840 test
 make -C firmware/nrf52840 size ENV=nrfmast_fleet_lua
 make -C firmware/nrf52840 parser-stack-check
 make -C firmware/nrf52840 production-lua-source-parser-test \
-  SOURCE=/path/to/pinned/MeshCore LUA_ARCHIVE=/path/to/lua-5.5.1.tar.gz
+  SOURCE=/path/to/pinned/MeshCore
 ```
 
 The production target runs ABI-realistic native32 shared API tests, actual

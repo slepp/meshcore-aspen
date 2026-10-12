@@ -9,7 +9,7 @@ upstream base and is recorded separately.
 | Aspen | As needed | `aspen-v0.1.12` | `aspen-v0.1.13` |
 | Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
 | Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental series | `willow-v0.0.4` | `willow-v0.0.5` |
+| Willow | Experimental series | `willow-v0.0.5` | `willow-v0.0.6` |
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;

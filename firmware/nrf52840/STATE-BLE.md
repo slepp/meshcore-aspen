@@ -456,8 +456,7 @@ parser-stack and runtime checks. To measure the Lua core's link footprint
 separately, build the development probe:
 
 ```sh
-make -C firmware/nrf52840 lua-probe \
-  LUA_ARCHIVE=/path/to/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 lua-probe
 ```
 
 The Lua 5.5.1 archive must match SHA-256

@@ -1,0 +1,6 @@
+[package]
+name = "test.lua-consumer"
+version = "0.1.0"
+edition = "2026"
+[dependencies]
+"hew.lua" = { path = ".." }

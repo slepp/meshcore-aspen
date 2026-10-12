@@ -1,0 +1,18 @@
+[package]
+name = "hew.lua"
+version = "0.1.0"
+edition = "2026"
+license = "Apache-2.0 AND MIT"
+description = "Owned, bounded Lua sessions for Hew"
+include = ["lua.hew", "native/**", "README.md", "NOTICE", "LICENSE", "examples/**", "tests/**"]
+exclude = ["**/.hew/**", "**/target/**", "**/build/**", "**/hew.lock", "**/__pycache__/**", "**/*.pyc"]
+
+[native]
+sources = ["native/lua/lapi.c", "native/lua/lcode.c", "native/lua/lctype.c", "native/lua/ldebug.c", "native/lua/ldo.c", "native/lua/ldump.c", "native/lua/lfunc.c", "native/lua/lgc.c", "native/lua/llex.c", "native/lua/lmem.c", "native/lua/lobject.c", "native/lua/lopcodes.c", "native/lua/lparser.c", "native/lua/lstate.c", "native/lua/lstring.c", "native/lua/ltable.c", "native/lua/ltm.c", "native/lua/lundump.c", "native/lua/lvm.c", "native/lua/lzio.c", "native/lua/lauxlib.c", "native/lua/lbaselib.c", "native/lua/lmathlib.c", "native/lua/lstrlib.c", "native/lua/ltablib.c", "native/hlua_core.cpp", "native/session.cpp", "native/ffi.cpp"]
+include-dirs = ["native", "native/lua"]
+cflags = ["-std=c11"]
+cxxflags = ["-std=c++17"]
+[native.linux]
+link-libs = ["m"]
+[native.freebsd]
+link-libs = ["m"]

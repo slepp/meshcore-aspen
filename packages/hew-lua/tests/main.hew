@@ -1,0 +1,198 @@
+import hew.lua;
+
+import std.encoding.utf8;
+
+fn values(step: lua.Step) -> Vec<lua.Value> {
+    match step {
+        lua.Step.Complete(v) => v,
+        _ => panic("unexpected host request"),
+    }
+}
+
+fn request(step: lua.Step) -> lua.Request {
+    match step {
+        lua.Step.Host(v) => v,
+        _ => panic("expected host request"),
+    }
+}
+
+fn main() {
+    let vm = lua.open(lua.default_limits()).expect("open");
+    vm.load("function echo(...) return ... end; function ask() return host('read', 'a'..string.char(0)..'b') end; function bad() return {} end; function spin() while true do end end; function libs() return debug,io,os,package,load,loadfile,dofile,coroutine end; function catches() return pcall,xpcall,getmetatable,setmetatable end".to_bytes()).expect("load");
+    var binary = bytes.new();
+    binary.push(0);
+    binary.push(255);
+    binary.push(7);
+    var input: Vec<lua.Value> = Vec.new();
+    input.push(lua.Value.Nil);
+    input.push(lua.Value.Bool(true));
+    input.push(lua.Value.Integer(9007199254740993));
+    input.push(lua.Value.Number(1.25));
+    input.push(lua.Value.Bytes(binary));
+    input.push(lua.Value.Bytes(bytes.new()));
+    let output = values(vm.call("echo", input).expect("echo"));
+    assert(output.len() == 6);
+    assert(match output[0] {
+        lua.Value.Nil => true,
+        _ => false,
+    });
+    assert(match output[1] {
+        lua.Value.Bool(v) => v,
+        _ => false,
+    });
+    assert(match output[2] {
+        lua.Value.Integer(v) => v == 9007199254740993,
+        _ => false,
+    });
+    assert(match output[3] {
+        lua.Value.Number(v) => v == 1.25,
+        _ => false,
+    });
+    assert(match output[4] {
+        lua.Value.Bytes(v) => v.len() == 3 && v[0] == 0 && v[1] == 255 && v[2] == 7,
+        _ => false,
+    });
+    assert(match output[5] {
+        lua.Value.Bytes(v) => v.len() == 0,
+        _ => false,
+    });
+    let absent = values(vm.call("libs", Vec.new()).expect("controlled libraries"));
+    for v in absent {
+        assert(match v {
+            lua.Value.Nil => true,
+            _ => false,
+        });
+    }
+    let escapes = values(vm.call("catches", Vec.new()).expect("no catch/finalizer escape"));
+    for v in escapes { assert(match v { lua.Value.Nil => true, _ => false, }); }
+    let pending = request(vm.call("ask", Vec.new()).expect("host request"));
+    assert(utf8.decode(pending.operation).expect("operation") == "read");
+    assert(match pending.arguments[0] {
+        lua.Value.Bytes(v) => v.len() == 3 && v[1] == 0,
+        _ => false,
+    });
+    assert(vm.resume(pending.token + 1, Vec.new()).is_err());
+    // Time spent with the host is excluded; 150ms exceeds the default active limit.
+    sleep(150ms);
+    var reply: Vec<lua.Value> = Vec.new();
+    reply.push(lua.Value.Integer(42));
+    let resumed = values(vm.resume(pending.token, reply).expect("resume exact token after host wait"));
+    assert(match resumed[0] {
+        lua.Value.Integer(v) => v == 42,
+        _ => false,
+    });
+    let cancelled = request(vm.call("ask", Vec.new()).expect("second request"));
+    vm.cancel();
+    assert(vm.resume(cancelled.token, Vec.new()).is_err());
+    assert(values(vm.call("echo", Vec.new()).expect("call after cancel")).is_empty());
+    assert(vm.call("bad", Vec.new()).is_err());
+    assert(vm.call("missing", Vec.new()).is_err());
+    assert(vm.call("spin", Vec.new()).is_err());
+    assert(vm.instructions() > 100000);
+    assert(values(vm.call("echo", Vec.new()).expect("call after failed invocation")).is_empty());
+    assert(vm.peak_bytes() > 0);
+    {
+        let closing = lua.open(lua.default_limits()).expect("open pending close");
+        closing.load("function f() return host('pending') end".to_bytes()).expect("load");
+        let ignored = request(closing.call("f", Vec.new()).expect("pending"));
+        assert(ignored.token > 0);
+        closing.close();
+    };
+    {
+        var limits = lua.default_limits();
+        limits.parser_steps = 32;
+        let bounded = lua.open(limits).expect("open parser");
+        assert(bounded.load("-- a comment with more than thirty-two consumed characters\nfunction f() return 1 end".to_bytes()).is_err());
+        assert(bounded.parser_steps() == 33);
+    };
+    {
+        let syntax = lua.open(lua.default_limits()).expect("open syntax");
+        assert(syntax.load("function broken(".to_bytes()).is_err());
+        assert(syntax.load("function valid() return 1 end".to_bytes()).is_err());
+        assert(syntax.call("valid", Vec.new()).is_err());
+    };
+    {
+        let binary_chunk = lua.open(lua.default_limits()).expect("open binary chunk");
+        var chunk = bytes.new();
+        chunk.push(27);
+        chunk.push(76);
+        chunk.push(117);
+        chunk.push(97);
+        assert(binary_chunk.load(chunk).is_err());
+    };
+    {
+        var limits = lua.default_limits();
+        limits.heap_bytes = 65536;
+        let memory = lua.open(limits).expect("open heap");
+        memory.load("function f() return string.rep('x', 1000000) end".to_bytes()).expect("load heap");
+        assert(memory.call("f", Vec.new()).is_err());
+        assert(memory.peak_bytes() <= 65536);
+    };
+    {
+        var limits = lua.default_limits();
+        limits.instructions = 120;
+        let cumulative = lua.open(limits).expect("open cumulative");
+        cumulative.load("function f() for i=1,100 do host('tick',i) end return 1 end".to_bytes()).expect("load cumulative");
+        var result = cumulative.call("f", Vec.new());
+        var requests = 0;
+        while result.is_ok() {
+            let r = request(result.expect("yield"));
+            requests += 1;
+            result = cumulative.resume(r.token, Vec.new());
+        }
+        assert(requests > 1 && requests < 100);
+        assert(cumulative.instructions() == 121);
+    };
+    {
+        var limits = lua.default_limits();
+        limits.host_calls = 1;
+        let bounded = lua.open(limits).expect("open host cap");
+        bounded.load("function f() host('one'); host('two') end".to_bytes()).expect("load host cap");
+        let r = request(bounded.call("f", Vec.new()).expect("first host"));
+        assert(bounded.resume(r.token, Vec.new()).is_err());
+    };
+    {
+        var limits = lua.default_limits();
+        limits.instructions = 1000000000;
+        limits.active_us = 5000;
+        let timed = lua.open(limits).expect("open time limit");
+        timed.load("function f() while true do end end".to_bytes()).expect("load time limit");
+        assert(timed.call("f", Vec.new()).is_err());
+        assert(timed.instructions() < 1000000000);
+    };
+    {
+        var limits = lua.default_limits();
+        limits.heap_bytes = 49152;
+        limits.value_bytes = 65536;
+        let protected_args = lua.open(limits).expect("open protected args");
+        protected_args.load("function f(x) return x end".to_bytes()).expect("load protected args");
+        var large = bytes.new();
+        for i in 0..60000 {
+            large.push(42);
+        }
+        var args: Vec<lua.Value> = Vec.new();
+        args.push(lua.Value.Bytes(large));
+        assert(protected_args.call("f", args).is_err());
+        assert(values(protected_args.call("f", Vec.new()).expect("recover from argument heap failure")).len() == 1);
+    };
+    {
+        let first = lua.open(lua.default_limits()).expect("open first");
+        let second = lua.open(lua.default_limits()).expect("open second");
+        let source = "function f() return host('owned') end".to_bytes();
+        first.load(source).expect("load first");
+        second.load(source).expect("load second");
+        let a = request(first.call("f", Vec.new()).expect("first request"));
+        let b = request(second.call("f", Vec.new()).expect("second request"));
+        assert(a.token != b.token);
+        assert(first.resume(b.token, Vec.new()).is_err());
+        assert(second.resume(a.token, Vec.new()).is_err());
+        assert(values(first.resume(a.token, Vec.new()).expect("first owns token")).is_empty());
+        assert(values(second.resume(b.token, Vec.new()).expect("second owns token")).is_empty());
+    };
+    {
+        let no_finalizer = lua.open(lua.default_limits()).expect("open finalizer guard");
+        assert(no_finalizer.load("held=setmetatable({}, {__gc=function() while true do end end})".to_bytes()).is_err());
+        no_finalizer.close();
+    }
+    println("PASS owned Lua scalar/binary values, controlled libraries, host resume/cancel/close, parser/heap/instruction budgets and cumulative continuations");
+}

@@ -25,8 +25,7 @@ start an unattended update that must automatically resume mesh operation.
 Use the production `nrfmast_fleet_lua` image. Build without uploading:
 
 ```sh
-make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua \
-  LUA_ARCHIVE=/path/in/your/project/lua-5.5.1.tar.gz
+make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 python3 firmware/nrf52840/ble_field.py package \
   --zip firmware/nrf52840/.build/upstream/.pio/build/nrfmast_fleet_lua/firmware.zip
 ```

@@ -1,0 +1,27 @@
+import hew.lua;
+
+import std.encoding.utf8;
+
+fn main() {
+    let vm = lua.open(lua.default_limits()).expect("open Lua");
+    vm.load("function greet(name) return host('greeting', name) end".to_bytes()).expect("load Lua");
+    var args: Vec<lua.Value> = Vec.new();
+    args.push(lua.Value.Bytes("Hew".to_bytes()));
+    match vm.call("greet", args).expect("call Lua") {
+        lua.Step.Host(request) => {
+            assert(utf8.decode(request.operation).expect("operation") == "greeting");
+            var response: Vec<lua.Value> = Vec.new();
+            response.push(lua.Value.Bytes("Hello from the host".to_bytes()));
+            match vm.resume(request.token, response).expect("resume Lua") {
+                lua.Step.Complete(values) => {
+                    match values[0] {
+                        lua.Value.Bytes(text) => println(utf8.decode(text).expect("text")),
+                        _ => panic("wrong type"),
+                    }
+                }
+                _ => panic("unexpected host request"),
+            }
+        }
+        _ => panic("expected host request"),
+    }
+}
