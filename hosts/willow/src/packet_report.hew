@@ -1,0 +1,66 @@
+//! Copied ABI-v1 packet reports from the current native worker, never accumulated here.
+import willow.src.wire;
+import willow.src.hostlib.binary;
+import std.encoding.json;
+import std.encoding.utf8;
+
+fn text(data: bytes, at: i64) -> Option<string> {
+    var end = at;
+    while end < at + 24 && data[end] != 0 {
+        if data[end] < 32 || data[end] > 126 { return .None; }
+        end += 1;
+    }
+    if end == at || end == at + 24 { return .None; }
+    match utf8.decode(wire.cut(data, at, end)) {
+        .Ok(value) => .Some(value),
+        .Err(_) => .None,
+    }
+}
+
+pub fn decode(message: bytes) -> Option<json.Value> {
+    if message.len() != 3283 || message[0] != 138 || message[1] != 1 || message[2] > 3 {
+        return .None;
+    }
+    var reports = json.array();
+    let mask = message[2] as i64;
+    for slot in 0..2 {
+        if (mask & (1 << slot)) == 0 { continue; }
+        let at = 3 + slot * 1640;
+        let rows = wire.uint(wire.cut(message, at + 4, at + 8));
+        let fields = wire.uint(wire.cut(message, at + 8, at + 12));
+        if wire.uint(wire.cut(message, at, at + 4)) != 1 ||
+           wire.uint(wire.cut(message, at + 12, at + 16)) != 0 || rows > 16 || fields < 1 || fields > 8 {
+            return .None;
+        }
+        let name = match text(message, at + 16) { .Some(value) => value, .None => return .None };
+        var report = json.object();
+        report.set("slot", json.from_int(slot)).expect("packet report slot");
+        report.set("name", json.from_string(name)).expect("packet report name");
+        var names = json.array();
+        for field in 0..fields {
+            let field_name = match text(message, at + 40 + field * 24) { .Some(value) => value, .None => return .None };
+            names.push(json.from_string(field_name)).expect("packet report field");
+        }
+        report.set("fields", names).expect("packet report fields");
+        var values = json.array();
+        for index in 0..rows {
+            let row_at = at + 232 + index * 88;
+            let label = match text(message, row_at) { .Some(value) => value, .None => return .None };
+            var row = json.object();
+            row.set("label", json.from_string(label)).expect("packet report label");
+            var numbers = json.array();
+            for field in 0..fields {
+                let number = match binary.finite_float64(wire.cut(message, row_at + 24 + field * 8, row_at + 32 + field * 8)) {
+                    .Some(value) => value,
+                    .None => return .None,
+                };
+                numbers.push(json.from_float(number).expect("finite packet report number")).expect("packet report value");
+            }
+            row.set("values", numbers).expect("packet report values");
+            values.push(row).expect("packet report row");
+        }
+        report.set("rows", values).expect("packet report rows");
+        reports.push(report).expect("packet report");
+    }
+    .Some(reports)
+}

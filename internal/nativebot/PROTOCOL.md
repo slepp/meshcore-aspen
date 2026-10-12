@@ -76,6 +76,7 @@ Go -> native:
 | `0x06` ACTIVATE | No body; exactly one byte including tag. Accepted once, only for a dormant worker after source READY. Go sends it after the identity commit. Enables RF commands and attempts one owner zero-hop advert. |
 | `0x07` OWNER_SEND | Optional owner feature: `requestID:[16]`, `recipient:[32]`, `text:[1..162]` printable ASCII. Uses the active native identity, fresh direct contact, admission and airtime policy, then ordinary TX_REQUEST/TX_RESULT tracking. It is not an ADMIN command or a raw packet injection facility. |
 | `0x08` OWNER_ENABLE | `enabled:u8 (0/1)`. Enables/disables owner callbacks. **Disabled by default**, so existing Go consumers receive no unsolicited owner frames. The owning host authenticates its local caller; this private pipe is not independently exposed. |
+| `0x09` PACKET_REPORTS | `enabled:u8 (0/1)`; exactly two bytes including tag. Willow opts in after MANAGEMENT_READY. Enabling requests the current packet report snapshot even when unchanged; disabling stops snapshots. Birch leaves this disabled. |
 
 Native -> Go:
 
@@ -90,6 +91,13 @@ Native -> Go:
 | `0x87` ACTIVATED | `advertQueued:u8 (0/1)`; exactly two bytes including tag. Confirms activation and whether the zero-hop advert entered the native queue, never terminal RF success. |
 | `0x88` OWNER_SEND_STATUS | `requestID:[16]`, `phase:u8`, `flags:u8`, `reason:u8`; exactly 20 bytes including tag. Phases: 1 admitted, 2 queued, 3 local TX confirmed, 4 matched native RF ACK, 5 failed, 6 unknown. Flags independently retain bit 0 local TX confirmed, bit 1 native RF ACK, bit 2 admitted. Reasons: 0 none, 1 invalid text, 2 fresh direct contact required, 3 native capacity/radio unavailable, 4 clock unavailable, 5 airtime/admission denied, 6 TX failed/uncertain, 7 ACK deadline expired. Four native slots; 45-second ACK deadline. No automatic retransmission. |
 | `0x89` OWNER_INBOX | `sender:[32]`, `timestamp:u32`, `text:[1..162]`; full sender key selected by authenticated native decryption, excluding self/reflection. Canonical timestamp/text/full-key duplicates (including changed retry bits/padding) are suppressed for 120 seconds in 64 entries. A frame containing only the tag reports a dedup-capacity drop. Forward plaintext only to the authenticated owner's private inbox, never the journal or raw-packet observer. |
+| `0x8a` PACKET_REPORTS | `version:u8=1`, `presentMask:u8 (bits0..1)`, two `mp_report` records of 1640 bytes each; exactly 3283 bytes including tag. Unset slots contain zeros. Records use `firmware/shared/PacketReport.h`: four u32 header fields, 24-byte name, eight 24-byte field names and 16 rows of 24-byte label plus eight little-endian binary64 values. Snapshots appear only after opt-in, at most once per second, when changed or requested. |
+
+Willow's Receive-only packet guests process measured RF copies from the existing
+RX stream, with no additional stream per logical role. Bot reception retains the
+original bytes. Command Lua, the host status and metrics read the same native
+report. Reports clear when their worker ends; packet source/configuration remain
+in the private native state. See [Willow packet guests](../../hosts/willow/docs/PACKET_GUESTS.md).
 
 Willow exposes the optional owner feature through its
 [same-UID Unix control socket](../../hosts/willow/docs/SERVICE.md#send-a-dm-and-read-the-owners-inbox),

@@ -44,7 +44,7 @@ fn telemetry(sample: management.Telemetry) -> json.Value {
     value
 }
 
-pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: radio.Sampler, airtime: Vec<i64>, publisher: Option<observer_client.Snapshot>, outbox: Option<observer_queue.Statistics>) -> Snapshot {
+pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: radio.Sampler, airtime: Vec<i64>, publisher: Option<observer_client.Snapshot>, outbox: Option<observer_queue.Statistics>, packet_reports: json.Value) -> Snapshot {
     var status = json.object();
     var not_ready = json.object();
     let measured = connected && (sample.current.flags & 256) != 0;
@@ -57,6 +57,9 @@ pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: rad
     for role in roles {
         var item = json.object();
         item.set("public_key", json.from_string(role.key)).expect("role field");
+        if role.name == "bot" {
+            item.set("packet_reports", packet_reports).expect("packet reports field");
+        }
         item.set("state", json.from_string(if role.running {
             "running"
         } else {

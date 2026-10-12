@@ -7,6 +7,7 @@
 #include "NativeClock.h"
 #include "Scopes.h"
 #include "SavedContacts.h"
+#include "PacketPrograms.h"
 #include <QueuedTxProtocol.h>
 #include <Utils.h>
 #include <array>
@@ -48,6 +49,8 @@ using Clock = std::chrono::steady_clock;
 constexpr uint32_t MaxFrame = 4096;
 constexpr size_t HelloSize = 1 + 2 + 64 + 4 + 4 + 3 + 2 + 256 * 4;
 bool output_fault = false;
+bool packet_reports_enabled = false;
+bool packet_reports_requested = false;
 onchip::SavedContacts saved_contacts;
 
 bool saved_contact_lookup(const uint8_t *hash, unsigned &cursor, uint8_t *key,
@@ -243,6 +246,8 @@ bool admin(onchip::CommandBot &bot, onchip::MastSource &source,
       !std::strcmp(policy_command, "access") || !std::strncmp(policy_command, "access ", 7) ||
       !std::strcmp(policy_command, "thread") || !std::strncmp(policy_command, "thread ", 7)) {
     bot.radioPolicyCommand(policy_command, reply, sizeof(reply));
+  } else if (!std::strcmp(command, "packet") || !std::strncmp(command, "packet ", 7)) {
+    onchip::hostPacketCommand(command[6] ? command + 7 : "", reply, sizeof(reply));
   } else if (!std::strcmp(command, "help")) {
     std::strcpy(reply, "Native commands: help grants; status; policy; clock; shared; reminders; events; cancel; source help; data help; https status; home; config; discovery; name; aliases; channel; path; airtime; adaptive; advert|advert.zerohop; key bot (Go owner)");
   } else if (!std::strcmp(command, "help grants")) {
@@ -518,6 +523,11 @@ void owner_inbox(const uint8_t *sender, uint32_t timestamp, const uint8_t *text,
 }
 bool process(onchip::CommandBot &bot, onchip::MastSource &source,
              const uint8_t *frame, size_t length) {
+  if (frame[0] == 0x09 && length == 2 && frame[1] <= 1) {
+    packet_reports_enabled = frame[1] != 0;
+    packet_reports_requested = packet_reports_enabled;
+    return true;
+  }
   if (frame[0] == 0x08 && length == 2 && frame[1] <= 1) {
     bot.setOwnerSinks(frame[1] ? owner_send_status : nullptr, frame[1] ? owner_inbox : nullptr);
     return true;
@@ -553,6 +563,7 @@ bool process(onchip::CommandBot &bot, onchip::MastSource &source,
                     !std::isfinite(snr) || snr < -32 || snr > 32)))
       return false;
     if (!source.ready()) return true;
+    onchip::hostPacketReceive(frame + 10, length - 10, rssi, snr, frame[9]);
     // A full RX ring drops a packet, not the host RF connection.
     bot.hostReceive(frame + 10, length - 10, frame[9] == 2 ? NAN : rssi,
                     frame[9] == 2 ? NAN : snr, local);
@@ -694,10 +705,11 @@ int main(int argc, char **argv) {
   }
   struct StopBot {
     onchip::CommandBot &bot;
-    ~StopBot() { bot.stop(); }
+    ~StopBot() { bot.stop(); onchip::stopHostPacketPrograms(); }
   } stopBot{bot};
   onchip::MastSource source;
   auto &wake = onchip::BotWake::shared();
+  uint8_t last_packet_report[2 + 2 * sizeof(mp_report)]{};
   auto last_status = Clock::now();
   auto ready_deadline = Clock::time_point::max();
   for (;;) {
@@ -732,6 +744,9 @@ int main(int argc, char **argv) {
         if (!bot.beginHost(profile, airtime, noise)) {
           return fail(4, "CommandBot startup failed");
         }
+        if (!onchip::beginHostPacketPrograms(profile, bot.publicKey()))
+          return fail(4, "Packet program startup failed; inspect retained packet journal/source");
+        bot.setPacketReportReader(onchip::hostPacketReport);
         source.begin();
         uint8_t management[33]{};
         std::memcpy(management, bot.publicKey(), 32);
@@ -766,6 +781,7 @@ int main(int argc, char **argv) {
       if (dormant) bot.setCommandAdmission(false);
       bot.loop();
       source.loop();
+      onchip::serviceHostPacketPrograms();
       if (dormant) bot.setCommandAdmission(false);
       else if (bot.sourceReady()) bot.setCommandAdmission(true);
       if (!ready_sent && !source.recoveryRequired() && Clock::now() > ready_deadline) {
@@ -793,12 +809,22 @@ int main(int argc, char **argv) {
                                     c.rejected, c.vmFailures, c.replies, c.traces};
         for (unsigned n = 0; n < 7; ++n) queued_tx::put32(body + 2 + n * 4, values[n]);
         if (!send(0x83, body, sizeof(body))) return 1;
+        if (packet_reports_enabled) {
+          uint8_t reports[sizeof(last_packet_report)];
+          const auto size = onchip::hostPacketSnapshot(reports, sizeof(reports));
+          if (size && (packet_reports_requested || memcmp(reports, last_packet_report, size))) {
+            if (!send(0x8a, reports, size)) return fail(6, "packet report snapshot pipe failed");
+            memcpy(last_packet_report, reports, size);
+            packet_reports_requested = false;
+          }
+        }
         last_status = Clock::now();
       }
     }
     uint32_t wait = received == 1 ? 0 : UINT32_MAX;
     if (started) {
       wait = std::min(wait, std::min(bot.hostWaitMs(), source.hostWaitMs()));
+      wait = std::min(wait, onchip::hostPacketWaitMs());
       const auto now = Clock::now();
       const auto deadline = !ready_sent && !source.recoveryRequired() ?
           std::min(last_status + std::chrono::seconds(1), ready_deadline) :

@@ -364,6 +364,8 @@ BOT_NATIVE_WORKER := $(BOT_BUILD)/bot-native-worker
 .PHONY: bot-native-worker-install
 bot-native-worker-install: bot-native-worker
 	install -Dm 755 "$(BOT_NATIVE_WORKER)" "$(HOME)/.local/libexec/meshcore-bot-native-worker"
+BOT_HOST_PACKET_SOURCES := $(ROOT)/internal/nativebot/PacketPrograms.cpp ../runtime/PacketPrograms.cpp \
+    ../runtime/PacketProgramWorker.cpp ../runtime/PacketLua.cpp ../runtime/PacketWasm.cpp
 BOT_HOST_NETWORK_FLAGS = -DONCHIP_BOT_HTTPS=1 -DONCHIP_BOT_NATIVE_HTTPS=1 -I. -I$(BOT_JSON_INCLUDE)
 BOT_HOST_ADMIN_FLAGS = $(BOT_FLAGS) -DMESHCORE_HOST_BOT_SOURCE=1 -DMESHCORE_MAST_ADMIN=1 $(BOT_HOST_NETWORK_FLAGS)
 $(BOT_BUILD)/host-worker.o: $(ROOT)/internal/nativebot/worker.cpp $(ROOT)/internal/nativebot/NativeClock.h \
@@ -374,7 +376,7 @@ $(BOT_BUILD)/host-worker.o: $(ROOT)/internal/nativebot/worker.cpp $(ROOT)/intern
 $(BOT_BUILD)/host-mast-source.o: ../runtime/MastSource.cpp ../runtime/MastSource.h ../runtime/CommandBot.h ../runtime/BotWorker.h ../runtime/BotSignal.h bot.mk
 	@mkdir -p "$(BOT_BUILD)"
 	$(CXX) $(BOT_HOST_ADMIN_FLAGS) $(BOT_NATIVE_FLAGS) -I$(ROOT)/internal/nativebot $(BOT_NATIVE_INCLUDES) -c $< -o $@
-$(BOT_NATIVE_WORKER): $(BOT_LUA_OBJECTS) $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) \
+$(BOT_NATIVE_WORKER): $(BOT_HOST_PACKET_SOURCES) $(BOT_LUA_OBJECTS) $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) \
 		../runtime/CommandBot.h ../runtime/BotLearnedState.h LocalRadio.h ../runtime/BotSignal.h ../runtime/AdaptiveAdmission.h ../runtime/BotScheduleFiles.h ../runtime/BotJournal.h ../runtime/BotTimers.h ../runtime/BotReminders.h $(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o \
 		$(ROOT)/internal/nativebot/worker.cpp $(ROOT)/internal/nativebot/HostLocalRadio.h \
 		$(ROOT)/internal/nativebot/nvs.cpp $(ROOT)/internal/nativebot/spiffs.cpp \
@@ -388,7 +390,7 @@ $(BOT_NATIVE_WORKER): $(BOT_LUA_OBJECTS) $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER
 		$(ROOT)/internal/nativebot/HttpsTransport.cpp \
 		$(ROOT)/internal/nativebot/NativeClock.cpp \
 		TelemetryEndpoint.cpp TelemetryHttps.cpp \
-		$(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) \
+		$(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) $(BOT_HOST_PACKET_SOURCES) \
 		$(BOT_NATIVE_OBJECTS) $(BOT_JSON_LIBS) -lssl -lcrypto -lm -o $@
 bot-native-worker: bot-prepare bot-lua bot-prepare-phy $(BOT_NATIVE_WORKER)
 .PHONY: bot-native-host-test

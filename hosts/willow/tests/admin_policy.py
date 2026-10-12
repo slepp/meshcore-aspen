@@ -56,6 +56,8 @@ print(f"ADMIN_POLICY_DIFFERENTIAL_OK commands={len(commands)} modes=debug,releas
 
 # Willow exposes source operations implemented by its native worker beyond the Go HTTP patterns.
 source_commands = [
+    "packet api", "packet 0 status", "packet 0 budget 1 100000 20000 9",
+    "packet 1 cancel 0123456789abcdef",
     "help grants", "bot shared status", "bot reminders status", "bot events status",
     "bot events 0", "bot events 31", "source api grants",
     "source api sources", "source api bundled", "source api storage", "source api board", "source wasm api events", "source commit 0123456789abcdef "+"a"*64,
@@ -67,7 +69,7 @@ source_commands = [
 for binary in ("admin-checks", "admin-checks-release"):
     cases = ["b:"+command for command in source_commands]
     cases += ["b:"+command+suffix for command in source_commands for suffix in ("\n", ";reboot")]
-    cases += ["b:source commit 0123456789abcdef "+"a"*63, "b:source wasm key export", "b:bot events 32", "b:bot events -1", "b:packet api"]
+    cases += ["b:source commit 0123456789abcdef "+"a"*63, "b:source wasm key export", "b:bot events 32", "b:bot events -1", "b:packet 0 budget 255 100000 20000 9", "b:packet 1 cancel"]
     actual = subprocess.run([str(ROOT/"build"/binary), *cases], text=True,
         capture_output=True, check=True, timeout=30).stdout.splitlines()
     assert actual == ["1"]*len(source_commands)+["0"]*(len(cases)-len(source_commands)), (binary, actual)

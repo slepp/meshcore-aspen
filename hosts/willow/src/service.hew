@@ -28,6 +28,10 @@ import willow.src.owner_control;
 
 import willow.src.host_health;
 
+import willow.src.packet_report;
+
+import std.encoding.json;
+
 import willow.src.meshproto.packet_log;
 
 import willow.src.observer_queue;
@@ -1159,7 +1163,7 @@ fn role_health(worker: ChildRef<RoleWorker>, name: string, key: string, generati
     }
 }
 
-fn publish_health(plan: HealthPlan, connected: bool, native_ready: bool, native_started: i64, generations: Vec<i64>, sensors: radio.Sampler, table: bytes) {
+fn publish_health(plan: HealthPlan, connected: bool, native_ready: bool, native_started: i64, generations: Vec<i64>, sensors: radio.Sampler, table: bytes, packet_reports: json.Value) {
     var roles: Vec<host_health.Role> = Vec.new();
     let relay_generation = if generations.len() >= 3 {
         generations[0]
@@ -1211,7 +1215,7 @@ fn publish_health(plan: HealthPlan, connected: bool, native_ready: bool, native_
             airtime.push(wire.uint(wire.cut(table, i * 4, i * 4 + 4)));
         }
     }
-    let snapshot = host_health.snapshot(roles, connected, plan.endpoint, sensors, airtime, publisher, outbox);
+    let snapshot = host_health.snapshot(roles, connected, plan.endpoint, sensors, airtime, publisher, outbox, packet_reports);
     if plan.control.record_health(snapshot).is_err() {
         println("HOST_MONITORING_OFFLINE reason=owner-control-actor-unavailable");
     }
@@ -1507,6 +1511,7 @@ fn cancel_native(fd: Option<ChildRef<process.WorkerOwner>>, decoder: session.Wor
                         }
                         .Err(_) => {}
                     }
+                } else if message[0] == 138 && packet_report.decode(message).is_some() {
                 } else if !((message[0] == 131 && message.len() == 31) || ((message[0] == 130 || message[0] == 134) && message.len() == 34)) {
                     return false;
                 }
@@ -1516,7 +1521,7 @@ fn cancel_native(fd: Option<ChildRef<process.WorkerOwner>>, decoder: session.Wor
             return false;
         }
     }
-    confirmed
+    confirmed && transport.native_send(fd, session.frame(9, wire.byte(1)))
 }
 
 fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool, ready: bool, worker_fd: Option<ChildRef<process.WorkerOwner>>, observer: ChildRef<observer_queue.Outbox>, observing: bool) -> bool {
@@ -1742,6 +1747,7 @@ pub fn run(root: string) {
     let owner_task = fork owner_control.drive_events(owner_branch.control, owner_branch.admin, owner_lifetime, end, events.share(owner_events), owner_input, .Some(owner_channel));
     let health_plan = HealthPlan { control: owner_branch.control, relay: relay_worker, room: room_worker, bot: bot_worker, publisher: observer_branch.publisher, outbox: observer_queue_branch.outbox, relay_key: hex.encode(wire.public_key(relay_seed)), room_key: hex.encode(wire.public_key(room_seed)), bot_key: hex.encode(wire.public_key(bot_seed)), observer_key: hex.encode(observer_settings.config.identity), native: use_native, observer: observer_settings.enabled, endpoint: cfg.address + ":" + to_string(cfg.port), started_ms: transport.now() };
     var native_ready = false;
+    var packet_reports = json.array();
     var native_management = false;
     var native_started: i64 = 0;
     var native_ok = true;
@@ -1754,7 +1760,7 @@ pub fn run(root: string) {
     var native_fault_nonce: i64 = -1;
     var admin_fault_nonce: i64 = -1;
     while until(end) {
-        publish_health(health_plan, false, native_ready, native_started, Vec.new(), radio.create(), bytes.new());
+        publish_health(health_plan, false, native_ready, native_started, Vec.new(), radio.create(), bytes.new(), packet_reports);
         match duplex.open(fd, cfg.address, cfg.port, 1500) {
             .Ok(_) => {}
             .Err(error) => {
@@ -1823,6 +1829,7 @@ pub fn run(root: string) {
                 transport.native_close(worker_fd);
                 worker_fd = .None;
                 native_ready = false;
+                packet_reports = json.array();
             }
         }
         let link = session.create(fd, negotiated.generations);
@@ -2076,7 +2083,12 @@ pub fn run(root: string) {
                     for message in worker_decoder.feed(wire.cut(worker_input, 1, worker_input.len())).expect("native extension decoder") {
                         worker_progress.last = transport.monotonic();
                         let tag = message[0] as i64;
-                        if tag == 130 || tag == 134 {
+                        if tag == 138 {
+                            match packet_report.decode(message) {
+                                .Some(value) => { packet_reports = value; }
+                                .None => { native_ok = false; }
+                            }
+                        } else if tag == 130 || tag == 134 {
                             if message.len() != 34 || message[33] != 1 || !wire.equal(wire.cut(message, 1, 33), wire.public_key(bot_seed)) {
                                 native_ok = false;
                             } else if tag == 130 {
@@ -2085,6 +2097,7 @@ pub fn run(root: string) {
                                 let _ = owner_branch.control.ready(true);
                             } else {
                                 native_management = true;
+                                native_ok = native_ok && transport.native_send(worker_fd, session.frame(9, wire.byte(1)));
                                 let _ = owner_branch.admin.management(true);
                             }
                         } else if tag == 129 && message.len() >= 15 && message.len() <= 269 {
@@ -2146,7 +2159,7 @@ pub fn run(root: string) {
                 connection.next_health = now + 1000;
                 let _ = owner_branch.admin.management(native_management && native_ok);
                 let _ = owner_branch.admin.bind_host(events.share(event_group));
-                publish_health(health_plan, connection.healthy, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime);
+                publish_health(health_plan, connection.healthy, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime, packet_reports);
             }
             let sampling = radio.poll(sensors, now, connection.config_deadline != 0 || now >= connection.next_config || link.policy_busy().expect("source policy control state"));
             sensors = sampling.sampler;
@@ -2218,6 +2231,7 @@ pub fn run(root: string) {
                     worker_fd = .None;
                     link.fence_worker().expect("retire old worker jobs");
                     native_ready = false;
+                packet_reports = json.array();
                     native_management = false;
                     worker_progress.retry = now + worker_progress.backoff;
                     println("BOT_OFFLINE worker failed; relay and room remain online");
@@ -2293,7 +2307,7 @@ pub fn run(root: string) {
             .Err(_) => true,
         };
         let _ = owner_branch.admin.fence();
-        publish_health(health_plan, false, native_ready && native_ok, native_started, Vec.new(), radio.create(), negotiated.airtime);
+        publish_health(health_plan, false, native_ready && native_ok, native_started, Vec.new(), radio.create(), negotiated.airtime, packet_reports);
         for result in link.disconnect().expect("disconnect outcomes") {
             if use_native {
                 let _ = transport.native_send(worker_fd, result);
@@ -2315,6 +2329,7 @@ pub fn run(root: string) {
                 transport.native_close(worker_fd);
                 worker_fd = .None;
                 native_ready = false;
+                packet_reports = json.array();
                 native_management = false;
             }
         }

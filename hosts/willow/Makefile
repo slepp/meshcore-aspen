@@ -97,7 +97,7 @@ release: build/hew-host-release build/hew-base-release build/hew-dashboard-relea
 # Run the production processes, retained fault cases and Birch comparisons.
 # Missing compilers, libraries and fixture binaries are errors, never skips.
 check: export HEW_WORKERS = 4
-check: release acceptance-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release build/hew-dashboard
+check: release acceptance-test packet-workflow-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release build/hew-dashboard
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/dashboard.py Dashboard.test_health_refresh_is_demand_driven_shared_and_bounded
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_service.py IntegratedObserver.test_restart_retains_pending_and_queued_observations
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/worker_binding.py
@@ -421,3 +421,12 @@ modem-diagnostics-test: all build/oracle build/session-checks build/session-chec
 
 # Shared native value layout is a dependency of every C bridge consumer.
 $(patsubst %.c,build/%.o,$(notdir $(wildcard native/*_bridge.c))) build/storage_interrupt.o build/transport_supervision.o build/identity-bindings build/event-native-checks build/library-fixture.o: native/bridge_abi.h
+
+.PHONY: packet-workflow-test
+packet-workflow-test: build/hew-host build/hew-host-release build/oracle build/repeater-snr.wasm
+	HEW_WORKERS=4 PYTHONDONTWRITEBYTECODE=1 python3 tests/packet_workflow.py
+build/repeater-snr.wasm: ../../firmware/runtime/wasm/examples/repeater_snr.c ../../firmware/runtime/wasm/sdk/packet.h | build
+	TMPDIR=$(CURDIR)/build clang --target=wasm32 -Oz -nostdlib -fno-builtin -I../../firmware/shared \
+	  -mno-bulk-memory -mno-reference-types -mno-multivalue \
+	  -Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
+	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <stddef.h>
+#if (defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN) || (defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
+namespace onchip {
+bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present);
+}
+#endif
 #if defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "BotWorker.h"
 
@@ -92,6 +98,5 @@ private:
   void serviceLoop();
   void publishReadiness();
 };
-bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present);
 } // namespace onchip
 #endif
