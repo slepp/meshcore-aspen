@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -60,14 +61,47 @@ def inventory(directories):
     return result
 
 
-def local_inputs():
-    result = inventory([ROOT/"packages/hew-lua", ROOT/"packages/hew-wamr", ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
-                        ROOT/"internal/nativebot", ROOT/"test_support/phy_parity",
-                        ROOT/"test_support/parity"])
-    for path in (ROOT/"Makefile", ROOT/"release/source.json",
-                 ROOT/"packages/hew-lua/hew.toml", ROOT/"packages/hew-wamr/hew.toml", HERE/"tools/build_worker.py", HERE/"tools/compiler_capture.py"):
+def local_inputs(sources=()):
+    result = inventory([ROOT/"packages/hew-wamr/native/vendor/build-scripts"])
+    result = {path: value for path, value in result.items() if Path(path).suffix == ".cmake"}
+    recipes = (ROOT/"Makefile", ROOT/"release/source.json", ROOT/"release/products.json",
+               ROOT/"release/versions.mk", ROOT/"firmware/esp32/Makefile", ROOT/"firmware/esp32/bot.mk",
+               ROOT/"firmware/esp32/prepare.py", ROOT/"firmware/esp32/prepare_bot.py",
+               ROOT/"firmware/esp32/prepare_wasm.py", ROOT/"firmware/shared/radio-reconfigure.patch",
+               ROOT/"firmware/shared/queued-dispatch.patch", ROOT/"packages/hew-lua/hew.toml",
+               ROOT/"packages/hew-wamr/hew.toml", ROOT/"packages/hew-wamr/native/CMakeLists.txt", HERE/"tools/build_worker.py", HERE/"tools/compiler_capture.py")
+    for path in (*recipes, *map(Path, sources)):
+
         result[str(path)] = digest(path)
     return result
+
+
+def compiled_inputs(output, wasm_host):
+    sources = set()
+    for directory in (output, wasm_host):
+        for depfile in directory.rglob("*.d"):
+            # GCC and CMake depfiles escape spaces and continue long rules.
+            rule = depfile.read_text().replace("\\\n", "")
+            for line in rule.splitlines():
+                if not line.strip():
+                    continue
+                for name in shlex.split(line.split(":", 1)[1]):
+                    path = Path(name)
+                    if not path.is_absolute():
+                        path = ROOT/"firmware/esp32"/path
+                    path = path.resolve()
+                    sources.add(str(path))
+                    lua = output/"bot/lib/OnchipLua"
+                    if path.is_relative_to(lua):
+                        name = path.relative_to(lua)
+                        package = ROOT/"packages/hew-lua/native"
+                        path = package/name if str(name).startswith("hlua_core.") else package/"lua"/name
+                    sources.add(str(path))
+    if not sources:
+        raise ValueError("native compiler source dependency records missing")
+    for command in json.loads((wasm_host/"compile_commands.json").read_text()):
+        sources.add(str(Path(command["file"]).resolve()))
+    return sorted(sources)
 
 
 def verify(candidate=None):
@@ -77,7 +111,7 @@ def verify(candidate=None):
     supplied = Path(candidate).absolute() if candidate else WORKER
     if supplied != WORKER or spec["worker"] != str(WORKER):
         raise ValueError(f"unverified external worker {supplied}; use {WORKER} from make native-worker")
-    if local_inputs() != spec["local_inputs"]:
+    if local_inputs(spec["local_sources"]) != spec["local_inputs"]:
         raise ValueError("native worker source inputs changed; run make native-worker and rebuild hew-host")
     if digest(INPUTS) != spec["inputs_sha256"]:
         raise ValueError("native worker input record changed; rebuild with make native-worker")
@@ -110,8 +144,10 @@ def ensure():
         return
     except (ValueError, OSError, KeyError):
         pass
+    previous_sources = []
     if SPEC.exists():
         old = json.loads(SPEC.read_text())
+        previous_sources = old.get("local_sources", [])
         pinned = [NATIVE/name for name in ("upstream", "deps", "usb-deps")]
         for name, expected in old["inputs"].items():
             path = Path(name)
@@ -154,7 +190,7 @@ def ensure():
                      "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
                      f"m.CACHE=pathlib.Path({str(wasm.CACHE)!r});m.prepare()"]
             run(child, wasm_log, env)
-        local = local_inputs()
+        local = local_inputs(previous_sources)
         compiler = {name: subprocess.check_output([name, "--version"], text=True).splitlines()[0]
                     for name in ("cc", "c++", "cmake")}
         dependencies = inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps", wasm.ROOT/"packages/hew-wamr/native"])
@@ -222,8 +258,12 @@ def ensure():
         compiled = output/"bot/bot-native-worker"
         shutil.copyfile(compiled, WORKER)
         WORKER.chmod(0o755)
+        compiled = compiled_inputs(output, wasm.CACHE/"host")
+        sources = [name for name in compiled if Path(name).is_relative_to(ROOT) and not Path(name).is_relative_to(NATIVE)]
+        local = local_inputs(sources)
         inputs = local | inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps",
-                                    wasm.ROOT/"packages/hew-wamr/native", output/"mesh", output/"bot/lib"])
+                                    output/"mesh", output/"bot/lib"])
+        inputs.update({name: digest(name) for name in compiled})
         for path in [WORKER, compiler_log, wasm.CACHE/"host/compile_commands.json",
                      wasm.CACHE/"host/CMakeCache.txt",
                      json_include/"cJSON.h"]:
@@ -249,7 +289,7 @@ def ensure():
                 "upstream": PIN, "lua_package_sha256": digest(ROOT/"packages/hew-lua/hew.toml"),
                 "wamr_revision": wasm.REVISION, "wamr_package_sha256": digest(ROOT/"packages/hew-wamr/hew.toml"),
                 "compiler": compiler, "compiler_commands": str(compiler_log),
-                "inputs_sha256": digest(INPUTS), "inputs": inputs, "local_inputs": local}
+                "inputs_sha256": digest(INPUTS), "inputs": inputs, "local_inputs": local, "local_sources": sources}
         pending = SPEC.with_suffix(".json.pending")
         pending.write_text(json.dumps(spec, indent=2, sort_keys=True)+"\n")
         os.replace(pending, SPEC)

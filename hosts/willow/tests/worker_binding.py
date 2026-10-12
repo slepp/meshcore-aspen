@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -85,6 +86,41 @@ class WorkerBinding(unittest.TestCase):
         finally:
             listener.close()
             shutil.rmtree(root)
+
+    def test_worker_inputs_follow_each_translation_unit_not_unrelated_fixtures(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/"build", prefix="worker-deps-") as directory:
+            output = Path(directory)
+            (output/"first.h").write_text("#define FIRST 1\n")
+            (output/"second.h").write_text("#define SECOND 1\n")
+            (output/"first.c").write_text('#include "first.h"\nint first(void) { return FIRST; }\n')
+            (output/"second.c").write_text('#include "second.h"\nint first(void); int main(void) { return first() - SECOND; }\n')
+            wasm = output/"wasm"
+            wasm.mkdir()
+            (wasm/"compile_commands.json").write_text("[]")
+            environment = os.environ | {"HEW_NATIVE_COMPILER_LOG": str(output/"commands.jsonl")}
+            subprocess.run([sys.executable, str(ROOT/"compiler_capture.py"), "cc", str(output/"first.c"),
+                            str(output/"second.c"), "-o", str(output/"worker")],
+                           env=environment, check=True, capture_output=True, timeout=10)
+            # GCC -MP and CMake may append empty rules for included headers.
+            (output/"phony.d").write_text(f"native: {output/'first.h'}\n\n{output/'first.h'}:\n")
+            sources = build_worker.compiled_inputs(output, wasm)
+            self.assertIn(str(output/"first.h"), sources)
+            self.assertIn(str(output/"second.h"), sources)
+            before = build_worker.local_inputs(sources)
+            with tempfile.TemporaryDirectory(dir=ROOT.parents[1]/"firmware/esp32/tests", prefix="unrelated-") as fixtures:
+                fixture = Path(fixtures)/"unused.py"
+                fixture.write_text("unrelated test fixture\n")
+                self.assertEqual(before, build_worker.local_inputs(sources))
+                fixture.write_text("changed unrelated test fixture\n")
+                self.assertEqual(before, build_worker.local_inputs(sources))
+            (output/"first.h").write_text("#define FIRST 2\n")
+            self.assertNotEqual(before, build_worker.local_inputs(sources))
+            (output/"new.h").write_text("#define FIRST 3\n")
+            (output/"first.h").write_text('#include "new.h"\n')
+            subprocess.run([sys.executable, str(ROOT/"compiler_capture.py"), "cc", str(output/"first.c"),
+                            str(output/"second.c"), "-o", str(output/"worker")],
+                           env=environment, check=True, capture_output=True, timeout=10)
+            self.assertIn(str(output/"new.h"), build_worker.compiled_inputs(output, wasm))
 
     def test_manifest_binding_and_changed_input(self):
         root = ROOT/"build"/f"worker-check-{os.getpid()}"
