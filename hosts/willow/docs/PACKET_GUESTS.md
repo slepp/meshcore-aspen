@@ -16,6 +16,9 @@ python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
   source install snr firmware/runtime/plugins/examples/snr.lua
 ```
 
+Set `WASM_CC=/path/to/clang` on the Make command when several LLVM installations
+are on PATH. Install the selected compiler's matching `wasm-ld` as well.
+
 The named source operation retains the main Lua source and other named modules.
 It refuses a conflicting command namespace. Existing channel access rules still
 control who can invoke `!snr`, `!rssi` and prefixes such as `!snr d1`.

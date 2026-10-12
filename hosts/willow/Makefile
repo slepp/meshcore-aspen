@@ -1,4 +1,5 @@
 HEW ?= hew
+WASM_CC ?= clang
 HEW_BINARIES = $(patsubst %.d,%,$(wildcard build/*.d)) build/roles build/roles-release build/hew-host build/hew-host-release build/hew-base build/hew-base-release build/hew-dashboard build/hew-dashboard-release build/hew-broker build/hew-broker-release
 $(HEW_BINARIES): .EXTRA_PREREQS = build/toolchain.json
 build/toolchain.json: FORCE | build
@@ -369,7 +370,7 @@ test-release: build/roles-release build/hew-host-release build/oracle build/arit
 	  BOT_NATIVE_WORKER=$${BOT_NATIVE_WORKER:-$(CURDIR)/build/native-worker} \
 	  go test ../../internal/roles ../../internal/app -run '^TestHew.*Differential$$' -count=1
 build/arithmetic.wasm: ../../firmware/runtime/wasm/examples/arithmetic.c ../../firmware/runtime/wasm/sdk/meshcore.h | build
-	TMPDIR=$(CURDIR)/build clang --target=wasm32 -Oz -nostdlib -fno-builtin \
+	TMPDIR=$(CURDIR)/build $(WASM_CC) --target=wasm32 -Oz -nostdlib -fno-builtin \
 	  -mno-bulk-memory -mno-reference-types -mno-multivalue \
 	  -Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
 	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@
@@ -426,7 +427,7 @@ $(patsubst %.c,build/%.o,$(notdir $(wildcard native/*_bridge.c))) build/storage_
 packet-workflow-test: build/hew-host build/hew-host-release build/oracle build/repeater-snr.wasm
 	HEW_WORKERS=4 PYTHONDONTWRITEBYTECODE=1 python3 tests/packet_workflow.py
 build/repeater-snr.wasm: ../../firmware/runtime/wasm/examples/repeater_snr.c ../../firmware/runtime/wasm/sdk/packet.h | build
-	TMPDIR=$(CURDIR)/build clang --target=wasm32 -Oz -nostdlib -fno-builtin -I../../firmware/shared \
+	TMPDIR=$(CURDIR)/build $(WASM_CC) --target=wasm32 -Oz -nostdlib -fno-builtin -I../../firmware/shared \
 	  -mno-bulk-memory -mno-reference-types -mno-multivalue \
 	  -Wl,--no-entry -Wl,--strip-all -Wl,--initial-memory=65536 \
 	  -Wl,--max-memory=65536 -Wl,-z,stack-size=4096 $< -o $@

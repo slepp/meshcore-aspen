@@ -58,7 +58,11 @@ jobs:
         env:
           BOT_JSON_INCLUDE: /usr/include/cjson
           CMAKE_BUILD_PARALLEL_LEVEL: '2'
-        run: make -C hosts/willow -j2 check
+          WASM_CC: /usr/bin/clang
+        run: |
+          "$WASM_CC" --version
+          "$("$WASM_CC" --target=wasm32 -print-prog-name=wasm-ld)" --version
+          make -C hosts/willow -j2 check
   shared-room:
     name: Shared room Worker, web UI and opaque frontend
     runs-on: ubuntu-24.04
