@@ -1,6 +1,6 @@
 # Make a release
 
-Release source and firmware together from a tagged commit in
+Release each product from its signed product tag in
 [`slepp/meshcore-aspen`](https://github.com/slepp/meshcore-aspen).
 Firmware versions identify the MeshCore base and profile, such as
 `1.17.1-slp-pine` for Pine. For Aspen and Birch, use the independent product
@@ -54,7 +54,7 @@ State the supported board and update prerequisites in the installation guide.
 Willow is source-built at its final installation path. Its compiled worker
 binding requires the unchanged source and build inputs there; copied binaries
 are not a relocatable host package. Run the selected Willow checks from its
-guide and state any remaining qualification gaps in the release description.
+guide and state operating limitations in the release description.
 
 ## Create the release
 

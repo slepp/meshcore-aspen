@@ -12,7 +12,7 @@ upstream base and is recorded separately.
 | Willow | Experimental | `0.0.5` | `willow-v0.0.6` |
 
 Source versions can be ahead of published releases. The latest published
-Willow source release is [0.0.4](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.4);
+Willow source release is [0.0.5](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.5);
 the current published Aspen firmware is [0.1.11](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11).
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
@@ -214,6 +214,28 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Willow 0.0.5
+
+Build the host, Base, broker and dashboard from `hosts/willow/`. Production Hew
+modules are under `src/`, native bridges under `native/`, administration and
+migration tools under `tools/`, and the setup guides under `docs/`.
+
+The host retains complete and split RF frames received during modem negotiation,
+including reconnect and final presence announcements. `tools/willow.py check`
+uses the same offline settings validation as startup. Unsupported snapshot file
+types, including FIFOs, fail promptly.
+
+The dashboard exports native host metrics at `/metrics`. Observer delivery
+checkpoints retain queued work across controlled restarts, with batched saves
+and bounded expiry. Existing Linux user services can use the
+[source-build updater](../tools/INSTALL_WILLOW.md), which copies the latest
+stopped state and retains the previous installation for rollback.
+
+Run `make -C hosts/willow -j2 check` with the current Hew compiler and matching
+libraries. See [setup, prerequisites and the compatible toolchain](../hosts/willow/README.md).
+Keep one running owner per identity and build at the final installation path.
+Shared-modem stalls can briefly return HTTP503 while connections recover.
 
 ## Willow 0.0.4
 

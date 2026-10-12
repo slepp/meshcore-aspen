@@ -6,8 +6,7 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-**Willow 0.0.5 is the current development version.** The latest published
-source release is [Willow 0.0.4](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.4).
+Get the [Willow 0.0.5 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.5).
 Build the
 [current repository source](https://github.com/slepp/meshcore-aspen) at the final
 installation path with the current Hew compiler and matching libraries. The native worker is bound to that
@@ -113,10 +112,13 @@ make native-login-test
 ```
 
 Requirements: Linux x86-64, the current `hew` compiler and libraries on `PATH`,
-a C compiler and OpenSSL development headers, libcurl development headers/library, `libcrypto.so.3`, `libsodium.so.23`, Go matching the root `go.mod`, and
+a C compiler, C++17 compiler and OpenSSL development headers, libcurl 7.86 or
+newer development headers/library, `pkg-config`, `libcrypto.so.3`,
+`libsodium.so.23`, Go matching the root `go.mod`, and
 Python with `cryptography` and `PyNaCl`, CMake, Git, patch, PlatformIO's package
 manager and cJSON headers/library. The full demo additionally needs Clang's
 wasm32 target and `wasm-ld`. `BOT_JSON_INCLUDE` can select the cJSON header directory;
+MQTT over WebSocket also needs libcurl built with `ws`/`wss` support.
 the default is the installed ESP32 SDK. The first native worker build downloads
 pinned public C/C++ dependencies using the existing host-worker recipe.
 Build products and generated test identities stay in ignored
