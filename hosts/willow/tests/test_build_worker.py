@@ -47,7 +47,11 @@ class SourceIdentity(unittest.TestCase):
     def test_package_core_and_manifest_are_worker_binding_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            paths = ["Makefile", "release/source.json", "packages/hew-lua/hew.toml",
+            paths = ["Makefile", "release/source.json", "release/products.json", "release/versions.mk",
+                     "firmware/esp32/Makefile", "firmware/esp32/bot.mk", "firmware/esp32/prepare.py",
+                     "firmware/esp32/prepare_bot.py", "firmware/esp32/prepare_wasm.py",
+                     "firmware/shared/radio-reconfigure.patch", "firmware/shared/queued-dispatch.patch",
+                     "packages/hew-wamr/native/CMakeLists.txt", "packages/hew-lua/hew.toml",
                      "packages/hew-lua/native/hlua_core.hpp", "packages/hew-lua/native/lua/llex.c",
                      "packages/hew-wamr/hew.toml", "packages/hew-wamr/native/runtime.cpp",
                      "packages/hew-wamr/native/vendor/core/iwasm/common/arch/invokeNative_em64.s"]
@@ -56,13 +60,21 @@ class SourceIdentity(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("initial")
             with patch.object(worker, "ROOT", root):
-                before = worker.local_inputs()
+                sources = [root/name for name in paths if Path(name).suffix in (".hpp", ".c", ".cpp", ".s")]
+                before = worker.local_inputs(sources)
                 for name in paths[2:]:
                     path = root / name
                     path.write_text("changed")
-                    after = worker.local_inputs()
+                    after = worker.local_inputs(sources)
                     self.assertNotEqual(before[str(path)], after[str(path)])
                     before = after
+                removed = sources[0]
+                removed.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    worker.local_inputs(sources)
+                rebuilding = worker.local_inputs(sources, existing_only=True)
+                self.assertNotIn(str(removed), rebuilding)
+                self.assertIn(str(sources[1]), rebuilding)
 
     def test_invalid_archive_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

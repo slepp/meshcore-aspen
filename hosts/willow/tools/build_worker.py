@@ -61,7 +61,7 @@ def inventory(directories):
     return result
 
 
-def local_inputs(sources=()):
+def local_inputs(sources=(), *, existing_only=False):
     result = inventory([ROOT/"packages/hew-wamr/native/vendor/build-scripts"])
     result = {path: value for path, value in result.items() if Path(path).suffix == ".cmake"}
     recipes = (ROOT/"Makefile", ROOT/"release/source.json", ROOT/"release/products.json",
@@ -70,9 +70,12 @@ def local_inputs(sources=()):
                ROOT/"firmware/esp32/prepare_wasm.py", ROOT/"firmware/shared/radio-reconfigure.patch",
                ROOT/"firmware/shared/queued-dispatch.patch", ROOT/"packages/hew-lua/hew.toml",
                ROOT/"packages/hew-wamr/hew.toml", ROOT/"packages/hew-wamr/native/CMakeLists.txt", HERE/"tools/build_worker.py", HERE/"tools/compiler_capture.py")
-    for path in (*recipes, *map(Path, sources)):
+    for path in recipes:
 
         result[str(path)] = digest(path)
+    for path in map(Path, sources):
+        if not existing_only or path.is_file():
+            result[str(path)] = digest(path)
     return result
 
 
@@ -190,7 +193,7 @@ def ensure():
                      "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
                      f"m.CACHE=pathlib.Path({str(wasm.CACHE)!r});m.prepare()"]
             run(child, wasm_log, env)
-        local = local_inputs(previous_sources)
+        local = local_inputs(previous_sources, existing_only=True)
         compiler = {name: subprocess.check_output([name, "--version"], text=True).splitlines()[0]
                     for name in ("cc", "c++", "cmake")}
         dependencies = inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps", wasm.ROOT/"packages/hew-wamr/native"])
