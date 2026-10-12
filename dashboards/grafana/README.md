@@ -24,17 +24,18 @@ sampler. This feed needs no status polls or extra RF transmissions.
 ## Battery trends and voltage limits
 
 The repeater dashboard overlays reported RF voltage and a **30-minute mean**,
-with separate **V/hour** and **voltage-limit estimate history** graphs. The mean
-and trend use time-weighted voltage: one-minute steps hold an RF reading for
-at most six minutes. Reported voltage points use **Sample hold**; they can repeat
-a reading until it expires. All battery graphs follow the dashboard time range
-(24 hours by default); choose several days to compare overnight discharge and
-solar recovery. The 30-minute window controls smoothing and prediction.
+with separate **V/hour** and **voltage-limit estimate history** graphs. Reported
+voltage, smoothing and trend use **Sample hold** (15 minutes by default), then
+leave a gap. The mean and trend use one-minute steps. Repeated uploads do not
+increase the observation count or smoothing weight.
 
-A trend needs fresh status and at least four distinct RF samples spanning
-20 minutes. Both 15-minute halves must agree in direction; movement must exceed
-sample scatter and 0.005 V/hour. Paused, missing, stale, flat or reversing
-readings leave the estimate blank. The mean does not require a stable slope.
+All battery graphs follow the dashboard time range (24 hours by default);
+choose several days to compare overnight discharge and solar recovery. The
+30-minute window controls smoothing and prediction. The mean remains visible
+through flat readings, reversals and failed polls while an RF reading remains
+within Sample hold. The signed trend and projections need at least two distinct
+RF observations in 30 minutes. Flat trends have no projection. A long gap stays
+blank; no line joins an hours-long outage.
 
 Select one repeater, then set **Low battery voltage** and **Full voltage** for
 its battery and operating load. Defaults are **3.3 V low** and **4.2 V full**
@@ -47,7 +48,10 @@ limit while falling or the full limit while rising. A reached limit shows zero.
 This is a voltage projection,
 not measured state of charge, remaining energy or a charging completion time.
 Solar input, load, battery chemistry and temperature can change the estimate.
-Repeated uploads do not increase the observation count or smoothing weight.
+Projections are displayed in days. The axis is linear up to one day, then
+logarithmically compressed so near-flat trends do not hide shorter projections. Long
+projections remain visible. Reported and smoothed voltage share each peer’s
+colour across the voltage, trend and projection graphs.
 
 ## Import and select a node
 

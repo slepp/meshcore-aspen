@@ -435,7 +435,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Battery voltage history · RF and 30-minute mean",
-      "description": "Use the dashboard range to compare day/night discharge and solar recovery. RF voltage holds the last reading for Sample hold, then leaves a gap. The time-weighted mean uses one-minute steps with holds capped at six minutes and four distinct RF observations spanning 20 minutes. Flat or reversing voltage can still have a mean. Uploads are not new RF observations.",
+      "description": "Compare overnight discharge and solar recovery across the dashboard range. Reported voltage holds the last RF reading for Sample hold, then leaves a gap. The 30-minute time-weighted mean uses one-minute steps with the same bounded hold; it remains visible through flat readings, reversals and failed polls while the latest RF sample remains within Sample hold. Uploads are not new RF observations.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -454,7 +454,7 @@
         },
         {
           "refId": "B",
-          "expr": "avg_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) and ((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200))",
+          "expr": "avg_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s]) and (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))",
           "legendFormat": "{{device}} / {{peer}} · 30-minute smoothed voltage"
         }
       ],
@@ -465,7 +465,7 @@
           "custom": {
             "spanNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 2
+            "lineWidth": 3
           }
         },
         "overrides": [
@@ -477,19 +477,117 @@
             "properties": [
               {
                 "id": "custom.drawStyle",
-                "value": "points"
+                "value": "line"
               },
               {
                 "id": "custom.showPoints",
-                "value": "always"
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 2
+                "value": "never"
               },
               {
                 "id": "custom.lineWidth",
-                "value": 0
+                "value": 1
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d1 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d2 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FADE2A"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d4 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d7 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )r2 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )wye · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#B877D9"
+                }
               }
             ]
           }
@@ -519,7 +617,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -595,7 +693,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 44,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -641,7 +739,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 52,
+        "y": 62,
         "w": 12,
         "h": 8
       },
@@ -691,7 +789,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 52,
+        "y": 62,
         "w": 12,
         "h": 8
       },
@@ -736,7 +834,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 60,
+        "y": 70,
         "w": 12,
         "h": 8
       },
@@ -782,7 +880,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 60,
+        "y": 70,
         "w": 12,
         "h": 8
       },
@@ -858,7 +956,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 68,
+        "y": 78,
         "w": 12,
         "h": 8
       },
@@ -903,7 +1001,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 68,
+        "y": 78,
         "w": 12,
         "h": 8
       },
@@ -961,7 +1059,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 76,
+        "y": 86,
         "w": 12,
         "h": 8
       },
@@ -1011,7 +1109,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 76,
+        "y": 86,
         "w": 12,
         "h": 8
       },
@@ -1063,7 +1161,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 84,
+        "y": 94,
         "w": 12,
         "h": 8
       },
@@ -1111,7 +1209,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 84,
+        "y": 94,
         "w": 12,
         "h": 8
       },
@@ -1187,7 +1285,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 92,
+        "y": 102,
         "w": 12,
         "h": 8
       },
@@ -1237,7 +1335,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 92,
+        "y": 102,
         "w": 12,
         "h": 8
       },
@@ -1289,7 +1387,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 46,
         "w": 12,
         "h": 8
       },
@@ -1402,7 +1500,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 46,
         "w": 12,
         "h": 8
       },
@@ -1481,7 +1579,7 @@
       "id": 26,
       "type": "timeseries",
       "title": "Battery voltage trend · V/hour",
-      "description": "Least-squares slope of time-weighted voltage over 30 minutes (one-minute steps, holds capped at six minutes). Requires fresh status, four distinct RF observations spanning 20 minutes, agreeing half-window slopes, and movement above scatter and 0.005 V/hour. Missing means no stable estimate.",
+      "description": "Signed least-squares voltage trend over the trailing 30 minutes, including flat readings and reversals. Uses one-minute steps with Sample hold and at least two distinct RF observations. Gaps mean insufficient observations or an expired RF reading. This is voltage change, not energy use.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1489,13 +1587,13 @@
       "gridPos": {
         "x": 0,
         "y": 28,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) * 3600) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005))",
+          "expr": "(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s]) * 3600) and (((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 2))",
           "legendFormat": "{{device}} / {{peer}}"
         }
       ],
@@ -1508,15 +1606,104 @@
             "lineInterpolation": "linear"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / d1$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / d2$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FADE2A"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / d4$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / d7$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / r2$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* / wye$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#B877D9"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
@@ -1528,28 +1715,28 @@
       "id": 27,
       "type": "timeseries",
       "title": "Approximate time to voltage limit · history",
-      "description": "At each point in the dashboard range, project the stable trailing 30-minute voltage trend to the low battery limit while falling or the full voltage limit while rising. Linear voltage projection at the stable 30-minute rate: falling voltage to Low battery voltage, rising voltage to Full voltage. Defaults are 3.3 V low and 4.2 V full for 1S parallel Li-ion packs. Set limits for the selected battery; 0 disables that direction. The low limit is not empty or zero state of charge. Voltage is not state of charge or usable energy. Solar, load, chemistry and temperature can change the result. At the limit: zero; stale, sparse, flat or changing trends: no estimate.",
+      "description": "At each point, project the trailing 30-minute voltage rate to the low battery limit while falling or the full voltage limit while rising. Uses at least two distinct RF observations and the latest RF voltage within Sample hold. Exactly flat trends have no estimate; changing solar input or load can quickly change a projection. Defaults are 3.3 V low and 4.2 V full for 1S parallel Li-ion. The low limit is not empty or zero state of charge. This is a voltage projection, not remaining energy or charging completion time. Set either limit to 0 to disable that direction. Projections are displayed in days. The axis is linear up to one day and logarithmically compressed above it; long projections remain visible.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
       "gridPos": {
-        "x": 12,
-        "y": 28,
-        "w": 12,
-        "h": 8
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 10
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "clamp_min(((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) - ${battery_empty_v}) / (-(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]))), 0) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) < 0) and on() (vector(${battery_empty_v}) > 0)",
+          "expr": "(clamp_min(((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold])) - ${battery_empty_v}) / (-(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s]))), 0) and (((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 2)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s]) < -1e-12) and on() (vector(${battery_empty_v}) > 0)) / 86400",
           "legendFormat": "{{device}} · {{peer}} · low battery voltage",
           "instant": false,
           "range": true
         },
         {
           "refId": "B",
-          "expr": "clamp_min((${battery_full_v} - (((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360))) / (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])), 0) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) > 0) and on() (vector(${battery_full_v}) > 0)",
+          "expr": "(clamp_min((${battery_full_v} - (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))) / (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s])), 0) and (((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 2)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$sample_hold]))[30m:60s]) > 1e-12) and on() (vector(${battery_full_v}) > 0)) / 86400",
           "legendFormat": "{{device}} · {{peer}} · full voltage",
           "instant": false,
           "range": true
@@ -1557,24 +1744,119 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "decimals": 0,
-          "noValue": "No stable estimate / limits unset",
+          "unit": "suffix: days",
+          "decimals": 2,
+          "noValue": "No projection / limits unset",
           "custom": {
             "spanNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 2
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "symlog",
+              "log": 10,
+              "linearThreshold": 1
+            },
+            "axisLabel": "Approximate days to limit · compressed above 1 day"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d1 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d2 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FADE2A"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d4 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )d7 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )r2 · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*(?: / | · )wye · .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#B877D9"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": []
         },
         "tooltip": {
           "mode": "multi",
