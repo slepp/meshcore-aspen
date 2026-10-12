@@ -5,6 +5,10 @@ explicit host-operation requests. The package includes the interpreter sources;
 it needs Hew, a C11/C++17 compiler and the platform math library. It builds without
 MeshCore, PlatformIO or a downloaded Lua installation.
 
+Use Hew with its matching runtime and standard library. When building Hew from
+source, run `make hew` and put its `build/bin` directory on `PATH`; this builds
+the compiler and optimized native runtime together.
+
 Add a path dependency and import `hew.lua`:
 
 ```toml

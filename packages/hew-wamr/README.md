@@ -8,9 +8,9 @@ The standalone native package currently supports **Linux x86-64**. It includes
 WAMR 2.4.1 sources and the upstream native-call assembly; consumers need a C11/
 C++17 compiler and Hew with native `.s`/`.S` package-source support. It builds
 through `[native]` without MeshCore, PlatformIO, CMake or a prepared archive.
-Native assembly package support is currently proposed in
-[Hew PR #3689](https://github.com/hew-lang/hew/pull/3689); use a compiler with
-that capability and its matching runtime and standard library.
+Use a current Hew toolchain with its matching runtime and standard library.
+When building Hew from source, run `make hew` and put its `build/bin` directory
+on `PATH`; this builds the compiler and optimized native runtime together.
 
 Add a path dependency, then run `hew install --offline`:
 
