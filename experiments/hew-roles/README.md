@@ -6,7 +6,9 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-**Willow 0.0.5 is an experimental Hew release.** Build the
+**Willow 0.0.5 is the current development version.** The latest published
+source release is [Willow 0.0.4](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.4).
+Build the
 [current repository source](https://github.com/slepp/meshcore-aspen) at the final
 installation path with the current Hew compiler and matching libraries. The native worker is bound to that
 source/build tree; copying prebuilt binaries alone is not a supported install.
@@ -46,9 +48,25 @@ libraries. `hew build --release` optimizes the application; a compiler launched
 from `target/debug` still uses that toolchain's debug runtime libraries.
 For a new installation, [create private state](SERVICE.md#start-with-new-identities)
 with `build/hew-host-release init`, then use the state check and launcher above.
-Before connecting a radio, run `make acceptance-test`: it exchanges companion
-messages with private loopback modem emulators, restarts the host and broker,
-and checks native-worker and modem recovery using synthetic identities.
+Build and test the complete host before connecting a radio:
+
+```sh
+make -j2 check
+```
+
+This runs the Hew applications against private loopback modem emulators,
+checks restart and native-worker recovery, exercises interrupted persistence,
+and compares protocol behaviour with Birch. Missing prerequisites fail the
+command. The selected compiler, runtime and standard-library hashes are
+recorded in ignored `build/toolchain.json`; the compiler version is printed.
+The contributor CI runs this same command.
+
+The current source has been built with Hew
+`0.6.0-rc8-dev.230+3e9267d355`. The published rc7 SDK cannot parse its actor
+syntax. Use a current Hew development installation and its matching libraries;
+normal builds select `hew` from `PATH`. CI builds current Hew main through
+its supported `make hew-native` target and records that source revision.
+It uses that compiler with its matching runtime and standard library.
 
 Use the running host's [owner-only DM and inbox commands](SERVICE.md#send-a-dm-and-read-the-owners-inbox)
 to send as its native bot and read authenticated incoming DMs. For a version

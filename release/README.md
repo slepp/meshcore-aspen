@@ -4,12 +4,16 @@ Aspen, Birch, Pine and Willow each use an independent Semantic Version. A fix to
 does not require a release of the other. MeshCore's version identifies the
 upstream base and is recorded separately.
 
-| Product | Candidate tag | Stable tag | Next product fix |
+| Product | Series | Current source version | Next product fix |
 | --- | --- | --- | --- |
-| Aspen | As needed | `aspen-v0.1.12` | `aspen-v0.1.13` |
-| Birch | As needed | `birch-v0.1.1` | `birch-v0.1.2` |
-| Pine | As needed | `pine-v0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental series | `willow-v0.0.5` | `willow-v0.0.6` |
+| Aspen | Maintenance | `0.1.12` | `aspen-v0.1.13` |
+| Birch | Maintenance | `0.1.1` | `birch-v0.1.2` |
+| Pine | Experimental | `0.1.0` | `pine-v0.1.1` |
+| Willow | Experimental | `0.0.5` | `willow-v0.0.6` |
+
+Source versions can be ahead of published releases. The latest published
+Willow source release is [0.0.4](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.4);
+the current published Aspen firmware is [0.1.11](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11).
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
 use `-rc.2`, `-rc.3`, and so on. Use SemVer's usual patch/minor/major meaning;

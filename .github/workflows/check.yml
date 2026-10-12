@@ -13,6 +13,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  willow:
+    name: Willow Hew build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld pkg-config zlib1g-dev libzstd-dev
+          python3 -m pip install --require-hashes -r requirements-linux.lock
+          python3 -m pip install platformio
+      # The published rc7 SDK predates Willow's actor syntax. Build current
+      # Hew through its supported target; fork PRs need no cross-repo token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hew-lang/hew
+          ref: main
+          path: .tmp/hew
+          persist-credentials: false
+      - uses: ./.tmp/hew/.github/actions/setup-llvm
+      - name: Build current Hew development toolchain
+        env:
+          CARGO_BUILD_JOBS: '2'
+          CARGO_INCREMENTAL: '0'
+        run: |
+          channel=$(awk -F '"' '/^channel =/ {print $2; exit}' .tmp/hew/rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          RUSTUP_TOOLCHAIN="$channel" make -C .tmp/hew -j2 hew-native
+          echo "$GITHUB_WORKSPACE/.tmp/hew/target/debug" >> "$GITHUB_PATH"
+          echo "HEW_STD=$GITHUB_WORKSPACE/.tmp/hew/std" >> "$GITHUB_ENV"
+          echo "Hew source: $(git -C .tmp/hew rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Build and test Willow
+        env:
+          BOT_JSON_INCLUDE: /usr/include/cjson
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+        run: make -C experiments/hew-roles -j2 check
   shared-room:
     name: Shared room Worker, web UI and opaque frontend
     runs-on: ubuntu-24.04

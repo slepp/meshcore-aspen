@@ -93,6 +93,12 @@ base-service-test: base-service build/oracle
 .PHONY: role-lifecycle-test
 .PHONY: combined-service-test release acceptance-test
 release: build/hew-host-release build/hew-base-release build/hew-dashboard-release build/hew-broker-release
+.PHONY: check
+# Run the production processes, retained fault cases and Birch comparisons.
+# Missing compilers, libraries and fixture binaries are errors, never skips.
+check: export HEW_WORKERS = 4
+check: release test test-release acceptance-test base-local-test base-service-test broker-test dashboard-test observer-service-test observer-queue-test supervision-test
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 # A complete private host, real companion protocol, retained state and recovery.
 acceptance-test: combined-service-test build/roles-release
 	HEW_WORKERS=4 MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/readiness.py Readiness.test_reconnect_and_restart_do_not_reflood_roles Readiness.test_native_worker_fault_isolated_and_old_jobs_fenced
