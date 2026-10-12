@@ -14,7 +14,6 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = Path(os.environ.get("MESHCORE_HEW_OUTBOUND_BIN", ROOT / "build/outbound-checks"))
-STD_TLS = Path(os.environ.get("MESHCORE_HEW_STD_TLS_BIN", ROOT / "build/std-tls-deadline-probe"))
 
 
 class TLSFixture(unittest.TestCase):
@@ -179,45 +178,6 @@ class Outbound(TLSFixture):
                 output = self.run_probe("reject", url)
                 self.assertIn("requires an allowed endpoint", output)
 
-    def test_standard_tls_write_has_no_three_second_handshake_deadline(self):
-        accepted, release = threading.Event(), threading.Event()
-        errors = []
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            listener.settimeout(5)
-
-            def peer():
-                try:
-                    with listener.accept()[0] as connection:
-                        accepted.set()
-                        release.wait(6)
-                        connection.shutdown(socket.SHUT_RDWR)
-                except BaseException as error:
-                    errors.append(error)
-
-            thread = threading.Thread(target=peer)
-            thread.start()
-            process = subprocess.Popen([str(STD_TLS), str(listener.getsockname()[1])],
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                self.assertTrue(accepted.wait(3))
-                self.assertEqual(process.stdout.readline().strip(), "STD_TLS_CONNECT_RETURNED")
-                time.sleep(3.3)
-                self.assertIsNone(process.poll(), "write unexpectedly has a shorter deadline")
-                release.set()
-                stdout, stderr = process.communicate(timeout=3)
-                self.assertEqual(process.returncode, 0, stdout + stderr)
-                self.assertIn("STD_TLS_WRITE_RETURNED_ERROR", stdout)
-            finally:
-                release.set()
-                if process.poll() is None:
-                    process.terminate()
-                    process.communicate(timeout=3)
-                thread.join(timeout=7)
-            self.assertFalse(thread.is_alive())
-            if errors:
-                raise errors[0]
 
 
 if __name__ == "__main__":

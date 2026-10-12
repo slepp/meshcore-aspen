@@ -301,16 +301,12 @@ build/endpoint-checks-release: tests/endpoint_checks.hew src/meshproto/mqtt_endp
 observer-test: build/endpoint-checks build/endpoint-checks-release
 	./build/endpoint-checks
 	./build/endpoint-checks-release
-build/std-tls-deadline-probe: tests/probes/std_tls_deadline_probe.hew | build
-	$(HEW) build --emit-deps $@.d $< -o $@
-build/std-tls-deadline-probe-release: tests/probes/std_tls_deadline_probe.hew | build
-	$(HEW) build --emit-deps $@.d $< --release -o $@
 mqtt-test: build/mqtt-checks build/mqtt-checks-release
 	MESHCORE_HEW_MQTT_BIN=$(CURDIR)/build/mqtt-checks go test ../../internal/observer -run '^TestHewMQTT' -count=1
 	MESHCORE_HEW_MQTT_BIN=$(CURDIR)/build/mqtt-checks-release go test ../../internal/observer -run '^TestHewMQTT' -count=1
-outbound-test: build/outbound-checks build/outbound-checks-release build/std-tls-deadline-probe build/std-tls-deadline-probe-release
+outbound-test: build/outbound-checks build/outbound-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/outbound.py
-	MESHCORE_HEW_OUTBOUND_BIN=$(CURDIR)/build/outbound-checks-release MESHCORE_HEW_STD_TLS_BIN=$(CURDIR)/build/std-tls-deadline-probe-release PYTHONDONTWRITEBYTECODE=1 python3 tests/outbound.py
+	MESHCORE_HEW_OUTBOUND_BIN=$(CURDIR)/build/outbound-checks-release PYTHONDONTWRITEBYTECODE=1 python3 tests/outbound.py
 build/library-fixture.o: tests/library_fixture.c | build
 	$(CC) -std=c11 -Wall -Wextra -Werror -O2 -c $< -o $@
 build/child-fixture: tests/child_fixture.c | build

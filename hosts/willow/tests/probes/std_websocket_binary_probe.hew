@@ -1,7 +1,7 @@
 import std.net.websocket;
 
 fn send_packet(connection: websocket.Conn) {
-    connection.send_binary(bytes.new());
+    connection.send_binary(bytes.new()).expect("send binary packet");
 }
 
 fn main() {}

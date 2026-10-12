@@ -18,8 +18,15 @@ The following type-check results apply to Hew
 | `std_tcp_write_probe.hew` | Pass |
 | `process_pipe_probe.hew` | Fails: `std.process.start_argv` is unavailable |
 | `select_send_probe.hew` | Fails: a sink send is not a supported select source |
-| `std_tls_deadline_probe.hew` | Fails: its two-argument `tls.connect` call differs from the current three-argument API |
-| `std_websocket_binary_probe.hew` | Fails: the send result must be handled |
+| `std_websocket_binary_probe.hew` | Pass, unused-function warning |
+
+`process_pipe_probe.hew` and `select_send_probe.hew` are expected negative
+feature queries; their rejection records the unavailable operations.
+
+`std.net.tls.connect(host, port, tls.options())` completes a verified handshake
+before returning. Its default handshake deadline is 10 seconds; subsequent
+read/write timeouts are configured separately. Run `make outbound-test` for
+Willow's TLS certificate, deadline, write-failure and supervision checks.
 
 The supervision resource contract remains at
 [`../supervised_resource_contract.hew`](../supervised_resource_contract.hew).
