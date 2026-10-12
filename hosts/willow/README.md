@@ -6,7 +6,7 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-Get the [Willow 0.0.5 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.5).
+Get the [Willow 0.0.6 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.6).
 Build the
 [current repository source](https://github.com/slepp/meshcore-aspen) at the final
 installation path with the current Hew compiler and matching libraries. The native worker is bound to that
@@ -36,7 +36,7 @@ python3 -B tools/willow.py check --state /path/to/private/willow
 python3 -B tools/willow.py run --release --state /path/to/private/willow
 ```
 
-Expected: `Willow 0.0.5`; the state check verifies the retained role identities
+Expected: `Willow 0.0.6`; the state check verifies the retained role identities
 and configuration, and startup connects to the configured shared modem without
 retuning it. `make release` builds the host, Base, broker and dashboard with
 the current Hew installation. The launcher defaults to four scheduler workers; set
@@ -62,15 +62,14 @@ The contributor CI runs this same command. The broader `make test test-release`
 targets retain the complete debug/release protocol, management, login,
 readiness and migration suites.
 
-The current source has been built with Hew
-`0.6.0-rc8-dev.230+3e9267d355`. The published rc7 SDK cannot parse its actor
-syntax. Use a current Hew development installation and its matching libraries;
-normal builds select `hew` from `PATH`. CI builds current Hew main through
-its supported `make hew-native` target and records that source revision.
-It uses that compiler with its matching runtime and standard library.
-The supervision resource probe also runs with
-`0.6.0-rc8-dev.1+017db3b`; the full application build has not yet been
-checked with that revision.
+The complete host check passed with Hew source
+`dce0bc72da487bf4c9307df84b738c2caa58b8f7`, using its matching optimized
+runtime and standard library. This records a compatible toolchain; normal
+builds select the current `hew` from `PATH`. The published rc7 SDK predates
+Willow's actor syntax. CI builds current Hew main through its supported
+`make hew` target, selects `build/bin` and records the source revision.
+Compiler-specific probe results are documented separately in
+[tests/probes](tests/probes/README.md).
 
 Production modules live in `src/`, native bridges in `native/`, launch and
 build helpers in `tools/`, and checks in `tests/`. Internal Hew imports use

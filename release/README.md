@@ -9,10 +9,10 @@ upstream base and is recorded separately.
 | Aspen | Maintenance | `0.1.12` | `aspen-v0.1.13` |
 | Birch | Maintenance | `0.1.1` | `birch-v0.1.2` |
 | Pine | Experimental | `0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental | `0.0.5` | `willow-v0.0.6` |
+| Willow | Experimental | `0.0.6` | `willow-v0.0.7` |
 
 Source versions can be ahead of published releases. The latest published
-Willow source release is [0.0.5](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.5);
+Willow source release is [0.0.6](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.6);
 the current published Aspen firmware is [0.1.11](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11).
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
@@ -214,6 +214,23 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Willow 0.0.6
+
+Install receive-only Lua/Wasm packet programs through the existing native bot
+worker. Measured RF packets supply repeater SNR/RSSI history to commands,
+the dashboard and metrics. Program selection, budgets and sources survive a
+host restart; signal sample rings restart empty and survive modem reconnects.
+See [packet programs](../hosts/willow/docs/PACKET_GUESTS.md).
+
+The installer waits for the launched Hew process before checking its executable
+and binds the dashboard page to the selected installation. Upgrades copy the
+latest stopped state and retain the previous installation for rollback.
+Existing identities, notes, history and wire protocols remain compatible.
+
+Use current Hew with its matching optimized runtime and standard library,
+built through `make hew` and selected through `build/bin`. The normal Willow
+CI command remains `make -C hosts/willow -j2 check`.
 
 ## Willow 0.0.5
 

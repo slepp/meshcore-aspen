@@ -21,9 +21,9 @@ for the XIAO ESP32-S3R8 + Wio SX1262, or see
 The host/device releases are
 [Birch 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.1),
 [Pine 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and
-[Willow 0.0.5](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.5).
+[Willow 0.0.6](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.6).
 Birch includes Linux binaries; Pine is an initialized-node application update;
-Willow is a source-build release. Willow 0.0.5 uses
+Willow is a source-build release. Willow 0.0.6 uses
 the Hew compiler and matching libraries on `PATH`.
 First-install procedures differ
 from application-only updates that retain an existing node's identities and
