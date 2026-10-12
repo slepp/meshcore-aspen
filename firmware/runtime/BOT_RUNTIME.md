@@ -715,6 +715,27 @@ full public key in the bot's signed contacts, the companion's saved signed
 adverts or the owner's monitor targets. A hash seen only in an RF path does not
 identify a destination. Receive or share its signed advert first if it is unknown.
 
+Both `!find-path` and `!trace` are public commands: callers need no bot admin
+password or owner grant. A DM identifies its sender through native encryption;
+a channel invocation verifies the channel key without authenticating the
+nickname. Command and `action_trace` permissions control both forms. For a
+selected membership with default access `0`, allow bare and addressed calls with:
+
+```text
+bot access 1 trace 15
+bot access 1 find-path 15
+bot access 1 action_trace 15
+```
+
+Use `12` instead of `15` for addressed-only calls such as `!@aspen find-path d2`.
+These examples change only membership 1; choose the intended membership slot.
+Other commands retain their existing permissions and targeting rules. The
+configured shared TX airtime budget always applies. Optional adaptive admission
+accounts DMs by sender public key and anonymous channel traffic by channel ID;
+changing a nickname does not create a new allowance. Ordinary channel packets
+cannot provide trustworthy per-person accounting. Use DMs when that distinction
+matters. TRACE requires a supplied or received route, but no destination login.
+
 The bot sends one anonymous empty-password guest login by flood, then confirms
 the returned route with a tagged base-telemetry request sent directly along it.
 Default open-guest repeaters can admit the bot through this normal login; a

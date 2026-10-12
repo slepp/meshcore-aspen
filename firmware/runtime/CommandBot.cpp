@@ -2422,7 +2422,8 @@ struct CommandBot::Core : mesh::Mesh {
       audit(event, 0, "rejected", "policy");
       reject("Native command policy denies this command/context"); return;
     }
-    if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name)) {
+    if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name) &&
+        strcmp(event.name, "trace") && strcmp(event.name, "find-path")) {
       audit(event, 0, "rejected", "target-required");
       rejectAdmission(event, packet, sender, secret, "target required: !@ALIAS COMMAND or !@BOTKEY8 COMMAND", 0); return;
     }

@@ -2728,6 +2728,99 @@ static void native_find_path() {
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
   puts("PASS find-path: empty guest flood, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
 }
+static void anonymous_channel_routes() {
+  BotRadioPolicy policy; policy.pathWidth = 3;
+  strcpy(policy.channel, "#example1");
+  assert(saveBotEnabled(true) && saveBotRadioPolicy(policy) && saveBotRepeaterPolicy({}) &&
+         saveBotAdaptiveAdmission(true));
+  Fixture f; f.start(); Peer caller, otherCaller, target;
+  f.learn(target); // Channel participants need no signed advert, login or owner grant.
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  char reply[320]{}, command[96]{}, key[65]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", target.self_id.pub_key[i]);
+  const auto access = [&](const char *setting) {
+    f.bot.radioPolicyCommand(setting, reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved and applied", 17));
+  };
+  const auto ask = [&](const char *text, bool addressed, bool refill = true, Peer *sender = nullptr) {
+    if (refill) timeMs += 61000;
+    f.radio.sent.clear();
+    auto &source = sender ? *sender : caller;
+    f.deliver(addressed ? source.targetedGroup(f.bot.publicKey(), text) : source.group(text));
+    f.step(300);
+  };
+  const auto packets = [&](uint8_t type) {
+    std::vector<Bytes> result;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() == type) result.push_back(raw);
+    }
+    return result;
+  };
+  const auto returned = [&](bool login, uint32_t tag) {
+    uint8_t secret[32]{}, plain[16]{};
+    target.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, tag);
+    plain[7] = 1;
+    if (!login) { plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; }
+    const Bytes route{0xaa, 0xbb, 0xcc};
+    auto *packet = login ? target.createPathReturn(mesh::Identity(f.bot.publicKey()), secret,
+        route.data(), 0x81, PAYLOAD_TYPE_RESPONSE, plain, 13) :
+        target.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, 8);
+    assert(packet); packet->header |= login ? ROUTE_TYPE_DIRECT : ROUTE_TYPE_FLOOD;
+    packet->path_len = 0x80;
+    f.deliver(target.wire(packet)); f.step(300);
+  };
+  const auto requestTag = [&](const Bytes &raw, bool anonymous) {
+    mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    target.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    const unsigned offset = anonymous ? 33 : 2;
+    assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + offset, packet.payload_len - offset) == 16);
+    if (anonymous) assert(packet.isRouteFlood() && plain[4] == 0);
+    else assert(packet.isRouteDirect() && plain[4] == 3 && plain[5] == uint8_t(~TELEM_PERM_BASE));
+    return queued_tx::get32(plain);
+  };
+  for (bool addressed : {false, true}) {
+    access(addressed ? "access 0 default 12" : "access 0 default 15");
+    ask("visitor: !trace 1:a1b2", addressed);
+    auto traces = packets(PAYLOAD_TYPE_TRACE); assert(traces.size() == 1);
+    mesh::Packet trace; assert(trace.readFrom(traces[0].data(), traces[0].size()));
+    assert(trace.isRouteDirect() && trace.payload[8] == 0);
+    trace.path_len = 2; trace.path[0] = trace.path[1] = 20;
+    uint8_t wire[255]; const size_t size = trace.writeTo(wire);
+    f.deliver(Bytes(wire, wire + size)); f.step(300);
+    assert(caller.groupReplies(f.radio) == std::vector<std::string>{"Trace 2 hops; SNR 5.00 5.00"});
+    snprintf(command, sizeof(command), "visitor: !find-path %s", key);
+    ask(command, addressed);
+    auto probes = packets(PAYLOAD_TYPE_ANON_REQ); assert(probes.size() == 1);
+    returned(true, requestTag(probes[0], true));
+    probes = packets(PAYLOAD_TYPE_REQ); assert(probes.size() == 1);
+    returned(false, requestTag(probes[0], false));
+    const auto replies = caller.groupReplies(f.radio);
+    assert(replies.size() == 1 && replies[0].find("fresh 3:aabbcc") != std::string::npos);
+  }
+  // Addressed-only policy silences bare probes and replies, despite public command visibility.
+  for (const char *text : {"visitor: !trace 1:a1b2", static_cast<const char *>(command)}) {
+    ask(text, false); assert(f.radio.sent.empty());
+  }
+  access("access 0 default 15"); access("access 0 action_trace 0");
+  for (const char *text : {"visitor: !trace 1:a1b2", static_cast<const char *>(command)}) {
+    ask(text, false); assert(f.radio.sent.empty());
+  }
+  access("access 0 action_trace inherit");
+  // A second nickname/key on the same channel cannot get another airtime bucket.
+  f.radio.airtime = 200;
+  ask("first-name: !trace 1:a1b2", false);
+  assert(packets(PAYLOAD_TYPE_TRACE).size() == 1);
+  f.bot.cancelJobs(); f.step();
+  ask("different-name: !trace 1:a1b2", false, false, &otherCaller);
+  assert(packets(PAYLOAD_TYPE_TRACE).empty());
+  f.bot.adaptiveCommand("bot adaptive", reply, sizeof(reply));
+  assert(strstr(reply, "callers=1 "));
+  assert(saveBotAdaptiveAdmission(false) && saveBotRadioPolicy({}));
+  puts("PASS anonymous channel routes: bare15/addressed12 TRACE and confirmed find-path, bare12/action denial no TX, shared nickname-independent channel airtime");
+}
+
 static void find_path_full_contact_scan() {
   using namespace contact_recovery_test;
   assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotRepeaterPolicy({}));
@@ -4792,6 +4885,7 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
     native_find_path();
+    anonymous_channel_routes();
     find_path_full_contact_scan();
     return 0;
   }
@@ -5025,6 +5119,7 @@ int main(int argc, char **argv) {
   }
   if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
     native_find_path();
+    anonymous_channel_routes();
     find_path_full_contact_scan();
     return 0;
   }
