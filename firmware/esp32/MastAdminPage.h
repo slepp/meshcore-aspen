@@ -131,9 +131,9 @@ Message the bot with <code>!plugins</code> or <code>!help</code> to list its com
 <pre id="firmware-detail">Check status before choosing an update.</pre>
 <label>Application image (.bin)<input id="firmware-image" type="file" accept=".bin,application/octet-stream"></label>
 <label>Signed update manifest (.json)<input id="firmware-manifest" type="file" accept=".json,application/json"></label>
-<div class="actions"><button id="firmware-upload" disabled>Upload and verify</button><button id="firmware-reboot" disabled>Restart with update</button></div>
+<div class="actions"><button id="firmware-upload" disabled>Upload and verify</button><button id="firmware-reboot" disabled>Restart with update</button><button id="firmware-force" disabled>Force restart without saving</button></div>
 <p class="warning">Choose an application-only image and its signed manifest, never a signing key, bootloader or full-flash image.
-Restarting interrupts all roles. Keep USB recovery accessible.</p>
+Restarting interrupts all roles. Force restart skips saving; unsaved contacts, messages and settings may be lost. Keep USB recovery accessible.</p>
 <p class="muted">After restarting, log in and check the running image hash and boot health.</p></section>
 <section id="advanced"><h2>Command console</h2><p>Use CLI commands for settings without a form. Changes require confirmation.</p>
 <form id="command-form" class="actions"><label>Command<input id="command" maxlength="162" value="status" size="60"></label><button type="submit">Run native command</button></form>
@@ -171,7 +171,7 @@ let token='', expires=0, busy=false, uncertain=false, effective=null, uploaded=n
 const unresolved=[];
 let inFlight=null, lastMutation=null;
 let uploadAttempt=null;
-let firmwareStatus=null, expectedFirmware=null;
+let firmwareStatus=null, expectedFirmware=null, forceRestartAttempt=false;
 const supported={source:false,wasm:false,data:false,telemetry:false}, seen={};
 function programRuntime() { return $('program-runtime').value==='wasm'?'wasm':'lua'; }
 function sourceCommand(text) { return text.replace(/^source /,programRuntime()==='wasm'?'source wasm ':'source '); }
@@ -196,6 +196,7 @@ function updateControls() {
   $('role-advert').disabled=blocked || $('role').value==='kiss';
   $('firmware-status').disabled=busy || !token;
   $('firmware-upload').disabled=busy || !token || uncertain || !firmwareStatus || !['idle','failed'].includes(firmwareStatus.state);
+  $('firmware-force').disabled=busy || !token || forceRestartAttempt || firmwareStatus?.force_restart_supported!==true || firmwareStatus.force_restart_pending || firmwareStatus.state==='receiving';
   $('firmware-reboot').disabled=busy || !token || uncertain || firmwareStatus?.reboot_ready!==true;
   $('firmware-image').disabled=busy || !token; $('firmware-manifest').disabled=busy || !token;
 }
@@ -635,17 +636,42 @@ async function updateRequest(method,body='',headers={}) {
 function firmwareConfirmed(item,status) {
   if(item.command==='firmware upload') return status.state==='verified' && status.reboot_ready &&
     status.sha256===item.image.sha256 && status.target===item.image.target && status.size===item.image.size && status.received===item.image.size;
-  return item.command==='firmware reboot' && status.state==='idle' && !status.reboot_ready && status.size===0 && status.received===0 &&
+  if(item.command==='forced restart' && (!/^[0-9a-f]{16}$/.test(status.boot_id) || status.boot_id===item.forceBootId)) return false;
+  return ['firmware reboot','forced restart'].includes(item.command) && status.state==='idle' && !status.reboot_ready && status.size===0 && status.received===0 &&
     status.running_sha256===item.image.sha256 && status.running_size===item.image.size && status.boot_health==='healthy' && !status.running_hash_error;
 }
 bind('firmware-status','Reading firmware update and boot health',async()=>{
   const status=await updateRequest('GET');
+  if(unresolved.some(item=>item.command==='forced restart' && firmwareConfirmed(item,status))) forceRestartAttempt=false;
   for(let n=unresolved.length-1;n>=0;n--) if(unresolved[n].image && firmwareConfirmed(unresolved[n],status)) unresolved.splice(n,1);
   uncertain=unresolved.length>0;
   const running=expectedFirmware && firmwareConfirmed({command:'firmware reboot',image:expectedFirmware},status);
   return running?'The uploaded image is running and healthy.':status.state==='verified'?
     'Update verified. Restart to activate it.':
     'Firmware status updated.'+(uncertain?' The previous update is still unconfirmed.':'');
+});
+bind('firmware-force','Forcing device restart without saving',async()=>{
+  if(forceRestartAttempt) throw Error('A forced restart was already sent. Reconnect and check firmware status; do not repeat it.');
+  const status=await updateRequest('GET');
+  if(status.force_restart_supported!==true || status.force_restart_pending || status.state==='receiving' || !/^[0-9a-f]{16}$/.test(status.boot_id))
+    throw Error('Forced restart is unavailable or another restart/update is active.');
+  const image={target:status.target,sha256:status.state==='verified'?status.sha256:status.running_sha256,
+    size:status.state==='verified'?status.size:status.running_size};
+  if(!/^[0-9a-f]{64}$/.test(image.sha256) || !Number.isSafeInteger(image.size) || image.size<=0)
+    throw Error('Read the selected application hash and size before forcing a restart.');
+  if(!confirmed('Force restart every role WITHOUT SAVING? Unsaved contacts, messages and settings may be lost. The selected application will boot.',true))
+    return 'Cancelled; no forced restart sent.';
+  forceRestartAttempt=true;
+  inFlight={command:'forced restart',runtime:'firmware',mutation:true,image,forceBootId:status.boot_id}; lastMutation={...inFlight};
+  try {
+    const result=JSON.parse(await post('/admin/restart/force'));
+    if(!result || result.force_restart_pending!==true) throw unknown('Forced restart reply is unconfirmed.');
+    throw unknown('Forced restart admitted; saving skipped. Reconnect and login, then check firmware status before another restart.');
+  } catch(e) {
+    if(e instanceof SyntaxError) throw unknown('Invalid forced restart reply; inspect boot status before another restart.');
+    if(!e.unknown) forceRestartAttempt=false;
+    throw e;
+  } finally {inFlight=null;}
 });
 bind('firmware-upload','Uploading signed application',async()=>{
   const image=$('firmware-image').files[0],file=$('firmware-manifest').files[0];
@@ -684,6 +710,7 @@ bind('firmware-reboot','Rebooting into verified application',async()=>{
 bind('inspect','Checking pending changes',async()=>{
   if(unresolved.some(x=>x.image)) {
     const status=await updateRequest('GET');
+    if(unresolved.some(item=>item.command==='forced restart' && firmwareConfirmed(item,status))) forceRestartAttempt=false;
     for(let n=unresolved.length-1;n>=0;n--) if(unresolved[n].image && firmwareConfirmed(unresolved[n],status)) unresolved.splice(n,1);
     if(unresolved.some(x=>x.image)) return 'Firmware outcome remains unconfirmed; writes stay blocked. Check the signed image digest and running boot health.\n'+$('firmware-detail').textContent;
     if(!unresolved.length) {uncertain=false;return 'Firmware update confirmed.\n'+$('firmware-detail').textContent;}

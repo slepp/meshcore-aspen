@@ -78,8 +78,12 @@ class RadioHandler(BaseHTTPRequestHandler):
         if self.path == "/admin/update":
             self.reply(radio.status())
         elif self.path == "/api/status":
+            if radio.dashboard_unavailable_before_restart and not radio.booted:
+                self.reply({"error": "Dashboard unavailable before restart"}, 503)
+                return
             key = "f" * 64 if radio.changed_identity and radio.booted else "1" * 64
             self.reply({"roles": [{"role": "repeater", "name": "test-radio", "public_key": key, "ready": True}],
+                        "uptime_ms": radio.boot_uptime_ms if radio.booted else radio.initial_uptime_ms,
                         "profile": {"frequency_hz": 900000000, "generation": int(radio.booted)}})
         else:
             self.reply("unknown", 404)
@@ -147,6 +151,16 @@ class RadioHandler(BaseHTTPRequestHandler):
                 self.disconnect()
             else:
                 self.reply(radio.status())
+        elif self.path == "/admin/restart/force":
+            record = json.loads(radio.receipt.read_text())
+            assert record["restart_attempted"] is True
+            assert body == b""
+            radio.force_requests += 1
+            radio.force_pending = True
+            if radio.force_lost_reply:
+                self.disconnect()
+            else:
+                self.reply({"force_restart_pending": True}, 202)
         elif self.path == "/admin/update/reboot":
             record = json.loads(radio.receipt.read_text())
             assert record["reboot_attempted"] is True
@@ -175,16 +189,30 @@ class Radio:
         self.reboot_started = threading.Event()
         self.reboot_release = None
         self.flush_failure = self.lost_upload = self.lost_reboot = self.stuck_reboot = False
+        self.dashboard_unavailable_before_restart = False
+        self.initial_uptime_ms, self.boot_uptime_ms = 100000, 1000
+        self.force_wrong_image = self.force_missing_boot_id = False
+        self.force_supported = True
+        self.force_pending = self.force_hold = self.force_lost_reply = False
+        self.force_requests = 0
+        self.force_polls = 3
         self.unsaved_supported = True
         self.http_flush_failure = False
         self.changed_identity = self.changed_source = self.bundled = self.pending_identity = False
 
     def status(self):
-        return {"running_sha256": self.digest if self.booted else self.current,
-                "running_size": self.size if self.booted else 100, "running_hash_error": "",
+        if self.force_pending and not self.force_hold:
+            self.force_polls -= 1
+            if self.force_polls <= 0:
+                self.booted = True
+                self.force_pending = False
+        return {"running_sha256": self.digest if self.booted and self.uploaded and not self.force_wrong_image else self.current,
+                "running_size": self.size if self.booted and self.uploaded else 100, "running_hash_error": "",
                 "state": "idle" if self.booted or not self.uploaded else "verified",
+                "boot_id": None if self.force_missing_boot_id else ("1" * 16 if self.booted else "0" * 16),
+                "force_restart_supported": self.force_supported, "force_restart_pending": self.force_pending,
                 "unsaved_state_supported": self.unsaved_supported, "boot_health": "healthy", "reboot_ready": self.uploaded and not self.booted,
-                "sha256": self.digest, "received": self.size}
+                "sha256": self.digest, "received": self.size, "size": self.size}
 
 
 class MaintenanceTests(unittest.TestCase):
@@ -223,6 +251,95 @@ class MaintenanceTests(unittest.TestCase):
 
     def receipt(self):
         return json.loads(self.args.receipt.read_text())
+
+    def force_args(self):
+        return SimpleNamespace(action="force-restart", url=self.args.url,
+                               password_file=self.args.password_file, receipt=self.args.receipt,
+                               wait=1, poll_interval=.1, expected_current_sha256=self.radio.current)
+
+    def test_force_restart_refuses_unsupported_radio_before_restart_post(self):
+        self.radio.force_supported = False
+        with self.assertRaisesRegex(ValueError, "does not support"):
+            maintenance.maintain(self.force_args())
+        self.assertEqual(self.radio.force_requests, 0)
+        self.assertNotIn("restart_attempted", self.receipt())
+
+    def test_force_restart_refuses_wrong_current_hash(self):
+        args = self.force_args()
+        args.expected_current_sha256 = "f" * 64
+        with self.assertRaisesRegex(ValueError, "Running application differs"):
+            maintenance.maintain(args)
+        self.assertEqual(self.radio.force_requests, 0)
+
+    def test_force_restart_current_image_waits_for_uptime_drop_without_flush(self):
+        self.radio.flush_failure = True
+        self.radio.min_login_interval = 60
+        self.assertTrue(maintenance.maintain(self.force_args()))
+        record = self.receipt()
+        self.assertTrue(record["complete"])
+        self.assertEqual(record["before_update"]["running_sha256"], record["after_update"]["running_sha256"])
+        self.assertNotEqual(record["before_update"]["boot_id"], record["after_update"]["boot_id"])
+        self.assertEqual(self.radio.force_requests, 1)
+        self.assertFalse(any(path == "/admin/command" for path, _ in self.radio.posts))
+        self.assertEqual(sum(path == "/admin/login" for path, _ in self.radio.posts), 1)
+
+    def test_force_restart_boots_staged_verified_application(self):
+        self.radio.uploaded = True
+        self.radio.digest, self.radio.size = "e" * 64, 200
+        maintenance.maintain(self.force_args())
+        self.assertEqual(self.receipt()["expected_target"], {"sha256": "e" * 64, "size": 200})
+        self.assertEqual(self.receipt()["after_update"]["running_sha256"], "e" * 64)
+        self.assertEqual(self.radio.uploads, 0)
+
+    def test_force_restart_lost_reply_resume_never_repeats_request(self):
+        self.radio.force_hold = self.radio.force_lost_reply = True
+        args = self.force_args()
+        with self.assertRaisesRegex(TimeoutError, "restart has not returned healthy"):
+            maintenance.maintain(args)
+        self.assertFalse(self.receipt()["complete"])
+        self.assertTrue(self.receipt()["restart_attempted"])
+        self.assertIn("restart_failure", self.receipt())
+        self.radio.booted = True
+        args.action = "resume"
+        maintenance.maintain(args)
+        self.assertTrue(self.receipt()["complete"])
+        self.assertEqual(self.radio.force_requests, 1)
+
+    def test_force_restart_recovers_with_dashboard_unavailable_before_boot(self):
+        self.radio.dashboard_unavailable_before_restart = True
+        maintenance.maintain(self.force_args())
+        self.assertTrue(self.receipt()["complete"])
+        self.assertEqual(self.radio.force_requests, 1)
+
+    def test_force_restart_low_initial_uptime_uses_boot_identifier(self):
+        self.radio.initial_uptime_ms = 10
+        self.radio.boot_uptime_ms = 40000
+        maintenance.maintain(self.force_args())
+        self.assertTrue(self.receipt()["complete"])
+        self.assertGreater(self.receipt()["after_uptime_ms"], self.radio.initial_uptime_ms)
+        self.assertNotEqual(self.receipt()["before_update"]["boot_id"], self.receipt()["after_update"]["boot_id"])
+
+    def test_force_restart_refuses_missing_boot_identifier(self):
+        self.radio.force_missing_boot_id = True
+        with self.assertRaisesRegex(ValueError, "boot identifier unavailable"):
+            maintenance.maintain(self.force_args())
+        self.assertEqual(self.radio.force_requests, 0)
+
+    def test_force_restart_wrong_staged_application_does_not_complete(self):
+        self.radio.uploaded = True
+        self.radio.digest, self.radio.size = "e" * 64, 200
+        self.radio.force_wrong_image = True
+        with self.assertRaisesRegex(TimeoutError, "restart has not returned healthy"):
+            maintenance.maintain(self.force_args())
+        self.assertFalse(self.receipt()["complete"])
+        self.assertEqual(self.radio.force_requests, 1)
+
+    def test_force_restart_healthy_old_image_is_not_restart_success(self):
+        self.radio.force_hold = True
+        with self.assertRaisesRegex(TimeoutError, "restart has not returned healthy"):
+            maintenance.maintain(self.force_args())
+        self.assertFalse(self.receipt()["complete"])
+        self.assertEqual(self.radio.force_requests, 1)
 
     def test_application_update_authenticates_backup_and_retains_state(self):
         maintenance.maintain(self.args)

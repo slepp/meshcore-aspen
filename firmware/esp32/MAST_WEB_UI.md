@@ -52,7 +52,11 @@ Another administrator can still change state, so workflows check manifests,
 stages and identity again before committing.
 Firmware uses authenticated `GET/POST /admin/update` and the separate
 `POST /admin/update/reboot`; native command writes are unavailable while an
-application awaits reboot.
+application awaits reboot. **Force restart without saving** uses the separate
+authenticated `POST /admin/restart/force` endpoint and remains available while
+a verified application awaits reboot. Its confirmation warns that unsaved
+contacts, messages and settings may be lost. It sends once; reconnect and
+check firmware status to confirm a new boot, the running hash and boot health.
 See [ESP application updates](ESP_FIELD_UPDATES.md) for the initial retained
 USB installation, application-slot layout and rollback/recovery requirements.
 

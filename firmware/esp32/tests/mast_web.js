@@ -145,6 +145,12 @@ function fixture() {
         if(path==='/admin/login') {state.session=true;return {ok:true,status:200,text:async()=>'ab'.repeat(16)};}
         assert.equal(options.headers['X-Mast-Session'],'ab'.repeat(16));
         if(path==='/admin/logout') {state.session=false;return {ok:true,status:200,text:async()=>'Logged out'};}
+        if(path==='/admin/update' && options.method==='GET') return {ok:true,status:200,text:async()=>JSON.stringify(state.firmwareStatus)};
+        if(path==='/admin/restart/force') {
+          assert.equal(options.method,'POST'); assert.equal(options.body,'');
+          state.forcePosts=(state.forcePosts||0)+1;
+          return {ok:true,status:202,text:async()=>state.forceResponse??JSON.stringify({force_restart_pending:true,warning:'Unsaved data may be lost'})};
+        }
         if(path.startsWith('/admin/backup?id=')) {
           assert.equal(path,'/admin/backup?id='+digest(state.nodeBackup).slice(0,16));
           return {ok:true,status:200,arrayBuffer:async()=>state.nodeBackup};
@@ -180,6 +186,52 @@ async function tests() {
     assert.equal(f.evaluate(`sha256(Uint8Array.from(${JSON.stringify([...bytes])}))`),digest(bytes));
   }
   await f.login();
+  const forced=fixture(); await forced.login();
+  forced.state.firmwareStatus={state:'verified',size:1234,received:1234,target:'xiao-esp32s3',reboot_ready:true,
+    boot_health:'healthy',rollback_supported:false,force_restart_supported:true,force_restart_pending:false,
+    boot_id:'1111111111111111',sha256:'ab'.repeat(32),running_sha256:'cd'.repeat(32),running_size:1200};
+  await forced.element('firmware-status').click();
+  assert.equal(forced.element('firmware-force').disabled,false);
+  assert.equal(forced.element('source-stage').disabled,true);
+  forced.state.confirm=false;
+  await forced.element('firmware-force').click();
+  assert.equal(forced.state.forcePosts,undefined);
+  forced.state.confirm=true;
+  await forced.element('firmware-force').click();
+  assert.equal(forced.state.forcePosts,1);
+  assert.match(forced.confirms.at(-1),/WITHOUT SAVING.*Unsaved contacts/s);
+  assert.equal(forced.element('firmware-force').disabled,true);
+  await forced.element('firmware-force').click();
+  assert.equal(forced.state.forcePosts,1,'Uncertain force acknowledgement must never replay the restart');
+  await forced.element('firmware-status').click();
+  assert.equal(forced.element('firmware-force').disabled,true,'Same boot must not resolve the restart');
+  Object.assign(forced.state.firmwareStatus,{state:'idle',size:0,received:0,reboot_ready:false,
+    boot_id:'2222222222222222',running_sha256:'ab'.repeat(32),running_size:1234});
+  delete forced.state.firmwareStatus.boot_id;
+  await forced.element('firmware-status').click();
+  assert.equal(forced.evaluate('unresolved.length'),1,'Missing boot ID must not confirm a restart');
+  forced.state.firmwareStatus.boot_id='2222222222222222';
+  await forced.element('inspect').click();
+  assert.equal(forced.evaluate('unresolved.length'),0);
+  assert.equal(forced.evaluate('forceRestartAttempt'),false,'Check pending changes releases the confirmed force fence');
+  await forced.element('firmware-force').click();
+  assert.equal(forced.state.forcePosts,2);
+  forced.state.firmwareStatus.boot_id='3333333333333333';
+  await forced.element('firmware-status').click();
+  assert.equal(forced.evaluate('forceRestartAttempt'),false,'Firmware status releases the confirmed force fence');
+  for(const response of ['invalid JSON','null']) {
+    forced.state.forceResponse=response;
+    await forced.element('firmware-force').click();
+    assert.equal(forced.element('result').className,'warning');
+    assert.equal(forced.evaluate('unresolved.length'),1,'Malformed or null acceptance remains uncertain and can be checked after boot');
+    assert.equal(forced.element('firmware-force').disabled,true);
+    const sent=forced.state.forcePosts;
+    await forced.element('firmware-force').click();
+    assert.equal(forced.state.forcePosts,sent,'An invalid acceptance must never enable a repeated restart');
+    forced.state.firmwareStatus.boot_id=response==='null'?'5555555555555555':'4444444444444444';
+    await forced.element('firmware-status').click();
+    assert.equal(forced.evaluate('forceRestartAttempt'),false);
+  }
   const node=fixture();
   await node.login();
   node.state.nodeBackup=Buffer.alloc(384);

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Install one signed ESP32S3 application, retaining the radio's identities and setup."""
+"""Maintain an ESP32S3 application or request one explicit node restart."""
 import argparse
 from contextlib import contextmanager
 try:
@@ -278,6 +278,99 @@ def finish(client, record, receipt, connect, deadline, interval):
             candidate.close()
 
 
+def finish_restart(client, record, receipt, connect, deadline, interval):
+    try:
+        target = record["expected_target"]
+        while True:
+            try:
+                if client is None:
+                    client = connect()
+                status = json_request(client, "/admin/update")
+                dashboard = json_request(client, "/api/status")
+                uptime = dashboard.get("uptime_ms")
+                boot_id = status.get("boot_id")
+                restarted = (isinstance(boot_id, str) and
+                             re.fullmatch(r"[0-9a-f]{16}", boot_id) and
+                             boot_id != record["before_update"]["boot_id"])
+                record.update(last_update=status, last_uptime_ms=uptime)
+                if (restarted and running(status, target["sha256"], target["size"]) and
+                        status.get("state") == "idle" and status.get("boot_health") == "healthy" and
+                        dashboard.get("roles") and all(role.get("ready") for role in dashboard["roles"])):
+                    record.update(complete=True, after_update=status, after_uptime_ms=uptime)
+                    save_receipt(receipt, record)
+                    return True
+            except OSError:
+                if client is not None:
+                    client.close()
+                    client = None
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Node restart has not returned healthy; resume this receipt without repeating the restart")
+            time.sleep(interval)
+    finally:
+        if client is not None:
+            client.close()
+        save_receipt(receipt, record)
+
+
+def restart_locked(args, record=None):
+    password = private_file(args.password_file, 256)
+    connect = lambda: node_backup.HttpClient(args.url, password)
+    client = None
+    try:
+        if args.action == "force-restart":
+            if not re.fullmatch(r"[0-9a-f]{64}", args.expected_current_sha256):
+                raise ValueError("Expected current application requires a full lowercase SHA256")
+            record = {"format": RECEIPT_FORMAT, "kind": "force-restart", "url": args.url,
+                      "complete": False, "expected_current_sha256": args.expected_current_sha256}
+            write_new_file(args.receipt, b"{}\n", 0o600)
+            save_receipt(args.receipt, record)
+            client = connect()
+            status = json_request(client, "/admin/update")
+            if status.get("force_restart_supported") is not True:
+                raise ValueError("Radio does not support forced node restart; no restart request sent")
+            if not isinstance(status.get("boot_id"), str) or not re.fullmatch(r"[0-9a-f]{16}", status["boot_id"]):
+                raise ValueError("Node boot identifier unavailable; no restart request sent")
+            if not running(status, args.expected_current_sha256):
+                raise ValueError("Running application differs; no restart request sent")
+            if status.get("state") not in ("idle", "failed", "verified") or status.get("force_restart_pending"):
+                raise ValueError("Application transfer or node restart active; inspect status")
+            target = {"sha256": status["running_sha256"], "size": status.get("running_size")}
+            if status.get("state") == "verified":
+                target = {"sha256": status.get("sha256"), "size": status.get("size")}
+                if (not status.get("reboot_ready") or status.get("received") != target["size"] or
+                        not isinstance(target["sha256"], str) or
+                        not re.fullmatch(r"[0-9a-f]{64}", target["sha256"])):
+                    raise ValueError("Selected application is not verified; no restart request sent")
+            if not isinstance(target["size"], int) or isinstance(target["size"], bool) or target["size"] <= 0:
+                raise ValueError("Expected application size unavailable; no restart request sent")
+            record.update(before_update=status, expected_target=target,
+                          restart_attempted=True)
+            print("Warning: forced node restart skips saving; recent unsaved contacts, messages and settings may be lost.", file=sys.stderr)
+            save_receipt(args.receipt, record)
+            try:
+                record["restart_response"] = json_request(client, "/admin/restart/force", b"")
+            except (OSError, ValueError) as error:
+                record["restart_failure"] = response_failure(error, client)
+                save_receipt(args.receipt, record)
+                if isinstance(error, urllib.error.HTTPError):
+                    raise ValueError(f'Forced restart HTTP {error.code}: {record["restart_failure"].get("error", "inspect status")}') from None
+            save_receipt(args.receipt, record)
+        else:
+            if record.get("format") != RECEIPT_FORMAT or record.get("url") != args.url:
+                raise ValueError("Maintenance receipt format or radio URL differs")
+            if not record.get("restart_attempted"):
+                raise ValueError("Receipt has no restart attempt; start with a new receipt")
+            record["complete"] = False
+            save_receipt(args.receipt, record)
+            client = connect()
+        previous_client, client = client, None
+        return finish_restart(previous_client, record, args.receipt, connect,
+                              time.monotonic() + args.wait, args.poll_interval)
+    finally:
+        if client is not None:
+            client.close()
+
+
 def maintain(args):
     with receipt_lock(args.receipt):
         return maintain_locked(args)
@@ -286,6 +379,12 @@ def maintain(args):
 def maintain_locked(args):
     if not 1 <= args.wait <= 600 or not .1 <= args.poll_interval <= 30:
         raise ValueError("Wait must be 1..600 seconds; poll interval 0.1..30 seconds")
+    if args.action == "force-restart":
+        return restart_locked(args)
+    if args.action == "resume":
+        saved = json.loads(private_file(args.receipt, 256 * 1024))
+        if saved.get("kind") == "force-restart":
+            return restart_locked(args, saved)
     password = private_file(args.password_file, 256)
     connect = lambda: node_backup.HttpClient(args.url, password)
     client = None
@@ -399,13 +498,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     update = sub.add_parser("update", help="Verify backup and image, upload once, restart once, check retained state")
+    restart = sub.add_parser("force-restart", help="Restart the node once without saving; recent unsaved state may be lost")
     resume = sub.add_parser("resume", help="Finish an earlier attempt; never repeat an upload or attempted restart")
     status = sub.add_parser("status", help="Read current application SHA256 and update/boot state")
-    for command in (update, resume, status):
+    for command in (update, resume, restart, status):
         command.add_argument("--url", required=True)
         command.add_argument("--password-file", type=Path, required=True)
-    for command in (update, resume):
-        command.add_argument("--receipt", type=Path, required=True, help="Private JSON receipt (new path for update)")
+    for command in (update, resume, restart):
+        command.add_argument("--receipt", type=Path, required=True, help="Private JSON receipt (new path for update or force-restart)")
         command.add_argument("--wait", type=float, default=240, help="Seconds to wait for a healthy application")
         command.add_argument("--poll-interval", type=float, default=3, help=argparse.SUPPRESS)
     update.add_argument("--image", type=Path, required=True)
@@ -413,6 +513,7 @@ def main():
     update.add_argument("--key-file", type=Path, required=True, help="Existing 32-byte operator signing seed (0600)")
     update.add_argument("--backup", type=Path, required=True, help="Encrypted node backup (0600), authenticated before upload")
     update.add_argument("--expected-current-sha256", required=True)
+    restart.add_argument("--expected-current-sha256", required=True)
     update.add_argument("--target", default="xiao-esp32s3")
     update.add_argument("--retain-command", action="append", default=[], help="Additional read-only stable setting to compare")
     update.add_argument("--sampler-slot", type=int, help="Known read-only Wasm sampler to pause for flash writes")
@@ -430,10 +531,13 @@ def main():
             finally:
                 client.close()
             return
-        maintain(args)
+        restarted = maintain(args)
     except (OSError, ValueError, KeyError) as error:
         receipt_help = f"Inspect receipt {args.receipt} before any retry.\n" if args.action != "status" else ""
         parser.exit(2, f"Application maintenance stopped: {error}\n" + receipt_help)
+    if restarted:
+        print(f"Node restarted; intended application and roles healthy. Receipt: {args.receipt}")
+        return
     print(f"Application healthy; identities, radio profile, selected programs and settings retained. Receipt: {args.receipt}")
 
 

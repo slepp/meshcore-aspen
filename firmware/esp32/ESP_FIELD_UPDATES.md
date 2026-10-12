@@ -106,6 +106,32 @@ remain in the bot's diagnostics but do not restart the boot health window.
 Source activation failures and invalid adaptive-admission policy still block
 confirmation.
 
+## Force a device restart
+
+If saving state prevents a normal restart, send a fresh, explicit owner request
+with encrypted Management `reboot force`, or choose **Force restart without
+saving** in the web Firmware section. This skips all state saves. Unsaved
+contacts, messages and settings may be lost. Forced restart does not erase
+saved identities or files.
+The selected boot partition is unchanged, so an already verified and selected
+application boots on restart. Active uploads and activation refuse the request.
+
+For HTTP integrations, `GET /admin/update` reports
+`force_restart_supported:true`, `force_restart_pending` and a 16-digit hex
+`boot_id` that remains fixed during one boot. Use the same authenticated,
+same-origin session to send an empty `POST /admin/restart/force`. HTTP 202
+acknowledges admission with a data-loss warning; HTTP 409 indicates an active
+update or restart, and HTTP 503 indicates unavailable restart resources.
+A successful response arms an independent one-shot timer for 1.5 seconds.
+A failed response transmission cancels admission. No automatic save-failure
+fallback invokes this endpoint.
+
+Record the old `boot_id`, selected image hash and size before sending once.
+After reconnecting, require a different boot ID, the intended running hash and
+size, and healthy startup. If the response is lost, inspect status rather than
+repeating the restart. Older firmware without the capability cannot use this
+endpoint until a supporting application is running.
+
 ## Boot health and recovery
 
 **Automatic rollback requires a rollback-enabled installed bootloader.** Arduino

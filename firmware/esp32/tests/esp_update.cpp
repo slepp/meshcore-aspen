@@ -3,6 +3,7 @@
 #include "../EspUpdate.h"
 #include <cassert>
 #include <iostream>
+#include <thread>
 extern "C" bool verifyRollbackLater();
 std::string hex(const uint8_t *p, size_t n) {
   std::string result;
@@ -40,8 +41,13 @@ void rejected(httpd_req_t r, bool preflight = false) {
   assert(reboot.status == "409 Conflict");
 }
 void duringWrite() {
-  auto second = candidate(); onchip::uploadEspUpdate(&second);
-  assert(second.status == "409 Conflict");
+  std::thread contender([] {
+    const char *error = nullptr;
+    assert(!onchip::reserveEspForceRestart(error) && error);
+    auto second = candidate(); onchip::uploadEspUpdate(&second);
+    assert(second.status == "409 Conflict");
+  });
+  contender.join();
 }
 int main(int argc, char **argv) {
   const bool unsupported = argc > 1 && !strcmp(argv[1], "unsupported-bootloader");
@@ -79,6 +85,67 @@ int main(int argc, char **argv) {
       assert(status.response.find("\"running_sha256\":\"" + runningCandidate.headers.at("X-Mast-SHA256") + "\"") != std::string::npos);
     }
     std::cout << "ESP post-reboot raw running-image digest readback passed\n"; return 0;
+  }
+  if (argc > 1 && !strcmp(argv[1], "force-restart")) {
+    const char *error = nullptr;
+    failTimerCreate = true;
+    assert(!onchip::reserveEspForceRestart(error) && !onchip::espUpdateBusy());
+    failTimerCreate = false; failTimerStart = true;
+    onTimerCreate = [] {
+      std::thread contender([] {
+        auto racingUpload = candidate(); onchip::uploadEspUpdate(&racingUpload);
+        assert(racingUpload.status == "409 Conflict" && !begins);
+      });
+      contender.join();
+    };
+    assert(!onchip::reserveEspForceRestart(error) && !onchip::espUpdateBusy());
+    failTimerStart = false; onTimerCreate = nullptr;
+    auto ticket = onchip::reserveEspForceRestart(error);
+    assert(ticket && onchip::espUpdateBusy());
+    assert(!onchip::reserveEspForceRestart(error));
+    auto blocked = candidate(); onchip::uploadEspUpdate(&blocked);
+    assert(blocked.status == "409 Conflict" && !begins);
+    advanceEspTimers(30000); // No reply acknowledgement: independently release the reservation.
+    assert(!onchip::espUpdateBusy() && !ESP.restarts);
+    assert(!onchip::acknowledgeEspForceRestart(ticket, true));
+    ticket = onchip::reserveEspForceRestart(error);
+    assert(!onchip::acknowledgeEspForceRestart(ticket, false));
+    advanceEspTimers(30000);
+    assert(!onchip::espUpdateBusy() && !ESP.restarts);
+    ticket = onchip::reserveEspForceRestart(error);
+    testMillis += 30000; // Expiry task has not run yet; a late ACK must still be rejected.
+    assert(!onchip::acknowledgeEspForceRestart(ticket, true) && !onchip::espUpdateBusy());
+    ticket = onchip::reserveEspForceRestart(error);
+    failTimerStart = true;
+    assert(!onchip::acknowledgeEspForceRestart(ticket, true));
+    failTimerStart = false;
+    assert(!onchip::espUpdateBusy() && !ESP.restarts);
+    onWrite = duringWrite;
+    auto image = candidate(); onchip::uploadEspUpdate(&image); onWrite = nullptr;
+    assert(image.status == "200 OK" && switches == 1 && onchip::espUpdateBusy());
+    unsigned flushes = 0;
+    static unsigned *flushCount; flushCount = &flushes;
+    onchip::setEspUpdateFlush([] { ++*flushCount; return false; });
+    httpd_req_t normal; onchip::rebootEspUpdate(&normal);
+    onchip::serviceEspUpdate(true, true, true);
+    testMillis += 1500; onchip::serviceEspUpdate(true, true, true);
+    assert(flushes == 1 && !ESP.restarts);
+    ticket = onchip::reserveEspForceRestart(error);
+    assert(ticket && !onchip::acknowledgeEspForceRestart(ticket, false) && onchip::espUpdateBusy());
+    ticket = onchip::reserveEspForceRestart(error);
+    httpd_req_t status; onchip::statusEspUpdate(&status);
+    assert(status.response.find("\"force_restart_supported\":true") != std::string::npos);
+    assert(status.response.find("\"force_restart_pending\":true") != std::string::npos);
+    const auto before = status.response;
+    assert(onchip::acknowledgeEspForceRestart(ticket, true));
+    assert(!onchip::acknowledgeEspForceRestart(ticket, true));
+    advanceEspTimers(1499); assert(!ESP.restarts && flushes == 1);
+    advanceEspTimers(1); assert(ESP.restarts == 1 && flushes == 1 && switches == 1 && !rollbacks);
+    advanceEspTimers(60000); assert(ESP.restarts == 1);
+    onchip::statusEspUpdate(&status);
+    assert(status.response == before); // Selected image and boot identity did not change in the returning mock.
+    std::cout << "ESP forced restart: independent timer, save bypass, OTA fence and cancellation passed\n";
+    return 0;
   }
   runningImage[400] ^= 1;
   assert(verifyRollbackLater()); assert(confirms == 0);

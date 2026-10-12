@@ -135,3 +135,30 @@ state still needs checking; `resume` tries that restoration when the original
 or intended application can safely accept commands. A separate `0600` `.lock` file beside the receipt prevents concurrent updates or
 resumes from sending the same operation. Leave it in place; the lock releases
 when the command exits. Keep receipts and encrypted backups private. They contain node configuration and are not release assets.
+
+## Restart when native state cannot be saved
+
+On firmware that reports `force_restart_supported: true`, `force-restart`
+restarts the entire node without saving native state. Recent unsaved contacts,
+messages and settings may be lost. Download an encrypted backup first when
+storage permits. This command does not upload an application or change the
+selected boot partition; an already verified, selected application boots on
+restart.
+
+```sh
+python3 tools/hardware/esp32_maintenance.py force-restart \
+  --url "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+  --expected-current-sha256 CURRENT_RUNNING_SHA256 \
+  --receipt /private/radio-force-restart.json
+```
+
+Use a new receipt. The command checks the running hash and firmware support
+before sending one restart request. It records the running application, boot identifier, selected verified
+application and restart intent first.
+It waits for a new boot identifier, then requires the intended application and
+ready roles. A healthy response from the old boot is insufficient.
+
+If the reply is lost or the wait expires, use `resume` with that receipt.
+Resume only reads status; it never repeats a forced restart. Older firmware
+without this endpoint requires an available physical or remote power/reset
+control to recover from an unsaveable native-state checkpoint.

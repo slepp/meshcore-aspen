@@ -45,6 +45,23 @@ available through authenticated management's `radio` and `tempradio` commands.
 RF management and `/admin` reach the same backend. Any delegated role-side shared control must carry
 explicit management authority and use that backend.
 
+When a normal device restart refuses a failed state save, an authenticated
+Management owner can send `reboot force`. The Firmware section in `/admin`
+also offers **Force restart without saving**. Both restart the entire device,
+skip saving and wait 1.5 seconds after the acceptance reply is sent. Unsaved
+contacts, messages and settings may be lost; saved identities and settings are
+not erased. A verified application already selected for the next boot stays
+selected. Native repeater/room `reboot` restarts only that role; Management
+`apply` and `reboot` retain their normal save requirement.
+
+Forced restart remains available when a verified update is waiting to boot,
+but refuses an active upload or activation. HTTP uses an independent timer,
+so a stalled radio dispatch loop does not prevent the acknowledged restart.
+Encrypted RF administration still requires the radio loop to receive the
+command and transmit its reply. After a lost response, inspect boot status
+before issuing another restart. Firmware must already support this command;
+it cannot add a recovery command to an older application that is still running.
+
 The native HTTPS image also supports [optional device metrics](TELEMETRY.md)
 through `telemetry help`. It is disabled until explicitly provisioned through
 this same RF/web management backend; role administrator ACLs are unchanged.

@@ -136,9 +136,10 @@ esp-field-update-test:
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
 		-DARDUINO_ARCH_ESP32 -DMESHCORE_MAST_ADMIN=1 -DMESHCORE_ESP_UPDATE_TEST \
 		-DONCHIP_OPERATOR_PUBKEY='"3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"' \
-		tests/esp_update.cpp EspFieldUpdate.cpp -lcrypto \
+		tests/esp_update.cpp EspFieldUpdate.cpp -lcrypto -pthread \
 		-o "$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update"
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update"
+	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" force-restart
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" unsupported-bootloader
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" recovery
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-recovery

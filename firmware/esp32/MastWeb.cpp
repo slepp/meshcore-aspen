@@ -11,11 +11,11 @@
 #endif
 #include "Config.h"
 #include "RadioNetwork.h"
+#include "EspFieldUpdate.h"
 #include <atomic>
 #include <mutex>
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
-#include "EspFieldUpdate.h"
 #endif
 #if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
 #include <esp_system.h>
@@ -151,7 +151,7 @@ esp_err_t execute(httpd_req_t *request) {
     return error(request, "403 Forbidden", "Authenticated same-origin session required");
   if (recoveryOnly)
     return error(request, "503 Service Unavailable", "Recovery mode: only signed application updates are available");
-#ifdef ARDUINO_ARCH_ESP32
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
   if (espUpdateBusy())
     return error(request, "409 Conflict", "Application update active; inspect /admin/update before commands");
 #endif
@@ -266,12 +266,29 @@ esp_err_t updateReboot(httpd_req_t *request) {
   return rebootEspUpdate(request);
 }
 #endif
+esp_err_t forceRestart(httpd_req_t *request) {
+  if (!origin(request) || !authenticated(request))
+    return error(request, "403 Forbidden", "Authenticated same-origin session required");
+  if (request->content_len)
+    return error(request, "400 Bad Request", "Forced restart request must have an empty body");
+  const char *reason = nullptr;
+  bool unavailable = false;
+  const uint32_t ticket = reserveEspForceRestart(reason, &unavailable);
+  if (!ticket) return error(request, unavailable ? "503 Service Unavailable" : "409 Conflict", reason);
+  headers(request);
+  httpd_resp_set_status(request, "202 Accepted");
+  httpd_resp_set_type(request, "application/json");
+  const auto result = httpd_resp_sendstr(request,
+    "{\"force_restart_pending\":true,\"warning\":\"Restart skips saving; unsaved contacts, messages and settings may be lost\"}");
+  acknowledgeEspForceRestart(ticket, result == ESP_OK);
+  return result;
+}
 esp_err_t observerTokenRequest(httpd_req_t *request) {
   if (!origin(request) || !authenticated(request))
     return error(request, "403 Forbidden", "Authenticated same-origin session required");
   if (recoveryOnly)
     return error(request, "503 Service Unavailable", "Recovery mode: observer identity signing unavailable");
-#ifdef ARDUINO_ARCH_ESP32
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
   if (espUpdateBusy())
     return error(request, "409 Conflict", "Application update active; inspect /admin/update before signing");
 #endif
@@ -363,6 +380,10 @@ esp_err_t registerMastWeb(httpd_handle_t server) {
     const auto result = httpd_register_uri_handler(server, &route);
     if (result != ESP_OK) return result;
   }
+  httpd_uri_t forceRoute{};
+  forceRoute.uri = "/admin/restart/force"; forceRoute.method = HTTP_POST; forceRoute.handler = forceRestart;
+  const auto forceResult = httpd_register_uri_handler(server, &forceRoute);
+  if (forceResult != ESP_OK) return forceResult;
   httpd_uri_t tokenRoute{};
   tokenRoute.uri = "/admin/observer-token"; tokenRoute.method = HTTP_POST; tokenRoute.handler = observerTokenRequest;
   const auto tokenResult = httpd_register_uri_handler(server, &tokenRoute);

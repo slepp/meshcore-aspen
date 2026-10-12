@@ -9,6 +9,7 @@
 #include <esp_ota_ops.h>
 #include <esp_app_format.h>
 #include <esp_image_format.h>
+#include <esp_timer.h>
 #include <mbedtls/sha256.h>
 #endif
 #include <atomic>
@@ -21,6 +22,11 @@ namespace onchip {
 namespace {
 EspUpdate update;
 std::mutex updateMutex;
+std::mutex forceMutex;
+esp_timer_handle_t forceTimer = nullptr;
+std::atomic<uint32_t> forceTicket{0};
+uint32_t nextForceTicket = 0, forceDeadline = 0;
+bool forceArmed = false, forceFired = false, forcePriorBusy = false;
 std::atomic<bool> busy{false}, rebootRequested{false}, rollbackRequested{false}, healthy{false};
 std::atomic<bool> rollbackObserved{false};
 std::atomic<bool (*)()> flushRuntime{nullptr};
@@ -36,6 +42,22 @@ bool flushForUpdate() {
   const uint32_t started = millis();
   while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 10000) delay(1);
   return acceptFlush(flushCompleted.load() == ticket && flushResult.load());
+}
+void releaseForceRestart() {
+  forceTicket = 0;
+  busy = forcePriorBusy;
+  forceArmed = false;
+}
+void forceRestartTimer(void *) {
+  bool restart = false;
+  {
+    std::lock_guard<std::mutex> lock(forceMutex);
+    // A previously queued expiry callback must not shorten a newly armed delay.
+    if (!forceTicket || forceFired || int32_t(millis() - forceDeadline) < 0) return;
+    if (forceArmed) { forceFired = true; restart = true; }
+    else releaseForceRestart();
+  }
+  if (restart) ESP.restart();
 }
 uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0;
 bool automaticRollbackAttempted = false;
@@ -161,15 +183,19 @@ esp_err_t response(httpd_req_t *request, const char *status, const char *text) {
 esp_err_t statusLocked(httpd_req_t *request, const char *code) {
   cacheRunningDigest();
   const char *names[] = {"idle", "receiving", "failed", "verified"};
+  static char bootId[17]{};
+  if (!bootId[0]) snprintf(bootId, sizeof(bootId), "%08x%08x", unsigned(esp_random()), unsigned(esp_random()));
   char text[1024];
   snprintf(text, sizeof(text),
-    "{\"state\":\"%s\",\"received\":%u,\"size\":%u,\"error\":\"%s\","
+    "{\"boot_id\":\"%s\",\"state\":\"%s\",\"received\":%u,\"size\":%u,\"error\":\"%s\","
     "\"target\":\"%s\",\"boot_health\":\"%s\",\"recovery\":\"%s\","
+    "\"force_restart_supported\":true,\"force_restart_pending\":%s,"
     "\"unsaved_state_supported\":true,\"allow_unsaved_state\":%s,\"state_flush_failed\":%s,"
     "\"reboot_ready\":%s,\"rollback_supported\":%s,\"rollback_ready\":%s,"
     "\"sha256\":\"%s\",\"running_sha256\":\"%s\",\"running_size\":%u,\"running_hash_error\":\"%s\"}",
-    names[update.state()], unsigned(update.received()), unsigned(update.size()), update.error(),
+    bootId, names[update.state()], unsigned(update.received()), unsigned(update.size()), update.error(),
     ONCHIP_UPDATE_TARGET, healthy ? "healthy" : "pending", recovery.load(),
+    forceTicket ? "true" : "false",
     allowUnsavedState ? "true" : "false", stateFlushFailed ? "true" : "false",
     update.state() == EspUpdate::Verified ? "true" : "false",
     rollbackObserved ? "true" : "false",
@@ -178,6 +204,55 @@ esp_err_t statusLocked(httpd_req_t *request, const char *code) {
   return response(request, code, text);
 }
 }
+uint32_t reserveEspForceRestart(const char *&error, bool *unavailable) {
+  error = nullptr;
+  if (unavailable) *unavailable = false;
+  std::unique_lock<std::mutex> updateLock(updateMutex, std::try_to_lock);
+  if (!updateLock.owns_lock()) {
+    error = "Application transfer or activation active; inspect /admin/update"; return 0;
+  }
+  std::lock_guard<std::mutex> lock(forceMutex);
+  if (forceTicket) {
+    error = "Restart already pending; inspect status before another request"; return 0;
+  }
+  if (busy && update.state() != EspUpdate::Verified) {
+    error = "Application transfer active; inspect /admin/update"; return 0;
+  }
+  if (!forceTimer) {
+    esp_timer_create_args_t args{};
+    args.callback = forceRestartTimer;
+    args.name = "mast-force-restart";
+    if (esp_timer_create(&args, &forceTimer) != ESP_OK) {
+      if (unavailable) *unavailable = true;
+      error = "Forced restart timer unavailable"; return 0;
+    }
+  }
+  forcePriorBusy = busy;
+  forceArmed = forceFired = false;
+  forceDeadline = millis() + 30000;
+  if (++nextForceTicket == 0) ++nextForceTicket;
+  forceTicket = nextForceTicket;
+  busy = true;
+  if (esp_timer_start_once(forceTimer, 30000000) != ESP_OK) {
+    if (unavailable) *unavailable = true;
+    releaseForceRestart(); error = "Forced restart timer could not start"; return 0;
+  }
+  return forceTicket;
+}
+bool acknowledgeEspForceRestart(uint32_t ticket, bool transmitted) {
+  std::lock_guard<std::mutex> lock(forceMutex);
+  if (!ticket || ticket != forceTicket || forceArmed || forceFired) return false;
+  esp_timer_stop(forceTimer);
+  if (!transmitted || int32_t(millis() - forceDeadline) >= 0) { releaseForceRestart(); return false; }
+  forceDeadline = millis() + 1500;
+  forceArmed = true;
+  if (esp_timer_start_once(forceTimer, 1500000) != ESP_OK) {
+    releaseForceRestart();
+    recovery = "Forced restart timer failed; restart cancelled";
+    return false;
+  }
+  return true;
+}
 void setEspUpdateFlush(bool (*flush)()) { flushRuntime = flush; }
 bool espUpdateBusy() { return busy.load(); }
 esp_err_t statusEspUpdate(httpd_req_t *request) {
@@ -185,10 +260,12 @@ esp_err_t statusEspUpdate(httpd_req_t *request) {
   return statusLocked(request, "200 OK");
 }
 esp_err_t uploadEspUpdate(httpd_req_t *request) {
+  std::unique_lock<std::mutex> lock(updateMutex, std::try_to_lock);
+  if (!lock.owns_lock())
+    return response(request, "409 Conflict", "{\"error\":\"Application update operation active; inspect status\"}");
   bool expectedBusy = false;
   if (!busy.compare_exchange_strong(expectedBusy, true))
     return response(request, "409 Conflict", "{\"error\":\"Application update already active; inspect status\"}");
-  std::lock_guard<std::mutex> lock(updateMutex);
   updateDigest[0] = 0;
   allowUnsavedState = false; stateFlushFailed = false;
   Adapter adapter;
@@ -261,6 +338,8 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
 }
 esp_err_t rebootEspUpdate(httpd_req_t *request) {
   std::lock_guard<std::mutex> lock(updateMutex);
+  if (forceTicket)
+    return response(request, "409 Conflict", "{\"error\":\"Forced restart already pending\"}");
   char rollback[16];
   if (httpd_req_get_hdr_value_len(request, "X-Mast-Rollback")) {
     if (httpd_req_get_hdr_value_str(request, "X-Mast-Rollback", rollback, sizeof(rollback)) != ESP_OK ||
@@ -280,6 +359,7 @@ esp_err_t rebootEspUpdate(httpd_req_t *request) {
 }
 void espUpdateRecovery(const char *reason) { recovery = reason; }
 void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
+  if (forceTicket) return;
   const uint32_t requested = flushRequested.load();
   if (requested != flushCompleted.load()) {
     const auto flush = flushRuntime.load();

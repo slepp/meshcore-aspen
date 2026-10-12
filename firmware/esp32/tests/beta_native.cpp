@@ -7,6 +7,7 @@
 #include "ObserverConfig.h"
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
+#include "EspFieldUpdate.h"
 #include "bot_parser_cases.h"
 #include <functional>
 #include <limits>
@@ -20,6 +21,30 @@ void onchipBotVmHeapModel(size_t oldSize, size_t newSize) {
       : sourceSetLuaLive.fetch_sub(oldSize - newSize) - oldSize + newSize;
   size_t peak = sourceSetLuaPeak.load();
   while (live > peak && !sourceSetLuaPeak.compare_exchange_weak(peak, live)) {}
+}
+#endif
+
+#ifdef MESHCORE_MAST_WEB_TEST
+// The updater/timer is exercised by esp-field-update-test; this records transport admission and acknowledgements.
+namespace force_restart_test {
+bool verified = false, blocked = false, armed = false;
+uint32_t reserved = 0, next = 0;
+void reset() { verified = blocked = armed = false; reserved = 0; }
+}
+namespace onchip {
+bool espUpdateBusy() { return force_restart_test::verified || force_restart_test::reserved; }
+uint32_t reserveEspForceRestart(const char *&error, bool *unavailable) {
+  if (unavailable) *unavailable = false;
+  using namespace force_restart_test;
+  if (blocked || reserved) { error = "Application transfer or restart active"; return 0; }
+  error = nullptr; return reserved = ++next;
+}
+bool acknowledgeEspForceRestart(uint32_t ticket, bool sent) {
+  using namespace force_restart_test;
+  if (!ticket || ticket != reserved || armed) return false;
+  if (!sent) { reserved = 0; return false; }
+  armed = true; return true;
+}
 }
 #endif
 
@@ -150,11 +175,74 @@ struct BetaFixture {
   }
 };
 static std::string encode(const uint8_t *bytes, size_t size);
+#ifdef MESHCORE_MAST_WEB_TEST
+static void forced_restart_admission() {
+  using namespace force_restart_test;
+  reset();
+  BetaFixture f;
+  Peer owner, outsider;
+  MastAdmin::Reply reply;
+  f.management.admin().execute("reboot force", reply);
+  assert(strstr(reply.text, "authenticated direct") && !reserved);
+  f.management.admin().execute("reboot force", reply, 0, MastAdmin::Transport::NativeEncrypted,
+                              outsider.self_id.pub_key);
+  assert(strstr(reply.text, "authenticated direct") && !reserved);
+  assert(f.send(outsider, "reboot force", false).empty() && !reserved);
+  assert(!f.send(owner, "mast-pass-12", true).empty());
+  f.management.admin().execute("reboot force", reply, 1, MastAdmin::Transport::NativeEncrypted,
+                              owner.self_id.pub_key);
+  assert(strstr(reply.text, "authenticated direct") && !reserved);
+  verified = true;
+  f.management.admin().execute("reboot", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+  assert(strstr(reply.text, "application update active") && !reserved);
+  const auto accepted = f.send(owner, "reboot force", false);
+  assert(accepted.size() > 5 && std::string(accepted.begin() + 5, accepted.end()).find("Accepted forced device") == 0);
+  assert(armed && reserved); // Actual encrypted Management reply TX armed the controller.
+  reset();
+  f.management.admin().execute("reboot force", reply, 0, MastAdmin::Transport::NativeEncrypted,
+                              owner.self_id.pub_key);
+  assert(reply.ticket && reserved && !armed);
+  f.management.admin().acknowledged(reply.ticket, false);
+  assert(!reserved && !armed);
+
+  TestHTTPServer server;
+  assert(registerMastWeb(&server) == ESP_OK);
+  const auto request = [&](const char *path, const char *body, const std::string &token = "",
+                           const char *origin = "", bool failSend = false) {
+    httpd_req_t r; r.body = body; r.content_len = r.body.size(); r.failSend = failSend;
+    r.headers["Host"] = "mast.test";
+    if (!token.empty()) r.headers["X-Mast-Session"] = token;
+    if (*origin) r.headers["Origin"] = origin;
+    assert(server.routes.at(path).handler(&r) == (failSend ? ESP_FAIL : ESP_OK));
+    return r;
+  };
+  assert(request("/admin/restart/force", "").status == "403 Forbidden" && !reserved);
+  timeMs += 1100;
+  const auto login = request("/admin/login", "mast-pass-12");
+  assert(login.status == "200 OK");
+  const auto token = login.response;
+  assert(request("/admin/restart/force", "", token, "http://untrusted.test").status == "403 Forbidden");
+  assert(request("/admin/restart/force", "yes", token).status == "400 Bad Request" && !reserved);
+  blocked = true;
+  assert(request("/admin/restart/force", "", token).status == "409 Conflict" && !reserved);
+  blocked = false; verified = true;
+  assert(request("/admin/command", "reboot", token).status == "409 Conflict");
+  request("/admin/restart/force", "", token, "", true);
+  assert(!reserved && !armed && verified);
+  const auto result = request("/admin/restart/force", "", token);
+  assert(result.status == "202 Accepted" && result.response.find("skips saving") != std::string::npos);
+  assert(armed && reserved && verified); // No dispatcher step between HTTP request and arm.
+  assert(request("/admin/restart/force", "", token).status == "409 Conflict");
+  reset();
+  request("/admin/logout", "", token);
+  std::cout << "Forced device restart transport authentication/acknowledgement and busy admission passed\n";
+}
+#endif
 #ifdef ONCHIP_RUNTIME_CONFIG_ADMIN_TEST
 static void runtime_config_admin() {
   BetaFixture f;
   TestHTTPServer server;
-  assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 5);
+  assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 6);
   const auto request = [&](const char *path, const std::string &text, const std::string &token = "") {
     httpd_req_t r;
     r.body = text; r.content_len = text.size();
@@ -1367,7 +1455,7 @@ static void interrupted_upload() {
   const auto authenticated_web = [](bool installCommands = false) {
     BetaFixture f;
     TestHTTPServer server;
-    assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 5);
+    assert(registerMastWeb(&server) == ESP_OK && server.routes.size() == 6);
     const auto request = [&](const char *path, const std::string &body,
                              const std::string &token = "", const std::string &origin = "") {
       httpd_req_t r;
@@ -3508,6 +3596,9 @@ int main(int argc, char **argv) {
     MastReplayStorageTest::run();
     MastReplayStorageTest::configuration();
     management_cli_compatibility();
+#ifdef MESHCORE_MAST_WEB_TEST
+    forced_restart_admission();
+#endif
     management_cli_core();
     management_native_acl();
     replay_capacity_and_cancellation();

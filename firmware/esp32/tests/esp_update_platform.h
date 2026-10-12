@@ -116,3 +116,28 @@ inline int esp_partition_read(const esp_partition_t *p, size_t offset, void *out
   if (failRead || p != &running || offset + size > runningImage.size()) return -1;
   memcpy(out, runningImage.data() + offset, size); return 0;
 }
+
+// One-shot ESP timers run without the radio/role dispatcher.
+struct EspTimer { void (*callback)(void *) = nullptr; void *arg = nullptr; bool active = false; uint32_t due = 0; };
+using esp_timer_handle_t = EspTimer *;
+struct esp_timer_create_args_t { void (*callback)(void *) = nullptr; void *arg = nullptr; const char *name = nullptr; };
+inline EspTimer testTimer;
+inline bool failTimerCreate = false, failTimerStart = false;
+inline void (*onTimerCreate)() = nullptr;
+inline int esp_timer_create(const esp_timer_create_args_t *args, esp_timer_handle_t *out) {
+  if (failTimerCreate) return -1;
+  if (onTimerCreate) onTimerCreate();
+  testTimer.callback = args->callback; testTimer.arg = args->arg; *out = &testTimer; return ESP_OK;
+}
+inline int esp_timer_start_once(esp_timer_handle_t timer, uint64_t us) {
+  if (failTimerStart || timer->active) return -1;
+  timer->due = testMillis + us / 1000; timer->active = true; return ESP_OK;
+}
+inline int esp_timer_stop(esp_timer_handle_t timer) { timer->active = false; return ESP_OK; }
+inline void advanceEspTimers(uint32_t ms) {
+  testMillis += ms;
+  if (testTimer.active && int32_t(testMillis - testTimer.due) >= 0) {
+    testTimer.active = false; testTimer.callback(testTimer.arg);
+  }
+}
+inline uint32_t esp_random() { static uint32_t value = 0x12345678; return ++value; }

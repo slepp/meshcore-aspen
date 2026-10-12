@@ -17,6 +17,7 @@
 #include "Management.h"
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
+#include "EspFieldUpdate.h"
 #include "CloudRoomService.h"
 #include <Utils.h>
 #include <helpers/ClientACL.h>
@@ -32,7 +33,6 @@
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
 #include "RadioNetwork.h"
-#include "EspFieldUpdate.h"
 #endif
 
 namespace onchip {
@@ -209,6 +209,7 @@ bool wifiPassword(const char *text) {
 }
 struct Help { const char *topic, *syntax; unsigned page = 1; };
 constexpr Help topics[] = {
+    {"reboot", "reboot: save then restart device; reboot force: skip saving, unsaved data may be lost; direct authenticated Management only"},
     {"wifi", "wifi status|ssid TEXT|password TEXT|-|apply|forget; explicit bytes: ssid|password hex HEX; set wifi.enabled 0|1; encrypted RF only"},
     {"wifi", "wifi 2/5: literal ASCII, including spaces and hex-looking text; SSID 1..32 bytes; password 8..63 bytes or 64 hex digits; '-' opens network", 2},
     {"wifi", "wifi 3/5: wifi ssid hex HEX; wifi password hex HEX; UTF-8/control SSID: hex; combined legacy wifi HEX HEX: use separate forms", 3},
@@ -323,7 +324,7 @@ void MastAdmin::helpCommand(const char *argument, Reply &reply) {
   static constexpr const char *index[] = {
     "help 1/3: status; roles; stats; ver; board; help bot|channels|companion|repeaters|role|roles|room|stats|threads; next: help 2",
     "help 2/3: help autoadvert|cad|cloudroom|get|mqtt|radio|radio-controls|set|setup|sntp|syslog|tempradio|wifi; next: help 3",
-    "help 3/3: help auth|backup|data|key|packet|password|setperm|source|telemetry|trust; apply|reboot; one page per request"
+    "help 3/3: help auth|backup|data|key|packet|password|setperm|source|telemetry|trust; apply|reboot [force]; one page per request"
   };
   static_assert(textLength(index[0]) <= TextLimit - 17 &&
                 textLength(index[1]) <= TextLimit - 17 &&
@@ -1242,8 +1243,8 @@ void MastAdmin::aclCommand(char *command, Reply &reply) {
            settings_.trustedSet && !memcmp(settings_.trustedKey, key, 32), compiledTrusted(key));
 }
 bool MastAdmin::reserve(Effect effect, Reply &reply) {
-#ifdef ARDUINO_ARCH_ESP32
-  if (espUpdateBusy()) {
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+  if (effect != Effect::ForceReboot && espUpdateBusy()) {
     strcpy(reply.text, "Error: application update active; inspect /admin/update before changes");
     return false;
   }
@@ -1642,7 +1643,7 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     return;
   }
   if (const char *usage = commandUsage(input)) {
-    if (strcmp(input, "password") && strcmp(input, "telemetry") && strcmp(input, "stats")) {
+    if (strcmp(input, "password") && strcmp(input, "telemetry") && strcmp(input, "stats") && strcmp(input, "reboot")) {
       snprintf(reply.text, sizeof(reply.text), "Error: usage: %s", usage); return;
     }
   }
@@ -1987,6 +1988,23 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
   } else if (!strcmp(command, "bot on") || !strcmp(command, "bot off")) {
     strcpy(reply.text, saveBotEnabled(!strcmp(command, "bot on")) ?
            "Saved bot selection; apply reboots" : "Error: bot selection commit failed");
+  } else if (!strcmp(command, "reboot force")) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: forced restart requires authenticated direct Management administration"); return;
+    }
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+    if (reserve(Effect::ForceReboot, reply)) {
+      const char *reason = nullptr;
+      forceRestartTicket_ = reserveEspForceRestart(reason);
+      if (!forceRestartTicket_) {
+        effect_ = Effect::None; reply.ticket = 0;
+        snprintf(reply.text, sizeof(reply.text), "Error: %s", reason);
+      } else strcpy(reply.text, "Accepted forced device restart after reply; skips saving: unsaved contacts, messages and settings may be lost");
+    }
+#else
+    strcpy(reply.text, "Error: forced device restart unavailable on this platform");
+#endif
   } else if (!strcmp(command, "apply") || !strcmp(command, "reboot")) {
     if (reserve(Effect::Reboot, reply))
       strcpy(reply.text, "Accepted reboot after this reply; saved roles apply on boot");
@@ -2208,6 +2226,16 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
 }
 void MastAdmin::acknowledged(uint32_t ticket, bool transmitted) {
   if (!ticket || ticket != ticket_ || effect_ == Effect::None || armed_) return;
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+  if (effect_ == Effect::ForceReboot) {
+    const bool accepted = acknowledgeEspForceRestart(forceRestartTicket_, transmitted);
+    effect_ = Effect::None;
+    if (!accepted) cancelledTicket_ = ticket_;
+    strcpy(outcome_, accepted ? "Forced device restart armed; saving skipped" :
+           "Error: forced restart acknowledgement/timer failed; restart cancelled");
+    return;
+  }
+#endif
   if (!transmitted) {
     cancelledTicket_ = ticket_;
     effect_ = Effect::None;
@@ -2226,11 +2254,14 @@ void MastAdmin::loop() {
       strcpy(outcome_, "Temporary radio restored; effective generation advanced");
     }
   }
-#ifdef ARDUINO_ARCH_ESP32
-  if (espUpdateBusy()) return;
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+  if (effect_ != Effect::ForceReboot && espUpdateBusy()) return;
 #endif
   if (effect_ == Effect::None) return;
   if (uint32_t(now - admittedAt_) >= 30000) {
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+    if (effect_ == Effect::ForceReboot) acknowledgeEspForceRestart(forceRestartTicket_, false);
+#endif
     cancelledTicket_ = ticket_;
     effect_ = Effect::None;
     strcpy(outcome_, "Error: effect timed out; saved state may differ from applied state");
