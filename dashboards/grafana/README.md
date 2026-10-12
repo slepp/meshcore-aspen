@@ -21,6 +21,25 @@ counts and last-heard age in one table, with separate signal histories. See
 [Nearby repeater SNR](../../firmware/runtime/REPEATER_SNR.md) to install the
 sampler. This feed needs no status polls or extra RF transmissions.
 
+## Battery trends and voltage limits
+
+The repeater dashboard shows a **30-minute mean** and a **V/hour** trend from
+time-weighted voltage: one-minute steps hold an RF reading for at most six
+minutes. These two panels display the last 30 minutes. A trend needs fresh
+status and at least four distinct RF samples spanning 20 minutes. Both 15-minute halves must agree in direction;
+movement must exceed sample scatter and 0.005 V/hour. Paused, missing, stale,
+flat or reversing readings leave the estimate blank.
+
+Select one repeater, then set **Empty voltage** and **Full voltage** for its
+battery and operating load. Both default to `0`, which disables that estimate.
+These inputs apply to every selected repeater; select batteries with the same
+limits when comparing several. **Approximate time to selected voltage limit**
+projects the current linear trend to the empty limit while falling or the full
+limit while rising. A reached limit shows zero. This is a voltage projection,
+not measured state of charge, remaining energy or a charging completion time.
+Solar input, load, battery chemistry and temperature can change the estimate.
+Repeated uploads do not increase the observation count or smoothing weight.
+
 ## Import and select a node
 
 1. In Grafana, add a **Prometheus** datasource pointing at your authorized

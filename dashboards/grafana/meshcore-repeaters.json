@@ -33,7 +33,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -488,7 +488,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -564,7 +564,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 28,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -610,7 +610,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -660,7 +660,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -705,7 +705,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -751,7 +751,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 44,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -827,7 +827,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 52,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -872,7 +872,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 52,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -930,7 +930,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 60,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -980,7 +980,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 60,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -1032,7 +1032,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 68,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -1080,7 +1080,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 68,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -1156,7 +1156,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 76,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -1206,7 +1206,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 76,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -1258,7 +1258,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -1371,7 +1371,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -1445,6 +1445,150 @@
         "alignValue": "left"
       },
       "description": "Last reported monitor state, held for at most six minutes; gaps are unknown. This is a sampled state, not an RF reception event."
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Battery voltage · 30-minute mean",
+      "description": "30-minute time-weighted mean, sampled every minute with RF voltage held for at most six minutes. Requires four distinct RF observations spanning 20 minutes and fresh status. Duplicate uploads do not increase the observation count or weighting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) and ((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200))",
+          "legendFormat": "{{device}} / {{peer}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt",
+          "decimals": 3,
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "linear"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "timeFrom": "30m"
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Battery voltage trend · V/hour",
+      "description": "Least-squares slope of time-weighted voltage over 30 minutes (one-minute steps, holds capped at six minutes). Requires fresh status, four distinct RF observations spanning 20 minutes, agreeing half-window slopes, and movement above scatter and 0.005 V/hour. Missing means no stable estimate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) * 3600) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005))",
+          "legendFormat": "{{device}} / {{peer}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: V/hour",
+          "decimals": 3,
+          "custom": {
+            "spanNulls": false,
+            "lineInterpolation": "linear"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "timeFrom": "30m"
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Approximate time to selected voltage limit",
+      "description": "Linear voltage projection at the stable 30-minute rate: falling voltage to Empty voltage, rising voltage to Full voltage. Set limits for the selected battery; 0 disables that direction. Voltage is not state of charge or usable energy. Solar, load, chemistry and temperature can change the result. At the limit: zero; stale, sparse, flat or changing trends: no estimate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_min(((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) - ${battery_empty_v}) / (-(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]))), 0) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) < 0) and on() (vector(${battery_empty_v}) > 0)",
+          "legendFormat": "{{device}} · {{peer}} · empty voltage",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "clamp_min((${battery_full_v} - (((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360))) / (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])), 0) and (((((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) == last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) or (last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]) unless last_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[$history]))) and (meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"} == 1) and (time() - timestamp(meshcore_repeater_fresh{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}) < 360)) and (distinct_over_time(meshcore_repeater_sample_time_seconds{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 4) and (tlast_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) - tfirst_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[30m]) >= 1200)) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s]) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and ((deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[15m:60s] offset 15m) * deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) > 0) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 1800 > stddev_over_time((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) and (abs(deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s])) * 3600 >= 0.005)) and (deriv((last_over_time(meshcore_repeater_battery_volts{device=~\"${device:regex}\",peer=~\"${peer:regex}\"}[360s]))[30m:60s]) > 0) and on() (vector(${battery_full_v}) > 0)",
+          "legendFormat": "{{device}} · {{peer}} · full voltage",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "noValue": "No stable estimate / limits unset"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true
+        },
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
     }
   ],
   "templating": {
@@ -1567,6 +1711,40 @@
             "text": "30d",
             "value": "30d",
             "selected": false
+          }
+        ]
+      },
+      {
+        "name": "battery_empty_v",
+        "label": "Empty voltage (V; 0 off)",
+        "type": "textbox",
+        "query": "0",
+        "current": {
+          "text": "0",
+          "value": "0"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "battery_full_v",
+        "label": "Full voltage (V; 0 off)",
+        "type": "textbox",
+        "query": "0",
+        "current": {
+          "text": "0",
+          "value": "0"
+        },
+        "options": [
+          {
+            "text": "0",
+            "value": "0",
+            "selected": true
           }
         ]
       }
