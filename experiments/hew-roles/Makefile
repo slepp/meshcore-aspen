@@ -132,7 +132,7 @@ build/region-checks-release: region_checks.hew meshproto/regions.hew wire.hew bu
 	$(HEW) build --emit-deps $@.d $< --release -o $@ $(LINK)
 .PHONY: dashboard dashboard-test
 dashboard: compiler-version build/hew-dashboard-release
-DASHBOARD_DEPS = dashboard_main.hew dashboard.hew host_admin.hew owner_client.hew $(HOSTLIB) build/listener_bridge.o build/outbound_bridge.o build/owner_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+DASHBOARD_DEPS = dashboard_main.hew dashboard.hew host_metrics.hew host_admin.hew owner_client.hew $(HOSTLIB) build/listener_bridge.o build/outbound_bridge.o build/owner_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 DASHBOARD_LINK = $(LINK) $(OBSERVER_LINK) --link-lib $(CURDIR)/build/listener_bridge.o --link-lib $(CURDIR)/build/owner_bridge.o
 build/hew-dashboard: $(DASHBOARD_DEPS)
 	$(HEW) build --emit-deps $@.d dashboard_main.hew -o $@ $(DASHBOARD_LINK)

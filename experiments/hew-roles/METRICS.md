@@ -51,8 +51,8 @@ health reads, never an extra modem connection or an RF transmission.
 | `willow_radio_connected{role}` | Reported role radio connection. |
 | `willow_companion_listener_active{role}` | Reported companion TCP listener state. |
 | `willow_observer_mqtt_connected{role}` | Observer broker connection state. |
-| `willow_observer_{observed,published,dropped}_total`, `willow_observer_queued` | Outbox admissions, broker-PUBACK-confirmed publications, actual drops and current queue. QoS1 retries can deliver duplicates. |
-| `willow_observer_dirty`, `willow_observer_saving`, `willow_observer_save_error` | Outbox persistence state. Error codes: 0 none, -1 commit failed, -2 rename committed but directory sync failed, -3 restore invalid/unreadable. |
+| `willow_observer_{observed,published,dropped}_total`, `willow_observer_queued`, `willow_observer_pending` | Outbox admissions, broker-PUBACK-confirmed publications, actual drops, queued records and a separate record awaiting PUBACK. QoS1 retries can deliver duplicates. |
+| `willow_observer_dirty`, `willow_observer_saving`, `willow_observer_save_error` | Outbox persistence state. Error codes: 0 none, -1 commit failed, -2 rename committed but directory sync failed, -3 restore invalid/unreadable, -4 restoring. |
 | `willow_observer_save_failures_total`, `willow_observer_expired_total`, `willow_observer_restored` | Save failures and TTL expirations since this outbox started; restored is a gauge of entries loaded at startup. |
 | `willow_role_tx_{accepted,succeeded,failed,rejected,unknown,diagnostic_drops}_total` | Companion TX outcomes since that role started. Admission is not transmission; unknown remains uncertain. |
 | `willow_role_tx_reported_airtime_seconds_total` | Confirmed reported RF airtime, converted from nanoseconds. |

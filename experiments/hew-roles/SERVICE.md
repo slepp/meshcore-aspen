@@ -67,6 +67,9 @@ For an update, build a new installation first, then follow the
 It keeps the current identities and saved traffic while changing the worker
 binding. Keep the previous installation for rollback using the latest stopped
 state.
+For existing Linux systemd user services, the
+[source-build updater](../../tools/INSTALL_WILLOW.md) builds at a new final path,
+copies the latest stopped state and switches only the selected services.
 A service manager can invoke the runner directly:
 
 ```ini
@@ -501,9 +504,22 @@ only after the matching broker PUBACK, not when a broker first receives bytes.
 SIGTERM stops admission, attempts retained offline status and MQTT DISCONNECT
 within a bounded shutdown, then closes transports. Broker failure does not
 restart the modem or RF roles. Modem reconnect does not restart MQTT. Queued
-observations survive publisher replacement, but not process/outbox replacement;
-the observer identity survives both through its retained identity file and the
-`observer.initialized` identity guard.
+observations survive publisher replacement. Pending and queued observations are
+checkpointed in private `observer.outbox` after 30 seconds of dirty state; clean
+state causes no writes. A separate writer keeps disk saves outside RF admission.
+A controlled stop flushes the backlog. Abrupt failure can lose the latest
+30 seconds of admissions, or replay recently acknowledged events until their
+removal is checkpointed. Restored observations keep their exact event ID,
+timestamp and payload. The observer identity remains in its retained identity
+file and the `observer.initialized` identity guard.
+
+The configured queue size remains an item bound. Encoded backlog is also capped
+at 2 MiB, and checkpoint files at 4 MiB. Individual observations expire seven
+days after their original receipt; a clock rollback does not renew their age.
+Save failures retain dirty work and the last valid checkpoint, and readiness
+reports `observer_checkpoint_unavailable`. Failed final saves make the host stop
+unsuccessfully. Invalid or unsupported checkpoints leave the file and identity
+untouched; restore a valid checkpoint before restarting the observer.
 
 Run `make observer-service-test` to drive the release service from an isolated
 CAD-on modem through a localhost MQTT broker, interrupt one unacknowledged

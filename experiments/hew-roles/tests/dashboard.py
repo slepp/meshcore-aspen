@@ -76,7 +76,7 @@ class OwnerHealth:
         self.threads = []
         roles = {name: {"state": "running", "radio_connected": True}
                  for name in ("bot", "repeater", "room", "observer")}
-        roles["observer"]["observer_stats"] = {"observed": 13, "published": 11, "dropped": 1, "queued": 1, "dirty": True, "saving": False, "save_failures": 2, "save_error": -1, "restored": 4, "expired": 3}
+        roles["observer"]["observer_stats"] = {"observed": 14, "published": 11, "dropped": 1, "queued": 1, "pending": True, "dirty": True, "saving": False, "save_failures": 2, "save_error": -1, "restored": 4, "expired": 3}
         roles["observer"]["mqtt_connected"] = True
         for name in roles:
             roles[name]["telemetry"] = {"has_counters": True,
@@ -295,9 +295,10 @@ class Dashboard(unittest.TestCase):
                     code, metrics = request("/metrics", authorized=False)
                     self.assertEqual(code, 200)
                     self.assertIn(b'willow_role_health_available{role="companion"} 1', metrics)
-                    self.assertIn(b'willow_observer_observed_total{role="observer"} 13', metrics)
+                    self.assertIn(b'willow_observer_observed_total{role="observer"} 14', metrics)
                     self.assertIn(b'willow_role_tx_accepted_total{role="companion"} 7', metrics)
                     self.assertIn(b'willow_role_tx_reported_airtime_seconds_total{role="companion"} 0.25', metrics)
+                    self.assertIn(b'willow_observer_pending{role="observer"} 1', metrics)
                     self.assertIn(b'willow_observer_dirty{role="observer"} 1', metrics)
                     self.assertIn(b'willow_observer_save_error{role="observer"} -1', metrics)
                     self.assertIn(b'willow_observer_expired_total{role="observer"} 3', metrics)

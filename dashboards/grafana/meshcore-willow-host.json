@@ -517,7 +517,7 @@
     },
     {
       "id": 8,
-      "title": "Observer queue",
+      "title": "Observer backlog",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -529,12 +529,21 @@
         "w": 12,
         "h": 8
       },
-      "description": "Current queued observations. Observer queue is separate from modem and companion TX queues.",
+      "description": "Queued observations and the separate pending record awaiting PUBACK. Both contribute to the outstanding backlog.",
       "targets": [
         {
           "refId": "A",
           "expr": "willow_observer_queued{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
-          "legendFormat": "{{instance}} · {{role}}",
+          "legendFormat": "{{instance}} · queued",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "interval": "30s"
+        },
+        {
+          "refId": "B",
+          "expr": "willow_observer_pending{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} and on(job,instance) (up{job=\"meshcore-willow\",instance=~\"${instance:regex}\"} == 1)",
+          "legendFormat": "{{instance}} · pending PUBACK",
           "range": true,
           "instant": false,
           "editorMode": "code",
@@ -551,7 +560,12 @@
           "custom": {
             "spanNulls": false,
             "lineInterpolation": "stepAfter",
-            "lineWidth": 2
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 20
           }
         },
         "overrides": []
@@ -904,7 +918,7 @@
         "w": 24,
         "h": 7
       },
-      "description": "Dirty means accepted changes await a save. Saving is current work. Save error: 0 none; -1 commit failed; -2 directory sync failed after rename; -3 restore invalid/unreadable.",
+      "description": "Dirty means accepted changes await a save. Saving is current work. Save error: 0 none; -1 commit failed; -2 directory sync failed after rename; -3 restore invalid/unreadable. -4 means restoring a checkpoint.",
       "targets": [
         {
           "refId": "A",
@@ -970,6 +984,10 @@
                 "-3": {
                   "text": "Restore failed",
                   "color": "red"
+                },
+                "-4": {
+                  "text": "Restoring",
+                  "color": "blue"
                 }
               }
             }

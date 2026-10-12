@@ -54,6 +54,9 @@ Use the running host's [owner-only DM and inbox commands](SERVICE.md#send-a-dm-a
 to send as its native bot and read authenticated incoming DMs. For a version
 upgrade, [rebind a complete frozen state copy](MIGRATION.md#upgrade-a-frozen-willow-state)
 with the newly installed launcher; do not replace a running installation.
+Existing Linux user services can use the
+[source-build updater](../../tools/INSTALL_WILLOW.md) for selected-service upgrades
+and rollback using the latest stopped state.
 
 For the browser dashboard, follow [the host dashboard setup](SERVICE.md#run-the-host-dashboard).
 It defaults to `http://127.0.0.1:9080/`; set `address=0.0.0.0` in its private
