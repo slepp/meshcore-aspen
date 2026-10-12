@@ -72,7 +72,7 @@ class Readiness(unittest.TestCase):
         with RunningService() as service:
             modem=service.emulator
             modem.send(2,0,advert(2)); time.sleep(.15)
-            modem.hold=True
+            modem.hold_all=True
             modem.send(2,0,text(2,5,1700000910,"!ping"))
             held=modem.receive(lambda j:j["port"]==2 and parse(j["raw"])[0]==2)
             pid=int(service.wait("BOT_PROCESS pid=").split("pid=")[1])
@@ -86,6 +86,7 @@ class Readiness(unittest.TestCase):
             service.wait("BOT_READY",after=after)
             self.assertEqual(modem.epoch,1)
             self.assertTrue(any(f"job={held['job']} state=4" in line for line in service.logs))
+            modem.hold_all=False
             modem.event(2,held["generation"],held["job"],2,modem.connection)
             modem.send(2,0,advert(2)); time.sleep(.15)
             modem.send(2,0,text(2,5,1700000911,"!ping"))
