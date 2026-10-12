@@ -286,11 +286,11 @@ The built-in concurrency test runs two native producer actors, each submitting
 32-job modem saturation, then checks shutdown admission. The Python suite
 repeats it five times.
 
-Additional checks:
+Additional checks (compiler/API examples are in [tests/probes](tests/probes/README.md)):
 
 ```sh
-hew check main.hew
-hew check service_main.hew
+hew check tests/main.hew
+hew check src/service_main.hew
 make test-release
 TMPDIR="$PWD/build" MESHCORE_HEW_BIN="$PWD/build/roles" \
   go test -race ../../internal/roles ../../internal/policy -count=1
@@ -298,7 +298,7 @@ TMPDIR="$PWD/build" MESHCORE_HEW_BIN="$PWD/build/roles" \
 
 Go is a **test oracle only**, never started by the service. Crypto FFI uses
 OpenSSL/libsodium; filesystem FFI supplies POSIX read/lock/sync/rename.
-Transport FFI supplies individual socket/process syscalls; `hostlib` owns
+Transport FFI supplies individual socket/process syscalls; `src/hostlib` owns
 framing, deadlines, retry policy and actor/resource lifetimes in Hew.
 The relay/room and the optional smaller bot are Hew state machines.
 The default bot is explicitly the existing native extension, with its own
@@ -306,9 +306,9 @@ protocol, authentication, Lua/Wasm interpreters and persistence.
 
 ## Developer notes
 
-Start with `wire.hew` for wire formats, `roles.hew` for isolated state machines,
-`modem.hew` for queued-job outcomes, and `main.hew` for the explicit fixture
-clock and protocol. `service.hew` and `session.hew` implement the running
+Start with `src/wire.hew` for wire formats, `src/roles.hew` for isolated state machines,
+`src/modem.hew` for queued-job outcomes, and `tests/main.hew` for the explicit fixture
+clock and protocol. `src/service.hew` and `src/session.hew` implement the running
 host. `tests/oracle/main.go` imports the real pinned Go implementation.
 The opt-in Go room differential test lives in
 `internal/roles/hew_parity_test.go`.

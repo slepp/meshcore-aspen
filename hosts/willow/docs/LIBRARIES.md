@@ -201,7 +201,7 @@ Its adapter checks lengths and pads short integers before calling std getters,
 whose own short-buffer contract aborts rather than returns `Option`.
 Variable-width slicing uses the built-in owned `bytes` operations.
 MeshCore's typed `Packet` codec and route/path checks remain Hew functions in
-`wire.hew`; there is no native packet decoder. Existing Go golden and
+`src/wire.hew`; there is no native packet decoder. Existing Go golden and
 serialized differential vectors exercise that protocol facade.
 The new protocol modules are pure Hew rather than application-specific native
 decoders. Checked float32 conversion is another std promotion candidate.
@@ -354,7 +354,7 @@ classification does not establish recoverability.
 ## Standard networking: useful capability and one blocking gap
 
 `std.net.Connection.split()` and `select` on its receive stream work.
-`tests/std_net_select_probe.hew` times out a receive after 20 ms, then
+`tests/probes/std_net_select_probe.hew` times out a receive after 20 ms, then
 successfully sends/receives on the same connection. A timed receive therefore
 does **not** inherently require custom socket polling.
 
@@ -365,7 +365,7 @@ another typed transport error. The caller can catch the actor failure and a
 sibling continues, but normal shutdown returns 1 and the API cannot report
 the committed prefix.
 
-`tests/std_tcp_write_probe.hew` is the small reproducer; `make library-test`
+`tests/probes/std_tcp_write_probe.hew` is the small reproducer; `make library-test`
 provides its non-reading loopback peer and verifies this behavior in both
 build modes. The service instead uses the minimal POSIX boundary beneath
 `duplex` so an expected deadline is a value, with a measured prefix and no
@@ -375,20 +375,16 @@ partial-write semantics, without converting normal network failures to panic.
 
 ## Compiler and process API reproductions
 
-These checks intentionally fail on the installed rc7:
+The [compiler probes](../tests/probes/README.md) record current type-check
+results for revisions `3e9267d355` and `017db3b`. The range-cast and contextual
+`Option.None` examples now type-check on both revisions. The send-select and
+process-pipe examples still fail:
 
 ```sh
-hew check tests/range_cast_probe.hew
-hew check tests/select_none_probe.hew
-hew check tests/select_send_probe.hew
-hew check tests/process_pipe_probe.hew
+hew check tests/probes/select_send_probe.hew
+hew check tests/probes/process_pipe_probe.hew
 ```
 
-* A literal `for value in 0..256` followed by `value as u8` leaves the element
-  type unresolved. Binding the upper bound as `i64` works; production code
-  keeps range loops rather than replacing them with manual counters.
-* A `.None` timeout arm is not contextually typed from an enclosing
-  `Option<bytes>` annotation. A separately typed empty value works.
 * `Sink.send` is not an accepted `select` source; actor calls, tasks and stream
   receives are. The TCP timeout reproducer uses the supported socket timeout,
   not a simulated send cancellation.

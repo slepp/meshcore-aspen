@@ -202,7 +202,7 @@ Go, as required by the deployment handover.
 
 `hostlib/mqtt_server.hew` and `hostlib/mqtt_properties.hew` contain generic
 checked MQTT server primitives.
-`broker.hew` owns protocol state, routing, QoS, queues, deadlines and expiry in
+`src/broker.hew` owns protocol state, routing, QoS, queues, deadlines and expiry in
 one serial event loop. `hostlib/listener.hew` owns a heap-backed TCP listener
 resource; closing it closes every accepted socket, even on a checked error.
 Opaque monotonically assigned socket tokens prevent a reused descriptor

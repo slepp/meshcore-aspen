@@ -301,9 +301,9 @@ build/endpoint-checks-release: tests/endpoint_checks.hew src/meshproto/mqtt_endp
 observer-test: build/endpoint-checks build/endpoint-checks-release
 	./build/endpoint-checks
 	./build/endpoint-checks-release
-build/std-tls-deadline-probe: tests/std_tls_deadline_probe.hew | build
+build/std-tls-deadline-probe: tests/probes/std_tls_deadline_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< -o $@
-build/std-tls-deadline-probe-release: tests/std_tls_deadline_probe.hew | build
+build/std-tls-deadline-probe-release: tests/probes/std_tls_deadline_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
 mqtt-test: build/mqtt-checks build/mqtt-checks-release
 	MESHCORE_HEW_MQTT_BIN=$(CURDIR)/build/mqtt-checks go test ../../internal/observer -run '^TestHewMQTT' -count=1
@@ -327,13 +327,13 @@ build/supervised-resource-contract: tests/supervised_resource_contract.hew | bui
 	$(HEW) build --emit-deps $@.d $< -o $@
 build/supervised-resource-contract-release: tests/supervised_resource_contract.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
-build/std-tcp-write-probe: tests/std_tcp_write_probe.hew | build
+build/std-tcp-write-probe: tests/probes/std_tcp_write_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< -o $@
-build/std-tcp-write-probe-release: tests/std_tcp_write_probe.hew | build
+build/std-tcp-write-probe-release: tests/probes/std_tcp_write_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
-build/std-net-select-probe: tests/std_net_select_probe.hew | build
+build/std-net-select-probe: tests/probes/std_net_select_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< -o $@
-build/std-net-select-probe-release: tests/std_net_select_probe.hew | build
+build/std-net-select-probe-release: tests/probes/std_net_select_probe.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
 build/roles-release: tests/main.hew src/wire.hew src/roles.hew src/storage.hew src/modem.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 	$(HEW) build --emit-deps $@.d tests/main.hew --release -o $@ $(LINK)

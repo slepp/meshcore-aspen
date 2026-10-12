@@ -811,8 +811,8 @@ The same restart/history tests run against debug and release executables.
 A narrow two-flag actor did not reproduce this failure; this is a tested local
 workaround, not a general diagnosis of the compiler.
 
-`service.hew` owns orchestration, `session.hew` owns negotiation/framing/job
-correlation, and `roles.hew` owns the Hew state machines. `transport_bridge.c`
+`src/service.hew` owns orchestration, `src/session.hew` owns negotiation/framing/job
+correlation, and `src/roles.hew` owns the Hew state machines. `native/transport_bridge.c`
 contains POSIX connect/poll/write, signal/clock, directory and shell-free
 `posix_spawn` operations; it contains no role implementation.
 Socket readiness and role, owner-control and observer notifications enter bounded
@@ -822,7 +822,7 @@ its independently owned driver groups. [Readiness and timer ownership](LIBRARIES
 describes registration cleanup, shutdown and the loopback checks.
 
 Rc7's `std.process.Child` does not expose piped stdin/stdout. Run
-`hew check tests/process_pipe_probe.hew` to reproduce the expected missing
+`hew check tests/probes/process_pipe_probe.hew` to reproduce the expected missing
 `Child.stdin` diagnostic. `std.net` receive error behavior also prevented
 recoverable transport handling in the initial probe. Status-returning
 offloaded FFI avoids trapping on ordinary disconnect and bounds writes to
