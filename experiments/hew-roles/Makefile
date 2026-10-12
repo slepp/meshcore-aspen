@@ -271,17 +271,20 @@ build/outbound-checks: outbound_checks.hew hostlib/outbound.hew hostlib/events.h
 	$(HEW) build --emit-deps $@.d outbound_checks.hew -o $@ --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib $(CURDIR)/build/transport_bridge.o --link-lib $(CURDIR)/build/event_bridge.o --link-lib -lcurl --link-lib -lcrypto
 build/outbound-checks-release: outbound_checks.hew hostlib/outbound.hew hostlib/events.hew hostlib/binary.hew build/outbound_bridge.o build/transport_bridge.o
 	$(HEW) build --emit-deps $@.d outbound_checks.hew --release -o $@ --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib $(CURDIR)/build/transport_bridge.o --link-lib $(CURDIR)/build/event_bridge.o --link-lib -lcurl --link-lib -lcrypto
-build/observer-client-checks: observer_client_checks.hew observer_client.hew observer_queue.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
+build/observer-client-checks: observer_client_checks.hew observer_client.hew observer_queue.hew observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
 	$(HEW) build --emit-deps $@.d observer_client_checks.hew -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK)) --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib -lcurl
-build/observer-client-checks-release: observer_client_checks.hew observer_client.hew observer_queue.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
+build/observer-client-checks-release: observer_client_checks.hew observer_client.hew observer_queue.hew observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
 	$(HEW) build --emit-deps $@.d observer_client_checks.hew --release -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK)) --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib -lcurl
-build/observer-queue-checks: observer_queue_checks.hew observer_queue.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o | build
-	$(HEW) build --emit-deps $@.d observer_queue_checks.hew -o $@ --link-lib $(CURDIR)/build/event_bridge.o
-build/observer-queue-checks-release: observer_queue_checks.hew observer_queue.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o | build
-	$(HEW) build --emit-deps $@.d observer_queue_checks.hew --release -o $@ --link-lib $(CURDIR)/build/event_bridge.o
-observer-client-test: build/observer-client-checks build/observer-client-checks-release build/observer-queue-checks build/observer-queue-checks-release build/outbound-checks build/outbound-checks-release
+build/observer-queue-checks: observer_queue_checks.hew observer_queue.hew observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build
+	$(HEW) build --emit-deps $@.d observer_queue_checks.hew -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK))
+build/observer-queue-checks-release: observer_queue_checks.hew observer_queue.hew observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build
+	$(HEW) build --emit-deps $@.d observer_queue_checks.hew --release -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK))
+.PHONY: observer-queue-test
+observer-queue-test: build/observer-queue-checks build/observer-queue-checks-release
 	./build/observer-queue-checks
 	./build/observer-queue-checks-release
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_queue.py
+observer-client-test: observer-queue-test build/observer-client-checks build/observer-client-checks-release build/outbound-checks build/outbound-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_client.py
 	MESHCORE_HEW_OBSERVER_CLIENT_BIN=$(CURDIR)/build/observer-client-checks-release PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_client.py
 observer-test: mqtt-test outbound-test observation-test observer-auth-test observer-client-test

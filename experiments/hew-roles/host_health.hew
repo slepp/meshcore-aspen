@@ -131,6 +131,16 @@ pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: rad
                 stats.set("published", json.from_int(value.published)).expect("observer stats");
                 stats.set("dropped", json.from_int(value.dropped)).expect("observer stats");
                 stats.set("queued", json.from_int(value.queued)).expect("observer stats");
+                stats.set("pending", json.from_bool(value.pending)).expect("observer stats");
+                stats.set("dirty", json.from_bool(value.dirty)).expect("observer stats");
+                stats.set("saving", json.from_bool(value.saving)).expect("observer stats");
+                stats.set("save_failures", json.from_int(value.save_failures)).expect("observer stats");
+                stats.set("save_error", json.from_int(value.save_error)).expect("observer stats");
+                stats.set("restored", json.from_int(value.restored)).expect("observer stats");
+                stats.set("expired", json.from_int(value.expired)).expect("observer stats");
+                if value.closed || value.save_error != 0 {
+                    reason = "observer_checkpoint_unavailable";
+                }
                 item.set("observer_stats", stats).expect("observer field");
             }
         }

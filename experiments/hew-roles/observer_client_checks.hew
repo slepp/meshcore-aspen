@@ -51,7 +51,7 @@ fn main() {
     } else {
         observation.Format.Internal
     }, prefix: "meshcore", iata: "YYC", origin: "Willow fixture", model: "", firmware: "", radio: "", filter: .None };
-    let admission = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config, capacity: 2, active: true } };
+    let admission = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config, capacity: 2, active: true, path: "", lock: -1 } };
     let branch = spawn observer_client.PublisherBranch { plan: observer_client.Plan { outbox: admission.outbox, config: config, url: args[2], ca_file: args[3], client_id: "willow-fixture", username: if jwt {
         ""
     } else {

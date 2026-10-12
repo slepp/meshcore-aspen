@@ -1710,10 +1710,17 @@ pub fn run(root: string) {
     relay_environment.bind(events.share(event_group)).expect("bind relay events");
     room_environment.bind(events.share(event_group)).expect("bind room events");
     bot_environment.bind(events.share(event_group)).expect("bind bot events");
-    let observer_queue_branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: observer_settings.config, capacity: observer_settings.capacity, active: observer_settings.enabled } };
+    let observer_queue_branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: observer_settings.config, capacity: observer_settings.capacity, active: observer_settings.enabled, path: if observer_settings.enabled {
+        root + "/observer.outbox"
+    } else {
+        ""
+    }, lock: lock } };
+    if let .Some(request) = observer_queue_branch.outbox.restore_request().expect("observer restore request") {
+        observer_queue_branch.writer.restore(observer_queue_branch.outbox, request).expect("restore observer checkpoint before receiving RF");
+    }
     let observer_branch = spawn observer_client.PublisherBranch { plan: observer_client.Plan { outbox: observer_queue_branch.outbox, config: observer_settings.config, url: observer_settings.url, ca_file: observer_settings.ca_file, client_id: observer_settings.client_id, username: observer_settings.username, password: observer_settings.password, audience: observer_settings.audience, seed: observer_settings.seed } };
     let observer_lifetime = spawn observer_runtime.Lifetime;
-    let observer_task = fork observer_runtime.drive(observer_branch.publisher, observer_queue_branch.outbox, observer_lifetime, end, observer_settings.enabled, events.share(observer_events), observer_input, observer_channel);
+    let observer_task = fork observer_runtime.drive(observer_branch.publisher, observer_queue_branch.outbox, observer_queue_branch.writer, observer_lifetime, end, observer_settings.enabled, events.share(observer_events), observer_input, observer_channel);
     var incarnation = ModemIncarnation { epoch: 0, failures: 0 };
     var worker_fd: Option<ChildRef<process.WorkerOwner>> = .None;
     var worker_key: i64 = 0;

@@ -4,6 +4,14 @@ import meshproto.observation;
 
 import std.encoding.hex;
 
+import observer_store;
+
+import storage;
+
+import transport;
+
+import std.os;
+
 fn config(format: observation.Format) -> observation.Config {
     observation.Config { identity: hex.decode("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").expect("valid hexadecimal"), format: format, prefix: "meshcore", iata: "YYC", origin: "", model: "", firmware: "", radio: "", filter: .None }
 }
@@ -21,8 +29,163 @@ actor Producer {
     }
 }
 
+fn durable(path: string, mode: string) {
+    let lock = storage.lock(path);
+    assert(lock >= 0);
+    let cfg = config(observation.Format.Internal);
+    if mode == "expiry-seed" || mode == "future-seed" {
+        var entries: Vec<observer_store.Entry> = Vec.new();
+        for index in 0..3 {
+            entries.push(observer_store.Entry { token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-" + to_string(index + 1), payload: ("payload-" + to_string(index)).to_bytes(), received: transport.now() + if mode == "future-seed" {
+                60000
+            } else if index == 1 {
+                0
+            } else {
+                -604800001
+            } });
+        }
+        assert(observer_store.save(path, cfg, observer_store.Snapshot { entries: entries, pending: true, observed: 3, published: 0, dropped: 0 }) == 0);
+        storage.unlock(lock);
+        return;
+    }
+    let branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: cfg, capacity: if mode == "capacity" {
+        4096
+    } else {
+        2
+    }, active: true, path: path, lock: lock } };
+    let outbox = branch.outbox;
+    let writer = branch.writer;
+    if let .Some(request) = outbox.restore_request().expect("restore request") {
+        if mode == "restoring" {
+            assert(!outbox.observe(item()).expect("admission waits for restore"));
+            assert(outbox.checkpoint_deadline().expect("no restoration spin") == 9223372036854775807);
+        }
+        writer.restore(outbox, request).expect("serialized restore");
+    }
+    let state = outbox.state().expect("restore observer checkpoint");
+    println("SESSION " + state.incarnation);
+    if mode == "invalid" {
+        assert(state.closed);
+        assert(outbox.statistics().expect("invalid status").save_error == -3);
+        assert(outbox.checkpoint_deadline().expect("no refusal spin") == 9223372036854775807);
+        storage.unlock(lock);
+        return;
+    }
+    assert(!state.closed);
+    if mode == "seed" || mode == "generation" || mode == "capacity" {
+        var received = item();
+        received.timestamp_ms = transport.now();
+        if mode == "capacity" {
+            received.raw = bytes.new();
+            for index in 0..4096 {
+                received.raw.push(0);
+            }
+            for index in 0..300 {
+                let _ = outbox.observe(received).expect("byte-cap admission");
+            }
+            let stats = outbox.statistics().expect("bounded queue");
+            assert(stats.queued > 0 && stats.queued < 300 && stats.dropped > 0);
+        } else {
+            assert(outbox.observe(received).expect("first admission"));
+            assert(outbox.observe(received).expect("second admission"));
+            let first = outbox.next().expect("pending").expect("first delivery");
+            println("PENDING " + first.token + " " + hex.encode(first.payload));
+            if mode == "seed" {
+                assert(outbox.observe(received).expect("third admission"));
+            }
+        }
+        assert(outbox.checkpoint(transport.monotonic(), false).expect("coalesced").is_none());
+        let checkpoint = outbox.checkpoint(transport.monotonic(), true).expect("checkpoint").expect("dirty snapshot");
+        if mode == "generation" {
+            assert(outbox.observe(received).expect("admission while snapshot is in flight"));
+        }
+        writer.write(outbox, checkpoint).expect("write checkpoint");
+        let stats = outbox.statistics().expect("checkpoint status");
+        if mode == "generation" {
+            assert(stats.dirty && !stats.saving);
+            assert(outbox.checkpoint(transport.monotonic(), false).expect("minimum interval").is_none());
+        } else {
+            assert(!stats.dirty && stats.save_error == 0);
+        }
+    } else if mode == "future" {
+        assert(outbox.next().expect("future receipt quarantined").is_none());
+        assert(!outbox.state().expect("no busy work").work);
+        assert(outbox.statistics().expect("future status").expired == 0);
+    } else if mode == "expiry" {
+        let current = outbox.next().expect("remaining fresh entry").expect("fresh delivery");
+        assert(current.token.ends_with("-2") && current.payload == b"payload-1");
+        assert(outbox.statistics().expect("per-entry expiry").expired == 2);
+    } else if mode == "restoring" {
+        assert(outbox.statistics().expect("restoration drops counted").dropped > 0);
+    } else if mode == "empty" {
+        assert(outbox.next().expect("durable dequeue").is_none());
+    } else if mode == "replace" {
+        let first = outbox.next().expect("old pending").expect("pending delivery");
+        // Prepare a snapshot, then replace admission before that snapshot reaches disk.
+        assert(outbox.acknowledge(first.token).expect("old ACK"));
+        let checkpoint = outbox.checkpoint(transport.monotonic(), true).expect("checkpoint").expect("dirty state");
+        assert(outbox.inject_failure().is_err());
+        var request: Option<observer_queue.Restore> = .None;
+        for index in 0..1000 {
+            if request.is_none() {
+                if let .Ok(value) = outbox.restore_request() {
+                    request = value;
+                }
+                if request.is_none() {
+                    sleep(1ms);
+                }
+            }
+        }
+        let recovery = request.expect("replacement restoration request");
+        assert(recovery.incarnation != state.incarnation);
+        writer.write(outbox, checkpoint).expect("old write completes before restore");
+        writer.restore(outbox, recovery).expect("serialized replacement restore");
+        let next = outbox.next().expect("restored remaining queue").expect("remaining delivery");
+        assert(next.token != first.token);
+        assert(outbox.statistics().expect("replacement status").save_error == 0);
+    } else if mode == "failure" {
+        let first = outbox.next().expect("pending before failure").expect("delivery");
+        assert(outbox.acknowledge(first.token).expect("local ACK"));
+        let checkpoint = outbox.checkpoint(transport.monotonic(), true).expect("checkpoint").expect("dirty snapshot");
+        assert(transport.directory(path + ".pending"));
+        assert(writer.flush(outbox, checkpoint).expect("final failure is returned") == -1);
+        let stats = outbox.statistics().expect("visible save failure");
+        assert(stats.save_error == -1 && stats.save_failures == 1 && stats.dirty && !stats.saving);
+        assert(outbox.checkpoint(transport.monotonic(), false).expect("bounded failure retry").is_none());
+        let old = observer_store.decode(cfg, observer_store.read(path), 2).expect("previous checkpoint still valid");
+        assert(old.pending && old.entries[0].token == first.token);
+        assert(storage.remove_private_directory(path + ".pending") == 0);
+        let retry = outbox.checkpoint(transport.monotonic() + 30001, false).expect("retry due").expect("retained dirty state");
+        writer.write(outbox, retry).expect("successful retry");
+        assert(outbox.statistics().expect("error clears").save_error == 0);
+    } else {
+        let first = outbox.next().expect("restored pending").expect("first delivery");
+        println("PENDING " + first.token + " " + hex.encode(first.payload));
+        assert(!first.token.starts_with(state.incarnation));
+        assert(!outbox.acknowledge("wrong-token").expect("stale ACK"));
+        assert(outbox.acknowledge(first.token).expect("ACK"));
+        if mode == "drain" {
+            for index in 0..2 {
+                let delivery = outbox.next().expect("restored queue").expect("queued delivery");
+                assert(outbox.acknowledge(delivery.token).expect("queued ACK"));
+            }
+            outbox.close().expect("graceful close");
+            let checkpoint = outbox.checkpoint(transport.monotonic(), true).expect("final checkpoint").expect("dirty dequeue");
+            assert(writer.flush(outbox, checkpoint).expect("graceful final flush") == 0);
+        }
+    }
+    stop(branch);
+    stopped(branch);
+    storage.unlock(lock);
+}
+
 fn main() {
-    let branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 2, active: false } };
+    let args = os.args();
+    if args.len() > 1 {
+        durable(args[1], args[2]);
+        return;
+    }
+    let branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 2, active: false, path: "", lock: -1 } };
     let outbox = branch.outbox;
     assert(!outbox.observe(item()).expect("before start"));
     assert(outbox.start().expect("start"));
@@ -48,7 +211,7 @@ fn main() {
     let closed = outbox.statistics().expect("closed statistics");
     assert(closed.observed == 6 && closed.published == 1 && closed.dropped == 5);
     assert(closed.queued == 0 && !closed.pending && !closed.connected && closed.closed);
-    let public_branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Observer), capacity: 2, active: true } };
+    let public_branch = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Observer), capacity: 2, active: true, path: "", lock: -1 } };
     let public_box = public_branch.outbox;
     var reflection = item();
     reflection.snr_quarter = -128;
@@ -59,10 +222,10 @@ fn main() {
     assert(public_box.statistics().expect("filtered statistics").observed == 0);
     var early = item();
     early.timestamp_ms = 0;
-    assert(public_box.observe(early).expect("early RF"));
+    assert(!public_box.observe(early).expect("early RF"));
     assert(public_box.next().expect("early result").is_none());
     assert(public_box.statistics().expect("early statistics").dropped == 1);
-    let concurrent = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 64, active: true } };
+    let concurrent = spawn observer_queue.QueueBranch { plan: observer_queue.Plan { config: config(observation.Format.Internal), capacity: 64, active: true, path: "", lock: -1 } };
     let first_producer = spawn Producer { outbox: concurrent.outbox };
     let second_producer = spawn Producer { outbox: concurrent.outbox };
     let one = fork first_producer.fill(100);

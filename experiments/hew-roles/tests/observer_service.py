@@ -9,7 +9,7 @@ import unittest
 from nacl.signing import VerifyKey
 
 import service_demo
-from observer_client import Broker, field, packet as mqtt_packet
+from observer_client import Broker, field, packet as mqtt_packet, publication
 from parity import ROOT, public, packet, parse
 from service_demo import RunningService, advert, login
 
@@ -58,7 +58,86 @@ class ObserverService(RunningService):
         self.wait("OBSERVER_MQTT state=ready connected=true")
 
 
+class PendingBroker(CaptureBroker):
+    hold = True
+
+    def serve_connection(self, connection):
+        topic = self.connect(connection)
+        connection.sendall(b"\x20\x02\x00\x00")
+        while True:
+            frame = mqtt_packet(connection)
+            if frame is None:
+                return
+            if frame[0] == 224:
+                return
+            if frame[0] == 192:
+                connection.sendall(b"\xd0\0")
+                continue
+            record = publication(frame)
+            if record[0] == topic:
+                self.statuses.append(record)
+                connection.sendall(b"\x40\x02"+record[1])
+            else:
+                self.messages.append(record)
+                if not self.hold:
+                    connection.sendall(b"\x40\x02"+record[1])
+
+
 class IntegratedObserver(unittest.TestCase):
+    def test_restart_retains_pending_and_queued_observations(self):
+        broker = PendingBroker("durable")
+        service = None
+        try:
+            service = ObserverService(extra_config=(
+                "observer.enabled=1\n"
+                f"observer.url=tcp://127.0.0.1:{broker.port}\n"
+                "observer.format=capture-v1\nobserver.iata=YYC\n"
+                "observer.topic_prefix=willow-local\nobserver.audience=willow-local\n"
+                "observer.packet_filter=16\nobserver.queue_size=16\n"))
+            identities = {path.name: path.read_bytes() for path in service.root.glob("*.seed")}
+            frames = [advert(seed) for seed in (2, 7, 8)]
+            service.emulator.send(3, 0, frames[0])
+            self.until(lambda: len(broker.messages) == 1, service, broker)
+            for raw in frames[1:]:
+                service.emulator.send(3, 0, raw)
+            time.sleep(.15)
+            service.stop_process()
+            snapshot = service.root/"observer.outbox"
+            self.assertTrue(snapshot.exists())
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+            stats = next(line for line in reversed(service.logs) if line.startswith("OBSERVER_STATS"))
+            self.assertIn("queued=2 pending=true", stats)
+            broker.hold = False
+            service.start_process(False)
+            self.until(lambda: len(broker.messages) == 4, service, broker)
+            self.assertEqual(broker.messages[0][2], broker.messages[1][2])
+            self.assertEqual([json.loads(row[2])["raw"] for row in broker.messages[1:]],
+                             [raw.hex().upper() for raw in frames])
+            self.assertEqual(identities, {path.name: path.read_bytes() for path in service.root.glob("*.seed")})
+            self.assertFalse(any(job["port"] == 3 for job in service.emulator.all_submissions))
+            service.stop_process()
+            service.start_process(False)
+            time.sleep(.25)
+            self.assertEqual(len(broker.messages), 4)
+            # A failed final flush must not be reported as a clean retained stop.
+            old_checkpoint = snapshot.read_bytes()
+            broker.hold = True
+            service.emulator.send(3, 0, advert(9))
+            self.until(lambda: len(broker.messages) == 5, service, broker)
+            stage = service.root/"observer.outbox.pending"
+            stage.mkdir(mode=0o700)
+            service.expected_exit = 1
+            service.stop_process()
+            self.assertEqual(snapshot.read_bytes(), old_checkpoint)
+            self.assertTrue(any("observer shutdown checkpoint failed" in line for line in service.errors))
+            stage.rmdir()
+        finally:
+            if service is not None:
+                service.close()
+            broker.close()
+            if broker.errors:
+                raise broker.errors[0]
+
     def test_receive_publish_reconnect(self):
         service_demo.PROFILE = struct.pack("<IIBBBfBh", 912525000, 250000, 7, 5, 2, 1.0, 1, 0)
         broker = CaptureBroker("retry")

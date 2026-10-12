@@ -210,7 +210,7 @@ pub actor Lifetime {
 /// Run as a scoped native task, independently of modem negotiation/reconnect.
 /// Expected broker failures stay values; the stable child reference survives
 /// a publisher panic without replacing its independently owned outbox.
-pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, lifetime: Lifetime, end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
+pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, writer: ChildRef<observer_queue.Writer>, lifetime: Lifetime, end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
     if !enabled {
         return;
     }
@@ -227,6 +227,12 @@ pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<ob
             break;
         }
         let now = transport.monotonic();
+        if let .Ok(.Some(request)) = outbox.restore_request() {
+            mailbox(writer, on_full: .Wait).restore(outbox, request).expect("restore observer incarnation");
+        }
+        if let .Ok(.Some(checkpoint)) = outbox.checkpoint(now, false) {
+            mailbox(writer, on_full: .Wait).write(outbox, checkpoint).expect("queue observer checkpoint");
+        }
         let _ = outbox.bind(events.share(group));
         if publisher.step(now, transport.now()).is_err() {
             if !unavailable {
@@ -250,6 +256,11 @@ pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<ob
             .Err(_) => {}
         }
         var deadline = transport.monotonic() + 1000;
+        if let .Ok(due) = outbox.checkpoint_deadline() {
+            if due < deadline {
+                deadline = due;
+            }
+        }
         if end > 0 && end < deadline {
             deadline = end;
         }
@@ -291,6 +302,11 @@ pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<ob
         if let events.Event.Failed(code) = events.channel_wait(shutdown, channel, deadline) {
             panic(f"observer shutdown readiness failed: errno={code}");
         }
+    }
+    writer.barrier().expect("finish observer checkpoint before shutdown");
+    if let .Ok(.Some(checkpoint)) = outbox.checkpoint(transport.monotonic(), true) {
+        let result = writer.flush(outbox, checkpoint).expect("flush retained observer backlog");
+        assert(result == 0, "observer shutdown checkpoint failed; retain the stopped state and inspect observer.outbox before upgrading");
     }
     println(f"OBSERVER_MQTT state=stopped connected=false at_ms={transport.now()}");
     if let .Ok(stats) = outbox.statistics() {

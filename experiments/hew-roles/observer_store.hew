@@ -1,0 +1,176 @@
+//! Bounded observer checkpoint format. POSIX durability remains in storage_bridge.
+import hostlib.binary;
+
+import meshproto.observation;
+
+import std.crypto.crypto;
+
+import std.encoding.utf8;
+
+extern "C" {
+    #[offload]
+    fn mc_commit_bounded(path: bytes, data: bytes, limit: i32) -> i32;
+    #[offload]
+    fn mc_read_bounded(path: bytes, limit: i32) -> bytes;
+}
+
+pub type Entry {
+    token: string;
+    payload: bytes;
+    received: i64;
+}
+
+pub type Snapshot {
+    entries: Vec<Entry>;
+    pending: bool;
+    observed: i64;
+    published: i64;
+    dropped: i64;
+}
+
+fn format(config: observation.Config) -> i64 {
+    match config.format {
+        observation.Format.Internal => 0,
+        observation.Format.Observer => 1,
+        observation.Format.Capture => 2,
+    }
+}
+
+fn integer(data: bytes, at: i64, size: i64) -> Result<i64, string> {
+    let part = binary.slice(data, at, at + size).ok_or("observer checkpoint is truncated") handle failure {
+        return .Err(failure);
+    };
+    let value = binary.integer(part).ok_or("observer checkpoint integer is invalid") handle failure {
+        return .Err(failure);
+    };
+    if value < 0 {
+        return .Err("observer checkpoint integer is negative");
+    }
+    .Ok(value)
+}
+
+pub fn encode(config: observation.Config, snapshot: Snapshot) -> bytes {
+    var data = b"WOBS0001";
+    data.append(config.identity);
+    let topic = observation.topic(config).expect("validated observer topic").to_bytes();
+    data.append(binary.little(topic.len(), 4).expect("topic size"));
+    data.push(format(config) as u8);
+    data.append(topic);
+    for value in [snapshot.observed, snapshot.published, snapshot.dropped] {
+        data.append(binary.little(value, 8).expect("counter"));
+    }
+    data.push(if snapshot.pending {
+        1
+    } else {
+        0
+    });
+    data.append(binary.little(snapshot.entries.len(), 4).expect("entry count"));
+    for entry in snapshot.entries {
+        data.append(binary.little(entry.received, 8).expect("receipt time"));
+        let token = entry.token.to_bytes();
+        data.append(binary.little(token.len(), 4).expect("token size"));
+        data.append(binary.little(entry.payload.len(), 4).expect("payload size"));
+        data.append(token);
+        data.append(entry.payload);
+    }
+    data.append(crypto.sha256(data));
+    data
+}
+
+pub fn decode(config: observation.Config, data: bytes, capacity: i64) -> Result<Snapshot, string> {
+    if data.len() < 106 || data.len() > 4194304 {
+        return .Err("observer checkpoint size is invalid");
+    }
+    let end = data.len() - 32;
+    let body = binary.slice(data, 0, end).expect("checkpoint body");
+    if crypto.sha256(body) != binary.slice(data, end, data.len()).expect("checkpoint checksum") {
+        return .Err("observer checkpoint checksum failed");
+    }
+    if binary.slice(body, 0, 8).expect("header") != b"WOBS0001" {
+        return .Err("observer checkpoint format is unsupported");
+    }
+    let size = integer(body, 40, 4) handle failure {
+        return .Err(failure);
+    };
+    let stored_format = integer(body, 44, 1) handle failure {
+        return .Err(failure);
+    };
+    if size > 65535 || stored_format != format(config) || binary.slice(body, 8, 40).expect("identity") != config.identity {
+        return .Err("observer checkpoint identity or format differs from configuration");
+    }
+    let topic = binary.slice(body, 45, 45 + size).ok_or("observer checkpoint topic is truncated") handle failure {
+        return .Err(failure);
+    };
+    if topic != observation.topic(config).expect("validated topic").to_bytes() {
+        return .Err("observer checkpoint topic differs from configuration");
+    }
+    var at = 45 + size;
+    let observed = integer(body, at, 8) handle failure {
+        return .Err(failure);
+    };
+    let published = integer(body, at + 8, 8) handle failure {
+        return .Err(failure);
+    };
+    let dropped = integer(body, at + 16, 8) handle failure {
+        return .Err(failure);
+    };
+    let flag = integer(body, at + 24, 1) handle failure {
+        return .Err(failure);
+    };
+    let count = integer(body, at + 25, 4) handle failure {
+        return .Err(failure);
+    };
+    if flag > 1 || count > capacity + flag || (flag == 1 && count == 0) {
+        return .Err("observer checkpoint exceeds configured queue capacity");
+    }
+    at += 29;
+    var entries: Vec<Entry> = Vec.new();
+    var used: i64 = 0;
+    for index in 0..count {
+        let received = integer(body, at, 8) handle failure {
+            return .Err(failure);
+        };
+        let token_size = integer(body, at + 8, 4) handle failure {
+            return .Err(failure);
+        };
+        let payload_size = integer(body, at + 12, 4) handle failure {
+            return .Err(failure);
+        };
+        if received == 0 || token_size < 34 || token_size > 80 || payload_size == 0 || payload_size > 16384 {
+            return .Err("observer checkpoint entry bounds are invalid");
+        }
+        at += 16;
+        let token = utf8.decode(binary.slice(body, at, at + token_size).ok_or("truncated observer token") handle failure {
+            return .Err(failure);
+        }) handle failure {
+            return .Err("observer checkpoint token is not UTF-8");
+        };
+        at += token_size;
+        let payload = binary.slice(body, at, at + payload_size).ok_or("truncated observer payload") handle failure {
+            return .Err(failure);
+        };
+        at += payload_size;
+        used += token_size + payload_size + 16;
+        if used > 2097152 {
+            return .Err("observer checkpoint exceeds its byte capacity");
+        }
+        entries.push(Entry { token: token, payload: payload, received: received });
+    }
+    if at != end {
+        return .Err("observer checkpoint has trailing data");
+    }
+    .Ok(Snapshot { entries: entries, pending: flag == 1, observed: observed, published: published, dropped: dropped })
+}
+
+pub fn read(path: string) -> bytes {
+    unsafe {
+        mc_read_bounded(path.to_bytes(), 4194304)
+    }
+}
+
+pub fn save(path: string, config: observation.Config, snapshot: Snapshot) -> i64 {
+    let data = encode(config, snapshot);
+    unsafe {
+        mc_commit_bounded(path.to_bytes(), data, 4194304) as i64
+    }
+}

@@ -1,3 +1,9 @@
+import observer_store;
+
+import storage;
+
+import transport;
+
 import meshproto.observation;
 
 import std.crypto.crypto;
@@ -10,6 +16,8 @@ pub type Plan {
     config: observation.Config;
     capacity: i64;
     active: bool;
+    path: string;
+    lock: i32;
 }
 
 pub type Delivery {
@@ -25,6 +33,12 @@ pub type Statistics {
     pending: bool;
     connected: bool;
     closed: bool;
+    dirty: bool;
+    saving: bool;
+    save_failures: i64;
+    save_error: i64;
+    restored: i64;
+    expired: i64;
 }
 
 pub type State {
@@ -42,14 +56,65 @@ pub actor Outbox {
     var closed: bool = false;
     var connected: bool = false;
     var session: string = "";
-    var queue: Vec<observation.Reception> = Vec.new();
-    var pending: Option<Delivery> = .None;
+    var queue: Vec<observer_store.Entry> = Vec.new();
+    var pending: Option<observer_store.Entry> = .None;
     var observed: i64 = 0;
     var published: i64 = 0;
     var dropped: i64 = 0;
     var event_group: Option<events.Group> = .None;
     var retirement: Option<events.Notify> = .None;
+    var generation: i64 = 0;
+    var dirty_at: i64 = 0;
+    var attempted_at: i64 = 0;
+    var saving: bool = false;
+    var save_failures: i64 = 0;
+    var save_error: i64 = 0;
+    var restored: i64 = 0;
+    var expired: i64 = 0;
+    var used_bytes: i64 = 0;
+    var restore_requested: bool = false;
     mailbox 32;
+
+    fn dirty() {
+        generation += 1;
+        if dirty_at == 0 {
+            dirty_at = transport.monotonic();
+        }
+        changed();
+    }
+    fn size(entry: observer_store.Entry) -> i64 {
+        entry.payload.len() + entry.token.to_bytes().len() + 16
+    }
+    fn expire(utc: i64) {
+        if let .Some(entry) = pending {
+            if utc >= entry.received && utc - entry.received >= 604800000 {
+                used_bytes -= size(entry);
+                pending = .None;
+                dropped += 1;
+                expired += 1;
+                dirty();
+            }
+        }
+        var index: i64 = 0;
+        while index < queue.len() {
+            let entry = queue[index];
+            if utc >= entry.received && utc - entry.received >= 604800000 {
+                let removed = queue.remove(index);
+                used_bytes -= size(removed);
+                dropped += 1;
+                expired += 1;
+                dirty();
+            } else {
+                index += 1;
+            }
+        }
+    }
+    fn eligible() -> bool {
+        if let .Some(entry) = pending {
+            return entry.received <= transport.now();
+        }
+        !queue.is_empty() && queue[0].received <= transport.now()
+    }
 
     fn changed() {
         if let .Some(group) = event_group {
@@ -64,7 +129,7 @@ pub actor Outbox {
     }
     receive fn state() -> State {
         let _ = ensure();
-        State { incarnation: session, closed: closed, work: active && (pending.is_some() || !queue.is_empty()) }
+        State { incarnation: session, closed: closed, work: active && eligible() }
     }
     fn ensure() -> bool {
         if initialized {
@@ -84,12 +149,62 @@ pub actor Outbox {
                 return false;
             }
         }
+        if !plan.path.is_empty() {
+            save_error = -4;
+            return true;
+        }
         active = plan.active;
         true
     }
 
+    receive fn restore_request() -> Option<Restore> {
+        let _ = ensure();
+        if plan.path.is_empty() || restore_requested || closed {
+            return .None;
+        }
+        restore_requested = true;
+        .Some(Restore { plan: plan, incarnation: session })
+    }
+    receive fn restored(incarnation: string, result: Result<observer_store.Snapshot, string>) {
+        if incarnation != session || save_error != -4 {
+            return;
+        }
+        match result {
+            .Ok(snapshot) => {
+                queue = snapshot.entries;
+                if snapshot.pending {
+                    pending = .Some(queue.remove(0));
+                }
+                observed += snapshot.observed;
+                published += snapshot.published;
+                dropped += snapshot.dropped;
+                restored = queue.len() + if pending.is_some() {
+                    1
+                } else {
+                    0
+                };
+                for entry in queue {
+                    used_bytes += size(entry);
+                }
+                if let .Some(entry) = pending {
+                    used_bytes += size(entry);
+                }
+                save_error = 0;
+                expire(transport.now());
+                active = plan.active && !closed;
+                println(f"OBSERVER_STORE_RESTORED entries={restored} expired={expired}");
+            }
+            .Err(reason) => {
+                println(f"OBSERVER_STORE_FAILED reason={reason}; restore observer.outbox before enabling the observer");
+                closed = true;
+                save_error = -3;
+            }
+        }
+        changed();
+    }
+
     receive fn start() -> bool {
-        if !ensure() || active {
+        if !ensure() || active || save_error != 0 {
             return false;
         }
         active = true;
@@ -109,11 +224,30 @@ pub actor Outbox {
         observed += 1;
         if !ensure() || !active || item.raw.len() > 4096 || queue.len() >= plan.capacity {
             dropped += 1;
+            if save_error != -3 {
+                dirty();
+            }
             return false;
         }
         var accepted = item;
         accepted.sequence = observed;
-        queue.push(accepted);
+        let payload = match observation.event(plan.config, session, accepted) {
+            .Ok(value) => value.to_bytes(),
+            .Err(_) => {
+                dropped += 1;
+                dirty();
+                return false;
+            }
+        };
+        let entry = observer_store.Entry { token: session + "-" + to_string(accepted.sequence), payload: payload, received: transport.now() };
+        if used_bytes + size(entry) > 2097152 || payload.len() > 16384 {
+            dropped += 1;
+            dirty();
+            return false;
+        }
+        used_bytes += size(entry);
+        queue.push(entry);
+        dirty();
         if queue.len() == 1 {
             changed();
         }
@@ -124,23 +258,16 @@ pub actor Outbox {
         if !ensure() || !active {
             return .None;
         }
-        if pending.is_some() {
-            return pending;
+        expire(transport.now());
+        if !eligible() {
+            return .None;
         }
-        var attempts: i64 = 0;
-        while !queue.is_empty() && attempts < 16 {
-            let item = queue.remove(0);
-            attempts += 1;
-            match observation.event(plan.config, session, item) {
-                .Ok(encoded) => {
-                    let delivery = Delivery { token: session + "-" + to_string(item.sequence), payload: encoded.to_bytes() };
-                    pending = .Some(delivery);
-                    return pending;
-                }
-                .Err(_) => {
-                    dropped += 1;
-                }
-            }
+        if pending.is_none() {
+            pending = .Some(queue.remove(0));
+            dirty();
+        }
+        if let .Some(entry) = pending {
+            return .Some(Delivery { token: entry.token, payload: entry.payload });
         }
         .None
     }
@@ -149,7 +276,9 @@ pub actor Outbox {
         if let .Some(delivery) = pending {
             if delivery.token == token {
                 published += 1;
+                used_bytes -= size(delivery);
                 pending = .None;
+                dirty();
                 if !queue.is_empty() {
                     changed();
                 }
@@ -163,8 +292,69 @@ pub actor Outbox {
         connected = !closed && value;
     }
 
+    receive fn inject_failure() {
+        if transport.supervision_testing() {
+            panic("injected observer outbox failure");
+        }
+    }
+
     receive fn statistics() -> Statistics {
-        Statistics { observed: observed, published: published, dropped: dropped, queued: queue.len(), pending: pending.is_some(), connected: connected, closed: closed }
+        Statistics { observed: observed, published: published, dropped: dropped, queued: queue.len(), pending: pending.is_some(), connected: connected, closed: closed, dirty: dirty_at != 0 || saving, saving: saving, save_failures: save_failures, save_error: save_error, restored: restored, expired: expired }
+    }
+
+    receive fn checkpoint(now: i64, force: bool) -> Option<Checkpoint> {
+        if !initialized {
+            let _ = ensure();
+        }
+        if save_error == -3 || save_error == -4 || plan.path.is_empty() || saving {
+            return .None;
+        }
+        expire(transport.now());
+        if dirty_at == 0 || (!force && (now < dirty_at + 30000 || now < attempted_at + 30000)) {
+            return .None;
+        }
+        var entries: Vec<observer_store.Entry> = Vec.new();
+        if let .Some(entry) = pending {
+            entries.push(entry);
+        }
+        for entry in queue {
+            entries.push(entry);
+        }
+        saving = true;
+        attempted_at = now;
+        dirty_at = 0;
+        .Some(Checkpoint { path: plan.path, config: plan.config, incarnation: session, generation: generation, snapshot: observer_store.Snapshot { entries: entries, pending: pending.is_some(), observed: observed, published: published, dropped: dropped } })
+    }
+    receive fn saved(incarnation: string, version: i64, result: i64) {
+        if incarnation != session || !saving {
+            return;
+        }
+        saving = false;
+        if result != 0 {
+            save_failures += 1;
+            save_error = result;
+            if dirty_at == 0 {
+                dirty_at = attempted_at;
+            }
+            attempted_at = transport.monotonic();
+            println(f"OBSERVER_STORE_FAILED error={result} retry_ms=30000");
+        } else {
+            save_error = 0;
+            if generation != version && dirty_at == 0 {
+                dirty_at = attempted_at;
+            }
+        }
+        changed();
+    }
+    receive fn checkpoint_deadline() -> i64 {
+        if plan.path.is_empty() || saving || dirty_at == 0 || save_error == -3 || save_error == -4 {
+            return 9223372036854775807;
+        }
+        if dirty_at > attempted_at {
+            dirty_at + 30000
+        } else {
+            attempted_at + 30000
+        }
     }
 
     receive fn close() {
@@ -172,6 +362,10 @@ pub actor Outbox {
         closed = true;
         active = false;
         connected = false;
+        if !plan.path.is_empty() {
+            changed();
+            return;
+        }
         dropped += queue.len();
         if pending.is_some() {
             dropped += 1;
@@ -186,4 +380,47 @@ pub supervisor QueueBranch(plan: Plan) {
     strategy: one_for_one;
     intensity: 2 within 60s;
     child outbox: Outbox { plan: plan };
+    child writer: Writer;
+}
+
+pub type Restore {
+    plan: Plan;
+    incarnation: string;
+}
+
+pub type Checkpoint {
+    path: string;
+    config: observation.Config;
+    incarnation: string;
+    generation: i64;
+    snapshot: observer_store.Snapshot;
+}
+
+/// Serial disk owner; Outbox remains available while this actor syncs a file.
+pub actor Writer {
+    mailbox 1;
+    fn persist(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) -> i64 {
+        let result = observer_store.save(checkpoint.path, checkpoint.config, checkpoint.snapshot);
+        let _ = outbox.saved(checkpoint.incarnation, checkpoint.generation, result);
+        result
+    }
+    receive fn write(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) {
+        let _ = persist(outbox, checkpoint);
+    }
+    receive fn flush(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) -> i64 {
+        persist(outbox, checkpoint)
+    }
+    receive fn restore(outbox: ChildRef<Outbox>, request: Restore) {
+        let plan = request.plan;
+        var result: Result<observer_store.Snapshot, string> = .Err("checkpoint recovery failed");
+        if storage.recover(plan.path, plan.lock) {
+            result = if storage.absent(plan.path) {
+                .Ok(observer_store.Snapshot { entries: Vec.new(), pending: false, observed: 0, published: 0, dropped: 0 })
+            } else {
+                observer_store.decode(plan.config, observer_store.read(plan.path), plan.capacity)
+            };
+        }
+        let _ = outbox.restored(request.incarnation, result);
+    }
+    receive fn barrier() {}
 }
