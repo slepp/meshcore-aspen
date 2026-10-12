@@ -198,6 +198,28 @@ def build(plan, workspace):
                          for k in kinds}}
 
 
+def resume_build(plan, workspace):
+    if (workspace / "receipt.json").exists():
+        raise ValueError("Switch receipt exists; inspect current owners, never replay a stop or switch")
+    stage = load(workspace / "build.json")
+    if stage["plan"] != plan:
+        raise ValueError("Build stage belongs to a different plan")
+    result = stage["build"]
+    kinds = {s["kind"] for s in plan["services"] if s.get("selected", True)}
+    if set(result["binaries"]) != kinds:
+        raise ValueError("Build stage does not contain the selected production binaries")
+    if hashlib.sha256((workspace / "source.tar").read_bytes()).hexdigest() != result["source_archive_sha256"]:
+        raise ValueError("Saved source archive changed since the build")
+    for kind, expected in result["binaries"].items():
+        path = roles(plan["install"]) / "build" / BINARIES[kind]
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError(kind + ": production binary changed since the build")
+    if "host" in result["binaries"]:
+        run([sys.executable, "-B", "build_worker.py", "--verify"], cwd=roles(plan["install"]),
+            stdout=subprocess.DEVNULL)
+    return result
+
+
 def files(root):
     result = {}
     for path in Path(root).rglob("*"):
@@ -304,7 +326,7 @@ def switch(plan, workspace, items, build_result=None):
                                  for p in (t / "children").read_text().split()})
     unitroot = Path.home() / ".config/systemd/user"
     backups = workspace / "overrides"
-    backups.mkdir(mode=0o700)
+    backups.mkdir(mode=0o700, exist_ok=True)
     old_overrides = {}
     for item in items:
         path = unitroot / (item["unit"] + ".d") / OVERRIDE
@@ -426,7 +448,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     for verb in ("plan", "apply"):
-        sub.add_parser(verb).add_argument("plan", type=Path)
+        command = sub.add_parser(verb)
+        command.add_argument("plan", type=Path)
+        if verb == "apply":
+            command.add_argument("--resume", action="store_true", help="reuse a verified completed build only when no switch was attempted")
     rollback = sub.add_parser("rollback", help="restore old installs using latest stopped candidate state")
     rollback.add_argument("receipt", type=Path)
     rollback.add_argument("--workspace", required=True, type=Path)
@@ -450,9 +475,19 @@ def main():
     lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        workspace.mkdir(mode=0o700, parents=True)
-        result = None if args.operation == "rollback" else build(plan, workspace)
-        switch(plan, workspace, items, result)
+        if args.operation == "apply" and args.resume:
+            result = resume_build(plan, workspace)
+        else:
+            workspace.mkdir(mode=0o700, parents=True)
+            result = None if args.operation == "rollback" else build(plan, workspace)
+            if result is not None:
+                atomic(workspace / "build.json", (json.dumps({"plan": plan, "build": result}, indent=2) + "\n").encode())
+        try:
+            switch(plan, workspace, items, result)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            if args.operation == "apply" and not (workspace / "receipt.json").exists():
+                raise ValueError(str(error) + "; build retained. Once preflight is ready, use apply --resume with the same plan") from error
+            raise
     print("Willow services are ready; private receipt: " + str(workspace / "receipt.json"))
 
 

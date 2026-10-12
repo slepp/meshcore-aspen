@@ -7,6 +7,8 @@ import sys
 import tempfile
 import socket
 import tarfile
+import hashlib
+import urllib.error
 import unittest
 from unittest.mock import patch
 
@@ -138,6 +140,62 @@ class Install(unittest.TestCase):
 
     def test_failed_staging_restores_original_owner_without_switch_replay(self):
         self.switch(fail=True)
+
+    def test_explicit_resume_reuses_completed_build_only_before_any_switch(self):
+        item = self.item()
+        item.pop("target_install")
+        Path(item["config"]).write_text("state=/existing/host\npassword_env=PRIVATE_REFERENCE\n")
+        override = self.root / ".config/systemd/user/dashboard.service.d/70-willow-current.conf"
+        override.parent.mkdir(parents=True)
+        original = b"[Service]\nExecStart=\nExecStart=/old/dashboard /old/config\n"
+        override.write_bytes(original)
+        workspace = self.root / "operation"
+        plan = {"source": str(ROOT), "revision": "a" * 40, "install": str(self.root / "install"),
+                "workspace": str(workspace), "services": [item],
+                "ready_url": "http://fixture/readyz", "status_url": "http://fixture/status"}
+        path = self.root / "plan.json"
+        path.write_text(json.dumps(plan))
+        def build(plan, workspace):
+            (workspace / "source.tar").write_bytes(b"exact source archive")
+            binary = installer.roles(plan["install"]) / "build/hew-dashboard-release"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"completed binary")
+            return {"source_archive_sha256": hashlib.sha256(b"exact source archive").hexdigest(),
+                    "binaries": {"dashboard": hashlib.sha256(binary.read_bytes()).hexdigest()}}
+        commands = []
+        with patch.object(Path, "home", return_value=self.root), patch.object(installer, "build", side_effect=build) as builder, \
+             patch.object(installer, "owners", side_effect=lambda items, **kw: {i["unit"]: os.getpid() for i in items}), \
+             patch.object(installer, "snapshot", side_effect=[urllib.error.HTTPError("fixture", 503, "not ready", {}, None), {"bot": "key"}, {"bot": "key"}]), \
+             patch.object(installer, "run", side_effect=lambda args, **kw: commands.append(args)), \
+             patch.object(installer, "prop", side_effect=lambda u,k: "0" if k == "MainPID" else "inactive"):
+            with patch.object(sys, "argv", ["installer", "apply", str(path)]), self.assertRaisesRegex(ValueError, "build retained"):
+                installer.main()
+            self.assertTrue((workspace / "build.json").exists())
+            self.assertFalse((workspace / "receipt.json").exists())
+            self.assertEqual(override.read_bytes(), original)
+            self.assertEqual(commands, [])
+            changed_plan = {**plan, "ready_url": "http://different/readyz"}
+            path.write_text(json.dumps(changed_plan))
+            with patch.object(sys, "argv", ["installer", "apply", "--resume", str(path)]), self.assertRaisesRegex(ValueError, "different plan"):
+                installer.main()
+            path.write_text(json.dumps(plan))
+            (workspace / "source.tar").write_bytes(b"changed archive")
+            with patch.object(sys, "argv", ["installer", "apply", "--resume", str(path)]), self.assertRaisesRegex(ValueError, "source archive changed"):
+                installer.main()
+            (workspace / "source.tar").write_bytes(b"exact source archive")
+            binary = installer.roles(plan["install"]) / "build/hew-dashboard-release"
+            binary.write_bytes(b"changed")
+            with patch.object(sys, "argv", ["installer", "apply", "--resume", str(path)]), self.assertRaisesRegex(ValueError, "binary changed"):
+                installer.main()
+            binary.write_bytes(b"completed binary")
+            with patch.object(sys, "argv", ["installer", "apply", "--resume", str(path)]):
+                installer.main()
+            self.assertEqual(builder.call_count, 1)
+            calls = list(commands)
+            with patch.object(sys, "argv", ["installer", "apply", "--resume", str(path)]), self.assertRaisesRegex(ValueError, "Switch receipt exists"):
+                installer.main()
+            self.assertEqual(commands, calls)
+            self.assertEqual(builder.call_count, 1)
 
     def test_observer_backlog_guard_distinguishes_old_and_durable_hosts(self):
         stats = {"observed": 8, "published": 7, "dropped": 0, "queued": 0}

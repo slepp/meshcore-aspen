@@ -64,7 +64,19 @@ selected production targets are built; a host selection also verifies the native
 worker binding. Run the affected source tests before upgrading, as described in
 the service guide. Build output stays in the private workspace. A build failure
 stops no service. Inspect the log and use fresh install/workspace paths after
-correcting a failed build.
+correcting a failed build. A completed build is saved in private `build.json`
+before live preflight. If readiness or another preflight refuses the upgrade
+before a switch receipt exists, retain that result and, once the condition is
+resolved, run:
+
+```sh
+python3 tools/install_willow.py apply --resume upgrade.json
+```
+
+Resume requires the identical plan, unchanged source archive and production
+binary hashes, and a successful native-worker binding check when upgrading the
+host. It does not rebuild or retry automatically. Any `receipt.json` means a
+switch was attempted; resume then refuses, even if that receipt is incomplete.
 
 For a host or Base upgrade, add `state` and `next_state`. The host kind uses
 `willow.py rebind`; a Base uses `migrate_base.py` to retain its identity and
