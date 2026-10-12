@@ -561,10 +561,6 @@
             "spanNulls": false,
             "lineInterpolation": "stepAfter",
             "lineWidth": 2,
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
             "fillOpacity": 20
           }
         },
