@@ -58,7 +58,7 @@ jobs:
         env:
           BOT_JSON_INCLUDE: /usr/include/cjson
           CMAKE_BUILD_PARALLEL_LEVEL: '2'
-        run: make -C experiments/hew-roles -j2 check
+        run: make -C hosts/willow -j2 check
   shared-room:
     name: Shared room Worker, web UI and opaque frontend
     runs-on: ubuntu-24.04
