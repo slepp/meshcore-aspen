@@ -91,6 +91,10 @@ the same login page.
 `/status` shows public state and `/readyz` reports readiness. Restarting only the
 dashboard leaves the host roles, identities and companion listeners running.
 
+To track repeater SNR and RSSI, [install the packet sampler and commands](docs/PACKET_GUESTS.md).
+The bot replies, dashboard and signal metrics share its report; saved programs
+and settings remain after restart, while signal sample rings start empty.
+
 For an isolated modem-to-broker trial, run `make observer-service-test`. It uses
 localhost only and checks broker reconnect, modem reconnect and room login in
 the production process. Other development checks are:
