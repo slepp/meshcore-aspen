@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -200,7 +201,20 @@ func TestHewDiscoverySerializedDifferential(t *testing.T) {
 	}
 	goOwner := strings.TrimRight(string(decrypted(t, want, client, id)[4:]), "\x00")
 	hewOwner := strings.TrimRight(string(decrypted(t, got[0], client, id)[4:]), "\x00")
-	if strings.Replace(goOwner, buildinfo.HostVersion+"\n", "host-v2-slp-willow\n", 1) != hewOwner {
+	manifest, err := os.ReadFile("../../release/products.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var versions struct {
+		Products map[string]struct{ Version string }
+	}
+	if err := json.Unmarshal(manifest, &versions); err != nil {
+		t.Fatal(err)
+	}
+	willowVersion := versions.Products["willow"].Version
+	goVersion, goInfo, goOK := strings.Cut(goOwner, "\n")
+	hewVersion, hewInfo, hewOK := strings.Cut(hewOwner, "\n")
+	if willowVersion == "" || !goOK || !hewOK || goVersion != buildinfo.HostVersion || hewVersion != "willow-"+willowVersion || goInfo != hewInfo {
 		t.Fatalf("owner Go=%q Hew=%q", goOwner, hewOwner)
 	}
 	for index, query := range []byte{1, 2, 3, 3, 3} {
