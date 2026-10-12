@@ -147,7 +147,7 @@ class WorkerBinding(unittest.TestCase):
         root.mkdir(mode=0o700)
         try:
             config = root/"config"
-            text = f"address=127.0.0.1\nport=1\nprofile={PROFILE}\nworker=-\nworker=/bin/true\n"
+            text = f"address=127.0.0.1\nport=1\nprofile={PROFILE}\npassword=room\nworker=-\nworker=/bin/true\n"
             self.assertEqual(settings(text.encode())["worker"],"/bin/true")
             config.write_text(text)
             config.chmod(0o600)

@@ -97,7 +97,11 @@ release: build/hew-host-release build/hew-base-release build/hew-dashboard-relea
 # Run the production processes, retained fault cases and Birch comparisons.
 # Missing compilers, libraries and fixture binaries are errors, never skips.
 check: export HEW_WORKERS = 4
-check: release test test-release acceptance-test base-local-test base-service-test broker-test dashboard-test observer-service-test observer-queue-test supervision-test
+check: release acceptance-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release
+	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/worker_binding.py
+	MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release PYTHONDONTWRITEBYTECODE=1 python3 tests/storage_recovery.py
+	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release go test ../../internal/roles -run '^TestHew.*Differential$$' -count=1
+	TMPDIR=$(CURDIR)/build MESHCORE_HEW_BASE_BIN=$(CURDIR)/build/companion-checks-release go test ../../internal/companion -run '^TestHewBase(Local|RF|ReceivePolicy)Differential$$' -count=1 -timeout=120s
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 # A complete private host, real companion protocol, retained state and recovery.
 acceptance-test: combined-service-test build/roles-release

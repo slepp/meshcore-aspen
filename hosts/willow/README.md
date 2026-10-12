@@ -59,7 +59,9 @@ checks restart and native-worker recovery, exercises interrupted persistence,
 and compares protocol behaviour with Birch. Missing prerequisites fail the
 command. The selected compiler, runtime and standard-library hashes are
 recorded in ignored `build/toolchain.json`; the compiler version is printed.
-The contributor CI runs this same command.
+The contributor CI runs this same command. The broader `make test test-release`
+targets retain the complete debug/release protocol, management, login,
+readiness and migration suites.
 
 The current source has been built with Hew
 `0.6.0-rc8-dev.230+3e9267d355`. The published rc7 SDK cannot parse its actor
