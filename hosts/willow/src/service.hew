@@ -486,7 +486,7 @@ pub fn initialize(args: Vec<string>) {
     println(f"relay={hex.encode(wire.public_key(relay_seed))}");
     println(f"room={hex.encode(wire.public_key(room_seed))}");
     println(f"bot={hex.encode(wire.public_key(bot_seed))}");
-    println(f"next: python3 -B willow.py check --state {root}");
+    println(f"next: python3 -B tools/willow.py check --state {root}");
 }
 
 fn expanded(seed: bytes) -> bytes {

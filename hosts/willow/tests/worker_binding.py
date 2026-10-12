@@ -279,7 +279,7 @@ class WorkerBinding(unittest.TestCase):
             for secret in (config["admin"],config["room.password"]):
                 self.assertNotIn(secret,completed.stdout+completed.stderr)
             self.assertIn("INIT_OK",completed.stdout)
-            self.assertIn("next: python3 -B willow.py check",completed.stdout)
+            self.assertIn("next: python3 -B tools/willow.py check",completed.stdout)
             check(state)
             again = init(state)
             self.assertNotEqual(again.returncode,0)
