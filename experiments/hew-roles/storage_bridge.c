@@ -52,6 +52,12 @@ int32_t mc_commit_bounded(const Bytes *path, const Bytes *data, int32_t limit) {
     else strcpy(parent, ".");
     int directory = open(parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (directory < 0) return -1;
+    const char *leaf = strrchr(target, '/');
+    leaf = leaf ? leaf + 1 : target;
+    struct stat existing;
+    if (fstatat(directory, leaf, &existing, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!S_ISREG(existing.st_mode)) { close(directory); return -1; }
+    } else if (errno != ENOENT) { close(directory); return -1; }
     int fd = open(pending, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { close(directory); return -1; }
 #ifdef MC_STORAGE_TEST_INTERRUPT
@@ -117,7 +123,8 @@ int32_t mc_recover(const Bytes *path, int32_t lock) {
 Bytes mc_read_bounded(const Bytes *path, int32_t limit) {
     char name[4096];
     if (!path_string(path, name) || limit <= 0 || limit > 16777216) return (Bytes){0};
-    int fd = open(name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    /* Reject special files after open without waiting for a FIFO writer. */
+    int fd = open(name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return (Bytes){0};
     struct stat st;
     if (fstat(fd, &st) || !S_ISREG(st.st_mode) || (st.st_mode & 077) ||
@@ -145,7 +152,7 @@ int32_t mc_lock(const Bytes *path) {
     char name[4096];
     if (!path_string(path, name)) return -1;
     strcat(name, ".lock");
-    int fd = open(name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    int fd = open(name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
     if (fd < 0) return -1;
     struct stat st;
     if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
