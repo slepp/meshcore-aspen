@@ -16,9 +16,16 @@ pub fn cut(data: bytes, start: i64, end: i64) -> bytes {
 
 extern "C" {
     fn mc_public(seed: bytes) -> bytes;
+    fn mc_expanded(seed: bytes) -> bytes;
     fn mc_sign(seed: bytes, message: bytes) -> bytes;
     fn mc_shared(seed: bytes, peer: bytes) -> bytes;
     fn mc_aes(key: bytes, input: bytes, encrypt: i32) -> bytes;
+}
+
+pub fn expanded_key(seed: bytes) -> bytes {
+    unsafe {
+        mc_expanded(seed)
+    }
 }
 
 pub fn public_key(seed: bytes) -> bytes {

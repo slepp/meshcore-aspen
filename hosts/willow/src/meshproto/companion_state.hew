@@ -7,31 +7,15 @@ import std.encoding.utf8;
 
 import willow.src.wire;
 
-extern "C" {
-    #[offload]
-    fn mc_commit_bounded(path: bytes, data: bytes, limit: i32) -> i32;
-    #[offload]
-    fn mc_read_bounded(path: bytes, limit: i32) -> bytes;
-    fn mc_expanded(key: bytes) -> bytes;
-}
+import willow.src.storage;
 
 pub fn read(path: string) -> bytes {
-    unsafe {
-        mc_read_bounded(path.to_bytes(), 16777216)
-    }
+    storage.read_bounded(path, 16777216)
 }
 
 pub fn commit(path: string, value: json.Value) -> i64 {
     let data = value.stringify().expect("validated companion document").to_bytes();
-    unsafe {
-        mc_commit_bounded(path.to_bytes(), data, 16777216) as i64
-    }
-}
-
-pub fn expanded(key: bytes) -> bytes {
-    unsafe {
-        mc_expanded(key)
-    }
+    storage.commit_bounded(path, data, 16777216)
 }
 
 pub fn field(value: json.Value, name: string) -> json.Value {

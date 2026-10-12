@@ -74,6 +74,13 @@ pub type Batch {
     next_rx: i64;
 }
 
+fn packet_scope(client: Option<companion.Client>) -> Option<packets.Scope> {
+    match client {
+        .Some(value) => .Some(packets.Scope { unscoped: value.unscoped, scope_key: value.scope_key }),
+        .None => .None,
+    }
+}
+
 fn empty() -> Batch {
     Batch { events: Vec.new(), transmissions: Vec.new(), next_rx: 0 }
 }
@@ -369,7 +376,7 @@ pub actor RF {
                 plain.push(attempt as u8);
             }
             let peer = state.blob(state.field(contact, "PublicKey"));
-            p = packets.routed(packets.encrypted(key, peer, 2, plain, false), contact, document, session, false);
+            p = packets.routed(packets.encrypted(key, peer, 2, plain, false), contact, document, packet_scope(session), false);
             result.response = packets.sent(p, if result.ack.is_empty() {
                 0
             } else {
@@ -394,7 +401,7 @@ pub actor RF {
             var plain = wire.cat(wire.cut(b, 3, 7), wire.byte(0));
             plain.append(prefix.to_bytes());
             plain.append(text);
-            p = packets.flood(wire.packet(1, 5, wire.cat(wire.byte(packets.hash(ch)), wire.seal(state.blob(state.field(ch, "PSK")), plain))), document, session);
+            p = packets.flood(wire.packet(1, 5, wire.cat(wire.byte(packets.hash(ch)), wire.seal(state.blob(state.field(ch, "PSK")), plain))), document, packet_scope(session));
         } else if cmd == 16 {
             if b.len() != 33 {
                 return failed(client, 6);
@@ -469,7 +476,7 @@ pub actor RF {
             let body = wire.cat(wire.cat(wire.cut(plain, 0, 2), wire.byte(plain.len() - 2)), wire.cut(plain, 2, plain.len()));
             p = wire.packet(2, 6, wire.cat(wire.byte(packets.hash(ch)), wire.seal(state.blob(state.field(ch, "PSK")), body)));
             if b[2] == 255 {
-                p = packets.flood(p, document, session);
+                p = packets.flood(p, document, packet_scope(session));
             } else {
                 p.pathlen = b[2] as i64;
                 p.path = wire.cut(b, 3, 3 + size);
@@ -608,7 +615,7 @@ pub actor RF {
                     anonymous = true;
                 }
             }
-            p = packets.routed(packets.encrypted(key, peer, kind, plain, anonymous), contact, document, session, force_flood);
+            p = packets.routed(packets.encrypted(key, peer, kind, plain, anonymous), contact, document, packet_scope(session), force_flood);
             result.peer = peer;
             result.request = cmd;
             result.tag = request_tag;

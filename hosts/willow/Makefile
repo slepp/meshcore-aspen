@@ -57,9 +57,9 @@ broker-test: compiler-version build/hew-broker build/hew-broker-release build/br
 	./build/broker-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/broker.py
 
-build/companion-checks: tests/companion_checks.hew src/companion.hew src/companion_radio.hew $(MESHPROTO) $(HOSTLIB) src/wire.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+build/companion-checks: tests/companion_checks.hew src/companion.hew src/companion_radio.hew $(MESHPROTO) $(HOSTLIB) src/wire.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/companion_checks.hew -o $@ $(LINK)
-build/companion-checks-release: tests/companion_checks.hew src/companion.hew src/companion_radio.hew $(MESHPROTO) $(HOSTLIB) src/wire.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
+build/companion-checks-release: tests/companion_checks.hew src/companion.hew src/companion_radio.hew $(MESHPROTO) $(HOSTLIB) src/wire.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/companion_checks.hew --release -o $@ $(LINK)
 .PHONY: base-local-test
 base-local-test: build/companion-checks build/companion-checks-release
@@ -277,13 +277,13 @@ build/outbound-checks: tests/outbound_checks.hew src/hostlib/outbound.hew src/ho
 	$(HEW) build --emit-deps $@.d tests/outbound_checks.hew -o $@ --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib $(CURDIR)/build/transport_bridge.o --link-lib $(CURDIR)/build/event_bridge.o --link-lib -lcurl --link-lib -lcrypto
 build/outbound-checks-release: tests/outbound_checks.hew src/hostlib/outbound.hew src/hostlib/events.hew src/hostlib/binary.hew build/outbound_bridge.o build/transport_bridge.o
 	$(HEW) build --emit-deps $@.d tests/outbound_checks.hew --release -o $@ --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib $(CURDIR)/build/transport_bridge.o --link-lib $(CURDIR)/build/event_bridge.o --link-lib -lcurl --link-lib -lcrypto
-build/observer-client-checks: tests/observer_client_checks.hew src/observer_client.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
+build/observer-client-checks: tests/observer_client_checks.hew src/observer_client.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/observer_client_checks.hew -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK)) --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib -lcurl
-build/observer-client-checks-release: tests/observer_client_checks.hew src/observer_client.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o
+build/observer-client-checks-release: tests/observer_client_checks.hew src/observer_client.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/outbound_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/observer_client_checks.hew --release -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK)) --link-lib $(CURDIR)/build/outbound_bridge.o --link-lib -lcurl
-build/observer-queue-checks: tests/observer_queue_checks.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build
+build/observer-queue-checks: tests/observer_queue_checks.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/observer_queue_checks.hew -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK))
-build/observer-queue-checks-release: tests/observer_queue_checks.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build
+build/observer-queue-checks-release: tests/observer_queue_checks.hew src/observer_queue.hew src/observer_store.hew $(HOSTLIB) $(MESHPROTO) build/event_bridge.o build/crypto_bridge.o build/storage_bridge.o build/transport_supervision.o | build src/storage.hew
 	$(HEW) build --emit-deps $@.d tests/observer_queue_checks.hew --release -o $@ $(subst transport_bridge.o,transport_supervision.o,$(LINK))
 .PHONY: observer-queue-test
 observer-queue-test: build/observer-queue-checks build/observer-queue-checks-release

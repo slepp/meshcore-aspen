@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import struct
+import role_snapshot
 import region_state
 
 from migrate_go import (BASE_FIELDS, OBSERVER_FIELDS, ROLE_OPTIONS, document, fail,
@@ -117,15 +118,17 @@ def preferences(r):
     version = r.number()
     if version not in (1, 2, 3):
         fail(r.where+": unsupported preference version")
-    texts = [r.take(r.number(2)).decode("utf-8") for _ in range(4)]
-    name, guest, admin, owner = texts
-    if not 1 <= len(name.encode()) <= 31 or len(guest.encode()) > 63 or len(admin.encode()) > 63 or len(owner.encode()) > 119 or any("\0" in text for text in texts):
+    texts = {field: r.take(r.number(2)).decode("utf-8") for field, _ in role_snapshot.PREFERENCE_TEXT}
+    name, guest, admin, owner = (texts[field] for field in ("Name", "guest", "admin", "owner_info"))
+    if not name or any(len(texts[field].encode()) > maximum or "\0" in texts[field] for field, maximum in role_snapshot.PREFERENCE_TEXT):
         fail(r.where+": invalid preference text")
-    width, flags, acks, loop, flood, unscoped, adverts, local, flood_time = [r.number(4) for _ in range(9)]
-    delay, direct = struct.unpack("<ff", r.take(8))
-    latitude, longitude, offset, location = struct.unpack("<ddqB", r.take(25)) if version >= 2 else (0, 0, 0, 0)
-    rxdelay, factor = struct.unpack("<ff", r.take(8)) if version == 3 else (0, 1)
-    preference_profile = r.number() if version == 3 else 0
+    scalars = dict(zip(role_snapshot.PREFERENCE_FIELDS, role_snapshot.PREFERENCE_SCALARS.unpack(r.take(role_snapshot.PREFERENCE_SCALARS.size))))
+    width, flags, acks, loop = (scalars[field] for field in ("width", "flags", "acks", "loop"))
+    flood, unscoped, adverts = (scalars[field] for field in ("flood_max_hops", "unscoped_max_hops", "advert_max_hops"))
+    local, flood_time = (scalars[field] for field in ("local_advert_seconds", "flood_advert_seconds"))
+    delay, direct = role_snapshot.PREFERENCE_DELAYS.unpack(r.take(role_snapshot.PREFERENCE_DELAYS.size))
+    latitude, longitude, offset, location = role_snapshot.PREFERENCE_LOCATION.unpack(r.take(role_snapshot.PREFERENCE_LOCATION.size)) if version >= 2 else (0, 0, 0, 0)
+    rxdelay, factor, preference_profile = role_snapshot.PREFERENCE_SOURCE.unpack(r.take(role_snapshot.PREFERENCE_SOURCE.size)) if version == 3 else (0, 1, 0)
     if preference_profile > 1:
         fail(r.where+": invalid source-factor preference profile")
     if not math.isfinite(rxdelay) or not 0 <= rxdelay <= 20 or not math.isfinite(factor) or factor < 0:
@@ -153,11 +156,11 @@ def snapshot(data, public, kind, where):
         fail(where+": invalid snapshot size")
     r = Reader(data, where)
     version = r.take(4)
-    if version not in (b"HEW2", b"HEW3", b"HEW4", b"HEW5", b"HEW6"):
+    if version not in role_snapshot.SUPPORTED_VERSIONS:
         fail(where+": unknown snapshot version")
     if r.take(32) != public:
         fail(where+": snapshot identity differs from retained seed")
-    result = dict(zip(("Clock", "Posted", "Pushed"), (r.number(4) for _ in range(3))))
+    result = dict(zip(role_snapshot.COUNTER_FIELDS, role_snapshot.COUNTERS.unpack(r.take(role_snapshot.COUNTERS.size))))
     count = r.number()
     if count > 20 or r.number() != kind:
         fail(where+": invalid member count or role")
@@ -166,8 +169,10 @@ def snapshot(data, public, kind, where):
         key = r.take(32)
         if key.hex() in members:
             fail(where+": duplicate member")
-        member = {"Key": list(key), "Permissions": r.number(), "LastTimestamp": r.number(4),
-                  "SyncSince": r.number(4), "KnownPath": r.flag(), "PathLength": r.number()}
+        permission = r.number()
+        stamp, cursor = role_snapshot.MEMBER_TIMES.unpack(r.take(role_snapshot.MEMBER_TIMES.size))
+        member = {"Key": list(key), "Permissions": permission, "LastTimestamp": stamp,
+                  "SyncSince": cursor, "KnownPath": r.flag(), "PathLength": r.number()}
         path = r.take(r.number())
         length = member["PathLength"]
         if length >= 192 or len(path) > 64 or len(path) != ((length>>6)+1)*(length&63):
@@ -189,8 +194,9 @@ def snapshot(data, public, kind, where):
             fail(where+": too many retained posts")
         previous = 0
         for _ in range(count):
-            author, stamp = r.take(32), r.number(4)
-            text = r.take(r.number())
+            author = r.take(32)
+            stamp, length = role_snapshot.POST.unpack(r.take(role_snapshot.POST.size))
+            text = r.take(length)
             if not 1 <= len(text) <= 151 or b"\0" in text or not previous < stamp <= result["Clock"]:
                 fail(where+": invalid retained history")
             post = {"Author": list(author), "Timestamp": stamp}

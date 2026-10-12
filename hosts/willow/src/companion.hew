@@ -236,7 +236,7 @@ pub actor Base {
         var envelope = authority;
         if authority.type_of() == json.Kind.Object {
             envelope.set("state", next).expect("envelope");
-            envelope.set("identity", state.encoded(state.expanded(next_key))).expect("envelope identity");
+            envelope.set("identity", state.encoded(wire.expanded_key(next_key))).expect("envelope identity");
             stored = envelope;
         }
         let result = state.commit(path, stored);
@@ -910,7 +910,7 @@ pub actor Base {
                     return reply(id, error(6));
                 }
                 output.push(event(id, if callbacks.identity_export {
-                    wire.cat(wire.byte(14), state.expanded(key))
+                    wire.cat(wire.byte(14), wire.expanded_key(key))
                 } else {
                     wire.byte(15)
                 }));

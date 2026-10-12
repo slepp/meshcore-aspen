@@ -128,7 +128,7 @@ pub fn fresh(key: bytes, name: string, retention: string, flood_seconds: i64, pa
 
 pub fn reset(root: string, name: string, retention: string, flood_seconds: i64, path_mode: i64) -> bool {
     let seed = crypto.random_bytes(32).expect("new factory-reset role identity");
-    let identity = state.expanded(seed);
+    let identity = wire.expanded_key(seed);
     let document = fresh(identity, name, retention, flood_seconds, path_mode);
     var envelope = json.object();
     envelope.set("version", json.from_int(1)).expect("reset authority");

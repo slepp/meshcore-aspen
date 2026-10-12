@@ -7,9 +7,12 @@ import std.crypto.crypto;
 
 import willow.src.wire;
 
-import willow.src.companion;
+pub type Scope {
+    unscoped: bool;
+    scope_key: bytes;
+}
 
-pub fn flood(packet: wire.Packet, doc: json.Value, client: Option<companion.Client>) -> wire.Packet {
+pub fn flood(packet: wire.Packet, doc: json.Value, client: Option<Scope>) -> wire.Packet {
     var p = packet;
     p.route = 1;
     p.pathlen = state.integer(state.field(doc, "Preferences"), "path_hash_mode") << 6;
@@ -30,7 +33,7 @@ pub fn flood(packet: wire.Packet, doc: json.Value, client: Option<companion.Clie
     p
 }
 
-pub fn routed(packet: wire.Packet, contact: json.Value, doc: json.Value, client: Option<companion.Client>, force_flood: bool) -> wire.Packet {
+pub fn routed(packet: wire.Packet, contact: json.Value, doc: json.Value, client: Option<Scope>, force_flood: bool) -> wire.Packet {
     let encoded = state.integer(contact, "OutPathLen");
     if !force_flood && encoded != 255 {
         var p = packet;

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import struct
+import role_snapshot
 import ipaddress
 import math
 import zlib
@@ -393,7 +394,7 @@ def role_state(files, source_role, target_role, kind, public, config):
     order=state.get("MemberOrder") or []
     if len(order)!=len(set(order)) or any(key not in members for key in order): fail(f"{source_role}: invalid member order")
     order=order+sorted(set(members)-set(order))
-    out=bytearray(b"HEW6"+public+struct.pack("<III",*(u32(state.get(k,0),source_role+"."+k) for k in ("Clock","Posted","Pushed")))+bytes([len(order),kind]))
+    out=bytearray(role_snapshot.CURRENT_VERSION+public+role_snapshot.COUNTERS.pack(*(u32(state.get(k,0),source_role+"."+k) for k in role_snapshot.COUNTER_FIELDS))+bytes([len(order),kind]))
     attempts=bytearray()
     for key in order:
         member=members[key]
@@ -409,7 +410,7 @@ def role_state(files, source_role, target_role, kind, public, config):
         encoded=member.get("PathLength",0)
         if not 0<=encoded<=191 or len(path)!=((encoded>>6)+1)*(encoded&63) or len(path)>64:
             fail(f"{source_role}: invalid learned path")
-        out+=peer+bytes([permission])+struct.pack("<II",u32(member.get("LastTimestamp",0),"member stamp"),
+        out+=peer+bytes([permission])+role_snapshot.MEMBER_TIMES.pack(u32(member.get("LastTimestamp",0),"member stamp"),
                                                    u32(member.get("SyncSince",0),"member cursor"))
         out+=bytes([bool(member.get("KnownPath")),encoded,len(path)])+path
     out+=b"\0" # No all-Hew bot notes in relay/room snapshots.
@@ -427,23 +428,24 @@ def role_state(files, source_role, target_role, kind, public, config):
             else: text=post.get("Text","").encode("utf-8")
             if not previous<stamp<=state["Clock"] or not 1<=len(text)<=151 or b"\0" in text:
                 fail(f"{source_role}: invalid retained post order, timestamp or text")
-            out+=author+struct.pack("<IB",stamp,len(text))+text
+            out+=author+role_snapshot.POST.pack(stamp,len(text))+text
             previous=stamp
     settings = bytearray(b"\2")
-    for value, maximum in ((config[prefix+"name"], 31), (config[prefix+"password"], 63),
-                           (config[prefix+"admin"], 63), (owner_info, 119)):
+    texts = {"Name": config[prefix+"name"], "guest": config[prefix+"password"],
+             "admin": config[prefix+"admin"], "owner_info": owner_info}
+    for field, maximum in role_snapshot.PREFERENCE_TEXT:
+        value = texts[field]
         raw = value.encode()
         if len(raw) > maximum or "\0" in value:
             fail(f"{source_role}: invalid persisted preference text")
         settings += struct.pack("<H", len(raw))+raw
     flags = int(prefs.get("repeat", False)) | (2 if state.get("AllowReadOnly", False) else 0)
-    settings += struct.pack("<9I", prefs["path_hash_mode"]+1, flags, state.get("MultiACKs", 0),
-        prefs.get("loop", 0), prefs.get("flood_max_hops", 0), prefs.get("unscoped_max_hops", 0),
-        prefs.get("advert_max_hops", 0), prefs.get("local_advert_seconds", 0), prefs.get("flood_advert_seconds", 0))
-    settings += struct.pack("<ff", prefs.get("txdelay", 0), prefs.get("direct_txdelay", 0))
-    settings += struct.pack("<ddqB", latitude, longitude, rtc_offset, location)
+    scalars = dict(prefs, width=prefs["path_hash_mode"]+1, flags=flags, acks=state.get("MultiACKs", 0))
+    settings += role_snapshot.PREFERENCE_SCALARS.pack(*(scalars.get(field, 0) for field in role_snapshot.PREFERENCE_FIELDS))
+    settings += role_snapshot.PREFERENCE_DELAYS.pack(prefs.get("txdelay", 0), prefs.get("direct_txdelay", 0))
+    settings += role_snapshot.PREFERENCE_LOCATION.pack(latitude, longitude, rtc_offset, location)
     settings[0] = 3
-    settings += struct.pack("<ffB", rxdelay, factor, int(preference_profile != "native-preferences"))
+    settings += role_snapshot.PREFERENCE_SOURCE.pack(rxdelay, factor, int(preference_profile != "native-preferences"))
     metadata = region_state.encode(table)
     out += struct.pack("<H", len(settings))+settings+struct.pack("<H", len(metadata))+metadata
     return bytes(out), {"members":len(members),"regions":len(regions),"history":len(history),"retention":retention,

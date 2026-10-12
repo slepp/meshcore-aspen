@@ -7,12 +7,7 @@ import std.crypto.crypto;
 
 import std.encoding.utf8;
 
-extern "C" {
-    #[offload]
-    fn mc_commit_bounded(path: bytes, data: bytes, limit: i32) -> i32;
-    #[offload]
-    fn mc_read_bounded(path: bytes, limit: i32) -> bytes;
-}
+import willow.src.storage;
 
 pub type Entry {
     token: string;
@@ -163,14 +158,10 @@ pub fn decode(config: observation.Config, data: bytes, capacity: i64) -> Result<
 }
 
 pub fn read(path: string) -> bytes {
-    unsafe {
-        mc_read_bounded(path.to_bytes(), 4194304)
-    }
+    storage.read_bounded(path, 4194304)
 }
 
 pub fn save(path: string, config: observation.Config, snapshot: Snapshot) -> i64 {
     let data = encode(config, snapshot);
-    unsafe {
-        mc_commit_bounded(path.to_bytes(), data, 4194304) as i64
-    }
+    storage.commit_bounded(path, data, 4194304)
 }
