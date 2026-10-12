@@ -41,7 +41,7 @@ help:
 		'  make host-test          Go race tests (live tests require explicit environment opt-ins)' \
 		'  make test-native-smoke  Local C++ firmware and storage tests' \
 		'  make host-build         Build the host and check commands into bin/' \
-		'  make hew-base           Build the separate native Base candidate (see experiments/hew-roles/BASE.md)' \
+		'  make hew-base           Build the separate native Base candidate (see hosts/willow/docs/BASE.md)' \
 		'  make hew-base-test      Run synthetic Base differential/TCP/source/state checks' \
 		'  make aspen-config       Create the ESP32 standalone build configuration' \
 		'  make aspen-firmware     Build the configured ESP32 standalone radio' \
@@ -72,7 +72,7 @@ test-native-smoke:
 	python3 -m unittest discover -s firmware/esp32/tests -p test_packet_pipeline.py -v
 	python3 -m unittest discover -s test_support/resource_budget -v
 	$(MAKE) -C internal/nativebot test spiffs-test
-	python3 -m unittest discover -s experiments/hew-roles/tests -p 'test_build_worker.py' -v
+	python3 -m unittest discover -s hosts/willow/tests -p 'test_build_worker.py' -v
 
 .PHONY: host-build host-test host-run host-config host-install host-readiness test-host-live test-host-reconnect test-host-rf
 
@@ -91,11 +91,11 @@ release-check:
 
 .PHONY: hew-base hew-base-test hew-base-symbols
 hew-base:
-	$(MAKE) -C experiments/hew-roles base-service
+	$(MAKE) -C hosts/willow base-service
 hew-base-test:
-	$(MAKE) -C experiments/hew-roles base-local-test base-service-test
+	$(MAKE) -C hosts/willow base-local-test base-service-test
 hew-base-symbols:
-	$(MAKE) -C experiments/hew-roles base-symbols
+	$(MAKE) -C hosts/willow base-symbols
 
 .PHONY: test-mkiss-device
 test-mkiss-device:

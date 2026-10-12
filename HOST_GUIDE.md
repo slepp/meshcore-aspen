@@ -478,7 +478,7 @@ For private operator management, the active native bot creates
 Only a same-UID local Unix peer can submit one newline-terminated ASCII
 command (up to 160 bytes) per connection. Willow instead uses the explicit
 `--willow-socket` SEQPACKET transport; see its
-[Lua/Wasm installation guide](experiments/hew-roles/SERVICE.md#install-lua-and-wasm-programs).
+[Lua/Wasm installation guide](hosts/willow/docs/SERVICE.md#install-lua-and-wasm-programs).
 The existing `admin.py` accepts
 `--unix-socket /absolute/state/bot/native/admin.sock` for the same source
 install/update/download operations, scoped data exports/restores and individual

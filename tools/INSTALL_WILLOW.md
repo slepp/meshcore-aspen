@@ -7,7 +7,7 @@ configure a radio or install a compiler. Keep your existing installation for
 rollback.
 
 Install the normal build prerequisites described in
-[the service guide](../experiments/hew-roles/SERVICE.md#build-and-install-from-source).
+[the service guide](../hosts/willow/docs/SERVICE.md#build-and-install-from-source).
 Build the current Hew toolchain with `make hew` and put its `build/bin` launcher
 on `PATH`, with matching libraries and std. A debug compiler launcher can link
 an unoptimized runtime even when the application uses `--release`.

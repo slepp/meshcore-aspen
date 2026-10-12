@@ -113,7 +113,18 @@ def prop(unit, name):
 
 
 def roles(install):
-    return Path(install) / "experiments/hew-roles"
+    root = Path(install)
+    for relative in ("hosts/willow", "experiments/hew-roles"):
+        candidate = root / relative
+        if (candidate / "Makefile").is_file():
+            return candidate
+    raise ValueError("Installation has no Willow source/build directory")
+
+
+def helper(install, name):
+    directory = roles(install)
+    candidate = directory / "tools" / name
+    return candidate if candidate.is_file() else directory / name
 
 
 def executable(item, install):
@@ -189,7 +200,7 @@ def build(plan, workspace):
                        stdout=stream, stderr=subprocess.STDOUT, check=True,
                        timeout=900, preexec_fn=limited)
     if "host" in kinds:
-        run([sys.executable, "-B", "build_worker.py", "--verify"], cwd=roles(install),
+        run([sys.executable, "-B", str(helper(install, "build_worker.py")), "--verify"], cwd=roles(install),
             stdout=subprocess.DEVNULL)
     return {"compiler": str(Path(compiler).resolve()),
             "compiler_version": subprocess.check_output([compiler, "--version"], text=True).strip(),
@@ -215,7 +226,7 @@ def resume_build(plan, workspace):
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError(kind + ": production binary changed since the build")
     if "host" in result["binaries"]:
-        run([sys.executable, "-B", "build_worker.py", "--verify"], cwd=roles(plan["install"]),
+        run([sys.executable, "-B", str(helper(plan["install"], "build_worker.py")), "--verify"], cwd=roles(plan["install"]),
             stdout=subprocess.DEVNULL)
     return result
 
@@ -238,11 +249,11 @@ def stage_state(item, source, destination, log):
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     install = item["target_install"]
     if item["kind"] == "host":
-        run([sys.executable, "-B", str(roles(install) / "willow.py"), "rebind",
+        run([sys.executable, "-B", str(helper(install, "willow.py")), "rebind",
              "--source", str(source), "--state", str(destination)], stdout=log, stderr=log)
         ignored = {"config", "migration.json"}
     else:
-        run([sys.executable, "-B", str(roles(install) / "migrate_base.py"), "stage",
+        run([sys.executable, "-B", str(helper(install, "migrate_base.py")), "stage",
              "--source", str(source), "--destination", str(destination)], stdout=log, stderr=log)
         ignored = {"migration-base.json"}
     before, after = files(source), files(destination)
@@ -253,7 +264,7 @@ def stage_state(item, source, destination, log):
 def command(item):
     binary = executable(item, item["target_install"])
     if item["kind"] == "host":
-        return [sys.executable, "-B", str(roles(item["target_install"]) / "willow.py"),
+        return [sys.executable, "-B", str(helper(item["target_install"], "willow.py")),
                 "run", "--release", "--state", item["next_state"]]
     return [str(binary), item["next_config"]]
 

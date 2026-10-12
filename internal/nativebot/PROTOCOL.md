@@ -92,7 +92,7 @@ Native -> Go:
 | `0x89` OWNER_INBOX | `sender:[32]`, `timestamp:u32`, `text:[1..162]`; full sender key selected by authenticated native decryption, excluding self/reflection. Canonical timestamp/text/full-key duplicates (including changed retry bits/padding) are suppressed for 120 seconds in 64 entries. A frame containing only the tag reports a dedup-capacity drop. Forward plaintext only to the authenticated owner's private inbox, never the journal or raw-packet observer. |
 
 Willow exposes the optional owner feature through its
-[same-UID Unix control socket](../../experiments/hew-roles/SERVICE.md#send-a-dm-and-read-the-owners-inbox),
+[same-UID Unix control socket](../../hosts/willow/docs/SERVICE.md#send-a-dm-and-read-the-owners-inbox),
 not by sharing the worker pipe. Its durable request IDs prevent automatic
 replay across worker, host or Go handover. The worker remains the same
 Go-compatible native bot when this feature is not enabled.

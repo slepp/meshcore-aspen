@@ -39,7 +39,7 @@ toolchain. Give each profile a separate output directory. Set
 | Aspen | ESP32-S3 application and separate first-install files | [Product candidate build](release/README.md), [public setup](firmware/esp32/PUBLIC_SETUP.md), [WiFi updates](firmware/esp32/ESP_FIELD_UPDATES.md) |
 | Birch | Go host tools, native bot worker and matching WiFi shared modem from one commit | [Product candidate build and provisioning gate](release/README.md), [modem and Go host setup](HOST_GUIDE.md) |
 | Pine | nRF52840 application UF2, BIN and Legacy BLE DFU ZIP for initialized nodes | [Production Lua](firmware/nrf52840/PRODUCTION-LUA.md), [BLE updates](firmware/nrf52840/BLE-FIELD-UPDATE.md) |
-| Willow | Experimental Linux Hew host sources, including native Base, broker and dashboard | [Build and service setup](experiments/hew-roles/README.md) |
+| Willow | Experimental Linux Hew host sources, including native Base, broker and dashboard | [Build and service setup](hosts/willow/README.md) |
 
 Build generic images with per-node provisioning. Operators supply their own
 identities, passwords, network credentials and signing keys. Keep

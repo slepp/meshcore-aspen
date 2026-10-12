@@ -164,7 +164,7 @@ func TestWillowMigrationFixture(t *testing.T) {
 	}
 }
 
-// Opt-in: build experiments/hew-roles first. No device or socket is opened.
+// Opt-in: build hosts/willow first. No device or socket is opened.
 func TestHewRoomStateMachineDifferential(t *testing.T) {
 	binary := os.Getenv("MESHCORE_HEW_BIN")
 	if binary == "" {

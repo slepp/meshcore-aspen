@@ -34,7 +34,7 @@ Keep full source/build information in each candidate manifest.
 Willow is an experimental Hew source-build release. Its native
 worker is verified against the local source/build tree, so the source release
 must be built at its final installation path. Use its
-[setup and retained-state upgrade guide](../experiments/hew-roles/README.md).
+[setup and retained-state upgrade guide](../hosts/willow/README.md).
 **Birch 0.1.1 is a Linux x86_64 host-tools and native-worker
 bundle for an already configured queued-v1 WiFi/TCP shared modem.** The host
 and worker share one product commit. Modem firmware is built and privately
@@ -223,7 +223,7 @@ socket. Named Lua updates retain bundled commands and unrelated sources;
 hash-conditional commits reject a stale source set. Wasm remains independently
 installed alongside Lua. Event grants are explicit owner settings and are
 not enabled by installing a script. See the
-[Willow service controls](../experiments/hew-roles/SERVICE.md).
+[Willow service controls](../hosts/willow/docs/SERVICE.md).
 
 ## Aspen 0.1.12 and Willow 0.0.3
 
@@ -256,7 +256,7 @@ Willow builds with the current Hew compiler and matching libraries on `PATH`.
 Frozen-state rebinding validates a private staged copy before publishing the
 new state directory. A clean parallel build prepares the native worker's radio
 objects before compiling the worker. Follow the
-[upgrade and latest-state rollback procedure](../experiments/hew-roles/MIGRATION.md#upgrade-a-frozen-willow-state).
+[upgrade and latest-state rollback procedure](../hosts/willow/docs/MIGRATION.md#upgrade-a-frozen-willow-state).
 
 ## Aspen 0.1.11
 

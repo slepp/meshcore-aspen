@@ -1,6 +1,7 @@
 """Stopped-state and service-switch regressions; no real systemd or radio calls."""
 import importlib.util
 import json
+import io
 import os
 from pathlib import Path
 import sys
@@ -13,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "experiments/hew-roles"))
+sys.path.insert(0, str(ROOT / "hosts/willow/tools"))
 import migrate_base
 import willow
 spec = importlib.util.spec_from_file_location("installer", ROOT / "tools/install_willow.py")
@@ -77,14 +78,32 @@ class Install(unittest.TestCase):
             willow.rebind(source, self.root / "refused")
 
     def item(self, kind="dashboard"):
-        return {"unit": "dashboard.service", "kind": kind, "current_install": "/old-dashboard",
-                "target_install": "/new-dashboard", "config": str(self.root / "dashboard.conf"),
+        old, new = self.root / "old-dashboard", self.root / "new-dashboard"
+        for install, relative in ((old, "experiments/hew-roles"), (new, "hosts/willow")):
+            directory = install / relative
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "Makefile").touch()
+        (new / "hosts/willow/tools").mkdir(exist_ok=True)
+        for name in ("willow.py", "build_worker.py", "migrate_base.py"):
+            (new / "hosts/willow/tools" / name).touch()
+        return {"unit": "dashboard.service", "kind": kind, "current_install": str(old),
+                "target_install": str(new), "config": str(self.root / "dashboard.conf"),
                 "next_config": str(self.root / "new.conf")}
+
+    def test_old_and_new_install_layouts_select_their_own_helpers(self):
+        item = self.item()
+        old = Path(item["current_install"]) / "experiments/hew-roles"
+        new = Path(item["target_install"]) / "hosts/willow"
+        (old / "willow.py").touch()
+        self.assertEqual(installer.roles(item["current_install"]), old)
+        self.assertEqual(installer.roles(item["target_install"]), new)
+        self.assertEqual(installer.helper(item["current_install"], "willow.py"), old / "willow.py")
+        self.assertEqual(installer.helper(item["target_install"], "willow.py"), new / "tools/willow.py")
 
     def test_override_keeps_environment_and_other_service_options(self):
         old = b"[Service]\nExecStart=\nExecStart=/old/dashboard /old/config\nEnvironmentFile=/private/references\nEnvironment=HEW_WORKERS=4\nMemoryMax=1G\nWorkingDirectory=/old\n"
         new = installer.override_bytes(self.item(), old).decode()
-        self.assertIn('"/new-dashboard/experiments/hew-roles/build/hew-dashboard-release"', new)
+        self.assertIn(str(self.root / 'new-dashboard/hosts/willow/build/hew-dashboard-release'), new)
         self.assertIn("EnvironmentFile=/private/references\nEnvironment=HEW_WORKERS=4\nMemoryMax=1G", new)
         self.assertEqual(new.count("ExecStart="), 2)
 
@@ -157,6 +176,9 @@ class Install(unittest.TestCase):
         path.write_text(json.dumps(plan))
         def build(plan, workspace):
             (workspace / "source.tar").write_bytes(b"exact source archive")
+            directory = Path(plan["install"]) / "hosts/willow"
+            directory.mkdir(parents=True)
+            (directory / "Makefile").touch()
             binary = installer.roles(plan["install"]) / "build/hew-dashboard-release"
             binary.parent.mkdir(parents=True)
             binary.write_bytes(b"completed binary")
@@ -227,8 +249,10 @@ class Install(unittest.TestCase):
                 "services": [{"kind": "dashboard"}, {"kind": "host", "selected": False}]}
         commands = []
         def archive(args, **kwargs):
-            with tarfile.open(fileobj=kwargs["stdout"], mode="w"):
-                pass
+            with tarfile.open(fileobj=kwargs["stdout"], mode="w") as output:
+                marker = tarfile.TarInfo("hosts/willow/Makefile")
+                marker.size = 0
+                output.addfile(marker, io.BytesIO())
         def build(args, **kwargs):
             commands.append(args)
             directory = installer.roles(plan["install"]) / "build"

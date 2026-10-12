@@ -98,13 +98,13 @@ VERSION = "{willow}"
 name = "willow"
 version = "{willow}"
 edition = "2026"
-main = "service_main.hew"
+main = "src/service_main.hew"
 '''
     return {"firmware/esp32/FirmwareIdentity.h": header,
             "internal/buildinfo/identity.go": go, "release/versions.mk": make,
-            "experiments/hew-roles/release_identity.hew": hew,
-            "experiments/hew-roles/release_identity.py": python,
-            "experiments/hew-roles/hew.toml": manifest}
+            "hosts/willow/src/release_identity.hew": hew,
+            "hosts/willow/tools/release_identity.py": python,
+            "hosts/willow/hew.toml": manifest}
 
 
 def main():

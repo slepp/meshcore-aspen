@@ -48,7 +48,7 @@ an in-memory radio and network fixture, not a connected node.
 | `firmware/shared` | Modem, queue and wire contracts used across builds |
 | `firmware/remote-radio/esp32` | ESP32 roles connected to a separate WiFi modem |
 | `cmd`, `internal` | Go host services, protocol implementations and checks; the Python chat CLI also lives under `cmd` |
-| `experiments/hew-roles` | Experimental Willow host, Base companion, MQTT broker, dashboard and compatibility checks |
+| `hosts/willow` | Experimental Willow host, Base companion, MQTT broker, dashboard and compatibility checks |
 | `tools/hardware` | Operator administration, selected-device checks and update workflows |
 | `test_support` | Native seams, protocol fixtures and hardware test runners |
 | `packaging` | Host service units and host backup/restore tool |

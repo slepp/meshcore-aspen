@@ -44,7 +44,7 @@ Source dependencies are downloaded by Go; they are not vendored here.
 
 Willow uses Hew **0.6.0-rc7** and native libraries in addition to the shared
 Lua/Wasm worker dependencies above. See the
-[Willow library and compatibility guide](experiments/hew-roles/LIBRARIES.md)
+[Willow library and compatibility guide](hosts/willow/docs/LIBRARIES.md)
 for the required runtime contracts and checks.
 
 | Component | Source | License |

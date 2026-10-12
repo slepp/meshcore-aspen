@@ -25,7 +25,7 @@ Import [`meshcore-willow-host.json`](meshcore-willow-host.json) for the native
 Hew host's role transitions, connections, observer queue/publications,
 companion TX outcomes and shared-modem measurements. Configure an existing
 collector to scrape the Willow dashboard's `/metrics` endpoint; see
-[Willow host metrics](../../experiments/hew-roles/METRICS.md). This feed is
+[Willow host metrics](../../hosts/willow/docs/METRICS.md). This feed is
 separate from the ESP32 and Python panels above.
 
 ## Battery trends and voltage limits

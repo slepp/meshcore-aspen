@@ -34,7 +34,7 @@ settings. Follow the selected bundle's installation or update procedure.
 | Setup | Supported hardware | Use it when | Next step |
 | --- | --- | --- | --- |
 | Aspen: standalone ESP32 | XIAO ESP32-S3R8 with PSRAM + Wio SX1262 | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
-| Willow: WiFi modem + Hew host | Configured queued-v1 WiFi/TCP shared modem; Linux x86-64 host and current Hew compiler | You want host roles, filesystem state, a Lua/Wasm bot, Base companion, MQTT broker and browser dashboard | [Build and run Willow](experiments/hew-roles/README.md), or [retain an existing Birch node](experiments/hew-roles/MIGRATION.md) |
+| Willow: WiFi modem + Hew host | Configured queued-v1 WiFi/TCP shared modem; Linux x86-64 host and current Hew compiler | You want host roles, filesystem state, a Lua/Wasm bot, Base companion, MQTT broker and browser dashboard | [Build and run Willow](hosts/willow/README.md), or [retain an existing Birch node](hosts/willow/docs/MIGRATION.md) |
 | Birch: WiFi modem + Go host | The same shared modem; Linux x86_64 Debian 12 host | You need the existing prebuilt Go host download | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
 | Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
 | ESP32 role with a remote modem | XIAO ESP32-S3 indoors; ESP32 + SX1262 at the radio site | You want a repeater, room or companion on an indoor board, connected over WiFi | [Remote-radio roles](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) |
@@ -95,14 +95,14 @@ start with the [build-only shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.
 and keep the roles on a host. Its credential-free image is for build checks,
 not flashing a lab radio. A full Aspen port or a V4 image still needs its own
 wiring, TCXO, memory layout and feature selection.
-Willow sources are included in `experiments/hew-roles`. Willow is the primary
+Willow sources are included in `hosts/willow`. Willow is the primary
 host implementation; it remains beta software and currently requires a source
-build. Check the [supported services and limits](experiments/hew-roles/README.md)
+build. Check the [supported services and limits](hosts/willow/README.md)
 before replacing an existing installation. For a fresh host, the native Hew
 `hew-host init` command creates private role identities and generated or imported admin and
 room credentials, with the native worker enabled. Initialization stays
 offline; it neither connects to nor retunes the modem. Follow the
-[Willow service guide](experiments/hew-roles/SERVICE.md) for its required radio
+[Willow service guide](hosts/willow/docs/SERVICE.md) for its required radio
 profile and startup commands. Use the migration procedure instead to retain
 an existing Birch installation's identities. Aspen, Birch and Pine retain
 their own setup guides.
@@ -310,7 +310,7 @@ own targets, use `make -C DIRECTORY` as shown in its guide.
 | [Bot recipes](firmware/runtime/BOT_RECIPES.md) | Guided Lua/Wasm command installation, private data, timers and channel conversations |
 | [`firmware/shared`](firmware/shared/QUEUED_TX_PROTOCOL.md), [`firmware/remote-radio/esp32`](firmware/shared/RemoteKissRadio.md) | Shared modem contracts and the ESP32 remote-radio adapter |
 | [`cmd`](cmd), [`internal`](internal) | Host commands and libraries; Python chat in [`cmd/meshcore-chat`](cmd/meshcore-chat/README.md) |
-| [Willow: `experiments/hew-roles`](experiments/hew-roles/README.md) | Experimental Hew host services, migration and native runtime contracts |
+| [Willow: `hosts/willow`](hosts/willow/README.md) | Experimental Hew host services, migration and native runtime contracts |
 | [`tools/hardware/admin.py`](tools/hardware/admin.py) | Node administration and Lua/Wasm package operations |
 | [Directed MeshCore link](tools/meshcore_link/GUIDE.md) | Persistent Base-feed DM send, inbox and session notifications |
 | [`meshcore_kiss_monitor.py`](meshcore_kiss_monitor.py) | Standalone serial and TCP packet monitor |
