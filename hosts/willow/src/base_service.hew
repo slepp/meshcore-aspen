@@ -644,12 +644,12 @@ pub fn run(config_path: string, lock_fd: i32, locked_root: string, selected_port
         source.buffered = Vec.new();
         if source.online {
             match duplex.read(fd, 0) {
-                hostlib.duplex.Read.Data(data) => {
+                willow.src.hostlib.duplex.Read.Data(data) => {
                     for decoded in decoder.feed(data).expect("modem framing") {
                         source_frames.push(decoded);
                     }
                 }
-                hostlib.duplex.Read.Idle => {}
+                willow.src.hostlib.duplex.Read.Idle => {}
                 _ => {
                     source.online = false;
                 }
