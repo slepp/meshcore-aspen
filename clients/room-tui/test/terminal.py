@@ -146,9 +146,10 @@ def until(check, label, timeout=15):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pump()
+        exited = process.poll() is not None
         if check():
             return
-        if process.poll() is not None:
+        if exited:
             raise AssertionError(f"Client exited during {label}: {bytes(output)!r}")
     raise AssertionError(f"Timed out: {label}: {bytes(output)!r}")
 
