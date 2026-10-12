@@ -12,7 +12,6 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = "d92964352441e53b93e8667b802e04f6e072b39e"
 EPOCH = "1790798400"
-WAMR_SHA = "c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e"
 PROFILES = {
     "modem": ("Xiao_S3_WIO_kiss_wifi", 0),
     "native": ("Xiao_S3_WIO_onchip", 0),
@@ -94,23 +93,15 @@ def run(args, env, log):
     subprocess.run(args, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 
 
-def copy_archive(source, destination, expected):
-    if sha(source) != expected:
-        raise ValueError(f"Archive hash mismatch: {source.name}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        shutil.copyfile(source, destination)
-
-
 def verify_source(root, reference="HEAD"):
     revision = subprocess.check_output(
         ["git", "rev-parse", "--verify", "--end-of-options", reference + "^{commit}"],
         cwd=root, text=True).strip()
     subprocess.run(["git", "diff", "--exit-code", revision, "--", "firmware",
-                    "packages/hew-lua", "Makefile", ":(exclude)**/*.md"], cwd=root, check=True,
+                    "packages/hew-lua", "packages/hew-wamr", "Makefile", ":(exclude)**/*.md"], cwd=root, check=True,
                    stdout=subprocess.DEVNULL)
     untracked = subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard", "--", "firmware", "packages/hew-lua"],
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "firmware", "packages/hew-lua", "packages/hew-wamr"],
         cwd=root, text=True).splitlines()
     if any(Path(path).suffix != ".md" for path in untracked):
         raise ValueError("Untracked firmware inputs differ from the selected baseline")
@@ -121,7 +112,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--libdeps", type=Path, required=True)
-    parser.add_argument("--wamr-archive", type=Path, required=True)
     parser.add_argument("--baseline", default="HEAD",
                         help="Local source revision to verify build inputs against (default: HEAD)")
     parser.add_argument("--profiles", nargs="+", choices=PROFILES, default=list(PROFILES))
@@ -136,7 +126,6 @@ def main():
     if not source.exists():
         subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(args.upstream), str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "checkout", "--quiet", "--detach", UPSTREAM], check=True)
-    copy_archive(args.wamr_archive, ROOT / ".cache/meshcore-wamr/wamr.tar.gz", WAMR_SHA)
     config = (ROOT / "firmware/esp32/platformio.ini.example").read_text()
     config = config.replace("MAX_CONTACTS=256", "MAX_CONTACTS=350")
     config = config.replace("MAX_GROUP_CHANNELS=8", "MAX_GROUP_CHANNELS=40")
@@ -203,7 +192,7 @@ def main():
             "upstream": UPSTREAM, "profile": name,
             "environment": target_env, "wasm": wasm, "source_date_epoch": EPOCH,
             "lua_package_manifest_sha256": sha(ROOT / "packages/hew-lua/hew.toml"),
-            "wamr_archive_sha256": WAMR_SHA,
+            "wamr_package_manifest_sha256": sha(ROOT / "packages/hew-wamr/hew.toml"),
             "profile_sha256": sha(profile),
             "dependencies_sha256": dependency_inputs(deps),
             "toolchain": toolchain_inputs(),

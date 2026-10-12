@@ -15,7 +15,8 @@ BOT_LUA_C_STACK_LIMIT ?= 40
 BOT_LUA_STAMP = $(BOT_LUA_NATIVE)/.staged-$(BOT_LUA_C_STACK_LIMIT)
 BOT_WAMR := $(ROOT)/.cache/meshcore-wamr
 BOT_WAMR_LIB := $(BOT_WAMR)/host/libmeshcore_wamr.a
-BOT_WAMR_INCLUDES := -I$(BOT_WAMR)/source/core/iwasm/include
+BOT_WAMR_PACKAGE := $(ROOT)/packages/hew-wamr/native
+BOT_WAMR_INCLUDES := -I$(BOT_WAMR_PACKAGE) -I$(BOT_WAMR_PACKAGE)/vendor/core/iwasm/include
 BOT_WASM_SOURCE := ../runtime/BotWasm.cpp ../runtime/WamrRuntime.cpp
 ifeq ($(ONCHIP_BOT_WASM),0)
 BOT_WAMR_LIB :=
@@ -229,7 +230,7 @@ $(BOT_BUILD)/lua-runtime.o: $(BOT_LUA_PACKAGE)/hlua_core.cpp $(BOT_LUA_PACKAGE)/
 BOT_LUA_OBJECTS += $(BOT_BUILD)/lua-runtime.o
 BOT_LUA_OBJECTS += $(BOT_WAMR_LIB)
 ifeq ($(ONCHIP_BOT_WASM),1)
-$(BOT_WAMR_LIB): prepare_wasm.py ../runtime/wasm/CMakeLists.txt
+$(BOT_WAMR_LIB): prepare_wasm.py $(shell find $(BOT_WAMR_PACKAGE) -type f -not -path '*/target/*')
 	TMPDIR=$(ROOT)/.tmp python3 -B prepare_wasm.py
 endif
 ifeq ($(BOT_INTEGRATION),1)

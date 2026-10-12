@@ -1,0 +1,189 @@
+//! Owned numeric WebAssembly calls and copied linear-memory access.
+import std.encoding.utf8;
+
+#[opaque]
+type Handle {
+}
+
+extern "C" {
+    fn hwamr_ffi_pool(bytes: i64) -> i32;
+    fn hwamr_ffi_pool_error() -> bytes;
+    fn hwamr_ffi_open(module: bytes, source: i64, pages: i64, stack: i64, fuel: i64, us: i64) -> Handle;
+    fn hwamr_ffi_valid(handle: Handle) -> i32;
+    fn hwamr_close(handle: Handle);
+    fn hwamr_arguments(handle: Handle) -> i32;
+    fn hwamr_ffi_argument(handle: Handle, kind: i32, integer: i64, number: f64) -> i32;
+    fn hwamr_ffi_call(handle: Handle, name: bytes) -> i32;
+    fn hwamr_count(handle: Handle) -> u64;
+    fn hwamr_ffi_kind(handle: Handle, index: i64) -> i32;
+    fn hwamr_ffi_integer(handle: Handle, index: i64) -> i64;
+    fn hwamr_ffi_number(handle: Handle, index: i64) -> f64;
+    fn hwamr_ffi_readable(handle: Handle, offset: u64, size: u64) -> i32;
+    fn hwamr_ffi_read(handle: Handle, offset: u64, size: u64) -> bytes;
+    fn hwamr_ffi_write(handle: Handle, offset: u64, data: bytes) -> i32;
+    fn hwamr_ffi_error(handle: Handle) -> bytes;
+    fn hwamr_memory_size(handle: Handle) -> u64;
+    fn hwamr_instructions(handle: Handle) -> u32;
+    fn hwamr_cancel(handle: Handle);
+}
+
+pub type Limits {
+    source_bytes: i64;
+    memory_pages: i64;
+    stack_bytes: i64;
+    instructions: i64;
+    active_us: i64;
+}
+
+pub fn default_limits() -> Limits {
+    Limits { source_bytes: 65536, memory_pages: 1, stack_bytes: 8192, instructions: 100000, active_us: 100000 }
+}
+
+pub enum Value {
+    I32(i32);
+    I64(i64);
+    F32(f32);
+    F64(f64);
+}
+
+#[resource]
+pub type Instance {
+    handle: Handle;
+}
+
+fn text(value: bytes) -> string {
+    match utf8.decode(value) {
+        .Ok(v) => v,
+        .Err(_) => "Wasm execution failed",
+    }
+}
+
+fn error_text(handle: Handle) -> string {
+    text(unsafe {
+        hwamr_ffi_error(handle)
+    })
+}
+/// Select the shared runtime pool before the first instance/native registration.
+pub fn configure_pool(bytes: i64) -> bool fails string {
+    if unsafe {
+        hwamr_ffi_pool(bytes)
+    } == 0 {
+        return error text(unsafe {
+            hwamr_ffi_pool_error()
+        });
+    }
+    true
+}
+
+pub fn open(module: bytes, limits: Limits) -> Result<Instance, string> {
+    let handle = unsafe {
+        hwamr_ffi_open(module, limits.source_bytes, limits.memory_pages, limits.stack_bytes, limits.instructions, limits.active_us)
+    };
+    if unsafe {
+        hwamr_ffi_valid(handle)
+    } == 0 {
+        return .Err(error_text(handle));
+    }
+    .Ok(Instance { handle: handle })
+}
+
+impl Instance {
+    pub fn close(consume self) {
+        unsafe {
+            hwamr_close(self.handle);
+        };
+    }
+    pub fn call(self, name: string, values: Vec<Value>) -> Vec<Value> fails string {
+        if unsafe {
+            hwamr_arguments(self.handle)
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        if values.len() > 8 {
+            return error "Wasm accepts at most eight numeric arguments";
+        }
+        for value in values {
+            let ok = match value {
+                Value.I32(v) => unsafe {
+                    hwamr_ffi_argument(self.handle, 0, v as i64, 0.0)
+                }
+                Value.I64(v) => unsafe {
+                    hwamr_ffi_argument(self.handle, 1, v, 0.0)
+                }
+                Value.F32(v) => unsafe {
+                    hwamr_ffi_argument(self.handle, 2, 0, v as f64)
+                }
+                Value.F64(v) => unsafe {
+                    hwamr_ffi_argument(self.handle, 3, 0, v)
+                }
+            };
+            if ok == 0 {
+                return error error_text(self.handle);
+            }
+        }
+        if unsafe {
+            hwamr_ffi_call(self.handle, name.to_bytes())
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        var output: Vec<Value> = Vec.new();
+        let count = unsafe {
+            hwamr_count(self.handle)
+        } as i64;
+        for i in 0..count {
+            let kind = unsafe {
+                hwamr_ffi_kind(self.handle, i)
+            };
+            let value = match kind {
+                0 => Value.I32(unsafe {
+                    hwamr_ffi_integer(self.handle, i)
+                } as i32),
+                1 => Value.I64(unsafe {
+                    hwamr_ffi_integer(self.handle, i)
+                }),
+                2 => Value.F32(unsafe {
+                    hwamr_ffi_number(self.handle, i)
+                } as f32),
+                _ => Value.F64(unsafe {
+                    hwamr_ffi_number(self.handle, i)
+                }),
+            };
+            output.push(value);
+        }
+        output
+    }
+    pub fn read(self, offset: u64, size: u64) -> bytes fails string {
+        if unsafe {
+            hwamr_ffi_readable(self.handle, offset, size)
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        unsafe {
+            hwamr_ffi_read(self.handle, offset, size)
+        }
+    }
+    pub fn write(self, offset: u64, data: bytes) -> bool fails string {
+        if unsafe {
+            hwamr_ffi_write(self.handle, offset, data)
+        } == 0 {
+            return error error_text(self.handle);
+        }
+        true
+    }
+    pub fn memory_size(self) -> u64 {
+        unsafe {
+            hwamr_memory_size(self.handle)
+        }
+    }
+    pub fn instructions(self) -> u32 {
+        unsafe {
+            hwamr_instructions(self.handle)
+        }
+    }
+    /// Permanently retire execution; synchronous calls must finish first in Hew.
+    pub fn cancel(self) {
+        unsafe {
+            hwamr_cancel(self.handle);
+        };
+    }
+}

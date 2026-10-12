@@ -10,7 +10,6 @@ import platform
 import re
 import shutil
 import subprocess
-import tarfile
 
 from product_versions import ROOT
 from release_inputs import prepared_inventory, stage_source
@@ -63,18 +62,6 @@ def build_native(image, stem, env, command):
     inputs = stage_source(ROOT, source, command, run)
     scratch = source / ".tmp"
     (scratch / "native-home").mkdir()
-    wamr = source / ".cache/meshcore-wamr"
-    # Extract using host Python 3.13's data filter. Debian's Python 3.11 then
-    # patches/configures this fresh pinned source, never a newer-glibc object.
-    from importlib.util import spec_from_file_location, module_from_spec
-    spec = spec_from_file_location("release_wamr_pin", ROOT / "firmware/esp32/prepare_wasm.py")
-    pins = module_from_spec(spec)
-    spec.loader.exec_module(pins)
-    if sha256(wamr / "wamr.tar.gz") != pins.SHA256:
-        raise ValueError("Native WAMR source archive differs from the pin")
-    with tarfile.open(wamr / "wamr.tar.gz") as package:
-        package.extractall(wamr, filter="data")
-    (wamr / ("wasm-micro-runtime-" + pins.REVISION)).rename(wamr / "source")
     go_root = Path(run(["go", "env", "GOROOT"], env=env))
     receipt.update(go=run(["go", "version"], env=env), go_sha256=sha256(go_root / "bin/go"),
                    source_commit=run(["git", "rev-parse", "HEAD"]), source_date_epoch=int(env["SOURCE_DATE_EPOCH"]))

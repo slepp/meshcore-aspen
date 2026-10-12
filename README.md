@@ -256,6 +256,10 @@ uncertain sends. Read the relevant recovery procedure before acting.
 
 ## Develop an application
 
+To embed Lua or WebAssembly in another Hew application, use the optional
+[hew.lua and hew.wamr packages](packages/README.md). They build independently
+and share their engine cores with Willow and Aspen.
+
 For a clean Linux checkout, follow [contributor setup](CONTRIBUTING.md), then
 run `make check` to build the host tools and run offline Python, Go race and
 native smoke tests without opening a radio. Firmware and Lua/Wasm validation

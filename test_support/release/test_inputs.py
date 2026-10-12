@@ -47,14 +47,7 @@ class InputTests(unittest.TestCase):
                 "type": "library", "name": name, "version": pin["version"],
                 "spec": {"name": name, "owner": pin["url"].split("/")[4]},
             }))
-        self.archives = copy.deepcopy(inputs.ARCHIVES)
-        for name, pin in self.archives.items():
-            data = (name + " archive fixture").encode()
-            pin["sha256"] = hashlib.sha256(data).hexdigest()
-            target = self.root / pin["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-        for name, value in (("PINS", self.pins), ("ARCHIVES", self.archives)):
+        for name, value in (("PINS", self.pins),):
             context = patch.object(inputs, name, value)
             context.start()
             self.addCleanup(context.stop)
@@ -72,8 +65,8 @@ class InputTests(unittest.TestCase):
         source = self.root / "fresh"
         receipt = inputs.stage_source(self.root, source, self.command,
                                       lambda *args, **kwargs: inputs.load()["upstream"]["commit"])
-        for path in (".tmp/onchip-native-worker/lib/OnchipLua", ".cache/meshcore-wamr/source/core",
-                     ".cache/meshcore-wamr/source/build-scripts"):
+        for path in (".tmp/onchip-native-worker/lib/OnchipLua", "packages/hew-lua/native",
+                     "packages/hew-wamr/native"):
             (source / path).mkdir(parents=True)
             (source / path / "prepared.c").write_bytes(b"prepared source")
         receipt["prepared"] = inputs.prepared_inventory(source, ".tmp/onchip-native-worker/lib/OnchipLua")
@@ -137,17 +130,11 @@ class InputTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "metadata"):
                 inputs.package_inventory(metadata.parent, "Crypto", pin)
 
-    def test_wamr_unused_binding_symlink_is_not_a_compiled_input(self):
+    def test_vendored_source_symlink_is_rejected(self):
         source, receipt = self.stage()
-        wamr = source / ".cache/meshcore-wamr/source"
+        wamr = source / "packages/hew-wamr/native"
         (wamr / "LICENSE").write_bytes(b"license")
-        binding = wamr / "language-bindings/python"
-        binding.mkdir(parents=True)
-        (binding / "LICENSE").symlink_to("../../LICENSE")
-        self.assertEqual(inputs.prepared_inventory(source, ".tmp/onchip-native-worker/lib/OnchipLua"),
-                         receipt["prepared"])
-        inputs.verify_relink(self.relink(source), receipt)
-        (wamr / "core/extra.c").symlink_to("../LICENSE")
+        (wamr / "extra.c").symlink_to("LICENSE")
         with self.assertRaisesRegex(ValueError, "not a regular file"):
             inputs.prepared_inventory(source, ".tmp/onchip-native-worker/lib/OnchipLua")
         with self.assertRaisesRegex(ValueError, "not a regular file"):
@@ -163,7 +150,7 @@ class InputTests(unittest.TestCase):
             fetch.assert_not_called()
         self.assertEqual(path.read_bytes(), b"altered archive")
         path.unlink()
-        path.symlink_to(self.root / self.archives["lua"]["path"])
+        path.symlink_to(self.root / self.pins["CayenneLPP"]["path"] / "source.cpp")
         with self.assertRaisesRegex(ValueError, "not a regular file"):
             inputs.package_archive(self.root, name)
 
@@ -192,12 +179,13 @@ class InputTests(unittest.TestCase):
         altered["packages"]["Crypto"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "pin mismatch"):
             inputs.verify_relink(output, altered)
-        for path in (self.pins["Crypto"]["path"] + "/source.cpp", self.archives["lua"]["path"],
-                     ".tmp/onchip-native-worker/lib/OnchipLua/prepared.c"):
+        for path in (self.pins["Crypto"]["path"] + "/source.cpp", inputs.CACHE + "/" + Path(self.pins["Crypto"]["url"]).name,
+                     ".tmp/onchip-native-worker/lib/OnchipLua/prepared.c",
+                     "packages/hew-wamr/native/prepared.c"):
             target = source / path
             original = target.read_bytes()
             target.write_bytes(b"altered")
-            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "differs|pin mismatch"):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "differs|pin mismatch|SHA256 mismatch"):
                 inputs.verify_relink(self.relink(source), receipt)
             target.write_bytes(original)
 

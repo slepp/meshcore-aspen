@@ -33,16 +33,6 @@ PINS = {
         "path": ".tmp/native-test-deps/base64",
     },
 }
-ARCHIVES = {
-    "lua": {
-        "path": ".tmp/onchip-lua/lua-5.5.1.tar.gz",
-        "sha256": "1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce",
-    },
-    "wamr": {
-        "path": ".cache/meshcore-wamr/wamr.tar.gz",
-        "sha256": "c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e",
-    },
-}
 CACHE = ".cache/meshcore-release-inputs"
 
 
@@ -168,21 +158,14 @@ def stage_source(root, destination, command, run):
         bundled.parent.mkdir(parents=True, exist_ok=True)
         bundled.write_bytes(data)
         packages[name] = {**pin, "archive_path": f"{CACHE}/{archive_path.name}", "files": expected}
-    archives = {}
-    for name, pin in ARCHIVES.items():
-        data = checked_archive(root / pin["path"], pin)
-        target = destination / pin["path"]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-        archives[name] = {**pin, "bytes": len(data)}
-    return {"packages": packages, "archives": archives}
+    return {"packages": packages, "archives": {}}
 
 
 def prepared_inventory(source, lua):
     return {
         lua: tree_inventory(source / lua),
-        ".cache/meshcore-wamr/source/core": tree_inventory(source / ".cache/meshcore-wamr/source/core"),
-        ".cache/meshcore-wamr/source/build-scripts": tree_inventory(source / ".cache/meshcore-wamr/source/build-scripts"),
+        "packages/hew-lua/native": tree_inventory(source / "packages/hew-lua/native"),
+        "packages/hew-wamr/native": tree_inventory(source / "packages/hew-wamr/native"),
     }
 
 
@@ -197,13 +180,10 @@ def input_layout(profile=None, *, bot=True):
             "path": f".pio/libdeps/{profile}/{name}" if profile else pin["path"],
             "archive_path": f".release-inputs/{filename}" if profile else f"{CACHE}/{filename}",
         }
-    archives = {
-        name: {**pin, "path": f".release-inputs/{Path(pin['path']).name}" if profile else pin["path"]}
-        for name, pin in ARCHIVES.items() if not profile or bot
-    }
+    archives = {}
     prepared = ({"lib/OnchipLua", "lib/OnchipWamr"} if bot else set()) if profile else {
-        ".tmp/onchip-native-worker/lib/OnchipLua", ".cache/meshcore-wamr/source/core",
-        ".cache/meshcore-wamr/source/build-scripts"}
+        ".tmp/onchip-native-worker/lib/OnchipLua", "packages/hew-lua/native",
+        "packages/hew-wamr/native"}
     return packages, archives, prepared
 
 
@@ -219,10 +199,6 @@ def firmware_inputs(source, work, profile, *, bot):
         assert_inventory(actual, expected, pin["path"])
         (work / pin["archive_path"]).write_bytes(data)
         packages[name] = {**pin, "files": actual}
-    for name, pin in archives.items():
-        data = checked_archive(source / ARCHIVES[name]["path"], pin)
-        (work / pin["path"]).write_bytes(data)
-        archives[name] = {**pin, "bytes": len(data)}
     return {"packages": packages, "archives": archives,
             "prepared": {path: tree_inventory(work / path) for path in sorted(prepared)}}
 
@@ -265,11 +241,6 @@ def verify_relink(path, receipt, *, profile=None, bot=True):
                         continue
                     actual.append(file_record(member_name[len(prefix):], contents(member_name)))
             assert_inventory(actual, expected, name)
-        for name, pin in archives.items():
-            data = contents(pin["path"])
-            if (receipt["archives"][name] != {**pin, "bytes": len(data)} or
-                    hashlib.sha256(data).hexdigest() != pin["sha256"]):
-                raise ValueError(f"Release source archive pin mismatch: {name}")
         if set(receipt["prepared"]) != expected_prepared:
             raise ValueError("Release prepared source receipt has missing or extra trees")
         for prefix, expected in receipt["prepared"].items():

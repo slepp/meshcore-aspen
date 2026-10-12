@@ -263,7 +263,7 @@ def build(product, ref, output, native_image=None, host_only=False):
         # Include the older-baseline objects/sources/headers actually used.
         with tarfile.open(directory / "native-relink.tar.gz", "w:gz") as archive:
             for relative in (".tmp/onchip-native-worker", ".tmp/onchip-native-source", ".tmp/onchip-phy",
-                             ".tmp/onchip-lua", ".tmp/MeshCore/.pio/libdeps", ".tmp/native-test-deps",
+                             "packages/hew-lua", "packages/hew-wamr", ".tmp/MeshCore/.pio/libdeps", ".tmp/native-test-deps",
                              ".cache/meshcore-wamr", ".cache/meshcore-release-inputs",
                              ".tmp/native-toolchain", ".tmp/native-receipt.json"):
                 archive.add(native_source / relative, arcname=relative)

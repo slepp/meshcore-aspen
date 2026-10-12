@@ -1,0 +1,16 @@
+import hew.wamr;
+
+import std.fs;
+
+fn main() {
+    let module = fs.read_bytes("fixture.wasm").expect("read Wasm module");
+    let vm = wamr.open(module, wamr.default_limits()).expect("open Wasm");
+    var args: Vec<wamr.Value> = Vec.new();
+    args.push(wamr.Value.I32(20));
+    args.push(wamr.Value.I32(22));
+    let result = vm.call("add", args).expect("call add");
+    match result[0] {
+        wamr.Value.I32(value) => println(f"{value}"),
+        _ => panic("expected i32"),
+    }
+}

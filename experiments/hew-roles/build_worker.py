@@ -21,7 +21,7 @@ SPEC = BUILD/"native-worker.json"
 INPUTS = BUILD/"native-worker.inputs"
 UPSTREAM = json.loads((ROOT/"release/products.json").read_text())["upstream"]
 PIN = UPSTREAM["commit"]
-SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".inc", ".py", ".mk", ".cmake", ".S", ".patch"}
+SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".inc", ".py", ".mk", ".cmake", ".S", ".s", ".patch"}
 
 def source_identity(root=ROOT):
     if (root / ".git").exists():
@@ -61,11 +61,11 @@ def inventory(directories):
 
 
 def local_inputs():
-    result = inventory([ROOT/"packages/hew-lua", ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
+    result = inventory([ROOT/"packages/hew-lua", ROOT/"packages/hew-wamr", ROOT/"firmware/runtime", ROOT/"firmware/esp32", ROOT/"firmware/shared",
                         ROOT/"internal/nativebot", ROOT/"test_support/phy_parity",
                         ROOT/"test_support/parity"])
     for path in (ROOT/"Makefile", ROOT/"release/source.json",
-                 ROOT/"packages/hew-lua/hew.toml", HERE/"build_worker.py", HERE/"compiler_capture.py"):
+                 ROOT/"packages/hew-lua/hew.toml", ROOT/"packages/hew-wamr/hew.toml", HERE/"build_worker.py", HERE/"compiler_capture.py"):
         result[str(path)] = digest(path)
     return result
 
@@ -112,7 +112,7 @@ def ensure():
         pass
     if SPEC.exists():
         old = json.loads(SPEC.read_text())
-        pinned = [NATIVE/name for name in ("upstream", "deps", "usb-deps", "lua", "wamr/source")]
+        pinned = [NATIVE/name for name in ("upstream", "deps", "usb-deps")]
         for name, expected in old["inputs"].items():
             path = Path(name)
             cached_link_input = path.is_relative_to(NATIVE) and path.suffix in (".o", ".a")
@@ -146,7 +146,7 @@ def ensure():
         wasm = importlib.util.module_from_spec(wasm_spec)
         wasm_spec.loader.exec_module(wasm)
         wasm.CACHE = NATIVE/"wamr"
-        # Existing pinned WAMR fetch, checksum, metering patch and CMake recipe.
+        # Build the shared vendored WAMR core with the host CMake recipe.
         with open(log_path, "a") as wasm_log:
             child = ["python3", "-B", "-c",
                      "import importlib.util,pathlib;"
@@ -157,7 +157,7 @@ def ensure():
         local = local_inputs()
         compiler = {name: subprocess.check_output([name, "--version"], text=True).splitlines()[0]
                     for name in ("cc", "c++", "cmake")}
-        dependencies = inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps", wasm.CACHE/"source"])
+        dependencies = inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps", wasm.ROOT/"packages/hew-wamr/native"])
         fingerprint = hashlib.sha256(json.dumps({"sources": local, "dependencies": dependencies, "compiler": compiler,
                                                  "upstream": PIN}, sort_keys=True).encode()).hexdigest()
         output = NATIVE/("worker-"+fingerprint[:20])
@@ -223,10 +223,10 @@ def ensure():
         shutil.copyfile(compiled, WORKER)
         WORKER.chmod(0o755)
         inputs = local | inventory([upstream, NATIVE/"deps", NATIVE/"usb-deps",
-                                    wasm.CACHE/"source", output/"mesh", output/"bot/lib"])
+                                    wasm.ROOT/"packages/hew-wamr/native", output/"mesh", output/"bot/lib"])
         for path in [WORKER, compiler_log, wasm.CACHE/"host/compile_commands.json",
                      wasm.CACHE/"host/CMakeCache.txt",
-                     wasm.CACHE/"wamr.tar.gz", json_include/"cJSON.h"]:
+                     json_include/"cJSON.h"]:
             inputs[str(path)] = digest(path)
         for directory in (output, wasm.CACHE/"host"):
             for path in directory.rglob("*"):
@@ -247,7 +247,7 @@ def ensure():
         spec = {"format": 1, "base": source_commit, "source_date_epoch": source_epoch,
                 "worker": str(WORKER), "worker_sha256": digest(WORKER), "source_fingerprint": fingerprint,
                 "upstream": PIN, "lua_package_sha256": digest(ROOT/"packages/hew-lua/hew.toml"),
-                "wamr_revision": wasm.REVISION, "wamr_archive_sha256": wasm.SHA256,
+                "wamr_revision": wasm.REVISION, "wamr_package_sha256": digest(ROOT/"packages/hew-wamr/hew.toml"),
                 "compiler": compiler, "compiler_commands": str(compiler_log),
                 "inputs_sha256": digest(INPUTS), "inputs": inputs, "local_inputs": local}
         pending = SPEC.with_suffix(".json.pending")

@@ -1,0 +1,17 @@
+[package]
+name = "hew.wamr"
+version = "0.1.0"
+edition = "2026"
+license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND MIT"
+description = "Owned metered WebAssembly instances for Hew"
+include = ["wamr.hew", "native/**", "README.md", "NOTICE", "LICENSE", "tests/**", "examples/**"]
+exclude = ["**/.hew/**", "**/target/**", "**/build/**", "**/hew.lock", "**/__pycache__/**", "**/*.pyc"]
+[native]
+sources = ["native/vendor/core/shared/platform/linux/platform_init.c", "native/vendor/core/shared/platform/common/posix/posix_blocking_op.c", "native/vendor/core/shared/platform/common/posix/posix_malloc.c", "native/vendor/core/shared/platform/common/posix/posix_memmap.c", "native/vendor/core/shared/platform/common/posix/posix_sleep.c", "native/vendor/core/shared/platform/common/posix/posix_thread.c", "native/vendor/core/shared/platform/common/posix/posix_time.c", "native/vendor/core/shared/mem-alloc/ems/ems_alloc.c", "native/vendor/core/shared/mem-alloc/ems/ems_gc.c", "native/vendor/core/shared/mem-alloc/ems/ems_hmu.c", "native/vendor/core/shared/mem-alloc/ems/ems_kfc.c", "native/vendor/core/shared/mem-alloc/mem_alloc.c", "native/vendor/core/shared/utils/bh_assert.c", "native/vendor/core/shared/utils/bh_bitmap.c", "native/vendor/core/shared/utils/bh_common.c", "native/vendor/core/shared/utils/bh_hashmap.c", "native/vendor/core/shared/utils/bh_leb128.c", "native/vendor/core/shared/utils/bh_list.c", "native/vendor/core/shared/utils/bh_log.c", "native/vendor/core/shared/utils/bh_queue.c", "native/vendor/core/shared/utils/bh_vector.c", "native/vendor/core/shared/utils/runtime_timer.c", "native/vendor/core/iwasm/common/wasm_application.c", "native/vendor/core/iwasm/common/wasm_blocking_op.c", "native/vendor/core/iwasm/common/wasm_c_api.c", "native/vendor/core/iwasm/common/wasm_exec_env.c", "native/vendor/core/iwasm/common/wasm_loader_common.c", "native/vendor/core/iwasm/common/wasm_memory.c", "native/vendor/core/iwasm/common/wasm_native.c", "native/vendor/core/iwasm/common/wasm_runtime_common.c", "native/vendor/core/iwasm/common/wasm_shared_memory.c", "native/vendor/core/iwasm/common/arch/invokeNative_em64.s", "native/vendor/core/iwasm/interpreter/wasm_interp_classic.c", "native/vendor/core/iwasm/interpreter/wasm_loader.c", "native/vendor/core/iwasm/interpreter/wasm_runtime.c", "native/runtime.cpp", "native/session.cpp", "native/ffi.cpp"]
+include-dirs = ["native", "native/vendor/core/iwasm/interpreter", "native/vendor/core/iwasm/include", "native/vendor/core/shared/platform/linux", "native/vendor/core/shared/platform/include", "native/vendor/core/shared/mem-alloc", "native/vendor/core/iwasm/common", "native/vendor/core/shared/utils"]
+defines = ["WASM_ENABLE_LABELS_AS_VALUES=0", "WASM_ENABLE_INTERP=1", "BUILD_TARGET_X86_64", "WASM_ENABLE_FAST_INTERP=0", "WASM_ENABLE_MULTI_MODULE=0", "WASM_ENABLE_BULK_MEMORY=0", "WASM_ENABLE_SHARED_MEMORY=0", "WASM_ENABLE_MINI_LOADER=0", "WASM_DISABLE_HW_BOUND_CHECK=1", "WASM_DISABLE_STACK_HW_BOUND_CHECK=1", "WASM_DISABLE_WAKEUP_BLOCKING_OP=0", "WASM_GLOBAL_HEAP_SIZE=10485760", "WASM_DISABLE_WRITE_GS_BASE=0", "WASM_ENABLE_QUICK_AOT_ENTRY=0", "WASM_ENABLE_AOT_INTRINSICS=0", "WASM_ENABLE_SHRUNK_MEMORY=0", "WASM_ENABLE_INSTRUCTION_METERING=1", "WASM_ENABLE_EXTENDED_CONST_EXPR=0", "BH_PLATFORM_LINUX", "WASM_HAVE_MREMAP=1", "_GNU_SOURCE", "BH_MALLOC=wasm_runtime_malloc", "BH_FREE=wasm_runtime_free"]
+cflags = ["-std=gnu11"]
+cxxflags = ["-std=c++17"]
+asflags = ["-x", "assembler-with-cpp"]
+[native.linux]
+link-libs = ["m", "pthread", "dl"]

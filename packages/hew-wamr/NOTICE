@@ -1,0 +1,27 @@
+hew.wamr package code: Apache-2.0.
+
+WebAssembly Micro Runtime 2.4.1
+Source: https://github.com/bytecodealliance/wasm-micro-runtime
+Revision: b124f70345d712bead5c0c2393acb2dc583511de
+Upstream archive SHA-256: c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e
+Copyright and Apache-2.0 WITH LLVM-exception notices are retained in vendor
+sources and native/vendor/LICENSE. Native-call assembly instructions are unchanged.
+
+The source subset omits the unused TensorFlow dependency installer and optional
+lib-socket, lib-wasi-threads and wasi-nn test build scripts. Missing final
+newlines in retained upstream text files are normalized.
+
+Local source changes retained from the MeshCore embedding:
+- Classic switch-dispatch interpreter calls hwamr_tick on every opcode.
+- EMS pool realloc growth updates free-size, high-water and allocation counters.
+- ESP-IDF linear memory allocates from PSRAM.
+- ESP-IDF task identity uses xTaskGetCurrentTaskHandle, with guest thread manager
+  disabled. Linux retains its normal platform implementation.
+
+The profile disables AOT/JIT, WASI/libc, threads/shared memory, bulk memory,
+reference types, SIMD, GC and memory64. Native CMake firmware staging and the
+Hew native manifest use this same vendored implementation.
+
+native/hew.h is the public Hew byte C ABI header from hew-cabi/include/hew.h.
+Copyright (c) 2026 Stephen Olesen, The Hew Project Developers. Licensed under
+MIT or Apache-2.0; this package distributes it under the included MIT licence.

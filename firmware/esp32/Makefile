@@ -180,10 +180,12 @@ field-rebuild:
 	@test -f "$(BUILD)/platformio.local.ini" -a -f "$(BUILD)/examples/kiss_modem/onchip/BuildClock.h" || \
 		{ echo "A previously prepared field project is required." >&2; exit 1; }
 	@if test -n "$(CONFIG)"; then install -m 600 "$(CONFIG)" "$(BUILD)/platformio.local.ini"; fi
+	rm -f "$(BUILD)/examples/kiss_modem/onchip/LuaRuntime.cpp"
 	cp $(filter-out wifi_kiss_main.cpp,$(wildcard *.cpp *.h)) ../runtime/*.cpp ../runtime/*.h "$(BUILD)/examples/kiss_modem/onchip/"
 	cp ../shared/WifiKissMultiplexer.* ../shared/PacketPipeline.h ../shared/PacketServices.h ../shared/PacketReport.h ../shared/PacketReports.h ../shared/QueuedTxProtocol.h "$(BUILD)/examples/kiss_modem/"
 	cp ../shared/RadioDashboard.cpp ../shared/RadioDashboard.h ../shared/RadioDashboardPage.h "$(BUILD)/examples/kiss_modem/"
 	python3 prepare.py --upstream "$(UPSTREAM)" --target "$(BUILD)" --field-network
+	python3 -B prepare_bot.py --target "$(BUILD)"
 	TMPDIR="$(ROOT)/.tmp" python3 -B prepare_wasm.py --target "$(BUILD)" --enabled $(ONCHIP_BOT_WASM)
 	cd "$(BUILD)" && TMPDIR="$(ROOT)/.tmp" pio run -e "$(ENV)"
 buildfs:

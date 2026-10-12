@@ -1,0 +1,146 @@
+import hew.wamr;
+
+import std.fs;
+
+fn integer(values: Vec<wamr.Value>) -> i32 {
+    match values[0] {
+        wamr.Value.I32(v) => v,
+        _ => panic("expected i32"),
+    }
+}
+
+fn args2(a: i32, b: i32) -> Vec<wamr.Value> {
+    var args: Vec<wamr.Value> = Vec.new();
+    args.push(wamr.Value.I32(a));
+    args.push(wamr.Value.I32(b));
+    args
+}
+
+fn arg(a: i32) -> Vec<wamr.Value> {
+    var args: Vec<wamr.Value> = Vec.new();
+    args.push(wamr.Value.I32(a));
+    args
+}
+
+fn main() {
+    wamr.configure_pool(2097152).expect("configure process pool");
+    var module = fs.read_bytes("fixture.wasm").expect("read fixture");
+    let vm = wamr.open(module, wamr.default_limits()).expect("open");
+    assert(wamr.configure_pool(1048576).is_err());
+    assert(wamr.configure_pool(2097152).is_ok());
+    module[0] = 255;
+    assert(integer(vm.call("add", args2(20, 22)).expect("owned source copy")) == 42);
+    module[0] = 0;
+    var wide: Vec<wamr.Value> = Vec.new();
+    wide.push(wamr.Value.I64(9007199254740993));
+    wide.push(wamr.Value.I64(4));
+    assert(match vm.call("wide", wide).expect("i64")[0] {
+        wamr.Value.I64(v) => v == 9007199254740997,
+        _ => false,
+    });
+    var single: Vec<wamr.Value> = Vec.new();
+    single.push(wamr.Value.F32(1.25));
+    assert(match vm.call("single", single).expect("f32")[0] {
+        wamr.Value.F32(v) => v == 2.5,
+        _ => false,
+    });
+    var double: Vec<wamr.Value> = Vec.new();
+    double.push(wamr.Value.F64(1.125));
+    assert(match vm.call("double", double).expect("f64")[0] {
+        wamr.Value.F64(v) => v == 2.25,
+        _ => false,
+    });
+    assert(vm.call("add", Vec.new()).is_err());
+    var wrong: Vec<wamr.Value> = Vec.new();
+    wrong.push(wamr.Value.I64(1));
+    wrong.push(wamr.Value.I64(2));
+    assert(vm.call("add", wrong).is_err());
+    assert(vm.call("missing", Vec.new()).is_err());
+    assert(vm.memory_size() == 65536);
+    var binary = bytes.new();
+    binary.push(0);
+    binary.push(255);
+    binary.push(7);
+    vm.write(60000, binary).expect("write binary");
+    let copied = vm.read(60000, 3).expect("read binary");
+    assert(copied.len() == 3 && copied[0] == 0 && copied[1] == 255 && copied[2] == 7);
+    vm.write(60001, "x".to_bytes()).expect("replace byte");
+    assert(copied[1] == 255);
+    assert(integer(vm.call("load", arg(60001)).expect("guest observes memory")) == 120);
+    assert(vm.call("store", args2(60002, 42)).expect("void result").is_empty());
+    assert(vm.read(60002, 1).expect("guest memory read")[0] == 42);
+    assert(vm.read(65536, 0).expect("empty end read").is_empty());
+    assert(vm.write(65536, bytes.new()).is_ok());
+    assert(vm.read(65536, 1).is_err());
+    assert(vm.read(18446744073709551615, 1).is_err());
+    assert(vm.write(65535, binary).is_err());
+    assert(vm.call("load", arg(65536)).is_err());
+    assert(vm.call("trap", Vec.new()).is_err());
+    assert(integer(vm.call("add", args2(1, 2)).expect("call after trap")) == 3);
+    assert(integer(vm.call("grow", arg(1)).expect("bounded grow")) == -1);
+    assert(vm.call("spin", Vec.new()).is_err());
+    assert(vm.instructions() >= 100000 && vm.instructions() <= 100001);
+    assert(integer(vm.call("add", args2(3, 4)).expect("call after fuel")) == 7);
+    vm.cancel();
+    assert(vm.call("add", args2(1, 2)).is_err());
+    assert(vm.read(60002, 1).is_ok());
+    vm.close();
+    {
+        let larger = fs.read_bytes("larger.wasm").expect("larger");
+        assert(wamr.open(larger, wamr.default_limits()).is_err());
+        var limits = wamr.default_limits();
+        limits.memory_pages = 2;
+        let bounded = wamr.open(larger, limits).expect("two page profile");
+        assert(integer(bounded.call("grow", arg(1)).expect("grow second page")) == 1);
+        assert(bounded.memory_size() == 131072);
+        assert(integer(bounded.call("grow", arg(1)).expect("cannot grow third page")) == -1);
+        assert(bounded.write(100000, "second page".to_bytes()).is_ok());
+        assert(bounded.read(100000, 11).expect("second page")[0] == 115);
+    };
+    {
+        var limits = wamr.default_limits();
+        limits.instructions = 1000000000;
+        limits.active_us = 5000;
+        let timed = wamr.open(module, limits).expect("timed");
+        assert(timed.call("spin", Vec.new()).is_err());
+        assert(timed.instructions() < 1000000000);
+    };
+    for path in ["import.wasm", "implicit.wasm", "start.wasm", "bad.wasm"] {
+        assert(wamr.open(fs.read_bytes(path).expect("bad fixture"), wamr.default_limits()).is_err());
+    }
+    var tiny = wamr.default_limits();
+    tiny.source_bytes = 8;
+    assert(wamr.open(module, tiny).is_err());
+    {
+        let first = wamr.open(module, wamr.default_limits()).expect("first live instance");
+        let second = wamr.open(module, wamr.default_limits()).expect("second live instance");
+        first.write(60000, "A".to_bytes()).expect("first memory");
+        second.write(60000, "B".to_bytes()).expect("second memory");
+        assert(first.read(60000, 1).expect("isolated first")[0] == 65);
+        assert(second.read(60000, 1).expect("isolated second")[0] == 66);
+        first.close();
+        assert(second.read(60000, 1).expect("other survives close")[0] == 66);
+        assert(integer(second.call("add", args2(5, 6)).expect("other calls after close")) == 11);
+    };
+    {
+        let pair = wamr.open(fs.read_bytes("pair.wasm").expect("pair module"), wamr.default_limits()).expect("open pair");
+        var args: Vec<wamr.Value> = Vec.new();
+        args.push(wamr.Value.I32(42));
+        args.push(wamr.Value.I64(9007199254740993));
+        let results = pair.call("pair", args).expect("two result call");
+        assert(results.len() == 2);
+        assert(match results[0] {
+            wamr.Value.I32(v) => v == 42,
+            _ => false,
+        });
+        assert(match results[1] {
+            wamr.Value.I64(v) => v == 9007199254740993,
+            _ => false,
+        });
+    };
+    for i in 0..40 {
+        let repeated = wamr.open(module, wamr.default_limits()).expect("repeated owned instance");
+        assert(integer(repeated.call("add", args2(2, 3)).expect("repeat")) == 5);
+    }
+    println("PASS WAMR numeric types, owned modules, memory copies/bounds/growth, traps, fuel/time/cancel, import/start/profile refusal and repeated cleanup");
+}

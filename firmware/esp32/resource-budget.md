@@ -361,14 +361,13 @@ modified or untracked firmware inputs. These commands produce measurements
 for the selected source, not a recreation of the historical table.
 The helper uses a dedicated build
 tree; it never prepares an operator's upstream working directory. Existing
-dependency caches are required. Archive SHA mismatches fail before preparation.
+dependency caches are required. Lua and WAMR sources are included in `packages/`.
 No credentials/environment files are required.
 
 ```sh
 python3 test_support/resource_budget/build.py \
   --upstream PATH_TO_PINNED_UPSTREAM \
-  --libdeps PATH_TO_CACHED_ESP_LIBDEPS \
-  --wamr-archive PATH_TO_PINNED_WAMR_ARCHIVE
+  --libdeps PATH_TO_CACHED_ESP_LIBDEPS
 
 python3 test_support/resource_budget/inspect.py \
   .tmp/resource-artifacts/https-wasm-firmware.elf \

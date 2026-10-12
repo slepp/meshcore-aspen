@@ -48,7 +48,9 @@ class SourceIdentity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paths = ["Makefile", "release/source.json", "packages/hew-lua/hew.toml",
-                     "packages/hew-lua/native/hlua_core.hpp", "packages/hew-lua/native/lua/llex.c"]
+                     "packages/hew-lua/native/hlua_core.hpp", "packages/hew-lua/native/lua/llex.c",
+                     "packages/hew-wamr/hew.toml", "packages/hew-wamr/native/runtime.cpp",
+                     "packages/hew-wamr/native/vendor/core/iwasm/common/arch/invokeNative_em64.s"]
             for name in paths:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

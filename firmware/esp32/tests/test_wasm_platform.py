@@ -20,7 +20,7 @@ class CMakeSourceCacheTests(unittest.TestCase):
             (metadata / "source-selection").write_text("old source\n")
             library = build / "libmeshcore_wamr.a"
             library.write_bytes(b"retained build output")
-            source = root / "firmware/runtime/wasm"
+            source = root / "packages/hew-wamr/native"
             prepare_wasm.reset_cmake_source_cache(build, source)
             self.assertTrue(metadata.is_dir())
             cache.write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n")
@@ -33,64 +33,19 @@ class CMakeSourceCacheTests(unittest.TestCase):
             self.assertFalse(metadata.exists())
             self.assertEqual(library.read_bytes(), b"retained build output")
 
-class PoolReallocAccountingTests(unittest.TestCase):
-    def test_exact_idempotent_patch_and_rejection(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory)
-            allocator = source / "core/shared/mem-alloc/ems/ems_alloc.c"
-            allocator.parent.mkdir(parents=True)
-            original = "prefix\n" + prepare_wasm.POOL_REALLOC_ORIGINAL + "\nsuffix\n"
-            allocator.write_text(original)
-            prepare_wasm.patch_pool_realloc_accounting(source)
-            patched = "prefix\n" + prepare_wasm.POOL_REALLOC_PATCHED + "\nsuffix\n"
-            self.assertEqual(allocator.read_text(), patched)
-            prepare_wasm.patch_pool_realloc_accounting(source)
-            self.assertEqual(allocator.read_text(), patched)
-            for code in ("unexpected realloc", original * 2, patched * 2, original + patched):
-                allocator.write_text(code)
-                with self.assertRaisesRegex(ValueError, "pool realloc accounting patch"):
-                    prepare_wasm.patch_pool_realloc_accounting(source)
-                self.assertEqual(allocator.read_text(), code)
-
-
 class EspThreadIdentityTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.source = Path(self.directory.name)
-        self.thread = self.source / "core/shared/platform/esp-idf/espidf_thread.c"
-        self.thread.parent.mkdir(parents=True)
-        self.thread.write_text("/* retained prefix */\n" + prepare_wasm.ESP_THREAD_ID_ORIGINAL +
-                               "\n/* retained suffix */\n")
-
-    def test_patch_is_exact_idempotent_and_esp_only(self):
-        linux = self.source / "core/shared/platform/linux"
-        linux.mkdir(parents=True)
-        native = linux / "platform.c"
-        native.write_text("return pthread_self();\n")
-        prepare_wasm.patch_esp_thread_identity(self.source)
-        expected = ("/* retained prefix */\n" + prepare_wasm.ESP_THREAD_ID_PATCHED +
-                    "\n/* retained suffix */\n")
-        self.assertEqual(self.thread.read_text(), expected)
-        prepare_wasm.patch_esp_thread_identity(self.source)
-        self.assertEqual(self.thread.read_text(), expected)
-        self.assertEqual(native.read_text(), "return pthread_self();\n")
-
-    def test_unexpected_and_duplicate_source_fail_without_changes(self):
-        for code in ("return an_unreviewed_thread();",
-                     prepare_wasm.ESP_THREAD_ID_ORIGINAL * 2,
-                     prepare_wasm.ESP_THREAD_ID_PATCHED * 2,
-                     prepare_wasm.ESP_THREAD_ID_ORIGINAL + prepare_wasm.ESP_THREAD_ID_PATCHED,
-                     prepare_wasm.ESP_THREAD_ID_PATCHED + prepare_wasm.ESP_THREAD_ID_ORIGINAL):
-            with self.subTest(code=code):
-                self.thread.write_text(code)
-                with self.assertRaisesRegex(ValueError, "thread identity patch"):
-                    prepare_wasm.patch_esp_thread_identity(self.source)
-                self.assertEqual(self.thread.read_text(), code)
+        native = Path(__file__).resolve().parents[3] / "packages/hew-wamr/native/vendor"
+        text = (native / "core/shared/platform/esp-idf/espidf_thread.c").read_text()
+        start = text.index("korp_tid\nos_self_thread(void)")
+        end = text.index("\n}", start) + 2
+        self.function = text[start:end]
 
     def compile_adapter(self, thread_manager):
-        prepare_wasm.patch_esp_thread_identity(self.source)
-        function = self.thread.read_text()
+        function = self.function
         source = self.source / "adapter.c"
         source.write_text(
             "#include <assert.h>\n#include <stdint.h>\n#include <stdlib.h>\n"
@@ -126,10 +81,8 @@ class EspThreadIdentityTests(unittest.TestCase):
         self.assertIn("FreeRTOS task identity requires WAMR thread manager disabled", result.stderr)
 
     def test_disabled_preparation_does_not_touch_wamr(self):
-        with patch.object(prepare_wasm, "patch_esp_thread_identity") as adapter, \
-                patch.object(prepare_wasm.subprocess, "run") as build:
+        with patch.object(prepare_wasm.subprocess, "run") as build:
             prepare_wasm.prepare(enabled=False)
-        adapter.assert_not_called()
         build.assert_not_called()
 
 
