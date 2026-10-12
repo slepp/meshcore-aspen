@@ -1216,8 +1216,8 @@ def main():
             print(data_restore(client, private_file(args.source, DATA_LIMIT), args.no_rearm))
         else:
             source = download(client)
-            write_new_file(args.destination, source)
-            print(f"Saved {len(source)} source bytes")
+            write_new_file(args.destination, source, 0o600)
+            print(f"Saved {len(source)} source bytes (0600)")
     except (OSError, ValueError) as error:
         parser.exit(2, f"Mast command failed: {error}\n")
     finally:

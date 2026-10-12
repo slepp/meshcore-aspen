@@ -85,6 +85,7 @@ class SourceWorkflow(unittest.TestCase):
             wasm_export = service.root / "wasm-export.wasm"
             cli("download", wasm_export, runtime="wasm")
             self.assertEqual(wasm_export.read_bytes(), second_module)
+            self.assertEqual(wasm_export.stat().st_mode & 0o777, 0o600)
             cli("rollback", runtime="wasm")
             self.assertEqual(admin.download(wasm), module)
             self.assertEqual(admin.download(client), first_generation)

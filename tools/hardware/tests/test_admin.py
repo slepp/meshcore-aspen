@@ -2,6 +2,7 @@
 import hashlib
 from collections import deque
 import io
+import os
 import socket
 import struct
 import tempfile
@@ -181,6 +182,33 @@ class MastClientTests(unittest.TestCase):
                         patch("sys.stdout", new_callable=io.StringIO):
                     mast_cli.main()
                     restore.assert_called_once_with(client, source.read_bytes(), True)
+
+    def test_complete_source_download_is_private_with_permissive_umask(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
+            for index, (runtime, source) in enumerate((("lua", b"private_config='fixture'\n"),
+                                                       ("wasm", b"\0asm\1\0\0\0"), ("wasm", b""))):
+                destination = Path(directory) / f"source-{index}"
+                prefix = "source wasm " if runtime == "wasm" else "source "
+                def command(text):
+                    if text == prefix + "hash":
+                        return "SHA256 " + hashlib.sha256(source).hexdigest() + " gen=7"
+                    self.assertTrue(text.startswith(prefix + "read "))
+                    offset = int(text.split()[-1]) * 48
+                    return "DATA " + source[offset:offset + 48].hex() if offset < len(source) else "EOF"
+                client = MagicMock(command=MagicMock(side_effect=command))
+                arguments = ["admin.py", "--willow-socket", str(Path(directory) / "admin.sock"),
+                             "--runtime", runtime, "download", str(destination)]
+                previous_umask = os.umask(0)
+                try:
+                    with patch.object(sys, "argv", arguments), patch.object(mast_cli, "WillowClient", return_value=client), \
+                            patch("sys.stdout", new_callable=io.StringIO) as output:
+                        mast_cli.main()
+                finally:
+                    os.umask(previous_umask)
+                self.assertEqual(destination.read_bytes(), source)
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+                self.assertIn("source bytes (0600)", output.getvalue())
+                client.close.assert_called_once()
 
     def test_named_source_export_is_read_only_and_preserves_exact_bytes(self):
         from tools.hardware import lua_sources
