@@ -251,6 +251,11 @@ type Sample {
     failure: string;
 }
 
+type Advance {
+    update: Option<Sample>;
+    deadline: i64;
+}
+
 type HealthFetch {
     connected: bool;
     sent: i64;
@@ -268,8 +273,8 @@ actor Monitor {
     var rpc: Option<Rpc> = .None;
     var connection: Option<outbound.Connection> = .None;
     var fetch: HealthFetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(), deadline: 0, transport_due: 0 };
-    var next: i64 = 0;
     var sample: Sample = Sample { value: .None, updated: 0, failure: "health connection has not returned a sample" };
+    var changed: bool = false;
     fn complete(result: Result<json.Value, string>) {
         match result {
             .Ok(value) => {
@@ -290,13 +295,14 @@ actor Monitor {
         }
         connection = .None;
         fetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(), deadline: 0, transport_due: 0 };
-        next = listener.now() + 500;
+        changed = true;
     }
-    receive fn poll() -> Sample {
+    receive fn advance(begin: bool) -> Advance {
         let now = listener.now();
         var interest: i32 = 1;
         var finished: Option<Result<json.Value, string>> = .None;
-        if fetch.deadline == 0 && now >= next {
+        if begin {
+            assert(fetch.deadline == 0, "health refresh is already in progress");
             fetch.deadline = now + 2000;
             if port == 0 {
                 if root.is_empty() {
@@ -353,7 +359,7 @@ actor Monitor {
                 if !fetch.connected {
                     let progress = match connection {
                         .Some(owner) => outbound.progress(owner),
-                        .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                        .None => panic("health connection unavailable while fetching"),
                     };
                     match progress {
                         .Ok(done) => {
@@ -375,7 +381,7 @@ actor Monitor {
                         let suffix = binary.slice(request, fetch.sent, request.len()).expect("health request suffix");
                         let written = match connection {
                             .Some(owner) => outbound.write_some(owner, suffix),
-                            .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                            .None => panic("health connection unavailable while fetching"),
                         };
                         match written {
                             .Ok(count) => {
@@ -392,7 +398,7 @@ actor Monitor {
                         for _ in 0..17 {
                             let received = match connection {
                                 .Some(owner) => outbound.read(owner),
-                                .None => return Sample { value: .None, updated: 0, failure: "health connection unavailable" },
+                                .None => panic("health connection unavailable while fetching"),
                             };
                             match received {
                                 .Idle => {
@@ -433,11 +439,24 @@ actor Monitor {
                 listener.now() + delay
             };
         }
-        Sample { value: if now - sample.updated <= 3000 {
-            sample.value
+        finish_turn()
+    }
+    fn finish_turn() -> Advance {
+        let update: Option<Sample> = if changed {
+            changed = false;
+            .Some(sample)
         } else {
             .None
-        }, updated: sample.updated, failure: sample.failure }
+        };
+        Advance { update: update, deadline: next_deadline() }
+    }
+    receive fn cancel() {
+        if let .Some(request_actor) = rpc {
+            request_actor.cancel().expect("cancel health RPC");
+        }
+        connection = .None;
+        fetch = HealthFetch { connected: false, sent: 0, incoming: bytes.new(), deadline: 0, transport_due: 0 };
+        changed = false;
     }
     receive fn close() {
         if let .Some(request_actor) = rpc {
@@ -447,9 +466,9 @@ actor Monitor {
         rpc = .None;
         connection = .None;
     }
-    receive fn next_deadline() -> i64 {
+    fn next_deadline() -> i64 {
         if fetch.deadline == 0 {
-            return next;
+            return 0;
         }
         var due = fetch.deadline;
         if fetch.transport_due > 0 && fetch.transport_due < due {
@@ -610,6 +629,8 @@ type Client {
     worker: Rpc;
     rpc: Option<Rpc>;
     role: bool;
+    health: i64;
+    read_ended: bool;
     watch: i64;
 }
 
@@ -621,18 +642,13 @@ fn serialized(code: i64, value: json.Value) -> bytes {
     host_admin.response(code, "application/json", value.stringify().expect("dashboard JSON response"))
 }
 
-fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Authentication, enabled: bool, page: string, samples: Vec<Sample>) -> Client {
+fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Authentication, enabled: bool, page: string) -> Client {
     if request.method == "GET" && request.path == "/status" {
-        client.outgoing = serialized(200, status_snapshot(samples));
+        client.health = 1;
         return client;
     }
     if request.method == "GET" && request.path == "/readyz" {
-        let value = readiness(samples);
-        client.outgoing = serialized(if flag(value, "ready", true) {
-            200
-        } else {
-            503
-        }, value);
+        client.health = 2;
         return client;
     }
     if !enabled || !request.path.starts_with("/admin") {
@@ -670,7 +686,7 @@ fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Au
         return client;
     }
     if request.path == "/admin/status" {
-        client.outgoing = serialized(200, admin_status(status_snapshot(samples)));
+        client.health = 3;
         return client;
     }
     let role = request.path == "/admin/role/room" || request.path == "/admin/role/repeater";
@@ -705,6 +721,19 @@ fn dispatch(var client: Client, request: host_admin.Request, auth: host_admin.Au
     client
 }
 
+
+fn health_response(var client: Client, samples: Vec<Sample>) -> Client {
+    if client.health == 2 {
+        let value = readiness(samples);
+        client.outgoing = serialized(if flag(value, "ready", true) { 200 } else { 503 }, value);
+    } else {
+        let value = status_snapshot(samples);
+        client.outgoing = serialized(200, if client.health == 3 { admin_status(value) } else { value });
+    }
+    client.health = 0;
+    client
+}
+
 pub fn run(path: string) {
     let cfg = configuration(path);
     let enabled = !cfg.token_env.is_empty() || match os.env("MESHCORE_HOST_ADMIN_HTTP") {
@@ -734,6 +763,17 @@ pub fn run(path: string) {
     let shutdown = events.driver(group, input);
     let accept_watch = listener.watch(owner, 0, group, 1).expect("watch dashboard listener");
     let mut_monitors: Vec<Monitor> = [spawn Monitor { root: cfg.state, group: events.share(group), port: 0, selector: 0, label: "host-status" }, spawn Monitor { root: cfg.state, group: events.share(group), port: 0, selector: 1, label: "host-readiness" }, spawn Monitor { root: "", group: events.share(group), port: cfg.base_port, selector: 0, label: "Base-status" }, spawn Monitor { root: "", group: events.share(group), port: cfg.base_port, selector: 1, label: "Base-readiness" }, spawn Monitor { root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 0, label: "bot-companion-status" }, spawn Monitor { root: "", group: events.share(group), port: cfg.bot_companion_port, selector: 1, label: "bot-companion-readiness" }];
+    var samples: Vec<Sample> = Vec.new();
+    for _ in mut_monitors {
+        samples.push(Sample { value: .None, updated: 0, failure: "health connection has not returned a sample" });
+    }
+    var refresh_pending: Vec<bool> = Vec.new();
+    for _ in mut_monitors {
+        refresh_pending.push(false);
+    }
+    var refreshing = false;
+    var begin_refresh = false;
+    var cache_at: i64 = 0;
     var clients: Vec<Client> = Vec.new();
     var rpc_workers: Vec<Rpc> = Vec.new();
     var available: Vec<Rpc> = Vec.new();
@@ -747,15 +787,34 @@ pub fn run(path: string) {
     while transport.running() {
         // The one-second guard notices process signals; socket work wakes the pipe.
         var due = listener.now() + 1000;
-        var samples: Vec<Sample> = Vec.new();
-        for monitor in mut_monitors {
-            samples.push(match monitor.poll() {
-                .Ok(sample) => sample,
-                .Err(_) => Sample { value: .None, updated: 0, failure: "health monitor actor stopped" },
-            });
-            let deadline = monitor.next_deadline().expect("health monitor deadline");
-            if deadline < due {
-                due = deadline;
+        if refreshing {
+            for index in 0..mut_monitors.len() {
+                if refresh_pending[index] {
+                    match mut_monitors[index].advance(begin_refresh) {
+                        .Ok(turn) => {
+                            if let .Some(sample) = turn.update {
+                                samples[index] = sample;
+                                refresh_pending[index] = false;
+                            }
+                            if turn.deadline > 0 && turn.deadline < due {
+                                due = turn.deadline;
+                            }
+                        }
+                        .Err(_) => {
+                            samples[index] = Sample { value: .None, updated: 0, failure: "health monitor actor stopped" };
+                            refresh_pending[index] = false;
+                        }
+                    }
+                }
+            }
+            begin_refresh = false;
+            var pending = false;
+            for active in refresh_pending {
+                pending = pending || active;
+            }
+            if !pending {
+                refreshing = false;
+                cache_at = listener.now();
             }
         }
         for _ in 0..32 {
@@ -772,11 +831,12 @@ pub fn run(path: string) {
                 assert(!available.is_empty(), "no available HTTP owner RPC");
                 let worker = available.pop();
                 let watch = listener.watch(owner, token, group, 1).expect("watch dashboard client");
-                clients.push(Client { token: token, incoming: bytes.new(), outgoing: bytes.new(), written: 0, deadline: listener.now() + 5000, worker: worker, rpc: .None, role: false, watch: watch });
+                clients.push(Client { token: token, incoming: bytes.new(), outgoing: bytes.new(), written: 0, deadline: listener.now() + 5000, worker: worker, rpc: .None, role: false, health: 0, read_ended: false, watch: watch });
             }
             events.arm(group, accept_watch, 1).expect("rearm dashboard listener");
         }
         var retained: Vec<Client> = Vec.new();
+        var health_waiters: i64 = 0;
         for connection in clients {
             var client = connection;
             var close = false;
@@ -790,7 +850,15 @@ pub fn run(path: string) {
                 }
             }
             if !close && client.outgoing.is_empty() {
-                if let .Some(request_actor) = client.rpc {
+                if client.health > 0 {
+                    if !client.read_ended {
+                        match listener.read(owner, client.token) {
+                            .End => { client.read_ended = true; }
+                            .Failed => { close = true; }
+                            _ => {}
+                        }
+                    }
+                } else if let .Some(request_actor) = client.rpc {
                     let result = match request_actor.poll() {
                         .Ok(value) => value,
                         .Err(_) => .Some(b"\x01\x08"),
@@ -833,7 +901,7 @@ pub fn run(path: string) {
                                         client.outgoing = text(400, "Host HTTP request is malformed; owner command was not submitted");
                                     }
                                     .Complete(request) => {
-                                        client = dispatch(client, request, auth, enabled, page, samples);
+                                        client = dispatch(client, request, auth, enabled, page);
                                         client.incoming = bytes.new();
                                         client.deadline = now + 15000;
                                     }
@@ -842,6 +910,9 @@ pub fn run(path: string) {
                         }
                     }
                 }
+            }
+            if !close && client.health > 0 && !refreshing && cache_at > 0 && listener.now() - cache_at <= 500 {
+                client = health_response(client, samples);
             }
             if !close && !client.outgoing.is_empty() {
                 let end = if client.outgoing.len() - client.written > 65536 {
@@ -867,7 +938,10 @@ pub fn run(path: string) {
                 events.remove(group, client.watch).expect("retire dashboard client watch");
                 listener.drop(owner, client.token);
             } else {
-                if client.rpc.is_none() {
+                if client.health > 0 {
+                    health_waiters += 1;
+                }
+                if client.rpc.is_none() && !(client.health > 0 && client.read_ended) {
                     events.arm(group, client.watch, if client.outgoing.is_empty() {
                         1
                     } else {
@@ -888,6 +962,23 @@ pub fn run(path: string) {
             }
         }
         clients = retained;
+        if health_waiters > 0 && !refreshing {
+            for index in 0..refresh_pending.len() {
+                refresh_pending[index] = true;
+            }
+            refreshing = true;
+            begin_refresh = true;
+            due = listener.now();
+        } else if health_waiters == 0 && refreshing {
+            for index in 0..mut_monitors.len() {
+                if refresh_pending[index] {
+                    let _ = mut_monitors[index].cancel();
+                    refresh_pending[index] = false;
+                }
+            }
+            refreshing = false;
+            begin_refresh = false;
+        }
         match events.wait(shutdown, due) {
             events.Event.Failed(code) => panic(f"dashboard readiness failed: errno={code}"),
             _ => {}

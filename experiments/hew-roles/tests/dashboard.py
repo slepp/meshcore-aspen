@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import tempfile
 import threading
@@ -21,10 +22,18 @@ class CompanionHealth:
         self.role = role
         self.ready = True
         self.invalid = False
+        self.resume = threading.Event()
+        self.resume.set()
+        self.blocked = threading.Event()
+        self.requests = 0
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                fixture.requests += 1
+                if not fixture.resume.is_set():
+                    fixture.blocked.set()
+                    fixture.resume.wait(8)
                 if fixture.invalid:
                     body = b"invalid health JSON"
                     code = 200
@@ -40,7 +49,10 @@ class CompanionHealth:
                 self.send_response(code)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
             def log_message(self, *_):
                 pass
@@ -50,9 +62,59 @@ class CompanionHealth:
         self.thread.start()
 
     def close(self):
+        self.resume.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
+
+
+class OwnerHealth:
+    def __init__(self, root):
+        self.health_requests = 0
+        self.stop = threading.Event()
+        self.listeners = []
+        self.threads = []
+        roles = {name: {"state": "running", "radio_connected": True}
+                 for name in ("bot", "repeater", "room", "observer")}
+        ready = {"ready": True, "not_ready": {}, "mqtt_connection_checked": True}
+        for name in ("owner.sock", "admin.sock"):
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            listener.bind(str(root/name))
+            (root/name).chmod(0o600)
+            listener.listen(8)
+            listener.settimeout(.1)
+            self.listeners.append(listener)
+
+            def serve(listener=listener, health=name == "owner.sock"):
+                while not self.stop.is_set():
+                    try:
+                        connection, _ = listener.accept()
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+                    with connection:
+                        connection.settimeout(3)
+                        request = connection.recv(4096)
+                        if not request:
+                            continue
+                        if health:
+                            self.health_requests += 1
+                            body = json.dumps(roles if request[2] == 0 else ready).encode()
+                        else:
+                            body = b"Name: Fixture"
+                        connection.sendall(b"\x01\x00"+body)
+
+            thread = threading.Thread(target=serve, daemon=True)
+            thread.start()
+            self.threads.append(thread)
+
+    def close(self):
+        self.stop.set()
+        for listener in self.listeners:
+            listener.close()
+        for thread in self.threads:
+            thread.join(timeout=3)
 
 
 class Dashboard(unittest.TestCase):
@@ -67,7 +129,7 @@ class Dashboard(unittest.TestCase):
 
     def test_unknown_write_is_not_replayed_and_health_remains_available(self):
         for binary in ("hew-dashboard", "hew-dashboard-release"):
-            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT/"build") as name:
+            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
                 root = Path(name)
                 configuration = root/"dashboard.conf"
                 configuration.write_text(f"port=0\nstate={root}\n"
@@ -133,9 +195,125 @@ class Dashboard(unittest.TestCase):
                         process.terminate()
                         process.communicate(timeout=6)
 
+    def test_health_refresh_is_demand_driven_shared_and_bounded(self):
+        for binary in ("hew-dashboard", "hew-dashboard-release"):
+            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
+                root = Path(name)
+                owner = OwnerHealth(root)
+                base = CompanionHealth("companion")
+                secondary = CompanionHealth("bot_companion")
+                process = None
+                credential = "fixture-token-"+32*"a"
+                try:
+                    configuration = root/"dashboard.conf"
+                    configuration.write_text(f"port=0\nstate={root}\nbase_port={base.server.server_port}\n"
+                        f"page={ROOT.parents[1]/'internal/app/admin_page.html'}\n"
+                        f"bot_companion_port={secondary.server.server_port}\n"
+                        "token_env=MESHCORE_DASHBOARD_FIXTURE_TOKEN\n")
+                    configuration.chmod(0o600)
+                    process = subprocess.Popen([str(ROOT/"build"/binary), str(configuration)],
+                        env=os.environ|{"HEW_WORKERS": "4", "MESHCORE_DASHBOARD_FIXTURE_TOKEN": credential},
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    line = process.stdout.readline().strip()
+                    self.assertIn("DASHBOARD_LISTEN", line)
+                    port = int(line.split("port=")[1].split()[0])
+
+                    def request(path, body=b"", authorized=True):
+                        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=4)
+                        try:
+                            headers = {"X-Host-Intent": "admin-v1"}
+                            if authorized:
+                                headers["X-Host-Admin"] = credential
+                            connection.request("POST" if path.startswith("/admin/") else "GET", path, body, headers)
+                            response = connection.getresponse()
+                            return response.status, response.read()
+                        finally:
+                            connection.close()
+
+                    def counts():
+                        return owner.health_requests, base.requests, secondary.requests
+
+                    time.sleep(.7)
+                    self.assertEqual(counts(), (0, 0, 0))
+                    self.assertEqual(request("/admin/status", authorized=False)[0], 401)
+                    self.assertEqual(counts(), (0, 0, 0))
+                    base.resume.clear()
+                    with ThreadPoolExecutor(max_workers=12) as pool:
+                        pending = [pool.submit(request, path) for path in
+                                   ("/status", "/readyz", "/admin/status")*4]
+                        self.until(base.blocked.is_set)
+                        self.until(lambda: owner.health_requests == 2 and secondary.requests == 2)
+                        self.assertFalse(any(item.done() for item in pending))
+                        base.resume.set()
+                        results = [item.result(timeout=4) for item in pending]
+                    self.assertTrue(all(code == 200 for code, _ in results))
+                    self.assertTrue(json.loads(results[1][1])["ready"])
+                    self.assertEqual(counts(), (2, 2, 2))
+                    request("/status")
+                    request("/readyz")
+                    self.assertEqual(counts(), (2, 2, 2))
+                    time.sleep(.7)
+                    self.assertEqual(counts(), (2, 2, 2))
+                    # A complete HTTP request remains valid after write-side EOF.
+                    with socket.create_connection(("127.0.0.1", port), timeout=4) as half_closed:
+                        half_closed.sendall(b"GET /readyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                        half_closed.shutdown(socket.SHUT_WR)
+                        response = http.client.HTTPResponse(half_closed)
+                        response.begin()
+                        self.assertEqual(response.status, 200)
+                        self.assertTrue(json.loads(response.read())["ready"])
+                        response.close()
+                    time.sleep(.6)
+
+                    base.blocked.clear()
+                    base.resume.clear()
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        started = time.monotonic()
+                        pending = pool.submit(request, "/readyz")
+                        self.until(base.blocked.is_set)
+                        self.assertFalse(pending.done())
+                        command_at = time.monotonic()
+                        self.assertEqual(request("/admin/command", b"bot name"), (200, b"Name: Fixture"))
+                        self.assertLess(time.monotonic()-command_at, .5)
+                        code, body = pending.result(timeout=4)
+                        self.assertGreater(time.monotonic()-started, 1.5)
+                        self.assertLess(time.monotonic()-started, 3)
+                    self.assertEqual(code, 503)
+                    self.assertEqual(json.loads(body)["not_ready"]["companion"], "health_connection_unavailable")
+                    completed = counts()
+                    self.assertEqual(request("/readyz")[0], 503)
+                    self.assertEqual(counts(), completed)
+                    # Resetting the last waiter cancels its refresh; quiet time must
+                    # not start retries or turn the expired success into a reply.
+                    time.sleep(.6)
+                    base.blocked.clear()
+                    with socket.create_connection(("127.0.0.1", port), timeout=3) as cancelled:
+                        cancelled.sendall(b"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                        self.until(base.blocked.is_set)
+                        cancelled.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    time.sleep(.2)
+                    completed = counts()
+                    time.sleep(.7)
+                    self.assertEqual(counts(), completed)
+                    base.resume.set()
+                    code, body = request("/readyz")
+                    self.assertEqual(code, 200)
+                    self.assertTrue(json.loads(body)["ready"])
+                    process.terminate()
+                    _, stderr = process.communicate(timeout=6)
+                    self.assertEqual(process.returncode, 0, stderr)
+                finally:
+                    base.resume.set()
+                    if process is not None and process.poll() is None:
+                        process.terminate()
+                        process.communicate(timeout=6)
+                    owner.close()
+                    base.close()
+                    secondary.close()
+
     def test_http_owner_health_and_restart(self):
         for binary in ("hew-dashboard", "hew-dashboard-release"):
-            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT/"build") as name:
+            with self.subTest(binary=binary), tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
                 root = Path(name)
                 service = RunningService(root=root/"host")
                 base = CompanionHealth("companion")

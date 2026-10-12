@@ -40,6 +40,10 @@ and configuration, and startup connects to the configured shared modem without
 retuning it. `make release` builds the host, Base, broker and dashboard with
 the current Hew installation. The launcher defaults to four scheduler workers; set
 `HEW_WORKERS` explicitly to choose another count.
+For production builds, build Hew with its supported `make hew` target and put
+its `build/bin` directory on `PATH`. This selects matching optimized runtime
+libraries. `hew build --release` optimizes the application; a compiler launched
+from `target/debug` still uses that toolchain's debug runtime libraries.
 For a new installation, [create private state](SERVICE.md#start-with-new-identities)
 with `build/hew-host-release init`, then use the state check and launcher above.
 Before connecting a radio, run `make acceptance-test`: it exchanges companion

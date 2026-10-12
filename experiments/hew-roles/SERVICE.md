@@ -228,8 +228,11 @@ command argument or the dashboard configuration. Alternatively, set
 non-space ASCII characters; sessions expire after ten minutes.
 
 `GET /status` returns public operational state. `GET /readyz` returns HTTP
-503 when a role or its health connection is unavailable. Samples expire
-after three seconds. These routes remain available with admin access
+503 when a role or its health connection is unavailable. Health requests share
+one refresh, or reuse a completed result for up to 500 ms. A cold or expired
+request waits for fresh responses, with a two-second upstream deadline;
+the dashboard does not fetch health while idle. Admin commands remain available
+during a health refresh. These routes remain available with admin access
 disabled. `base_port=0` or `bot_companion_port=0` disables a health source
 for an isolated test; the corresponding role stays not ready.
 
