@@ -416,3 +416,6 @@ build/session-checks-release: session_checks.hew session.hew transport.hew wire.
 modem-diagnostics-test: all build/oracle build/session-checks build/session-checks-release build/hew-host-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/modem_diagnostics.py
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release MESHCORE_HEW_SESSION_CHECKS=$(CURDIR)/build/session-checks-release PYTHONDONTWRITEBYTECODE=1 python3 tests/modem_diagnostics.py
+
+# Shared native value layout is a dependency of every C bridge consumer.
+$(patsubst %.c,build/%.o,$(notdir $(wildcard *_bridge.c))) build/storage_interrupt.o build/transport_supervision.o build/identity-bindings build/event-native-checks build/library-fixture.o: bridge_abi.h

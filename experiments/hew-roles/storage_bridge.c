@@ -13,8 +13,7 @@
 #include <signal.h>
 #endif
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 static int path_string(const Bytes *in, char out[4096]) {
     if (!in->len || in->len > 4000 || !in->ptr) return 0;
     memcpy(out, in->ptr + in->offset, in->len);

@@ -17,8 +17,7 @@
 #include <netdb.h>
 #include <stdio.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 typedef struct { int fd; int64_t token; } Socket;
 typedef struct { int fd; int64_t next; Socket sockets[256]; } Listener;
 static volatile sig_atomic_t interrupted;

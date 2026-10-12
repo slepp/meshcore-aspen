@@ -17,8 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 extern char **environ;
 static volatile sig_atomic_t running = 1;
 int32_t mc_supervision_testing(void) {

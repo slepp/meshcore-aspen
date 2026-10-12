@@ -6,8 +6,7 @@
 
 /* Hew bytes ABI. Inputs are borrowed, outputs use the runtime allocator.
  * No role, routing, framing, or protocol state lives on this side of the ABI. */
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t capacity);
+#include "bridge_abi.h"
 extern int crypto_sign_seed_keypair(unsigned char *, unsigned char *, const unsigned char *);
 extern int crypto_sign_ed25519_pk_to_curve25519(unsigned char *, const unsigned char *);
 extern int crypto_sign_ed25519_sk_to_curve25519(unsigned char *, const unsigned char *);

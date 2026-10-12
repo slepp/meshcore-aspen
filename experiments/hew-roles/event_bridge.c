@@ -12,8 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 typedef struct { int fd; uint64_t key; } Registration;
 typedef struct {
     atomic_uint references;

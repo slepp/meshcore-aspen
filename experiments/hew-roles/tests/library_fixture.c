@@ -5,8 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "../bridge_abi.h"
 
 Bytes mc_test_pair(void) {
     int fd[2], capacity = 4096;

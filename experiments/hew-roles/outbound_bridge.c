@@ -11,8 +11,7 @@
 #include <sys/select.h>
 #include <sys/stat.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 typedef struct {
     CURL *easy;
     CURLM *multi;

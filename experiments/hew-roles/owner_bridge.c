@@ -7,8 +7,7 @@
 #include <unistd.h>
 #include <string.h>
 
-typedef struct { uint8_t *ptr; uint32_t offset, len; } Bytes;
-extern uint8_t *hew_bytes_new(uint32_t);
+#include "bridge_abi.h"
 
 static int path_string(const Bytes *input, char *path, size_t capacity) {
     if (!input->len || input->len >= capacity || memchr(input->ptr + input->offset, 0, input->len)) return 0;
