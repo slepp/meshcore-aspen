@@ -291,7 +291,7 @@ firmware-prepare: $(MESHCORE_DIR)/.git
 	@git -C $(MESHCORE_DIR) apply --reverse --check "$(CURDIR)/firmware/shared/radio-reconfigure.patch" >/dev/null 2>&1 || \
 		git -C $(MESHCORE_DIR) apply "$(CURDIR)/firmware/shared/radio-reconfigure.patch"
 	cp firmware/esp32/wifi_kiss_main.cpp $(MESHCORE_DIR)/examples/kiss_modem/main.cpp
-	cp firmware/shared/WifiKissMultiplexer.h firmware/shared/WifiKissMultiplexer.cpp firmware/shared/PacketPipeline.h firmware/shared/QueuedTxProtocol.h \
+	cp firmware/shared/WifiKissMultiplexer.h firmware/shared/WifiKissMultiplexer.cpp firmware/shared/PacketPipeline.h firmware/shared/PacketServices.h firmware/shared/QueuedTxProtocol.h \
 		firmware/shared/RadioDashboard.h firmware/shared/RadioDashboard.cpp firmware/shared/RadioDashboardPage.h \
 		firmware/shared/RadioNetwork.h firmware/shared/RadioFirmwareIdentity.h \
 		firmware/shared/SntpConfig.h firmware/shared/EspSntpClock.h $(MESHCORE_DIR)/examples/kiss_modem/
