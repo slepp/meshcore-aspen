@@ -118,8 +118,8 @@ fn main() {
     let width = number(args[7]);
     assert(seed.len() == 32 && role_kind >= 1 && role_kind <= 3 && width >= 1 && width <= 3);
     assert(!args[4].is_empty() && args[4].len() <= 31 && args[5].len() <= 63 && args[6].len() <= 63);
-    let region = hex.decode(args[8]).expect("valid hexadecimal");
-    let channel = hex.decode(args[9]).expect("valid hexadecimal");
+    let region = if args[8] == "-" { bytes.new() } else { hex.decode(args[8]).expect("valid hexadecimal") };
+    let channel = if args[9] == "-" { bytes.new() } else { hex.decode(args[9]).expect("valid hexadecimal") };
     assert((region.is_empty() || region.len() == 16) && (channel.is_empty() || channel.len() == 16));
     let role = roles.create(seed, role_kind, args[4], args[5], args[6], width, region, channel);
     let decoder = spawn wire.Decoder { buffer: bytes.new() };
