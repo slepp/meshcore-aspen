@@ -76,6 +76,12 @@ class OwnerHealth:
         self.threads = []
         roles = {name: {"state": "running", "radio_connected": True}
                  for name in ("bot", "repeater", "room", "observer")}
+        roles["bot"]["public_key"] = public(9).hex()
+        roles["bot"]["packet_reports"] = [{"slot": 0, "name": "repeater_snr",
+            "fields": ["mean_db", "rssi_mean_dbm", "samples"],
+            "rows": [{"label": "D12600", "values": [-2.25, -109.5, 12]},
+                     {"label": 'quote"slash\\', "values": [1.5, -98, 3]}]}]
+        self.roles = roles
         roles["observer"]["observer_stats"] = {"observed": 14, "published": 11, "dropped": 1, "queued": 1, "pending": True, "dirty": True, "saving": False, "save_failures": 2, "save_error": -1, "restored": 4, "expired": 3}
         roles["observer"]["mqtt_connected"] = True
         for name in roles:
@@ -308,11 +314,18 @@ class Dashboard(unittest.TestCase):
                     self.assertEqual(metrics.count(b'\nwillow_modem_received_packets_total '), 1)
                     self.assertIn(b'\nwillow_modem_received_packets_total 42', metrics)
                     self.assertIn(b'\nwillow_modem_temperature_celsius 31.5', metrics)
+                    packet_labels = f'{{device="willow_{public(9).hex()[:16]}",slot="0",report="repeater_snr",label="D12600"}}'.encode()
+                    self.assertIn(b'meshcore_packet_mean_db'+packet_labels+b' -2.25', metrics)
+                    self.assertIn(b'meshcore_packet_rssi_mean_dbm'+packet_labels+b' -109.5', metrics)
+                    self.assertIn(b'meshcore_packet_samples'+packet_labels+b' 12', metrics)
+                    self.assertIn(b'label="quote\\"slash\\\\"', metrics)
                     request("/status")
                     request("/readyz")
                     self.assertEqual(counts(), (2, 2, 2))
                     time.sleep(.7)
                     self.assertEqual(counts(), (2, 2, 2))
+                    owner.roles["bot"]["packet_reports"] = []
+                    self.assertNotIn(b'\nmeshcore_packet_', request("/metrics")[1])
                     # A complete HTTP request remains valid after write-side EOF.
                     with socket.create_connection(("127.0.0.1", port), timeout=4) as half_closed:
                         half_closed.sendall(b"GET /readyz HTTP/1.1\r\nHost: localhost\r\n\r\n")

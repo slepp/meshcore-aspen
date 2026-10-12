@@ -6,6 +6,7 @@ body{font:16px/1.5 system-ui,sans-serif;max-width:1000px;margin:auto;padding:24p
 section{border:1px solid #52657e;border-radius:8px;padding:18px;margin:18px 0}button,input,select,textarea{font:inherit;margin:5px;padding:8px}
 textarea{display:block;width:95%;min-height:180px;font:14px monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .warning{color:#ffd18a}.error{color:#ff9b9b}label{display:block}button:disabled{opacity:.5}a{color:#5ee0bd}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px;border-bottom:1px solid #52657e}.table-scroll{overflow-x:auto}
 </style></head><body>
 <h1>Host administration</h1>
 <p>Monitor host roles and configure the native bot through its existing owner console.
@@ -16,6 +17,7 @@ Never paste private keys or service credentials into the console.</p>
 <section><label>Configured host admin password or token <input id="token" type="password" autocomplete="current-password" maxlength="256"></label>
 <button id="login">Connect</button><button id="logout">Logout / forget session</button><span id="session">Disconnected</span>
 <p>Login sends this credential once; subsequent requests use a random ten-minute session retained only in this tab. Four sessions and five login attempts per minute are allowed.</p></section>
+<section><h2>Repeater signal</h2><p id="signal-status">Refresh host monitoring to read installed packet reports.</p><div class="table-scroll" id="signal-reports"></div></section>
 <section><h2>Roles and capabilities</h2><button id="monitor">Refresh host monitoring</button><pre id="monitoring"></pre>
 <p>Host role selection, listeners, MQTT and PHY authority remain in the operator's host configuration; activate those changes with an explicit service restart.
 This page never overwrites that configuration. Running state is shown below; bot settings and source save through native durable helpers.</p></section>
@@ -127,6 +129,24 @@ async function write(text){
   if(!window.confirm('Send this native setting change? A lost reply is not safe to repeat.'))return 'Cancelled; no command sent.';
   return command(text);
 }
+function renderPacketReports(reports){
+  const container=$('signal-reports');container.replaceChildren();
+  const titles={mean_db:'SNR mean (dB)',p95_db:'SNR P95 (dB)',rssi_mean_dbm:'RSSI mean (dBm)',samples:'Samples',window:'Window',heard_total:'Heard',last_seen_ms:'Last heard (uptime ms)',last_seen_utc:'Last heard'};
+  for(const report of Array.isArray(reports)?reports.slice(0,2):[]){
+    if(!Array.isArray(report.fields)||!Array.isArray(report.rows))continue;
+    const table=document.createElement('table'),caption=document.createElement('caption');
+    caption.textContent=`${report.name} · slot ${report.slot}`;table.appendChild(caption);
+    const head=table.createTHead().insertRow();
+    for(const name of ['Hop',...report.fields.slice(0,8)]){const cell=document.createElement('th');cell.scope='col';cell.textContent=titles[name]||name;head.appendChild(cell);}
+    const body=table.createTBody();
+    for(const item of report.rows.slice(0,16)){
+      const row=body.insertRow();row.insertCell().textContent=item.label;
+      for(const [index,value] of (Array.isArray(item.values)?item.values:[]).slice(0,8).entries())row.insertCell().textContent=!Number.isFinite(value)?'—':report.fields[index]==='last_seen_utc'?(value>0?new Date(value*1000).toLocaleString():'Unavailable'):Number(value.toFixed(2)).toString();
+    }
+    container.appendChild(table);
+  }
+  $('signal-status').textContent=container.children.length?'Current packet reports. Signal history starts again when the packet worker restarts.':'No packet report is available from the current worker.';
+}
 async function monitor(){
   const value=JSON.parse(await request('/admin/status'));
   nativeOwner=value.capabilities.native_owner===true;
@@ -137,6 +157,7 @@ async function monitor(){
   for(const role of roleOwners){const option=document.createElement('option');option.value=role;option.textContent=role;$('host-role').appendChild(option);}
   if(roleOwners.includes(selected))$('host-role').value=selected;
   $('monitoring').textContent=JSON.stringify(value,null,2);
+  renderPacketReports(value.roles?.bot?.packet_reports);
   return 'Monitoring connected. Native bot owner '+(nativeOwner?'available':'disabled')+'; role owners: '+(roleOwners.join(', ')||'unavailable')+'.';
 }
 async function roleCommand(role,text){
@@ -176,7 +197,7 @@ $('login').onclick=()=>action(async()=>{
 });
 $('logout').onclick=()=>action(async()=>{
   try{if(token)return await request('/admin/logout');return 'Disconnected';}
-  finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; draft and unresolved outcome retained';$('monitoring').textContent='';}
+  finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; draft and unresolved outcome retained';$('monitoring').textContent='';$('signal-reports').replaceChildren();$('signal-status').textContent='Refresh host monitoring to read installed packet reports.';}
 });
 $('monitor').onclick=()=>action(monitor);
 async function backupDownload(create){

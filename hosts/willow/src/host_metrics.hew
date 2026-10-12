@@ -28,6 +28,66 @@ fn numeric(name: string, labels: string, value: json.Value, key: string, scale: 
     }
     ""
 }
+fn text(value: json.Value, key: string) -> string {
+    if let .Some(item) = field(value, key) {
+        if let .Ok(result) = item.get_string() { return result; }
+    }
+    ""
+}
+fn label(value: string) -> string {
+    value.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"")
+}
+fn identifier(value: string) -> bool {
+    if value.is_empty() || value.len() > 23 { return false; }
+    let data = value.to_bytes();
+    for i in 0..data.len() {
+        let b = data[i];
+        if !((b >= 97 && b <= 122) || (i > 0 && (b == 95 || (b >= 48 && b <= 57)))) { return false; }
+    }
+    true
+}
+fn member(value: json.Value, key: string) -> json.Value {
+    match field(value, key) { .Some(item) => item, .None => json.null(), }
+}
+fn count(value: json.Value, limit: i64) -> i64 {
+    match value.array_len() { .Ok(n) => if n < limit { n } else { limit } .Err(_) => 0, }
+}
+fn at(value: json.Value, index: i64) -> json.Value {
+    match value.array_get(index) {
+        .Ok(item) => match item { .Some(v) => v, .None => json.null(), }
+        .Err(_) => json.null(),
+    }
+}
+fn packet_reports(bot: json.Value) -> string {
+    let key = text(bot, "public_key");
+    if key.len() != 64 { return ""; }
+    let device = label("willow_" + key.slice(0, 16));
+    let reports = member(bot, "packet_reports");
+    var out = "";
+    for i in 0..count(reports, 2) {
+        let report = at(reports, i);
+        let name = text(report, "name");
+        if !identifier(name) { continue; }
+        let slot = match member(report, "slot").get_int() { .Ok(n) => n, .Err(_) => -1, };
+        if slot < 0 || slot > 1 { continue; }
+        let fields = member(report, "fields");
+        let rows = member(report, "rows");
+        for r in 0..count(rows, 16) {
+            let row = at(rows, r);
+            let hop = label(text(row, "label"));
+            let labels = f"\{device=\"{device}\",slot=\"{slot}\",report=\"{name}\",label=\"{hop}\"\}";
+            let values = member(row, "values");
+            for f in 0..count(fields, count(values, 8)) {
+                let metric = match at(fields, f).get_string() { .Ok(v) => v, .Err(_) => "", };
+                if !identifier(metric) { continue; }
+                let value = at(values, f);
+                if let .Ok(integer) = value.get_int() { out += sample("meshcore_packet_" + metric, labels, integer as f64); }
+                else if let .Ok(number) = value.get_float() { out += sample("meshcore_packet_" + metric, labels, number); }
+            }
+        }
+    }
+    out
+}
 
 pub fn render(status: json.Value, ready: json.Value) -> string {
     var out = "# HELP willow_role_health_available Role status was returned by its health source.\n# TYPE willow_role_health_available gauge\n# TYPE willow_role_ready gauge\n# TYPE willow_role_running gauge\n# TYPE willow_radio_connected gauge\n# TYPE willow_companion_listener_active gauge\n# TYPE willow_observer_mqtt_connected gauge\n# TYPE willow_observer_observed_total counter\n# TYPE willow_observer_published_total counter\n# TYPE willow_observer_dropped_total counter\n# TYPE willow_observer_queued gauge\n# TYPE willow_observer_pending gauge\n# TYPE willow_observer_dirty gauge\n# TYPE willow_observer_saving gauge\n# TYPE willow_observer_save_failures_total counter\n# TYPE willow_observer_save_error gauge\n# TYPE willow_observer_restored gauge\n# TYPE willow_observer_expired_total counter\n# TYPE willow_role_tx_accepted_total counter\n# TYPE willow_role_tx_succeeded_total counter\n# TYPE willow_role_tx_failed_total counter\n# TYPE willow_role_tx_rejected_total counter\n# TYPE willow_role_tx_unknown_total counter\n# TYPE willow_role_tx_diagnostic_drops_total counter\n# TYPE willow_role_tx_reported_airtime_seconds_total counter\n# TYPE willow_modem_received_packets_total counter\n# TYPE willow_modem_sent_packets_total counter\n# TYPE willow_modem_errors_total counter\n# TYPE willow_modem_noise_dbm gauge\n# TYPE willow_modem_rssi_dbm gauge\n# TYPE willow_modem_temperature_celsius gauge\n# TYPE willow_modem_battery_volts gauge\n";
@@ -37,6 +97,7 @@ pub fn render(status: json.Value, ready: json.Value) -> string {
             let available = value.type_of() == json.Kind.Object && field(value, "health_error").is_none();
             out += sample("willow_role_health_available", labels, if available { 1.0 } else { 0.0 });
             if available {
+                if role == "bot" { out += packet_reports(value); }
                 if let .Some(failures) = field(ready, "not_ready") {
                     let failure = field(failures, role);
                     var known = true;
