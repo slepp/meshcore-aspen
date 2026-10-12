@@ -98,7 +98,7 @@ class WorkerBinding(unittest.TestCase):
             wasm.mkdir()
             (wasm/"compile_commands.json").write_text("[]")
             environment = os.environ | {"HEW_NATIVE_COMPILER_LOG": str(output/"commands.jsonl")}
-            subprocess.run([sys.executable, str(ROOT/"compiler_capture.py"), "cc", str(output/"first.c"),
+            subprocess.run([sys.executable, str(ROOT/"tools/compiler_capture.py"), "cc", str(output/"first.c"),
                             str(output/"second.c"), "-o", str(output/"worker")],
                            env=environment, check=True, capture_output=True, timeout=10)
             # GCC -MP and CMake may append empty rules for included headers.
@@ -117,7 +117,7 @@ class WorkerBinding(unittest.TestCase):
             self.assertNotEqual(before, build_worker.local_inputs(sources))
             (output/"new.h").write_text("#define FIRST 3\n")
             (output/"first.h").write_text('#include "new.h"\n')
-            subprocess.run([sys.executable, str(ROOT/"compiler_capture.py"), "cc", str(output/"first.c"),
+            subprocess.run([sys.executable, str(ROOT/"tools/compiler_capture.py"), "cc", str(output/"first.c"),
                             str(output/"second.c"), "-o", str(output/"worker")],
                            env=environment, check=True, capture_output=True, timeout=10)
             self.assertIn(str(output/"new.h"), build_worker.compiled_inputs(output, wasm))
