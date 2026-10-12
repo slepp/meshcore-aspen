@@ -118,8 +118,9 @@ newer development headers/library, `pkg-config`, `libcrypto.so.3`,
 Python with `cryptography` and `PyNaCl`, CMake, Git, patch, PlatformIO's package
 manager and cJSON headers/library. The full demo additionally needs Clang's
 wasm32 target and `wasm-ld`. `BOT_JSON_INCLUDE` can select the cJSON header directory;
+the default is the installed ESP32 SDK.
 MQTT over WebSocket also needs libcurl built with `ws`/`wss` support.
-the default is the installed ESP32 SDK. The first native worker build downloads
+The first native worker build downloads
 pinned public C/C++ dependencies using the existing host-worker recipe.
 Build products and generated test identities stay in ignored
 `build/`.
