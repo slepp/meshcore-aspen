@@ -149,7 +149,7 @@ build/admin-checks: admin_checks.hew host_admin.hew | build
 build/admin-checks-release: admin_checks.hew host_admin.hew | build
 	$(HEW) build --emit-deps $@.d $< --release -o $@
 .PHONY: source-workflow-test
-source-workflow-test: build/hew-host-release build/arithmetic.wasm
+source-workflow-test: build/hew-host-release build/arithmetic.wasm build/oracle
 	HEW_WORKERS=4 MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/source_workflow.py
 owner-service-test: build/hew-host-release build/oracle build/owner-client-checks build/owner-client-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/owner_service.py
@@ -331,7 +331,7 @@ build/roles-release: main.hew wire.hew roles.hew storage.hew modem.hew build/cry
 build/hew-host-release: service_main.hew service.hew session.hew transport.hew wire.hew roles.hew storage.hew worker_identity.hew build/crypto_bridge.o build/storage_bridge.o build/transport_bridge.o
 	$(HEW) build --emit-deps $@.d service_main.hew --release -o $@ $(LINK)
 build/oracle: tests/oracle/main.go | build
-	TMPDIR=$(CURDIR)/build go build -o $@ ./tests/oracle
+	TMPDIR=$(CURDIR)/build go build -buildvcs=false -o $@ ./tests/oracle
 test: all build/oracle build/session-checks build/worker-checks build/roles-interrupt firmware-negotiation-test
 	./build/session-checks
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/worker_binding.py
