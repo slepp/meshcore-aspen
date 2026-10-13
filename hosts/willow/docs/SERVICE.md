@@ -114,7 +114,10 @@ use the running roles; they never start another host or worker.
 
 Run the client as the service UID. The state directory must be mode `0700`,
 the Unix `SOCK_SEQPACKET` socket mode `0600`, and the complete socket path at
-most 107 bytes. Both endpoints verify the other's UID. There is no TCP control
+most 107 bytes, leaving one byte for the terminating NUL in Linux's 108-byte
+address field. Choose a short absolute state path: appending `/admin.sock` or
+`/owner.sock` adds 11 bytes, so the state path must fit in 96 filesystem-encoded
+bytes. Both endpoints verify the other's UID. There is no TCP control
 listener. `BOT_READY native-extension` identifies native readiness;
 `inbox` returning a cursor checks that the local control actor is responsive.
 `OWNER_CONTROL_OFFLINE` means the control actor is unavailable; relay, room
