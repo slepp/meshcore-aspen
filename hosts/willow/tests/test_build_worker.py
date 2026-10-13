@@ -18,24 +18,16 @@ class SourceIdentity(unittest.TestCase):
     def test_git_archive_identity_outside_git_and_inside_another_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            checkout = root / "checkout"
-            checkout.mkdir()
-            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-            (checkout / "release").mkdir()
-            (checkout / "release/source.json").write_bytes(
-                (worker.ROOT / "release/source.json").read_bytes())
-            (checkout / ".gitattributes").write_bytes(
-                (worker.ROOT / ".gitattributes").read_bytes())
-            subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
-            subprocess.run([
-                "git", "-C", str(checkout), "-c", "user.name=Archive test",
-                "-c", "user.email=archive@example.invalid", "-c", "commit.gpgsign=false",
-                "commit", "-qm", "Archive source identity",
-            ], check=True)
-            expected = worker.source_identity(checkout)
+            expected = worker.source_identity(worker.ROOT)
             archive = root / "source.tar"
-            subprocess.run(["git", "-C", str(checkout), "archive", "--format=tar",
-                            "-o", str(archive), "HEAD"], check=True)
+            if (worker.ROOT / ".git").exists():
+                # Exercise export-subst using the existing source revision.
+                subprocess.run(["git", "-C", str(worker.ROOT), "archive", "--format=tar",
+                                "-o", str(archive), "HEAD", "release/source.json"], check=True)
+            else:
+                # Published source already carries its expanded release identity.
+                with tarfile.open(archive, "w") as package:
+                    package.add(worker.ROOT / "release/source.json", arcname="release/source.json")
             extracted = root / "extracted"
             extracted.mkdir()
             with tarfile.open(archive) as package:
