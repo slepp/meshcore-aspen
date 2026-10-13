@@ -249,7 +249,11 @@ Bytes mc_outbound_read(int64_t handle) {
     CURLcode code = CURLE_BAD_FUNCTION_ARGUMENT;
     int end = 0;
     if (out && out->ready && out->websocket) {
+#if LIBCURL_VERSION_NUM < 0x080200
+        struct curl_ws_frame *meta = NULL;
+#else
         const struct curl_ws_frame *meta = NULL;
+#endif
         code = curl_ws_recv(out->easy, buffer + 1, sizeof buffer - 1, &received, &meta);
         if (code == CURLE_GOT_NOTHING) {
             code = CURLE_OK; end = 1;

@@ -265,16 +265,17 @@ fn config(root: string) -> Config {
 
 pub fn check_config(root: string) {
     let cfg = config(root);
+    if cfg.worker != "-" { verify_native(cfg.worker); }
     let _ = observer_runtime.validate(root, cfg.observer_options);
     println("Willow configuration checks passed; no connections opened");
 }
 
 fn verify_native(executable: string) {
     if executable != worker_identity.path() {
-        panic("unverified external native worker; use build/native-worker from make native-worker");
+        panic("unverified external native worker; use this installation's build/native-worker");
     }
     if !transport.verify_worker(worker_identity.inputs(), worker_identity.digest()) {
-        panic("native worker source/binary verification failed; run make native-worker and rebuild hew-host");
+        panic("native worker verification failed; reinstall the bundle or rebuild the source installation");
     }
 }
 
@@ -286,7 +287,7 @@ fn launch_worker(executable: string, root: string) -> Option<process.Child> {
 fn launch_native(owner: ChildRef<process.WorkerOwner>, executable: string, root: string) -> Option<ChildRef<process.WorkerOwner>> {
     let injected = transport.supervision_testing() && !storage.absent(root + "-verify.inject");
     if injected || executable != worker_identity.path() || !transport.verify_worker(worker_identity.inputs(), worker_identity.digest()) {
-        println("BOT_OFFLINE native worker verification failed; relay and room remain online; run make native-worker and rebuild hew-host");
+        println("BOT_OFFLINE native worker verification failed; relay and room remain online; reinstall the bundle or rebuild the source installation");
         return .None;
     }
     var arguments: Vec<string> = Vec.new();

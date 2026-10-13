@@ -1,44 +1,75 @@
 # MeshCore Willow
 
-Run a relay, room, command bot, Base companion and optional MQTT observer on a
-WiFi-connected shared modem. The host, Base, dashboard, local MQTT broker,
-queues and persistence are native Hew.
-For the default bot, it uses the same local C++ Lua/Wasm extension boundary
-as the Go host. A smaller all-Hew bot is also available.
+Run a relay, room and Lua/Wasm command bot on a Linux computer connected to a
+WiFi shared modem. Add a Base companion for the MeshCore app, a browser
+dashboard and an MQTT broker. An optional observer publishes received radio
+packets to your broker.
 
-Get the [Willow 0.0.8 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.8).
-Build the
-[current repository source](https://github.com/slepp/meshcore-aspen) at the final
-installation path with the current Hew compiler and matching libraries. The native worker is bound to that
-source/build tree; copying prebuilt binaries alone is not a supported install.
-The running services retain identities, source and data across upgrades and
-restart. Worker recovery and ordinary RF messaging have been exercised.
-Keep the previous installation for retained-state rollback.
+Download the [Willow 0.0.9 Linux bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.9)
+to install without a compiler. It includes all four services, the program
+worker, dashboard page, migration tools and source. Start below, or
+[build from source](#build-from-source).
 
-Willow is the Hew implementation of Birch's
-off-chip host arrangement. Aspen runs its selected roles on an ESP32 and is
-the core on-device design; Pine is its hardware-limited nRF52 variation.
+## Install the Linux bundle
 
-For an existing Birch node, [stage a frozen state copy](docs/MIGRATION.md), then run
-Willow with its preserved identities and native bot data. Keep the shared
-modem's configuration owner separate. The [native Base service](docs/BASE.md)
-owns its own companion identity and ordinary modem connection.
-Stop the previous host or companion service before Willow starts the same
-identities.
-Enable the native observer with [the private service settings](docs/SERVICE.md#native-mqtt-observer).
+Install the runtime libraries and Python helpers. On Debian 12:
+
+```sh
+sudo apt-get install python3 python3-cryptography python3-nacl \
+  libssl3 libcjson1 libsodium23 libstdc++6 zlib1g ca-certificates
+```
+
+Download `willow-v0.0.9-linux-x86_64.tar.gz` from the release above, extract it,
+and select a new versioned installation directory:
+
+```sh
+tar -xzf willow-v0.0.9-linux-x86_64.tar.gz
+cd willow-v0.0.9-linux-x86_64
+python3 install-willow.py --prefix "$HOME/.local/lib/willow/0.0.9"
+cd "$HOME/.local/lib/willow/0.0.9/hosts/willow"
+```
+
+The installer checks bundle files and never replaces an existing installation
+or changes private node state. You can move a complete binary installation to
+another prefix; its host verifies the bundled worker before use.
+The bundle includes libcurl with HTTP, HTTPS, WS and WSS support and uses the
+system's trusted CA certificates for TLS connections.
+
+For a new node, set the modem's IPv4 address and the hexadecimal profile from
+[the initialization guide](docs/SERVICE.md#start-with-new-identities), then run:
+
+```sh
+./build/hew-host-release init "$HOME/.local/state/willow" \
+  --address "$MODEM_IPV4" --port 8001 --profile "$PROFILE_HEX"
+python3 -B tools/willow.py check --state "$HOME/.local/state/willow"
+python3 -B tools/willow.py run --release --state "$HOME/.local/state/willow"
+```
+
+The check reads configuration and verifies the worker without connecting to the
+modem. Startup reports `ONLINE` and `BOT_READY native-extension`. The modem owns
+radio tuning; Willow checks its profile without retuning it. Use a short private
+state path so its Unix socket names fit the operating system's limit.
+
+For an existing node, use [stopped-state migration and rollback](docs/MIGRATION.md)
+instead of `init`. Never start two services with the same identity. The
+[service updater](../../tools/INSTALL_WILLOW.md) accepts an extracted binary
+bundle as its source, so an upgrade can retain the latest state without a compiler.
+
+Run Base, the dashboard and the MQTT broker separately using their guides in
+[docs/BASE.md](docs/BASE.md), [docs/SERVICE.md](docs/SERVICE.md#native-http-dashboard)
+and [docs/BROKER.md](docs/BROKER.md). Their executables are under `build/`.
+
+## Build from source
 
 ```sh
 git clone https://github.com/slepp/meshcore-aspen.git
 cd meshcore-aspen/hosts/willow
 make -j2 release
 python3 -B tools/willow.py --version
-python3 -B tools/willow.py check --state /path/to/private/willow
-python3 -B tools/willow.py run --release --state /path/to/private/willow
 ```
 
-Expected: `Willow 0.0.8`; the state check verifies the retained role identities
-and configuration, and startup connects to the configured shared modem without
-retuning it. `make release` builds the host, Base, broker and dashboard with
+Expected: `Willow 0.0.9`. Use the new-node initialization, check and run commands
+above, or migrate an existing stopped node. `make release` builds the host, Base, broker and dashboard with
 the current Hew installation. The launcher defaults to four scheduler workers; set
 `HEW_WORKERS` explicitly to choose another count.
 For production builds, build Hew with its supported `make hew` target and put
@@ -62,12 +93,13 @@ The contributor CI runs this same command. The broader `make test test-release`
 targets retain the complete debug/release protocol, management, login,
 readiness and migration suites.
 
-The complete host check passed with Hew source
-`dce0bc72da487bf4c9307df84b738c2caa58b8f7`, using its matching optimized
-runtime and standard library. This records a compatible toolchain; normal
-builds select the current `hew` from `PATH`. The published rc7 SDK predates
-Willow's actor syntax. CI builds current Hew main through its supported
-`make hew` target, selects `build/bin` and records the source revision.
+A compatible toolchain is Hew source
+`dce0bc72da487bf4c9307df84b738c2caa58b8f7`, with its matching optimized
+runtime and standard library. Normal builds select the current `hew` from
+`PATH`. For a Hew source checkout, run `make hew` and select its `build/bin`
+launcher. The published rc7 SDK predates Willow's actor syntax.
+See [building a Linux bundle](docs/BINARY_RELEASE.md) for the Debian 12 build
+and the included source, notices and relinking material.
 Compiler-specific probe results are documented separately in
 [tests/probes](tests/probes/README.md).
 
@@ -80,7 +112,7 @@ to send as its native bot and read authenticated incoming DMs. For a version
 upgrade, [rebind a complete frozen state copy](docs/MIGRATION.md#upgrade-a-frozen-willow-state)
 with the newly installed launcher; do not replace a running installation.
 Existing Linux user services can use the
-[source-build updater](../../tools/INSTALL_WILLOW.md) for selected-service upgrades
+[service updater](../../tools/INSTALL_WILLOW.md) for selected-service upgrades
 and rollback using the latest stopped state.
 
 For the browser dashboard, follow [the host dashboard setup](docs/SERVICE.md#run-the-host-dashboard).

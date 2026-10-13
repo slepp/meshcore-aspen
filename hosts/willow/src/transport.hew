@@ -3,6 +3,7 @@ import willow.src.hostlib.duplex;
 import willow.src.hostlib.process;
 
 import willow.src.hostlib.supervised_io;
+import std.encoding.utf8;
 
 extern "C" {
     fn mc_supervision_testing() -> i32;
@@ -11,6 +12,7 @@ extern "C" {
     fn mc_signals();
     fn mc_running() -> i32;
     fn mc_directory(path: bytes) -> i32;
+    fn mc_executable_sibling(leaf: bytes) -> bytes;
     fn mc_signal(snr: i32, rssi: i32) -> bytes;
     fn mc_snr_quarter(metadata: bytes) -> i32;
     #[offload]
@@ -191,4 +193,9 @@ pub fn verify_worker(path: string, expected: string) -> bool {
     unsafe {
         mc_verify_worker(path.to_bytes(), expected.to_bytes()) == 1
     }
+}
+
+pub fn executable_sibling(leaf: string) -> string {
+    let raw = unsafe { mc_executable_sibling(leaf.to_bytes()) };
+    utf8.decode(raw).expect("cannot resolve Willow executable directory")
 }

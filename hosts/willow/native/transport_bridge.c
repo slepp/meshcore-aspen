@@ -104,6 +104,21 @@ static int hash_matches(const uint8_t hash[32], const char *hex) {
         if (hex[2*i] != digits[hash[i] >> 4] || hex[2*i+1] != digits[hash[i] & 15]) return 0;
     return 1;
 }
+Bytes mc_executable_sibling(const Bytes *leaf) {
+    char name[4096], component[256];
+    if (!string(leaf, component, sizeof component) || strchr(component, '/') ||
+        !strcmp(component, ".") || !strcmp(component, "..")) return (Bytes){0};
+    ssize_t size = readlink("/proc/self/exe", name, sizeof name - 1);
+    if (size <= 0 || size >= (ssize_t)sizeof name - 1) return (Bytes){0};
+    name[size] = 0;
+    char *slash = strrchr(name, '/');
+    if (!slash || (size_t)(slash + 1 - name) + strlen(component) >= sizeof name) return (Bytes){0};
+    strcpy(slash + 1, component);
+    size_t length = strlen(name);
+    Bytes out = {hew_bytes_new((uint32_t)length), 0, (uint32_t)length};
+    memcpy(out.ptr, name, length);
+    return out;
+}
 int32_t mc_verify_worker(const Bytes *path, const Bytes *expected) {
     char name[4096]; struct stat st; uint8_t hash[32]; unsigned size = 0;
     if (!string(path, name, sizeof name) || expected->len != 64) return 0;
@@ -128,9 +143,29 @@ int32_t mc_verify_worker(const Bytes *path, const Bytes *expected) {
     char *entry = data;
     while (ok && *entry) {
         char *end = strchr(entry, '\n');
-        if (!end || end - entry < 67 || entry[64] != '\t' || entry[65] != '/') { ok = 0; break; }
+        if (!end || end - entry < 66 || entry[64] != '\t') { ok = 0; break; }
         *end = 0;
-        ok = hash_file(entry + 65, hash) && hash_matches(hash, entry);
+        const char *input = entry + 65;
+        char relative[4096];
+        if (*input != '/') {
+            /* Portable records stay beneath the manifest directory. */
+            char *slash = strrchr(name, '/');
+            const char *part = input;
+            int safe = 1;
+            while (*part) {
+                const char *next = strchr(part, '/');
+                size_t length = next ? (size_t)(next - part) : strlen(part);
+                if (!length || (length == 1 && part[0] == '.') ||
+                    (length == 2 && part[0] == '.' && part[1] == '.')) { safe = 0; break; }
+                part += length + (next ? 1 : 0);
+            }
+            if (!slash || !safe ||
+                (size_t)(slash + 1 - name) + strlen(input) >= sizeof relative) { ok = 0; break; }
+            memcpy(relative, name, (size_t)(slash + 1 - name));
+            strcpy(relative + (slash + 1 - name), input);
+            input = relative;
+        }
+        ok = hash_file(input, hash) && hash_matches(hash, entry);
         if (!ok) fprintf(stderr, "Native worker input changed or unavailable: %s\n", entry + 65);
         entry = end + 1;
     }

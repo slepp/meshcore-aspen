@@ -19,26 +19,27 @@ It has its own TCP clients, frozen-state migration and ordinary modem source;
 it does not occupy the four aggregate ports. The guide lists the remaining
 differences before replacing the existing Base service.
 
-Use `make demo` first. It starts private loopback modem emulators and the real
-`build/hew-host` executable, exchanges packets, checks recovery, and removes
-the synthetic service identities when each scenario finishes. It also builds
-the repository's arithmetic Wasm example, provisions it into a private native
-extension, and calls `!wadd 17 25` through KISS. The Lua bot remains active.
-
-```sh
-cd hosts/willow
-make native-worker
-export BOT_NATIVE_WORKER="$PWD/build/native-worker"
-make demo
-cat build/service-results.json
-```
-
-The worker is built from this worktree using the Go host's native Make recipe,
-with Lua and Wasm enabled. An installed worker or copied binary is not accepted.
+The Linux bundle includes a Lua/Wasm worker verified by the host. Source builds
+use the shared native Make recipe and verify their selected build inputs.
+Copy a complete binary installation, or retain the complete source build; a
+worker from another build is refused.
 See [worker build and verification](#worker-build-and-verification),
 [the native worker protocol](../../../internal/nativebot/PROTOCOL.md) and
 [the interpreter build guide](../../../firmware/runtime/WASM_RUNTIME.md).
 The service does not start Go, invoke a shell, or connect to an RPC endpoint.
+
+## Install the Linux bundle
+
+Follow [the bundle installation steps](../README.md#install-the-linux-bundle)
+for Linux x86-64. Debian 12 is the binary baseline. Install its runtime packages,
+extract the archive and use `install-willow.py --prefix NEW_DIRECTORY`. No Hew,
+C/C++ compiler or source build is required. The four service executables and
+verified program worker live under `hosts/willow/build` in that prefix.
+
+Keep private state outside the installation. For an existing node, use the
+[stopped-state migration guide](MIGRATION.md) and retain the previous version
+for rollback. Binary installations can move to another prefix as a complete
+tree; rebind stopped state to update its saved worker path.
 
 ## Build and install from source
 
@@ -60,6 +61,20 @@ make acceptance-test
 python3 -B tools/build_worker.py --verify --worker "$PWD/build/native-worker"
 ```
 
+For a source checkout, `make demo` runs an isolated service trial. It starts private loopback modem emulators and the real
+`build/hew-host` executable, exchanges packets, checks recovery, and removes
+the synthetic service identities when each scenario finishes. It also builds
+the repository's arithmetic Wasm example, provisions it into a private native
+extension, and calls `!wadd 17 25` through KISS. The Lua bot remains active.
+
+```sh
+cd hosts/willow
+make native-worker
+export BOT_NATIVE_WORKER="$PWD/build/native-worker"
+make demo
+cat build/service-results.json
+```
+
 Run migration from that same installation tree, so the generated private configuration
 selects its worker. Keep the source/build inputs available and unchanged.
 For an update, build a new installation first, then follow the
@@ -68,7 +83,7 @@ It keeps the current identities and saved traffic while changing the worker
 binding. Keep the previous installation for rollback using the latest stopped
 state.
 For existing Linux systemd user services, the
-[source-build updater](../../../tools/INSTALL_WILLOW.md) builds at a new final path,
+[service updater](../../../tools/INSTALL_WILLOW.md) installs a bundle or builds at a new final path,
 copies the latest stopped state and switches only the selected services.
 A service manager can invoke the runner directly:
 
@@ -92,8 +107,10 @@ saved data or radio connection limits. The C++ Lua/Wasm worker is separate.
 The installed release needs no FFI-path or `LD_LIBRARY_PATH` override.
 The existing C bridge objects are linked into the
 executable; its shared dependencies are system libraries. Keep the complete
-build/source installation at its final path: `src/worker_identity.hew` binds the
-absolute native-worker and input-manifest paths. `BOT_NATIVE_WORKER` selects
+source installation at its final path: `src/worker_identity.hew` binds the
+absolute native-worker and input-manifest paths. Binary bundles resolve both
+files beside the running executable and bind their expected digest into the
+host, so moving the complete installation retains verification. `BOT_NATIVE_WORKER` selects
 test helpers, not the production worker; migration writes the verified worker
 path into the private configuration. The compiler is needed to build, not
 to launch an already built release.

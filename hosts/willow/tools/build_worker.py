@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and bind the real Go-host native extension to this worktree's inputs."""
+"""Build and verify Willow's native program worker."""
 import argparse
 import hashlib
 import importlib.util
@@ -112,6 +112,12 @@ def verify(candidate=None):
         raise ValueError("native worker build record missing; run make native-worker")
     spec = json.loads(SPEC.read_text())
     supplied = Path(candidate).absolute() if candidate else WORKER
+    if spec.get("format") == 2:
+        if supplied != WORKER or set(spec["inputs"]) not in ({"native-worker"}, {"native-worker", "lib/libcurl.so.4"}):
+            raise ValueError(f"unverified external worker {supplied}; use {WORKER}")
+        if digest(INPUTS) != spec["inputs_sha256"] or any(digest(BUILD/name) != expected for name, expected in spec["inputs"].items()):
+            raise ValueError("installed native worker or binding changed; reinstall the Willow bundle")
+        return spec | {"worker": str(WORKER)}
     if supplied != WORKER or spec["worker"] != str(WORKER):
         raise ValueError(f"unverified external worker {supplied}; use {WORKER} from make native-worker")
     if local_inputs(spec["local_sources"]) != spec["local_inputs"]:
@@ -125,6 +131,15 @@ def verify(candidate=None):
 
 
 def write_identity(spec):
+    if spec.get("format") == 2:
+        module = ('import willow.src.transport;\n'
+                  'pub fn path() -> string { transport.executable_sibling("native-worker") }\n'
+                  'pub fn inputs() -> string { transport.executable_sibling("native-worker.inputs") }\n'
+                  f'pub fn digest() -> string {{ "{spec["inputs_sha256"]}" }}\n')
+        path = HERE/"src/worker_identity.hew"
+        if not path.exists() or path.read_text() != module:
+            path.write_text(module)
+        return
     module = (f'pub fn path() -> string {{ "{WORKER}" }}\n'
               f'pub fn inputs() -> string {{ "{INPUTS}" }}\n'
               f'pub fn digest() -> string {{ "{spec["inputs_sha256"]}" }}\n')
@@ -140,8 +155,17 @@ def run(command, log, env, cwd=ROOT):
 
 def ensure():
     source_commit, source_epoch = source_identity()
+    if os.environ.get("WILLOW_BINARY_BUILD") == "1" and SPEC.exists():
+        spec = json.loads(SPEC.read_text())
+        if spec.get("format") == 2:
+            verify()
+            write_identity(spec)
+            print("Verified portable native worker", str(WORKER))
+            return
     try:
         spec = verify()
+        if spec.get("format") != 1:
+            raise ValueError("Source builds require the source input record")
         write_identity(spec)
         print("Verified native worker", spec["worker_sha256"])
         return
@@ -179,7 +203,9 @@ def ensure():
                   f"NATIVE_USB_LIB_DIR={relative(NATIVE/'usb-deps')}"]
         run(["make", "--no-print-directory", "native-test-deps"]+shared, log, env)
         for name, version in (("Crypto", "0.4.0"), ("CayenneLPP", "1.6.1")):
-            if json.loads((NATIVE/"deps"/name/".piopm").read_text())["version"] != version:
+            directory = NATIVE/"deps"/name
+            metadata = directory/(".piopm" if (directory/".piopm").exists() else "library.json")
+            if json.loads(metadata.read_text())["version"] != version:
                 raise ValueError("native dependency version mismatch: "+name)
         wasm_spec = importlib.util.spec_from_file_location("hew_prepare_wasm", ROOT/"firmware/esp32/prepare_wasm.py")
         wasm = importlib.util.module_from_spec(wasm_spec)
@@ -227,7 +253,20 @@ def ensure():
             run(["git", "-C", upstream, "archive", "--format=tar", "-o", archive, PIN], log, env)
             mesh.mkdir()
             with tarfile.open(archive) as files:
-                files.extractall(mesh, filter="data")
+                # Git produces only the selected public tree. Extract regular
+                # files explicitly so the supported Python 3.11 also works.
+                for member in files:
+                    name = Path(member.name)
+                    if name.is_absolute() or ".." in name.parts or not (member.isdir() or member.isfile()):
+                        raise ValueError("unsafe native upstream archive member: "+member.name)
+                    target = mesh/name
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with files.extractfile(member) as source, target.open("xb") as destination:
+                            shutil.copyfileobj(source, destination)
+                        target.chmod(member.mode & 0o777)
             for patch in ("radio-reconfigure.patch", "queued-dispatch.patch"):
                 run(["patch", "--forward", "-p1", "-i", ROOT/"firmware/shared"/patch], log, env, cwd=mesh)
             (mesh/"hew-host-prepared").write_text(PIN+"\n")
@@ -302,14 +341,32 @@ def ensure():
     print("Native compiler log:", compiler_log)
 
 
+def portable():
+    """Bind distributable hosts to the worker bytes, without build-host files."""
+    spec = verify()
+    inputs = {"native-worker": digest(WORKER)}
+    if (BUILD/"lib/libcurl.so.4").exists():
+        inputs["lib/libcurl.so.4"] = digest(BUILD/"lib/libcurl.so.4")
+    INPUTS.write_text("".join(value+"\t"+name+"\n" for name,value in sorted(inputs.items())))
+    selected = {key: spec[key] for key in ("base", "source_date_epoch", "upstream", "wamr_revision")}
+    selected.update(format=2, worker="native-worker", worker_sha256=digest(WORKER),
+                    inputs=inputs, inputs_sha256=digest(INPUTS))
+    SPEC.write_text(json.dumps(selected, indent=2, sort_keys=True)+"\n")
+    write_identity(selected)
+    verify()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--portable", action="store_true", help="Bind a verified worker for a binary release build")
     parser.add_argument("--worker")
     args = parser.parse_args()
     try:
         if args.verify:
             print(verify(args.worker)["worker"])
+        elif args.portable:
+            portable()
         else:
             ensure()
     except (OSError, ValueError, subprocess.CalledProcessError) as error:

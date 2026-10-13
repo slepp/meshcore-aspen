@@ -122,9 +122,11 @@ def roles(install):
     root = Path(install)
     for relative in ("hosts/willow", "experiments/hew-roles"):
         candidate = root / relative
-        if (candidate / "Makefile").is_file():
+        if (candidate / "Makefile").is_file() or (
+                (candidate / "build/hew-host-release").is_file() and
+                (candidate / "tools/willow.py").is_file()):
             return candidate
-    raise ValueError("Installation has no Willow source/build directory")
+    raise ValueError("Installation has no Willow service directory")
 
 
 def helper(install, name):
@@ -190,6 +192,19 @@ def build(plan, workspace):
     install = Path(plan["install"])
     if install.exists():
         raise ValueError("Installation path already exists; use a new final path")
+    bundle = Path(plan["source"])
+    if (bundle / "manifest.json").is_file():
+        from install_willow_bundle import install as install_bundle, verify as verify_bundle
+        manifest = verify_bundle(bundle)
+        if manifest["source"]["commit"] != plan["revision"]:
+            raise ValueError("Binary bundle differs from the selected revision")
+        install_bundle(bundle, install)
+        shutil.copy2(bundle / "manifest.json", workspace / "bundle-manifest.json")
+        kinds = {s["kind"] for s in plan["services"] if s.get("selected", True)}
+        return {"compiler": "prebuilt", "compiler_version": "not required",
+                "bundle_manifest_sha256": hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest(),
+                "binaries": {k: hashlib.sha256((roles(install) / "build" / BINARIES[k]).read_bytes()).hexdigest()
+                             for k in kinds}}
     compiler = shutil.which("hew")
     if not compiler:
         raise ValueError("Put the current Hew build/bin launcher and matching libraries on PATH")
@@ -225,7 +240,10 @@ def resume_build(plan, workspace):
     kinds = {s["kind"] for s in plan["services"] if s.get("selected", True)}
     if set(result["binaries"]) != kinds:
         raise ValueError("Build stage does not contain the selected production binaries")
-    if hashlib.sha256((workspace / "source.tar").read_bytes()).hexdigest() != result["source_archive_sha256"]:
+    if "bundle_manifest_sha256" in result:
+        if hashlib.sha256((workspace / "bundle-manifest.json").read_bytes()).hexdigest() != result["bundle_manifest_sha256"]:
+            raise ValueError("Saved binary bundle manifest changed since installation")
+    elif hashlib.sha256((workspace / "source.tar").read_bytes()).hexdigest() != result["source_archive_sha256"]:
         raise ValueError("Saved source archive changed since the build")
     for kind, expected in result["binaries"].items():
         path = roles(plan["install"]) / "build" / BINARIES[kind]

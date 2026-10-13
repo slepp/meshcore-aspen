@@ -1,12 +1,17 @@
-# Upgrade Willow user services from source
+# Upgrade Willow user services
 
-Use `install_willow.py` to build a new Willow installation and upgrade existing
+Use `install_willow.py` to install a binary bundle or build a new Willow installation and upgrade existing
 Linux systemd user services. It keeps role identities, saved traffic, guest
 selections, grants and guest rollback history. It does not create identities,
 configure a radio or install a compiler. Keep your existing installation for
 rollback.
 
-Install the normal build prerequisites described in
+For a downloaded Linux bundle, extract it and set the plan's `source` to that
+bundle directory and `revision` to its manifest's source commit. No compiler is
+needed; the updater checks the manifest and installs into the new `install`
+prefix. The same stop, retained-state, readiness and rollback procedure applies.
+
+For source builds, install the normal build prerequisites described in
 [the service guide](../hosts/willow/docs/SERVICE.md#build-and-install-from-source).
 Build the current Hew toolchain with `make hew` and put its `build/bin` launcher
 on `PATH`, with matching libraries and std. A debug compiler launcher can link
@@ -15,7 +20,7 @@ an unoptimized runtime even when the application uses `--release`.
 Create a private JSON plan, mode 0600. List each existing unit independently:
 a dashboard can run from a different installation than its host or Base.
 Use absolute paths and the full source commit. Every destination must be new.
-The `source` field names a Git checkout; the tool exports the specified commit,
+For a Git checkout, the tool exports the specified commit,
 including the archive substitutions used by `release/source.json`, directly to
 `install`. Uncommitted files are excluded. Native-worker binding and builds run
 at that final path.

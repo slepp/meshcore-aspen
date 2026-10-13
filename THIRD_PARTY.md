@@ -42,14 +42,14 @@ Source dependencies are downloaded by Go; they are not vendored here.
 
 ## Willow native host
 
-Willow uses Hew **0.6.0-rc7** and native libraries in addition to the shared
+Willow uses the current Hew compiler and matching runtime and standard library and native libraries in addition to the shared
 Lua/Wasm worker dependencies above. See the
 [Willow library and compatibility guide](hosts/willow/docs/LIBRARIES.md)
 for the required runtime contracts and checks.
 
 | Component | Source | License |
 | --- | --- | --- |
-| Hew compiler, runtime and standard library | [hew-lang/hew, `v0.6.0-rc7`](https://github.com/hew-lang/hew/tree/v0.6.0-rc7); runtime and stdlib are linked from `libhew.a` | MIT or Apache-2.0; retain the selected license and component notices |
+| Hew compiler, runtime and standard library | [hew-lang/hew](https://github.com/hew-lang/hew); runtime and stdlib are linked from `libhew.a` | MIT or Apache-2.0; retain the selected license and component notices |
 | OpenSSL / libcrypto | [openssl/openssl](https://github.com/openssl/openssl), system OpenSSL 3 | Apache-2.0 and component notices |
 | libsodium | [jedisct1/libsodium](https://github.com/jedisct1/libsodium), system `libsodium.so.23` | ISC |
 | libcurl | [curl/curl](https://github.com/curl/curl), system headers and library | curl license (MIT-style); TLS and other enabled dependencies retain their own licenses |
