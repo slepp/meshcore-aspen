@@ -2272,9 +2272,7 @@ pub actor Role {
                     .Ok(value) => command(value, stamp, now, hex.encode(key)),
                     .Err(_) => CommandReply { text: "Error, command is not valid UTF-8", frames: Vec.new() },
                 };
-                for frame in answer.frames {
-                    out.push(frame);
-                }
+                out.append(answer.frames);
                 if restart_requested {
                     return out;
                 }
@@ -2451,9 +2449,7 @@ pub actor Role {
                 rx.drained_packets += 1;
                 match wire.decode(packet.raw) {
                     .Some(decoded) => {
-                        for frame in process(packet.raw, decoded, now, false, true) {
-                            out.push(frame);
-                        }
+                        out.append(process(packet.raw, decoded, now, false, true));
                     }
                     .None => {
                         diagnostics.denied += 1;

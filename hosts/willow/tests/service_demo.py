@@ -66,6 +66,7 @@ class Emulator:
         self.write_lock=threading.Lock()
         self.submissions=queue.Queue(); self.all_submissions=[]; self.controls=[]
         self.hold=False; self.hold_all=False; self.drift=False; self.malformed_hello=False
+        self.airtime_ms=None
         self.error=None
         self.identity_root=None
         self.policy_mode="ok"; self.policy_before_apply=None
@@ -121,7 +122,7 @@ class Emulator:
             if (count>1 or factor!=1) and self.policy_mode=="reject":reply=b"\1\3"+data[5:]
         elif op==15:
             assert len(data)==1
-            reply=struct.pack("<I",10+data[0])
+            reply=struct.pack("<I",10+data[0] if self.airtime_ms is None else self.airtime_ms)
             if data[0]==64 and getattr(self,"bad_airtime",False):
                 self.bad_airtime=False
                 reply=bytes(4)

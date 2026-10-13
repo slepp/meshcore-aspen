@@ -39,6 +39,14 @@ class Readiness(unittest.TestCase):
                 second=modem.receive(lambda j:j["port"]==0 and j["raw"][0]==0x26)
                 self.assertEqual(second["raw"],b"\x26\2\x08\xfc"+payload)
                 self.assertLessEqual(second["delay"],5*int((10+len(second["raw"]))*0.2))
+            modem.airtime_ms=1
+            modem.disconnect()
+            service.wait("ONLINE epoch=2",timeout=15)
+            for n in range(4):
+                payload=b"new-airtime"+bytes([n])
+                modem.send(0,0,packet(5,payload,route=1,width=3))
+                job=modem.receive(lambda j:j["port"]==0 and parse(j["raw"])[4]==payload)
+                self.assertEqual(job["delay"],0)
             service.stop_process()
             modem.bad_airtime=True
             marker=len(service.logs)

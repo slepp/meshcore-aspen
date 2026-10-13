@@ -990,9 +990,7 @@ pub actor Base {
         if output.is_empty() {
             output.push(event(id, wire.byte(0)));
         }
-        for e in extra {
-            output.push(e);
-        }
+        output.append(extra);
         output
     }
 

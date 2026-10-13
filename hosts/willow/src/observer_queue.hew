@@ -317,9 +317,7 @@ pub actor Outbox {
         if let .Some(entry) = pending {
             entries.push(entry);
         }
-        for entry in queue {
-            entries.push(entry);
-        }
+        entries.append(queue);
         saving = true;
         attempted_at = now;
         dirty_at = 0;

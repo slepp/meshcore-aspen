@@ -105,6 +105,17 @@ type WorkerProgress {
     backoff: i64;
 }
 
+type NativeWorker {
+    fd: Option<ChildRef<process.WorkerOwner>>;
+    key: i64;
+    ready: bool;
+    management: bool;
+    started: i64;
+    ok: bool;
+    airtime: bytes;
+    decoder: session.WorkerDecoder;
+}
+
 type TelemetryCache {
     revision: i64;
     reported: bool;
@@ -120,6 +131,15 @@ fn config_int(number: i64, key: string, value: string) -> i64 {
 fn config_require(valid: bool, problem: string) {
     if !valid {
         panic(f"invalid configuration: {problem}");
+    }
+}
+
+fn validate_modem(address: string, port: i64, profile: bytes) {
+    config_require(ipnet.is_v4(address), "address must be a numeric IPv4 address");
+    config_require(port > 0 && port <= 65535, "port must be 1..65535");
+    config_require(profile.len() == 18, "profile must be 18 bytes of hex");
+    if let .Err(error) = radio.validate_profile(profile) {
+        panic(f"invalid shared modem profile: {error}");
     }
 }
 
@@ -235,9 +255,7 @@ fn config(root: string) -> Config {
             }
         }
     }
-    config_require(ipnet.is_v4(address), "address must be a numeric IPv4 address");
-    config_require(port > 0 && port <= 65535, "port must be 1..65535");
-    config_require(profile.len() == 18, "profile must be 18 bytes of hex");
+    validate_modem(address, port, profile);
     config_require(width >= 1 && width <= 3, "width must be 1..3");
     config_require(password.len() <= 63, "password must be at most 63 bytes");
     config_require(admin.len() <= 63, "admin must be at most 63 bytes");
@@ -254,9 +272,6 @@ fn config(root: string) -> Config {
     config_require(bot_default.is_empty() || bot_default.len() == 16, "bot_default must be 16 bytes of hex");
     if worker == "-" && (!bot_home.is_empty() || !bot_default.is_empty()) {
         panic("bot_home and bot_default require the verified native worker");
-    }
-    if let .Err(error) = radio.validate_profile(profile) {
-        panic(f"invalid shared modem profile: {error}");
     }
     config_require(roles.validate_options(relay_options, 2, "Willow-Relay", password, admin, width, region), "invalid relay settings");
     config_require(roles.validate_options(room_options, 3, "Willow-Room", password, admin, width, region), "invalid room settings");
@@ -406,11 +421,6 @@ pub fn initialize(args: Vec<string>) {
     if address.is_empty() || address.len() > 253 {
         init_usage("--address is required (1..253 bytes)");
     }
-    for c in address.to_bytes() {
-        if c <= 32 || c > 126 {
-            init_usage("--address must be printable ASCII without spaces");
-        }
-    }
     if port_text.is_empty() || port_text.len() > 5 {
         init_usage("--port must be 1..65535");
     }
@@ -420,21 +430,17 @@ pub fn initialize(args: Vec<string>) {
         }
     }
     let port = config_int(0, "port", port_text);
-    if port < 1 || port > 65535 {
-        init_usage("--port must be 1..65535");
-    }
     if profile_text.len() != 36 {
         init_usage("--profile must be the modem's 18-byte configuration readback as 36 hex digits");
     }
-    for c in profile_text.to_bytes() {
-        if !((c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)) {
+    let profile = match hex.decode(profile_text) {
+        .Ok(value) => value,
+        .Err(_) => {
             init_usage("--profile must be the modem's 18-byte configuration readback as 36 hex digits");
+            return;
         }
-    }
-    let profile = hex.decode(profile_text).expect("valid hexadecimal");
-    if let .Err(error) = radio.validate_profile(profile) {
-        panic(f"init: invalid shared modem profile: {error}");
-    }
+    };
+    validate_modem(address, port, profile);
     if !storage.absent(root) {
         panic(f"init: {root} already exists; init creates new state only (use MIGRATION.md to keep Birch identities)");
     }
@@ -768,6 +774,10 @@ pub actor RoleWorker {
                 return .None;
             }
             plan.environment.factor(role.source_factor().expect("restored committed source factor")).expect("retain source factor");
+            let table = plan.environment.current_airtime().expect("role airtime");
+            if !table.is_empty() {
+                assert(role.airtime(table).expect("restored role airtime"));
+            }
             owned = .Some(owner);
             started_ms = transport.now();
             let generation = plan.environment.incarnation().expect("role incarnation");
@@ -779,11 +789,12 @@ pub actor RoleWorker {
                 return .None;
             }
         };
-        let table = plan.environment.current_airtime().expect("role airtime");
-        if !table.is_empty() {
-            assert(role.airtime(table).expect("restored role airtime"));
-        }
         .Some(role)
+    }
+    receive fn airtime(table: bytes) {
+        if let .Some(owner) = owned {
+            assert(owner.role.airtime(table).expect("negotiated role airtime"));
+        }
     }
     fn stage(role: roles.Role, frames: Vec<roles.Tx>) -> Vec<roles.Tx> {
         let factor = role.source_factor().expect("committed role source factor");
@@ -799,9 +810,7 @@ pub actor RoleWorker {
             quarantine(RoleFailure.SourcePolicyFailed);
             return Vec.new();
         }
-        for frame in frames {
-            policy_frames.push(frame);
-        }
+        policy_frames.append(frames);
         Vec.new()
     }
     fn restart(role: roles.Role) {
@@ -1017,9 +1026,7 @@ pub actor RoleWorker {
                     panic("role state actor failed during packet processing");
                 }
             };
-            for tx in result {
-                frames.push(tx);
-            }
+            frames.append(result);
             if !session.same_factor(role.source_factor().expect("updated role source factor"), verified_factor) {
                 policy_waiting = true;
             }
@@ -1109,9 +1116,7 @@ pub actor RoleWorker {
                 }
             }
         }
-        for frame in out {
-            ready.push(frame);
-        }
+        ready.append(out);
         let frames = stage(role, ready);
         restart(role);
         .Ok(frames)
@@ -1356,6 +1361,39 @@ fn native_watch(slot: Option<ChildRef<process.WorkerOwner>>, group: events.Group
             0
         }
     }
+}
+
+fn start_native(var worker: NativeWorker, owner: ChildRef<process.WorkerOwner>, cfg: Config, root: string, seed: bytes, airtime: bytes, group: events.Group) -> NativeWorker {
+    stop(worker.decoder);
+    stopped(worker.decoder);
+    worker.decoder = spawn session.WorkerDecoder { buffer: bytes.new() };
+    worker.ready = false;
+    worker.management = false;
+    worker.fd = launch_native(owner, cfg.worker, root + "/native");
+    worker.ok = worker.fd.is_some();
+    if worker.ok {
+        worker.started = transport.now();
+        let pid = transport.native_pid(worker.fd);
+        println(f"BOT_PROCESS pid={pid}");
+        worker.ok = transport.native_send(worker.fd, hello(seed, cfg.profile, airtime));
+        worker.airtime = airtime;
+        worker.key = native_watch(worker.fd, group);
+        worker.ok = worker.ok && worker.key != 0;
+    }
+    worker
+}
+
+fn retire_native(var worker: NativeWorker, group: events.Group) -> NativeWorker {
+    if worker.key != 0 {
+        events.remove(group, worker.key).expect("remove retired native socket");
+        worker.key = 0;
+    }
+    transport.native_close(worker.fd);
+    worker.fd = .None;
+    worker.ready = false;
+    worker.management = false;
+    worker.ok = false;
+    worker
 }
 
 fn earlier(deadline: i64, candidate: i64) -> i64 {
@@ -1738,8 +1776,6 @@ pub fn run(root: string) {
     let observer_lifetime = spawn observer_runtime.Lifetime;
     let observer_task = fork observer_runtime.drive(observer_branch.publisher, observer_queue_branch.outbox, observer_queue_branch.writer, observer_lifetime, end, observer_settings.enabled, events.share(observer_events), observer_input, observer_channel);
     var incarnation = ModemIncarnation { epoch: 0, failures: 0 };
-    var worker_fd: Option<ChildRef<process.WorkerOwner>> = .None;
-    var worker_key: i64 = 0;
     let native_branch = spawn process.WorkerBranch;
     let native_owner = native_branch.worker;
     let owner_branch = spawn owner_control.Branch { plan: owner_control.Plan { root: root, lock: lock, worker: native_owner } };
@@ -1747,13 +1783,8 @@ pub fn run(root: string) {
     let owner_lifetime = spawn owner_control.Lifetime;
     let owner_task = fork owner_control.drive_events(owner_branch.control, owner_branch.admin, owner_lifetime, end, events.share(owner_events), owner_input, .Some(owner_channel));
     let health_plan = HealthPlan { control: owner_branch.control, relay: relay_worker, room: room_worker, bot: bot_worker, publisher: observer_branch.publisher, outbox: observer_queue_branch.outbox, relay_key: hex.encode(wire.public_key(relay_seed)), room_key: hex.encode(wire.public_key(room_seed)), bot_key: hex.encode(wire.public_key(bot_seed)), observer_key: hex.encode(observer_settings.config.identity), native: use_native, observer: observer_settings.enabled, endpoint: cfg.address + ":" + to_string(cfg.port), started_ms: transport.now() };
-    var native_ready = false;
+    var native = NativeWorker { fd: .None, key: 0, ready: false, management: false, started: 0, ok: true, airtime: bytes.new(), decoder: spawn session.WorkerDecoder { buffer: bytes.new() } };
     var packet_reports = json.array();
-    var native_management = false;
-    var native_started: i64 = 0;
-    var native_ok = true;
-    var worker_decoder = spawn session.WorkerDecoder { buffer: bytes.new() };
-    var native_airtime = bytes.new();
     var native_configured = cfg.native_preserve;
     let modem_branch = spawn duplex.Branch;
     let fd = modem_branch.endpoint;
@@ -1761,7 +1792,7 @@ pub fn run(root: string) {
     var native_fault_nonce: i64 = -1;
     var admin_fault_nonce: i64 = -1;
     while until(end) {
-        publish_health(health_plan, false, native_ready, native_started, Vec.new(), radio.create(), bytes.new(), packet_reports);
+        publish_health(health_plan, false, native.ready, native.started, Vec.new(), radio.create(), bytes.new(), packet_reports);
         match duplex.open(fd, cfg.address, cfg.port, 1500) {
             .Ok(_) => {}
             .Err(error) => {
@@ -1795,6 +1826,8 @@ pub fn run(root: string) {
         let negotiated = negotiation.expect("negotiated modem");
         relay_environment.airtime(negotiated.airtime).expect("relay airtime table");
         room_environment.airtime(negotiated.airtime).expect("room airtime table");
+        let _ = relay_worker.airtime(negotiated.airtime);
+        let _ = room_worker.airtime(negotiated.airtime);
         session.announce(fd, decoder, 0, negotiated.generations[0], wire.public_key(relay_seed));
         session.announce(fd, decoder, 1, negotiated.generations[1], wire.public_key(room_seed));
         session.announce(fd, decoder, 2, negotiated.generations[2], wire.public_key(bot_seed));
@@ -1803,9 +1836,7 @@ pub fn run(root: string) {
             println(f"OBSERVER_READY epoch={incarnation.epoch + 1} port=3 identity={hex.encode(observer_settings.config.identity)}");
         }
         var initial_frames = negotiated.initial_frames;
-        for frame in decoder.take_native().expect("presence RF backlog") {
-            initial_frames.push(frame);
-        }
+        initial_frames.append(decoder.take_native().expect("presence RF backlog"));
         var initial_at: i64 = 0;
         var initial_deferred = false;
         if use_native && !native_configured {
@@ -1820,16 +1851,10 @@ pub fn run(root: string) {
             }
             native_configured = true;
         }
-        if use_native && worker_fd.is_some() {
-            native_ok = native_ok && wire.equal(native_airtime, negotiated.airtime) && cancel_native(worker_fd, worker_decoder, owner_branch.control, owner_branch.admin);
-            if !native_ok {
-                if worker_key != 0 {
-                    events.remove(event_group, worker_key).expect("remove retired native socket");
-                    worker_key = 0;
-                }
-                transport.native_close(worker_fd);
-                worker_fd = .None;
-                native_ready = false;
+        if use_native && native.fd.is_some() {
+            native.ok = native.ok && wire.equal(native.airtime, negotiated.airtime) && cancel_native(native.fd, native.decoder, owner_branch.control, owner_branch.admin);
+            if !native.ok {
+                native = retire_native(native, event_group);
                 packet_reports = json.array();
             }
         }
@@ -1840,27 +1865,15 @@ pub fn run(root: string) {
         let _ = room_worker.source_reset(room_factor);
         let receivers = session.receivers();
         incarnation.epoch += 1;
-        if use_native && worker_fd.is_none() {
-            native_management = false;
-            stop(worker_decoder);
-            stopped(worker_decoder);
-            worker_decoder = spawn session.WorkerDecoder { buffer: bytes.new() };
-            let child = launch_native(native_owner, cfg.worker, root + "/native");
-            if child.is_none() {
-                native_ok = false;
+        if use_native && native.fd.is_none() {
+            native = start_native(native, native_owner, cfg, root, bot_seed, negotiated.airtime, event_group);
+            if native.fd.is_none() {
                 println("BOT_OFFLINE native worker launch failed; relay and room remain online");
-            } else {
-                worker_fd = child;
-                native_started = transport.now();
-                let worker_pid = transport.native_pid(worker_fd);
-                println(f"BOT_PROCESS pid={worker_pid}");
-                native_ok = transport.native_send(worker_fd, hello(bot_seed, cfg.profile, negotiated.airtime));
-                native_airtime = negotiated.airtime;
             }
-        } else if use_native && native_ready {
+        } else if use_native && native.ready {
             println("BOT_READY native-extension retained");
             let _ = owner_branch.control.ready(true);
-            let _ = owner_branch.admin.management(native_management);
+            let _ = owner_branch.admin.management(native.management);
         }
         let relay_advert = match relay_worker.startup_advert(transport.now() / 1000, last_relay_flood, incarnation.epoch > 1) {
             .Ok(packet) => packet,
@@ -1904,10 +1917,6 @@ pub fn run(root: string) {
             }
         }
         let modem_key = duplex.watch(fd, event_group).expect("watch host modem socket");
-        if worker_fd.is_some() && worker_key == 0 {
-            worker_key = native_watch(worker_fd, event_group);
-            native_ok = native_ok && worker_key != 0;
-        }
         var connection = ConnectionTurn { healthy: true, config_deadline: 0, config_retry_at: 0, next_config: transport.monotonic() + 2000, next_stats: transport.monotonic(), next_health: transport.monotonic() };
         var sensors = radio.create();
         var telemetry = TelemetryCache { revision: -1, reported: false };
@@ -1972,7 +1981,7 @@ pub fn run(root: string) {
             var receptions: Vec<session.Reception> = Vec.new();
             var modem_frames: Vec<bytes> = Vec.new();
             let received_at = transport.monotonic();
-            if initial_deferred && (native_ready || !native_ok) {
+            if initial_deferred && (native.ready || !native.ok) {
                 var remaining: Vec<bytes> = Vec.new();
                 for index in initial_at..initial_frames.len() {
                     remaining.push(initial_frames[index]);
@@ -1989,7 +1998,7 @@ pub fn run(root: string) {
                 initial_at = 0;
                 initial_deferred = false;
             }
-            if initial_at < initial_frames.len() && (!use_native || native_ready || !native_ok) {
+            if initial_at < initial_frames.len() && (!use_native || native.ready || !native.ok) {
                 for i in 0..8 {
                     if initial_at < initial_frames.len() {
                         modem_frames.push(initial_frames[initial_at]);
@@ -2049,8 +2058,8 @@ pub fn run(root: string) {
                                 let _ = bot_worker.confirmed(event.raw);
                             }
                         }
-                        if use_native && native_ok && !result.is_empty() {
-                            native_ok = native_ok && transport.native_send(worker_fd, result);
+                        if use_native && native.ok && !result.is_empty() {
+                            native.ok = native.ok && transport.native_send(native.fd, result);
                         }
                     } else if port == 0 && session.hardware_busy(frame) && connection.config_deadline != 0 {
                         connection.config_retry_at = received_at + 100;
@@ -2063,42 +2072,40 @@ pub fn run(root: string) {
                         connection.healthy = connection.healthy && valid;
                         connection.config_deadline = 0;
                         connection.config_retry_at = 0;
-                    } else if use_native && native_ok && port == 2 && frame[1] == 164 {
+                    } else if use_native && native.ok && port == 2 && frame[1] == 164 {
                         let stats = session.statistics(negotiated.generations[2], wire.cut(frame, 2, frame.len()));
                         if !stats.is_empty() {
-                            native_ok = native_ok && transport.native_send(worker_fd, stats);
+                            native.ok = native.ok && transport.native_send(native.fd, stats);
                         }
                     }
                 }
-                for reception in receivers.feed(frame, transport.monotonic()).expect("RX metadata") {
-                    receptions.push(reception);
-                }
+                receptions.append(receivers.feed(frame, transport.monotonic()).expect("RX metadata"));
             }
             policy_results(link, relay_worker, room_worker);
-            if use_native && native_ok && connection.healthy {
-                let worker_input = transport.native_read(worker_fd, 0);
+            if use_native && native.ok && connection.healthy {
+                let worker_input = transport.native_read(native.fd, 0);
                 if worker_input[0] == 2 {
-                    native_ok = false;
+                    native.ok = false;
                 }
                 if worker_input[0] == 1 {
-                    for message in worker_decoder.feed(wire.cut(worker_input, 1, worker_input.len())).expect("native extension decoder") {
+                    for message in native.decoder.feed(wire.cut(worker_input, 1, worker_input.len())).expect("native extension decoder") {
                         worker_progress.last = transport.monotonic();
                         let tag = message[0] as i64;
                         if tag == 138 {
                             match packet_report.decode(message) {
                                 .Some(value) => { packet_reports = value; }
-                                .None => { native_ok = false; }
+                                .None => { native.ok = false; }
                             }
                         } else if tag == 130 || tag == 134 {
                             if message.len() != 34 || message[33] != 1 || !wire.equal(wire.cut(message, 1, 33), wire.public_key(bot_seed)) {
-                                native_ok = false;
+                                native.ok = false;
                             } else if tag == 130 {
-                                native_ready = true;
+                                native.ready = true;
                                 println("BOT_READY native-extension");
                                 let _ = owner_branch.control.ready(true);
                             } else {
-                                native_management = true;
-                                native_ok = native_ok && transport.native_send(worker_fd, session.frame(9, wire.byte(1)));
+                                native.management = true;
+                                native.ok = native.ok && transport.native_send(native.fd, session.frame(9, wire.byte(1)));
                                 let _ = owner_branch.admin.management(true);
                             }
                         } else if tag == 129 && message.len() >= 15 && message.len() <= 269 {
@@ -2114,7 +2121,7 @@ pub fn run(root: string) {
                                 } else {
                                     0
                                 };
-                                native_ok = native_ok && transport.native_send(worker_fd, session.result(token, state, if status == 1 {
+                                native.ok = native.ok && transport.native_send(native.fd, session.result(token, state, if status == 1 {
                                     0
                                 } else {
                                     2
@@ -2122,10 +2129,10 @@ pub fn run(root: string) {
                             }
                         } else if tag == 131 {
                             if message.len() != 31 {
-                                native_ok = false;
+                                native.ok = false;
                             } else {
-                                native_ready = message[1] == 1;
-                                let _ = owner_branch.control.ready(native_ready);
+                                native.ready = message[1] == 1;
+                                let _ = owner_branch.control.ready(native.ready);
                                 if message[2] != 0 {
                                     println("BOT_STATUS fault=1; native command or admission failure");
                                 }
@@ -2138,29 +2145,29 @@ pub fn run(root: string) {
                             };
                             match result {
                                 .Ok(valid) => {
-                                    native_ok = native_ok && valid;
+                                    native.ok = native.ok && valid;
                                 }
                                 .Err(_) => {}
                             }
                         } else {
-                            native_ok = false;
+                            native.ok = false;
                         }
                     }
                 }
-                native_ok = native_ok && worker_decoder.healthy().expect("native extension framing");
-                if native_ready && transport.monotonic() - worker_progress.last > 5000 {
-                    native_ok = false;
+                native.ok = native.ok && native.decoder.healthy().expect("native extension framing");
+                if native.ready && transport.monotonic() - worker_progress.last > 5000 {
+                    native.ok = false;
                 }
-                if !native_ready && transport.monotonic() > worker_progress.deadline {
-                    native_ok = false;
+                if !native.ready && transport.monotonic() > worker_progress.deadline {
+                    native.ok = false;
                 }
             }
             let now = transport.monotonic();
             if now >= connection.next_health {
                 connection.next_health = now + 1000;
-                let _ = owner_branch.admin.management(native_management && native_ok);
+                let _ = owner_branch.admin.management(native.management && native.ok);
                 let _ = owner_branch.admin.bind_host(events.share(event_group));
-                publish_health(health_plan, connection.healthy, native_ready && native_ok, native_started, negotiated.phy_generations, sensors, negotiated.airtime, packet_reports);
+                publish_health(health_plan, connection.healthy, native.ready && native.ok, native.started, negotiated.phy_generations, sensors, negotiated.airtime, packet_reports);
             }
             let sampling = radio.poll(sensors, now, connection.config_deadline != 0 || now >= connection.next_config || link.policy_busy().expect("source policy control state"));
             sensors = sampling.sampler;
@@ -2182,13 +2189,11 @@ pub fn run(root: string) {
                 }
             }
             if initial_frames.is_empty() {
-                for reception in receivers.flush(now).expect("RX metadata deadline") {
-                    receptions.push(reception);
-                }
+                receptions.append(receivers.flush(now).expect("RX metadata deadline"));
             }
             if connection.healthy {
-                let received_ok = receive_packets(receptions, link, relay_worker, room_worker, bot_worker, use_native, native_ready && native_ok, worker_fd, observer_queue_branch.outbox, observer_settings.enabled);
-                native_ok = native_ok && received_ok;
+                let received_ok = receive_packets(receptions, link, relay_worker, room_worker, bot_worker, use_native, native.ready && native.ok, native.fd, observer_queue_branch.outbox, observer_settings.enabled);
+                native.ok = native.ok && received_ok;
             }
             var next_tick = role_timer(relay_worker, room_worker, bot_worker, use_native);
             if connection.healthy && transport.monotonic() >= next_tick {
@@ -2220,37 +2225,19 @@ pub fn run(root: string) {
                 connection.config_deadline = now + 2000;
                 connection.next_config = now + 2000;
             }
-            if use_native && !native_ok {
-                if worker_fd.is_some() {
+            if use_native && !native.ok {
+                if native.fd.is_some() {
                     let _ = owner_branch.control.fence();
                     let _ = owner_branch.admin.fence();
-                    if worker_key != 0 {
-                        events.remove(event_group, worker_key).expect("remove failed native socket");
-                        worker_key = 0;
-                    }
-                    transport.native_close(worker_fd);
-                    worker_fd = .None;
+                    native = retire_native(native, event_group);
                     link.fence_worker().expect("retire old worker jobs");
-                    native_ready = false;
-                packet_reports = json.array();
-                    native_management = false;
+                    packet_reports = json.array();
                     worker_progress.retry = now + worker_progress.backoff;
                     println("BOT_OFFLINE worker failed; relay and room remain online");
                 }
                 if now >= worker_progress.retry {
-                    stop(worker_decoder);
-                    stopped(worker_decoder);
-                    worker_decoder = spawn session.WorkerDecoder { buffer: bytes.new() };
-                    let child = launch_native(native_owner, cfg.worker, root + "/native");
-                    if child.is_some() {
-                        worker_fd = child;
-                        native_started = transport.now();
-                        let worker_pid = transport.native_pid(worker_fd);
-                        println(f"BOT_PROCESS pid={worker_pid}");
-                        native_ok = transport.native_send(worker_fd, hello(bot_seed, cfg.profile, negotiated.airtime));
-                        native_airtime = negotiated.airtime;
-                        worker_key = native_watch(worker_fd, event_group);
-                        native_ok = native_ok && worker_key != 0;
+                    native = start_native(native, native_owner, cfg, root, bot_seed, negotiated.airtime, event_group);
+                    if native.fd.is_some() {
                         worker_progress.deadline = now + 30000;
                         worker_progress.last = now;
                     } else {
@@ -2281,8 +2268,8 @@ pub fn run(root: string) {
                 deadline = earlier(deadline, link.next_deadline().expect("session pending deadline"));
                 deadline = earlier(deadline, receivers.next_deadline().expect("receive metadata deadline"));
                 if use_native {
-                    if native_ok {
-                        deadline = earlier(deadline, if native_ready {
+                    if native.ok {
+                        deadline = earlier(deadline, if native.ready {
                             worker_progress.last + 5001
                         } else {
                             worker_progress.deadline + 1
@@ -2291,12 +2278,12 @@ pub fn run(root: string) {
                         deadline = earlier(deadline, worker_progress.retry);
                     }
                 }
-                if !initial_frames.is_empty() && (!use_native || native_ready || !native_ok) {
+                if !initial_frames.is_empty() && (!use_native || native.ready || !native.ok) {
                     deadline = wait_at;
                 }
                 events.arm(event_group, modem_key, 1).expect("arm host modem socket");
-                if worker_key != 0 {
-                    events.arm(event_group, worker_key, 1).expect("arm native worker socket");
+                if native.key != 0 {
+                    events.arm(event_group, native.key, 1).expect("arm native worker socket");
                 }
                 if let events.Event.Failed(code) = events.wait(event_shutdown, deadline) {
                     panic(f"host socket readiness failed: errno={code}");
@@ -2308,10 +2295,10 @@ pub fn run(root: string) {
             .Err(_) => true,
         };
         let _ = owner_branch.admin.fence();
-        publish_health(health_plan, false, native_ready && native_ok, native_started, Vec.new(), radio.create(), negotiated.airtime, packet_reports);
+        publish_health(health_plan, false, native.ready && native.ok, native.started, Vec.new(), radio.create(), negotiated.airtime, packet_reports);
         for result in link.disconnect().expect("disconnect outcomes") {
             if use_native {
-                let _ = transport.native_send(worker_fd, result);
+                let _ = transport.native_send(native.fd, result);
             }
         }
         policy_results(link, relay_worker, room_worker);
@@ -2320,18 +2307,11 @@ pub fn run(root: string) {
         log_outcomes(link, relay_worker, room_worker);
         events.remove(event_group, modem_key).expect("remove host modem socket");
         duplex.close(fd);
-        if use_native && worker_fd.is_some() {
-            native_ok = native_ok && !owner_pending && cancel_native(worker_fd, worker_decoder, owner_branch.control, owner_branch.admin);
-            if !native_ok || !until(end) {
-                if worker_key != 0 {
-                    events.remove(event_group, worker_key).expect("remove disconnected native socket");
-                    worker_key = 0;
-                }
-                transport.native_close(worker_fd);
-                worker_fd = .None;
-                native_ready = false;
+        if use_native && native.fd.is_some() {
+            native.ok = native.ok && !owner_pending && cancel_native(native.fd, native.decoder, owner_branch.control, owner_branch.admin);
+            if !native.ok || !until(end) {
+                native = retire_native(native, event_group);
                 packet_reports = json.array();
-                native_management = false;
             }
         }
         stop(link);
@@ -2351,12 +2331,8 @@ pub fn run(root: string) {
             reconnect_wait(incarnation.failures);
         }
     }
-    if worker_fd.is_some() {
-        if worker_key != 0 {
-            events.remove(event_group, worker_key).expect("remove final native socket");
-            worker_key = 0;
-        }
-        transport.native_close(worker_fd);
+    if native.fd.is_some() {
+        native = retire_native(native, event_group);
     }
     let _ = owner_lifetime.close();
     let _ = await owner_task;
@@ -2382,8 +2358,8 @@ pub fn run(root: string) {
     stopped(modem_branch);
     stop(native_branch);
     stopped(native_branch);
-    stop(worker_decoder);
-    stopped(worker_decoder);
+    stop(native.decoder);
+    stopped(native.decoder);
     stop(relay_environment);
     stopped(relay_environment);
     stop(room_environment);
