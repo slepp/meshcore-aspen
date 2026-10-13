@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "version": "0.1.0",
+  "repository": "https://github.com/slepp/meshcore-aspen",
+  "entries": [
+    {
+      "id": "greeting",
+      "name": "Greeting",
+      "summary": "Add !hello NAME and the generated argument help.",
+      "source_name": "greeting",
+      "commands": [
+        "hello"
+      ],
+      "files": [
+        {
+          "source": "firmware/runtime/plugins/template.lua",
+          "name": "hello.lua",
+          "runtime": "lua"
+        }
+      ],
+      "compatibility": {
+        "aspen": "Native Lua bot with named source installation",
+        "willow": "Native Lua bot with named source installation"
+      },
+      "usage": [
+        "!hello mesh → Hello mesh",
+        "!help hello → argument help"
+      ],
+      "notes": [
+        "Public command; existing channel admission and reply policy still apply.",
+        "Defines hello; a conflicting command or global in your existing source set rejects installation."
+      ]
+    },
+    {
+      "id": "private-notes",
+      "name": "Private notes",
+      "summary": "Save and read one note per authenticated DM caller.",
+      "source_name": "notes",
+      "commands": [
+        "note-save",
+        "note-read"
+      ],
+      "files": [
+        {
+          "source": "firmware/runtime/plugins/examples/notes-v2.lua",
+          "name": "notes.lua",
+          "runtime": "lua"
+        }
+      ],
+      "compatibility": {
+        "aspen": "Native Lua bot with named sources and scoped KV transactions",
+        "willow": "Native Lua bot with named sources and scoped KV transactions"
+      },
+      "usage": [
+        "!note-save lunch → Saved",
+        "!note-read → lunch, only for that authenticated caller"
+      ],
+      "notes": [
+        "DM only. The native runtime scopes the saved note to the caller's verified full public key; a channel nickname is not a private identity.",
+        "Uses the existing example:schema, example:note-v1 and example:note-v2 keys. It migrates schema 1 to 2 and updates both note fields so version-1 code can still read later writes.",
+        "An unfamiliar schema or unmarked existing note data is refused. Inspect existing data before changing it; source rollback does not undo saved notes.",
+        "Defines save_note and read_note; conflicting globals or commands reject installation."
+      ]
+    },
+    {
+      "id": "repeater-signal",
+      "name": "Repeater signal",
+      "summary": "Read nearby repeater SNR average/P95 and RSSI average from received packets.",
+      "source_name": "snr",
+      "commands": [
+        "snr",
+        "rssi"
+      ],
+      "files": [
+        {
+          "source": "firmware/runtime/plugins/examples/snr.lua",
+          "name": "snr.lua",
+          "runtime": "lua"
+        },
+        {
+          "source": "hosts/willow/build/repeater-snr.wasm",
+          "source_code": "firmware/runtime/wasm/examples/repeater_snr.c",
+          "name": "repeater-snr.wasm",
+          "runtime": "packet-wasm"
+        }
+      ],
+      "compatibility": {
+        "aspen": "0.1.12 source build with report:format, packet reports and packet Wasm enabled",
+        "willow": "0.0.6 with the shared packet-program workflow"
+      },
+      "usage": [
+        "!snr → up to three most frequently heard reported hops",
+        "!snr d1 → matching hop measurements and last-heard age",
+        "!rssi d1 → the same paired SNR/RSSI report"
+      ],
+      "packet": {
+        "slot": 0,
+        "import_module": "meshcore_packet_v1",
+        "abi_version": 1,
+        "report_version": 1,
+        "budget": [
+          1,
+          100000,
+          20000,
+          9
+        ]
+      },
+      "notes": [
+        "Check both packet slots and packet api before installing. report=1 and report-publishing capability 8 are required; the saved budget also permits read-only system access.",
+        "This command reads slot 0. Installing its Wasm replaces that slot's selected program: export an occupied slot first and decide whether to replace it. If slot 0 already runs this sampler, retain it and install only the Lua source.",
+        "Sampling is passive: only attributable RF flood-path receptions enter the rings. Direct routes, empty paths and local reflections are excluded.",
+        "Retains 24 hop prefixes, reports the 16 heard most often and keeps 256 measurements per hop in one 64 KiB Wasm memory. Prefixes are not authenticated identities. Restarting or reloading the sampler clears the rings.",
+        "No extra RF transmissions or automatic permissions are added. Existing channel policy still controls command admission and replies.",
+        "Defines the snr handler and the snr/rssi commands; conflicting globals or commands reject installation."
+      ]
+    },
+    {
+      "id": "repeater-monitor",
+      "name": "Repeater monitor",
+      "summary": "Poll configured repeater identities for native status and battery voltage.",
+      "source_name": "monitor",
+      "commands": [],
+      "files": [
+        {
+          "source": "firmware/runtime/plugins/examples/remote-repeater-monitor.lua",
+          "name": "monitor.lua",
+          "runtime": "lua"
+        }
+      ],
+      "compatibility": {
+        "aspen": "Native Lua bot with remote-repeater monitoring; HTTPS image for telemetry"
+      },
+      "guide": "firmware/runtime/REMOTE_REPEATERS.md",
+      "usage": [
+        "bot repeaters status → current target state and last-good samples",
+        "bot repeaters timing → shared wait and pending requests"
+      ],
+      "notes": [
+        "Willow support is not offered until the remote-monitor workflow is verified there.",
+        "Configure the bot identity, each target's read-only ACL, frequency and route using the remote-repeater guide before enabling polling. Adding a target does not retune the shared modem.",
+        "Read bot events and preserve existing bits when adding scheduled-event bit 16; bot repeaters on is a separate saved selection. No grants are changed automatically.",
+        "The Lua event checks every 15 seconds; the native per-target interval controls actual polls. Start with the guide's 300-second interval and retain its discovery cooldown.",
+        "Enabled polling sends encrypted RF status requests and consumes shared airtime. Pause all targets with bot repeaters off, or one target with bot repeaters enable ALIAS off, without deleting its last-good sample.",
+        "Defines fleet_poll; conflicting globals reject installation."
+      ],
+      "before_install": [
+        "Installation does not change saved grants or monitor enablement. If scheduled-event bit 16 and the monitor are already enabled, activating fleet_poll can start RF polling immediately. Use bot repeaters off before installing if polling must remain paused."
+      ]
+    }
+  ]
+}

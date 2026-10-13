@@ -66,6 +66,10 @@ Aspen source builds also support two saved Lua/Wasm programs on the shared
 modem's packet path. Use the
 [packet-program guide](firmware/runtime/PACKET_ENGINES.md) to install one,
 select its hooks and grant system, PHY or owned-identity composition access.
+Download ready-to-install Lua commands and the repeater signal sampler from the
+[command library](https://ve6slp.ca/projects/meshcore/extend/library/), or
+[build its ZIPs from source](command-library/README.md). Named installation
+retains bundled commands and unrelated sources.
 For autonomous fleet status and battery voltage through Aspen's existing
 metrics receiver, [install a remote-repeater Lua monitor](firmware/runtime/REMOTE_REPEATERS.md).
 For MQTT packet collection, choose the host or on-device
