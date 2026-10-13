@@ -69,7 +69,7 @@ Bytes hew_listener_config(const Bytes *path) {
     char *name = malloc(path->len + 1);
     if (!name) return reply(2, NULL, 0);
     memcpy(name, path->ptr + path->offset, path->len); name[path->len] = 0;
-    int fd = open(name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC); free(name);
+    int fd = open(name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK); free(name);
     struct stat stat;
     if (fd < 0) return reply(3, NULL, 0);
     if (fstat(fd, &stat)) { close(fd); return reply(4, NULL, 0); }
