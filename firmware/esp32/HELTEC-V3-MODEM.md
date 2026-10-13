@@ -1,28 +1,53 @@
-# Heltec WiFi LoRa 32 V3: build-only shared modem
+# Heltec WiFi LoRa 32 V3 shared modem
 
-Build the shared modem for a regular Heltec WiFi LoRa 32 V3 without on-device
-Aspen roles or PSRAM:
+Use a regular Heltec WiFi LoRa 32 V3 as the shared radio for Willow or another
+host role over KISS TCP on port 8001. Host role identities remain on the host.
+The modem includes a dashboard, but no on-device repeater, room, companion,
+command bot, Lua, Wasm or shared-room frontend. Full Aspen needs PSRAM, which
+this board does not have.
+
+From the repository root, check the default profile with PlatformIO installed:
 
 ```sh
 make -C firmware/esp32 heltec-modem-build
 ```
 
-Run this from the repository root with PlatformIO installed. The target exports
-the pinned MeshCore source, stages the shared modem and public profile, then
-compiles into `.tmp/heltec-v3-modem`. It does not read a private WiFi configuration
-or upload firmware. The profile deliberately has empty WiFi credentials.
+The target exports the pinned MeshCore source and builds in
+`.tmp/heltec-v3-modem`, using two compiler jobs by default (`PIO_JOBS` overrides
+that limit). It does not upload firmware. **The default image has empty WiFi
+credentials; do not flash it expecting a usable WiFi connection.**
 
-**Do not flash this build-only image.** It does not provision a usable network,
-and build success does not establish working RF, startup heap or board recovery.
-It is not a radio-silent image. The partition table is a build choice, not a
-migration plan for an existing device; replacing a device's flash layout can
-erase its settings and identity.
+For a configured modem, make a private copy outside the repository:
 
-This is a modem for host roles, not a full Aspen port. The modem retains the
-existing Birch modem version string. It includes the KISS TCP interface and
-dashboard, but no local repeater, room, companion, command bot, Lua, Wasm,
-CloudRoom frontend or on-device administration. Host role identities remain
-on the host.
+```sh
+umask 077
+mkdir -p "$HOME/.config/aspen-private"
+chmod 700 "$HOME/.config/aspen-private"
+install -m 600 firmware/esp32/platformio.heltec-modem.ini \
+  "$HOME/.config/aspen-private/heltec-v3.ini"
+$EDITOR "$HOME/.config/aspen-private/heltec-v3.ini"
+make -C firmware/esp32 heltec-modem-build \
+  MODEM_CONFIG="$HOME/.config/aspen-private/heltec-v3.ini"
+```
+
+Keep the existing environment name. Set `WIFI_SSID`, `WIFI_PWD` and
+`KISS_HOSTNAME` in that private file. Append explicit `LORA_FREQ` (MHz),
+`LORA_BW` (kHz), `LORA_SF`, `LORA_CR` and `LORA_TX_POWER` flags for your legal
+local PHY, matching the other radios. Connect the appropriate antenna before
+booting. Keep the file and compiled credential-bearing application private.
+
+The application is
+`.tmp/heltec-v3-modem/.pio/build/Heltec_v3_kiss_wifi_build/firmware.bin`.
+Before installing on an existing radio, identify its USB serial/MAC, preserve
+valuable state and check its current partition table. Replacing flash layout
+or SPIFFS can destroy settings and identities. This port has been compiled;
+physical boot, RF, free heap during WiFi/dashboard use and recovery still need
+testing on a Heltec V3.
+
+After installation and a successful WiFi join, open the reported address for
+the dashboard and configure the host's modem endpoint as `ADDRESS:8001`.
+A host owns the mesh identities; changing its radio does not move those keys
+onto the Heltec. See the [host guide](../../HOST_GUIDE.md) for role setup.
 
 ## Board and radio wiring
 
@@ -63,10 +88,10 @@ Arduino `default_8MB.csv` layout:
 | SPIFFS | `0x670000` | 1536 KiB |
 | Core dump | `0x7f0000` | 64 KiB |
 
-The initial compiled image uses 1,203,393 bytes of its 3,342,336-byte application
-slot; `firmware.bin` is 1,203,808 bytes. Static RAM is 168,288 of the linker's
+The initial compiled image uses 1,209,125 bytes of its 3,342,336-byte application
+slot; `firmware.bin` is 1,209,536 bytes. Static RAM is 168,288 of the linker's
 327,680 bytes, leaving 159,392 bytes before runtime allocations and task stacks.
-This is not a measurement of free heap while WiFi and the dashboard are active.
+Runtime free heap depends on WiFi and dashboard activity.
 
 The compiled target has `KISS_PSRAM_PAYLOADS=0`, four TCP clients, a 12-request
 queue, no local sources and no queued UART. The SDK provides 16 sockets. The
@@ -81,7 +106,5 @@ Run the focused profile check without compiling:
 python3 -m unittest discover -s firmware/esp32/tests -p test_heltec_profile.py
 ```
 
-The next hardware decision is a separately authorized modem startup/RF check
-with retained-device-state handling and an explicit network/PHY configuration.
-Full Aspen roles need a separate internal-memory design; this profile does
-not enable them.
+Use the configured PHY and a second radio to check reception after first boot.
+A local TX completion alone does not establish RF reception.

@@ -21,6 +21,14 @@ Aspen; its separate KISS modem image remains available. The T-Beam Supreme
 LR1121 and ordinary T-Beam use different radio hardware. T3-S3 boards with
 4 MB flash cannot hold two current full Aspen applications plus role storage.
 
+## Original T-Beam and Heltec V3
+
+Run host roles with an [original T-Beam v1.2 modem](TBEAM-V12-MODEM.md)
+or a [Heltec V3 modem](HELTEC-V3-MODEM.md). The original T-Beam's 4 MB flash
+cannot hold the current standalone application in both OTA slots; Heltec V3
+has no PSRAM. These modem profiles keep the roles and identities on Willow
+or another host and select the board's existing radio wiring.
+
 ## Build from source
 
 Use the repository's pinned MeshCore revision and installed PlatformIO tools.
