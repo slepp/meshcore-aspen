@@ -90,7 +90,7 @@ func TestFetchedReplayReclamationSurvivesRestart(t *testing.T) {
 		}
 	}
 	s.mu.Unlock()
-	if messages, err := c.GetWaitingMessages(ctx); err != nil || len(messages) != maxMessages {
+	if messages, err := c.GetWaitingMessages(testContext(t)); err != nil || len(messages) != maxMessages {
 		t.Fatalf("fetch persistent replay: count=%d error=%v", len(messages), err)
 	}
 	s.mu.Lock()
