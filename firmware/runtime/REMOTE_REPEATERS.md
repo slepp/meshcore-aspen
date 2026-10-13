@@ -108,6 +108,11 @@ does not reserve airtime or bypass another pending request. Learned routes are
 rebuilt after a restart; adverts do not supply status or an outbound route.
 `timing` without an alias reports the shared route/monitor start cooldown and
 number of pending probes, without sending RF.
+Use `!find-best-path PREFIX` to compare the learned route, saved seed and a
+fresh flood route. It tests each distinct path twice, reports delivery and
+mean latency, and keeps the learned path unless a candidate performs better.
+See [route discovery and comparison](BOT_RUNTIME.md#discovery-targeting-and-owner-commands)
+for timing and channel permissions.
 See [Aspen telemetry setup](../esp32/TELEMETRY.md) if publishing is not already
 configured. HTTP 2xx confirms receiver acceptance; query the receiver to
 check ingestion.

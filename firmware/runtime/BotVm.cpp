@@ -1143,7 +1143,7 @@ int finishIo(lua_State *s, int, lua_KContext) {
     }
   } else if (call.io->kind == onchip::BotIoRequest::Trace || call.io->kind == onchip::BotIoRequest::Advert ||
              call.io->kind == onchip::BotIoRequest::Inspect || call.io->kind == onchip::BotIoRequest::Admin ||
-             call.io->kind == onchip::BotIoRequest::FindPath) {
+             call.io->kind == onchip::BotIoRequest::FindPath || call.io->kind == onchip::BotIoRequest::FindBestPath) {
     lua_pushstring(s, call.completion->value);
   } else lua_pushboolean(s, true);
   return 1;
@@ -2078,7 +2078,7 @@ void ensureOriginals(lua_State *s, Call &call) {
     budget(s).transition(Budget::Init);
     lua_call(s, 0, 0);
   }
-  if (call.builtinDeclarations != (uint32_t(1) << onchip::BotBuiltinManifest.count) - 1)
+  if (call.builtinDeclarations != (UINT32_MAX >> (32 - onchip::BotBuiltinManifest.count)))
     luaL_error(s, "Bundled command metadata changed; regenerate BotBuiltinManifest.h");
   lua_createtable(s, 0, onchip::BotBuiltinManifest.count);
   for (unsigned i = 0; i < onchip::BotBuiltinManifest.count; ++i) {
@@ -2373,9 +2373,9 @@ int nodePacketReport(lua_State *s) {
   return lua_yieldk(s, 0, 0, finishIo);
 #endif
 }
-int findPath(lua_State *s) {
-  if (lua_gettop(s) != 1) return luaL_error(s, "find_path requires one hex key prefix");
-  auto &request = prepareIo(s, onchip::BotIoRequest::FindPath);
+int routeSearch(lua_State *s, onchip::BotIoRequest::Kind kind) {
+  if (lua_gettop(s) != 1) return luaL_error(s, "Route search requires one hex key prefix");
+  auto &request = prepareIo(s, kind);
   boundedString(s, 1, request.value, 65);
   const size_t length = strlen(request.value);
   if (!length) return luaL_error(s, "Use 1..64 hex digits");
@@ -2387,6 +2387,10 @@ int findPath(lua_State *s) {
   request.delayMs = 10000;
   return lua_yieldk(s, 0, 0, finishIo);
 }
+int findPath(lua_State *s) { return routeSearch(s, onchip::BotIoRequest::FindPath); }
+#if !ONCHIP_BOT_COMPACT_PROFILE
+int findBestPath(lua_State *s) { return routeSearch(s, onchip::BotIoRequest::FindBestPath); }
+#endif
 int nodeNeighbors(lua_State *s) {
   const lua_Integer page = lua_isnoneornil(s, 1) ? 1 : luaL_checkinteger(s, 1);
   if (page < 1 || page > 16) return luaL_error(s, "Neighbors page requires 1..16");
@@ -2477,6 +2481,7 @@ void nodeApi(lua_State *s) {
   lua_pushcfunction(s, nodeReport); lua_setfield(s, -2, "report");
 #if !ONCHIP_BOT_COMPACT_PROFILE
   lua_pushcfunction(s, nodePacketReport); lua_setfield(s, -2, "packet_report");
+  lua_pushcfunction(s, findBestPath); lua_setfield(s, -2, "find_best_path");
 #endif
   lua_pushcfunction(s, pluginInfo); lua_setfield(s, -2, "plugins");
   lua_pushcfunction(s, nodeNeighbors); lua_setfield(s, -2, "neighbors");
@@ -2887,6 +2892,9 @@ struct BotSession::Impl {
     lua_pushcfunction(s, waitPacket); lua_setfield(s, -2, "wait");
     lua_pushcfunction(s, traceRoute); lua_setfield(s, -2, "trace");
     lua_pushcfunction(s, findPath); lua_setfield(s, -2, "find_path");
+#if !ONCHIP_BOT_COMPACT_PROFILE
+    lua_pushcfunction(s, findBestPath); lua_setfield(s, -2, "find_best_path");
+#endif
     lua_pushcfunction(s, multiTrace); lua_setfield(s, -2, "multitrace");
     lua_pushcfunction(s, sendAdvert); lua_setfield(s, -2, "advert");
     freeze(s); lua_setglobal(s, "mesh");
@@ -2970,8 +2978,8 @@ struct BotSession::Impl {
       if (!phase) {
         captureOriginals(s, call);
 #if ONCHIP_BOT_COMPACT_PROFILE
-        static_assert(BotBuiltinManifest.count < 32, "Native declaration mask capacity");
-        if (call.builtinDeclarations != (uint32_t(1) << BotBuiltinManifest.count) - 1 ||
+        static_assert(BotBuiltinManifest.count <= 32, "Native declaration mask capacity");
+        if (call.builtinDeclarations != (UINT32_MAX >> (32 - BotBuiltinManifest.count)) ||
             self.natives.moduleCount || self.natives.eventMask)
           return luaL_error(s, "Bundled command metadata changed; regenerate BotBuiltinManifest.h");
 #else

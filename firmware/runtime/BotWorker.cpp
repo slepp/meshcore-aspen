@@ -1650,7 +1650,7 @@ void BotWorker::pumpJobs() {
                request.kind == BotIoRequest::Inspect || request.kind == BotIoRequest::Admin ||
                request.kind == BotIoRequest::RepeaterNext || request.kind == BotIoRequest::RepeaterStatus ||
                request.kind == BotIoRequest::RepeaterLogin || request.kind == BotIoRequest::FindPath ||
-               request.kind == BotIoRequest::RepeaterCommand) {
+               request.kind == BotIoRequest::RepeaterCommand || request.kind == BotIoRequest::FindBestPath) {
       for (auto &io : s.radio) if (io.state->load() == Idle) {
         io.request = request; io.result = {}; io.runtime = runtime;
         *io.state = Pending; admitted = true; break;

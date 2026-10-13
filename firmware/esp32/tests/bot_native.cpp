@@ -2425,7 +2425,7 @@ static void native_source_api_capacities() {
   assert(overrides == "Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=8");
   assert(overrides.size() < 146);
   for (const char *query : {"source api sources", "source api repeaters", "source api bundled",
-                           "source api events", "source api find-path", "source api repeater-cli"}) {
+                           "source api events", "source api find-path", "source api find-best-path", "source api repeater-cli"}) {
     const auto response = f.administer(query);
     assert(response.find("Error:") != 0 && response.size() < 146);
   }
@@ -2727,6 +2727,156 @@ static void native_find_path() {
   // Restore the original monitor authority after this isolated test process.
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
   puts("PASS find-path: empty guest flood, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
+}
+static void native_best_path() {
+  BotRadioPolicy policy; policy.airtimeMs = 3600;
+  assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy(policy) &&
+         saveBotRepeaterPolicy({}) && saveBotAdaptiveAdmission(false));
+  beginClocks();
+  Fixture::Options options; options.captureTxForTest = true;
+  Fixture f(options); f.start();
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  const uint32_t clockStart = timeMs;
+  Peer caller, peer, stranger;
+  f.learn(caller); f.learn(peer); f.learn(stranger);
+  Peer *destination = &peer;
+  char key[65]{}, command[160]{}, reply[192]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + i * 2, 3, "%02X", peer.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "add pilot %s 912525000 3:112233", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  const Bytes seed{0x11, 0x22, 0x33}, learned{0xcc, 0x26, 0x8a, 0xd1, 0x26, 0x00}, other{0xd7, 0x26, 0x00};
+  const auto response = [&](Peer &sender, uint32_t tag, bool login, const Bytes &route, bool distinct = false) {
+    uint8_t secret[32]{}, plain[16]{};
+    sender.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, tag);
+    if (login) plain[7] = distinct ? 2 : 1;
+    else { plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; plain[6] = 1; plain[7] = distinct ? 122 : 121; }
+    auto *packet = login ? sender.createPathReturn(mesh::Identity(f.bot.publicKey()), secret,
+        route.data(), uint8_t(0x80 | route.size() / 3), PAYLOAD_TYPE_RESPONSE, plain, 13) :
+        sender.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, 8);
+    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    return sender.wire(packet);
+  };
+  const auto ask = [&]() {
+    timeMs += 901000; receiveNetworkTime(1800000000 + (timeMs - clockStart) / 1000);
+    f.radio.sent.clear();
+    bot_native_test::TxFrame old; while (f.takeTxFrame(old)) {}
+    snprintf(command, sizeof(command), "!find-best-path %s", key);
+    f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+  };
+  const auto route = [&]() {
+    f.bot.repeaterCommand("route pilot", reply, sizeof(reply)); return std::string(reply);
+  };
+  const auto run = [&](bool newFlood, unsigned scenario) {
+    unsigned floods = 0, seeds = 0, currents = 0, alternatives = 0;
+    const auto originalRoute = route();
+    auto &foreign = destination == &peer ? stranger : peer;
+    uint32_t lastStart = 0, previousTag = 0;
+    for (unsigned tick = 0; tick < 310 && f.bot.jobsInUse(); ++tick) {
+      bot_native_test::TxFrame frame;
+      while (f.takeTxFrame(frame)) {
+        const auto &raw = frame.packet;
+        mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+        if (packet.getPayloadType() != PAYLOAD_TYPE_REQ && packet.getPayloadType() != PAYLOAD_TYPE_ANON_REQ) continue;
+        if (lastStart) assert(uint32_t(frame.eligibleAtMs - lastStart) >= 30000);
+        lastStart = frame.eligibleAtMs;
+        if (packet.getPayloadType() == PAYLOAD_TYPE_ANON_REQ) {
+          assert(packet.isRouteFlood() && newFlood); ++floods;
+          uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+          destination->self_id.calcSharedSecret(secret, f.bot.publicKey());
+          assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 33, packet.payload_len - 33) == 16);
+          const auto loginTag = queued_tx::get32(plain);
+          if (scenario != 2) {
+            const auto &fresh = scenario == 0 ? learned : other;
+            f.deliver(response(foreign, loginTag, true, fresh)); f.step(20);
+            f.reflect(response(*destination, loginTag, true, fresh, true)); f.step(20);
+            f.deliver(response(*destination, loginTag, true, fresh)); f.step(20);
+          }
+          continue;
+        }
+        assert(packet.isRouteDirect() && packet.getPathHashSize() == 3);
+        uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+        destination->self_id.calcSharedSecret(secret, f.bot.publicKey());
+        const int size = mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2);
+        assert(size == 16 && plain[4] == 3 && plain[5] == uint8_t(~TELEM_PERM_BASE));
+        const auto tag = queued_tx::get32(plain); assert(tag && tag != previousTag);
+        const Bytes path(packet.path, packet.path + packet.getPathHashCount() * 3);
+        if (path == seed) ++seeds;
+        else if (path == learned) ++currents;
+        else { assert(path == other); ++alternatives; }
+        assert(route() == originalRoute);
+        if (scenario == 3) {
+          f.bot.radioPolicyCommand("access dm action_trace 0", reply, sizeof(reply));
+          assert(!strncmp(reply, "Saved and applied", 17));
+          f.deliver(response(*destination, tag, false, {})); f.step(300);
+          assert(!f.bot.jobsInUse()); break;
+        }
+        bool answer = scenario == 0 ? path == learned : scenario == 1 ?
+            (path != other || alternatives == 1) : scenario >= 4;
+        if (answer) {
+          timeMs += scenario == 4 ? (path == seed ? 100 : 1000) :
+              scenario == 5 ? (path == seed ? 900 : 1000) : path == learned ? 100 : 1000;
+          f.deliver(response(foreign, tag, false, {})); f.step(20);
+          f.reflect(response(*destination, tag, false, {}, true)); f.step(20);
+          if (previousTag) { f.deliver(response(*destination, previousTag, false, {})); f.step(20); }
+          const auto good = response(*destination, tag, false, {});
+          f.deliver(good); f.step(20); f.deliver(good); f.step(20);
+        }
+        previousTag = tag;
+        if (scenario == 6) { timeMs += 300001; f.step(300); }
+      }
+      timeMs += 1000; f.step(30);
+    }
+    f.step(300); assert(!f.bot.jobsInUse());
+    if (scenario == 0) assert(floods == 1 && seeds == 2 && currents == 2 && !alternatives);
+    if (scenario == 1) assert(floods == 1 && seeds == 2 && currents == 2 && alternatives == 2);
+    if (scenario == 2) assert(floods == unsigned(newFlood) && seeds == 2 && currents == 2 && !alternatives);
+    if (scenario == 3 || scenario == 6) assert(floods == 1 && seeds + currents + alternatives == 1);
+    if (scenario == 7) assert(floods == 1 && !seeds && !currents && alternatives == 2);
+    if (scenario == 4 || scenario == 5) assert(floods == 1 && seeds == 2 && currents == 2 && alternatives == 2);
+    return caller.replies(f.bot.publicKey(), f.radio);
+  };
+  ask(); auto answers = run(true, 0);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0");
+  assert(answers.size() == 1 && answers[0].find("selected 3:cc268ad12600") != std::string::npos &&
+         answers[0].find("current=0/2 flood=2/2") != std::string::npos);
+  ask(); answers = run(true, 1);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0");
+  assert(answers.size() == 1 && answers[0].find("kept 3:cc268ad12600") != std::string::npos &&
+         answers[0].find("current=2/2 seed=2/2 flood=1/2") != std::string::npos);
+  // A new comparison during the persisted flood cooldown still tests known
+  // alternatives, but cannot emit another anonymous discovery request.
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+  answers = run(false, 2);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
+         answers[0].find("cached 3:cc268ad12600") != std::string::npos);
+  ask(); answers = run(true, 3);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0");
+  assert(answers.size() == 1 && answers[0].find("permission") != std::string::npos);
+  f.bot.radioPolicyCommand("access dm action_trace inherit", reply, sizeof(reply));
+  ask(); assert(f.bot.jobsInUse()); f.bot.cancelJobs(); f.step();
+  f.deliver(response(peer, companionClock().getCurrentTime(), true, other)); f.step(300);
+  assert(!f.bot.jobsInUse() && route() == "pilot route=3:cc268ad12600 repair=0");
+  ask(); answers = run(true, 6);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
+         answers[0].find("incomplete") != std::string::npos);
+  ask(); answers = run(true, 5);
+  assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
+         answers[0].find("kept 3:cc268ad12600") != std::string::npos);
+  ask(); answers = run(true, 4);
+  assert(route() == "pilot route=3:112233 repair=0" && answers.size() == 1 &&
+         answers[0].find("selected 3:112233") != std::string::npos);
+  f.bot.repeaterCommand("remove pilot", reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  destination = &stranger;
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + i * 2, 3, "%02X", stranger.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "add pilot %s 912525000", key);
+  f.bot.repeaterCommand(command, reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  assert(route() == "pilot route=unknown repair=0");
+  ask(); answers = run(true, 7);
+  assert(route() == "pilot route=3:d72600 repair=0" && answers.size() == 1 &&
+         answers[0].find("selected 3:d72600") != std::string::npos && answers[0].find("flood=2/2") != std::string::npos);
+  assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
+  puts("PASS best path: two tagged trials per route, shared 30s pacing, measured promotion, seed/current/flood comparison, stale/foreign/reflected rejection, cached fallback, saved cooldown and cancellation/revocation retain routes");
 }
 static void anonymous_channel_routes() {
   BotRadioPolicy policy; policy.pathWidth = 3;
@@ -5049,8 +5199,12 @@ int main(int argc, char **argv) {
     native_thread_policy();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--best-path-test")) {
+    native_best_path(); return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
     native_find_path();
+    native_best_path();
     anonymous_channel_routes();
     find_path_full_contact_scan();
     return 0;
@@ -5286,8 +5440,12 @@ int main(int argc, char **argv) {
     native_thread_policy();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--best-path-test")) {
+    native_best_path(); return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--find-path-test")) {
     native_find_path();
+    native_best_path();
     anonymous_channel_routes();
     find_path_full_contact_scan();
     return 0;

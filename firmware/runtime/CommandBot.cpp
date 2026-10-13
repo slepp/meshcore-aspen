@@ -249,6 +249,17 @@ struct CommandBot::Core : mesh::Mesh {
   CommandBot &owner;
   Counters stats{};
   struct Invocation {
+    struct BestPaths {
+      struct Candidate {
+        PeerRoute route;
+        uint32_t elapsed = 0;
+        uint8_t attempts = 0, received = 0;
+        const char *name = nullptr;
+      } candidates[3];
+      PeerRoute original;
+      uint32_t until = 0, probeAt = 0;
+      uint8_t count = 0, next = 0;
+    } best;
     bool used = false, collecting = false, deferred = false, cancelled = false, suppressReply = false;
     uint32_t job = 0, collectionStart = 0;
     uint32_t notBefore = 0, adminTicket = 0;
@@ -828,7 +839,7 @@ struct CommandBot::Core : mesh::Mesh {
     // While a probe is pending, uncorrelated PATH packets cannot replace its
     // fallback or promote the guest login's provisional route.
     for (const auto &job : invocations)
-      if (job.used && job.ioPending && job.io.kind == BotIoRequest::FindPath &&
+      if (job.used && job.ioPending && routeSearchIo(job) &&
           contact.id.matches(job.io.principal)) {
         if (extraType == PAYLOAD_TYPE_ACK && extraSize >= 4) {
           uint32_t ack = 0; memcpy(&ack, extra, 4); onAckRecv(packet, ack);
@@ -930,8 +941,11 @@ struct CommandBot::Core : mesh::Mesh {
   bool repeaterIo(const Invocation &job) const {
     return job.io.kind == BotIoRequest::RepeaterStatus || job.io.kind == BotIoRequest::RepeaterLogin;
   }
+  bool routeSearchIo(const Invocation &job) const {
+    return job.io.kind == BotIoRequest::FindPath || job.io.kind == BotIoRequest::FindBestPath;
+  }
   bool repeaterRadioIo(const Invocation &job) const {
-    return repeaterIo(job) || job.io.kind == BotIoRequest::FindPath ||
+    return repeaterIo(job) || routeSearchIo(job) ||
         job.io.kind == BotIoRequest::RepeaterCommand;
   }
   void failRepeater(Invocation &job, BotRepeaterError code, const char *message) {
@@ -1154,11 +1168,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!capacity(replyAirtime(packet, contact->route), true, false, packet, contact->id.pub_key)) {
       releasePacket(packet); finishRadio(job, capacityError); return;
     }
-    // Companion timeout estimate, including hops, with reply quiet time and a
-    // 25% allowance. Short paths retain 15 seconds; long paths can use 60.
-    const uint64_t estimate = 500 + (uint64_t(owner.radio_.getEstAirtimeFor(packet->getRawLength())) * 6 + 250) *
-                                    ((contact->route.length & 63) + 1);
-    job.deadline = millis() + uint32_t(std::clamp<uint64_t>(estimate * 5 / 4 + 2500, 15000, 60000));
+    job.deadline = millis() + companionReplyWait(packet, contact->route.length & 63, 2500);
     job.outbound = packet; job.repeaterQuietAt = 0;
     job.hashCount = 0; job.io.revision = timestamp;
     repeaterSent = true; repeaterAt = millis();
@@ -1197,6 +1207,121 @@ struct CommandBot::Core : mesh::Mesh {
       if (contact.used && contact.id.matches(job.io.principal)) return &contact;
     return nullptr;
   }
+  static bool sameRoute(const PeerRoute &a, const PeerRoute &b) {
+    return a.length == b.length && (a.length == 0xff ||
+        !memcmp(a.bytes, b.bytes, (a.length & 63) * ((a.length >> 6) + 1)));
+  }
+  void addBestPath(Invocation &job, const PeerRoute &route, const char *name) {
+    if (route.length == 0xff || job.best.count == 3) return;
+    for (unsigned i = 0; i < job.best.count; ++i)
+      if (sameRoute(job.best.candidates[i].route, route)) return;
+    auto &candidate = job.best.candidates[job.best.count++];
+    candidate.route = route; candidate.name = name;
+  }
+  bool routeSearchCurrent(const Invocation &job) const {
+    for (const char *action : {job.event.name, "action_trace"}) {
+      const auto flags = policy.flags(job.event, action);
+      if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute))) return false;
+    }
+    if (job.io.kind != BotIoRequest::FindBestPath) return true;
+    if (job.io.grant != repeaterGrant) return false;
+    if (job.repeaterIndex < 0) return true;
+    const auto &target = repeaterPolicy.targets[unsigned(job.repeaterIndex)];
+    return target.used && !memcmp(target.key, job.io.principal, 32) &&
+        (!target.frequencyHz || target.frequencyHz == owner.radio_.configuration().freq_hz);
+  }
+  void confirmedRoute(Contact &contact) {
+    learnedPath(contact);
+    const int index = repeaterIndex(contact.id.pub_key);
+    if (index >= 0) {
+      auto &state = repeaters[unsigned(index)];
+      state.failures = 0;
+      if (int32_t(state.due - millis()) > 30000) state.due = millis() + 30000;
+    }
+  }
+  void finishBestPath(Invocation &job) {
+    if (!owner.worker_.ioCurrent(job.io.token) || !routeSearchCurrent(job)) {
+      finishRadio(job, "Route comparison cancelled; learned route retained"); return;
+    }
+    auto *contact = findPathContact(job);
+    if (!contact || !sameRoute(contact->route, job.best.original)) {
+      finishRadio(job, "Route changed during comparison; learned route retained"); return;
+    }
+    int selected = -1;
+    for (unsigned i = 0; i < job.best.count; ++i) {
+      const auto &candidate = job.best.candidates[i];
+      if (sameRoute(candidate.route, job.best.original)) selected = int(i);
+    }
+    const int baseline = selected;
+    const bool complete = job.best.next == job.best.count * 2;
+    if (complete) for (unsigned i = 0; i < job.best.count; ++i) {
+      const auto &candidate = job.best.candidates[i];
+      if (!candidate.received || candidate.attempts != 2) continue;
+      if (selected < 0) { selected = int(i); continue; }
+      const auto &current = job.best.candidates[unsigned(selected)];
+      if (candidate.received > current.received ||
+          (candidate.received == current.received && candidate.elapsed < current.elapsed)) selected = int(i);
+    }
+    if (selected >= 0 && baseline >= 0 && selected != baseline) {
+      const auto &candidate = job.best.candidates[unsigned(selected)], &current = job.best.candidates[unsigned(baseline)];
+      if (candidate.received == current.received &&
+          (candidate.received != 2 || uint64_t(candidate.elapsed) * 4 >= uint64_t(current.elapsed) * 3)) selected = baseline;
+    }
+    const bool changed = selected >= 0 && !sameRoute(job.best.candidates[unsigned(selected)].route, job.best.original);
+    if (changed) contact->route = job.best.candidates[unsigned(selected)].route;
+    if (complete && selected >= 0 && job.best.candidates[unsigned(selected)].received) confirmedRoute(*contact);
+    char detail[96]{};
+    for (unsigned i = 0; i < job.best.count; ++i) {
+      const auto &candidate = job.best.candidates[i];
+      const auto used = strlen(detail);
+      snprintf(detail + used, sizeof(detail) - used, "%s%s=%u/%u", i ? " " : "",
+               candidate.name, candidate.received, candidate.attempts);
+    }
+    const size_t capacity = job.event.replyLimit + 1;
+    if (selected < 0) {
+      snprintf(job.result.value, capacity, "%02x%02x%02x %s; %s", job.io.principal[0],
+               job.io.principal[1], job.io.principal[2], complete ? "no route confirmed" : "comparison incomplete; route retained", detail);
+    } else {
+      const auto &candidate = job.best.candidates[unsigned(selected)];
+      const unsigned width = (candidate.route.length >> 6) + 1;
+      const unsigned bytes = (candidate.route.length & 63) * width;
+      char path[2 * MAX_PATH_SIZE + 3]{};
+      char average[20] = "unavailable";
+      if (candidate.received) snprintf(average, sizeof(average), "%ums", candidate.elapsed / candidate.received);
+      snprintf(path, sizeof(path), "%u:", width);
+      for (unsigned i = 0; i < bytes; ++i) snprintf(path + 2 + 2 * i, sizeof(path) - 2 - 2 * i, "%02x", candidate.route.bytes[i]);
+      const int size = snprintf(job.result.value, capacity, "%02x%02x%02x %s %s%s; %s; avg=%s", job.io.principal[0],
+          job.io.principal[1], job.io.principal[2], changed ? "selected" : candidate.received ? "kept" : "cached", path,
+          complete ? "" : " (incomplete)", detail, average);
+      if (size >= int(capacity)) snprintf(job.result.value, capacity,
+          "%02x%02x%02x %s %u hops (%u-byte)%s; %s; avg=%s", job.io.principal[0], job.io.principal[1],
+          job.io.principal[2], changed ? "selected" : candidate.received ? "kept" : "cached", candidate.route.length & 63, width,
+          complete ? "" : " (incomplete)", detail, average);
+    }
+    finishRadio(job, nullptr, true);
+  }
+  void bestPathProbeDone(Invocation &job) {
+    auto &candidate = job.best.candidates[job.best.next % job.best.count];
+    if (job.pathReady && job.result.transmitted) {
+      ++candidate.received;
+      candidate.elapsed += uint32_t(millis() - job.best.probeAt);
+    }
+    ++job.best.next; job.pathReady = false;
+    job.io.revision = 3; job.deadline = job.best.until;
+    if (job.best.next == job.best.count * 2) finishBestPath(job);
+  }
+  void startBestPathProbe(Invocation &job) {
+    if (int32_t(millis() - job.best.until) >= 0) { finishBestPath(job); return; }
+    if (repeaterSent && uint32_t(millis() - repeaterAt) < 30000) return;
+    if (!job.best.count) { finishBestPath(job); return; }
+    auto &candidate = job.best.candidates[job.best.next % job.best.count];
+    job.io.routeWidth = (candidate.route.length >> 6) + 1;
+    job.io.routeSize = (candidate.route.length & 63) * job.io.routeWidth;
+    memcpy(job.io.route, candidate.route.bytes, job.io.routeSize);
+    ++candidate.attempts; job.pathReady = false;
+    job.io.revision = 1; job.result.transmitted = false;
+    confirmFindPath(job);
+  }
   void finishFindPath(Invocation &job, bool fresh) {
     const auto *contact = findPathContact(job);
     char key[9]{};
@@ -1221,7 +1346,8 @@ struct CommandBot::Core : mesh::Mesh {
     finishRadio(job, nullptr, !fresh);
   }
   void confirmFindPath(Invocation &job) {
-    if (job.io.revision != 1 || job.outbound || !job.result.transmitted) return;
+    const bool best = job.io.kind == BotIoRequest::FindBestPath;
+    if (job.io.revision != 1 || job.outbound || (!best && !job.result.transmitted)) return;
     if (!owner.worker_.ioCurrent(job.io.token) || int32_t(millis() - job.deadline) >= 0) {
       finishRadio(job, "Route confirmation cancelled or deadline expired; no confirmation sent"); return;
     }
@@ -1247,10 +1373,17 @@ struct CommandBot::Core : mesh::Mesh {
     }
     job.io.revision = 2; job.outbound = packet;
     job.result.transmitted = false;
+    if (best) {
+      job.deadline = millis() + companionReplyWait(packet, job.io.routeSize / job.io.routeWidth);
+      if (int32_t(job.deadline - job.best.until) > 0) job.deadline = job.best.until;
+      job.best.probeAt = millis();
+      repeaterSent = true; repeaterAt = millis();
+    }
     sendDirect(packet, job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
                                          (job.io.routeSize / job.io.routeWidth)));
   }
   void startFindPath(Invocation &job) {
+    const bool best = job.io.kind == BotIoRequest::FindBestPath;
     const size_t length = strnlen(job.io.value, 65);
     uint8_t prefix[32]{};
     const auto digit = [](char c) -> int {
@@ -1345,6 +1478,23 @@ struct CommandBot::Core : mesh::Mesh {
     memcpy(job.io.principal, selected, 32);
     const auto *contact = findPathContact(job);
     if (!contact) { finishRadio(job, "Route discovery contact unavailable"); return; }
+    if (best) {
+      job.best = {}; job.best.original = contact->route; job.best.until = millis() + 300000;
+      job.io.grant = repeaterGrant; job.repeaterIndex = int8_t(index);
+      addBestPath(job, contact->route, "current");
+      if (index >= 0) {
+        const auto &seed = repeaterPolicy.targets[unsigned(index)].path;
+        if (seed.known) {
+          PeerRoute route; route.learn(seed.bytes, uint8_t((seed.width - 1) << 6 | seed.count));
+          addBestPath(job, route, "seed");
+        }
+      }
+      job.deadline = millis() + 30000;
+      if (directProbe) {
+        job.io.revision = 3; job.deadline = job.best.until;
+        startBestPathProbe(job); return;
+      }
+    }
     uint8_t secret[32]{}, data[5]{};
     self_id.calcSharedSecret(secret, contact->id);
     memcpy(data, &tag, 4);
@@ -1387,9 +1537,9 @@ struct CommandBot::Core : mesh::Mesh {
     if (packet->_localReflection || size < 5) return false;
     uint32_t tag = 0; memcpy(&tag, data, 4);
     for (auto &job : invocations)
-      if (job.used && job.ioPending && job.io.kind == BotIoRequest::FindPath &&
+      if (job.used && job.ioPending && routeSearchIo(job) &&
           contact.id.matches(job.io.principal) && owner.worker_.ioCurrent(job.io.token) &&
-          int32_t(millis() - job.deadline) < 0) {
+          int32_t(millis() - job.deadline) < 0 && routeSearchCurrent(job)) {
         if (job.io.revision == 0) {
           const uint32_t now = owner.rtc_.getCurrentTime();
           if ((!path && !job.io.routeType) || size < 13 || size >= 13 + CIPHER_BLOCK_SIZE || data[4] || !(data[7] & 3) ||
@@ -1400,8 +1550,17 @@ struct CommandBot::Core : mesh::Mesh {
             job.io.routeSize = uint8_t((length & 63) * job.io.routeWidth);
             memcpy(job.io.route, path, job.io.routeSize);
           }
-          job.io.revision = 1;
-          confirmFindPath(job);
+          if (job.io.kind == BotIoRequest::FindBestPath) {
+            PeerRoute route; route.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
+                                                             (job.io.routeSize / job.io.routeWidth)));
+            route.scoped = routing.scope(packet); addBestPath(job, route, "flood");
+            job.io.revision = 3; job.deadline = job.best.until;
+            // A very fast reply can precede the local TX completion. Keep its
+            // packet ownership until the terminal receipt arrives.
+          } else {
+            job.io.revision = 1;
+            confirmFindPath(job);
+          }
         } else if (job.io.revision == 2 && !path && tag == job.repeaterTag && size >= 8 &&
                    data[4] == TELEM_CHANNEL_SELF && (data[5] == 116 || data[5] == 103)) {
           // Base telemetry starts with self voltage (116) or temperature (103).
@@ -1410,16 +1569,15 @@ struct CommandBot::Core : mesh::Mesh {
           // Upstream repeaters answer a direct REQ with plain RESPONSE,
           // using a flood if their reverse route is unknown. Retain the
           // outbound route we actually tested; a PATH cannot replace it here.
+          if (job.io.kind == BotIoRequest::FindBestPath) {
+            job.pathReady = true;
+            if (job.result.transmitted) bestPathProbeDone(job);
+            return true;
+          }
           contact.route.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
                                                    (job.io.routeSize / job.io.routeWidth)));
           contact.route.scoped = routing.scope(packet);
-          learnedPath(contact);
-          const int index = repeaterIndex(contact.id.pub_key);
-          if (index >= 0) {
-            auto &state = repeaters[unsigned(index)];
-            state.failures = 0;
-            if (int32_t(state.due - millis()) > 30000) state.due = millis() + 30000;
-          }
+          confirmedRoute(contact);
           job.pathReady = true;
           if (job.result.transmitted) finishFindPath(job, true);
         } else return false;
@@ -1690,6 +1848,10 @@ struct CommandBot::Core : mesh::Mesh {
             invocation.traceTransmitted = true;
             if (invocation.io.traceSendOnly) finishRadio(invocation);
             else if (invocation.traceReady) completeTrace(invocation);
+          } else if (invocation.io.kind == BotIoRequest::FindBestPath) {
+            if (int32_t(millis() - invocation.deadline) >= 0)
+              finishRadio(invocation, "Route probe TX completed late; learned route retained");
+            else if (invocation.pathReady) bestPathProbeDone(invocation);
           } else if (invocation.io.kind == BotIoRequest::FindPath) {
             if (invocation.pathReady) finishFindPath(invocation, true);
             else confirmFindPath(invocation);
@@ -1746,7 +1908,7 @@ struct CommandBot::Core : mesh::Mesh {
       job.repeaterIndex = -1;
       job.io = request; resetBotIoResult(job.result); job.result.token = request.token;
       job.ioPending = true; job.deadline = millis() + request.delayMs;
-      const char *action = request.kind == BotIoRequest::Trace || request.kind == BotIoRequest::FindPath ? "action_trace" :
+      const char *action = request.kind == BotIoRequest::Trace || routeSearchIo(job) ? "action_trace" :
                            request.kind == BotIoRequest::Advert ? "action_advert" :
                            request.kind == BotIoRequest::Send || request.kind == BotIoRequest::RepeaterCommand ? "action_send" :
                            request.kind == BotIoRequest::Forward ? "action_forward" : nullptr;
@@ -1767,7 +1929,8 @@ struct CommandBot::Core : mesh::Mesh {
           !memchr(request.key, 0, sizeof(request.key))) {
         finishRadio(job, "Invalid native radio wait bounds"); continue;
       }
-      if (request.kind == BotIoRequest::FindPath) {
+      if (routeSearchIo(job)) {
+        if (request.kind == BotIoRequest::FindBestPath) job.io.grant = repeaterGrant;
         startFindPath(job); continue;
       }
       if (request.kind == BotIoRequest::RepeaterCommand) {
@@ -1989,6 +2152,8 @@ struct CommandBot::Core : mesh::Mesh {
 #endif
       if (!owner.worker_.ioCurrent(job.io.token)) {
         finishRadio(job, "Radio operation cancelled; outcome may be unknown");
+      } else if (routeSearchIo(job) && !routeSearchCurrent(job)) {
+        finishRadio(job, "Route command permission or repeater configuration changed; learned route retained");
       } else if (job.io.kind == BotIoRequest::RepeaterCommand && !repeaterCommandCurrent(job)) {
         finishRadio(job, "Repeater CLI authority revoked; remote outcome may be unknown");
       } else if (job.io.kind == BotIoRequest::RepeaterCommand && job.result.transmitted && job.repeaterQuietAt &&
@@ -2002,6 +2167,18 @@ struct CommandBot::Core : mesh::Mesh {
       } else if (!meshIoCurrent(job)) {
         finishRadio(job, "Mesh grant revoked; admitted TX may already have occurred");
       } else if (int32_t(millis() - job.deadline) >= (job.findPathWaiting || job.repeaterCommandWaiting ? 1 : 0)) {
+        if (job.io.kind == BotIoRequest::FindBestPath && !job.findPathWaiting) {
+          if (job.io.revision == 0) {
+            job.io.revision = 3; job.deadline = job.best.until;
+          } else if (job.io.revision == 2 && job.result.transmitted) {
+            bestPathProbeDone(job);
+          } else if (int32_t(millis() - job.best.until) >= 0) {
+            finishBestPath(job);
+          } else {
+            finishRadio(job, "Route probe TX deadline; comparison stopped with learned route retained");
+          }
+          continue;
+        }
         if (job.io.kind == BotIoRequest::RepeaterCommand) {
           finishRadio(job, job.repeaterCommandWaiting ? "Repeater CLI waited 30 seconds; no command sent" :
                       "Repeater CLI timed out; command may have applied; not retried"); continue;
@@ -2028,6 +2205,8 @@ struct CommandBot::Core : mesh::Mesh {
         if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute)))
           finishRadio(job, "Route command permission revoked while waiting");
         else startFindPath(job);
+      } else if (job.io.kind == BotIoRequest::FindBestPath && job.io.revision == 3 && !job.outbound) {
+        startBestPathProbe(job);
       } else if (job.io.kind == BotIoRequest::Advert && !job.outbound &&
                  !owner.radio_.hasPendingWork() && owner.radio_.queuedReady()) {
         auto *packet = makeAdvert(false, principal(job.event));
@@ -2733,6 +2912,10 @@ struct CommandBot::Core : mesh::Mesh {
     return owner.radio_.getEstAirtimeFor(
         2 + packet->payload_len + (traceBytes ? traceBytes : path) + (route.scoped ? 4 : 0));
   }
+  uint32_t companionReplyWait(const mesh::Packet *packet, unsigned hops, unsigned quiet = 0) const {
+    const uint64_t estimate = 500 + (uint64_t(owner.radio_.getEstAirtimeFor(packet->getRawLength())) * 6 + 250) * (hops + 1);
+    return uint32_t(std::clamp<uint64_t>(estimate * 5 / 4 + quiet, 15000, 60000));
+  }
   bool act(const BotAction &action, Invocation &invocation) {
     const auto &pending = invocation.event;
 #ifdef MESH_PACKET_ENGINE_API
@@ -3198,8 +3381,11 @@ uint32_t CommandBot::hostWaitMs() const {
     if (job.collecting) botEarlier(wait, now, job.collectionStart + job.event.windowMs);
     else if (job.deferred) botEarlier(wait, now, job.notBefore);
     if (job.ioPending) botEarlier(wait, now, job.deadline);
-    if (job.findPathWaiting || job.repeaterCommandWaiting) botEarlier(wait, now,
-        core_->repeaterSent ? core_->repeaterAt + 30000 : now);
+    if ((job.findPathWaiting || job.repeaterCommandWaiting) &&
+        (!core_->repeaterSent || int32_t(core_->repeaterAt + 30000 - now) > 0))
+      botEarlier(wait, now, core_->repeaterSent ? core_->repeaterAt + 30000 : now);
+    if (job.ioPending && job.io.kind == BotIoRequest::FindBestPath && job.io.revision == 3 && !job.outbound)
+      botEarlier(wait, now, core_->repeaterSent && uint32_t(now - core_->repeaterAt) < 30000 ? core_->repeaterAt + 30000 : now);
     if (job.ioPending && job.io.kind == BotIoRequest::RepeaterCommand && job.result.transmitted && job.repeaterQuietAt)
       botEarlier(wait, now, job.repeaterQuietAt);
   }

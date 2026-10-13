@@ -13,6 +13,9 @@ constexpr BotCommand BotBuiltinCommands[] = {
   {BotCommand::Public, "cancel", "cancel", "id:string:10", "Cancel personal ID; unknown is uncertain TX", "!cancel 1"},
   {BotCommand::Public, "choose", "choose", "options:text:148", "2..8 nonempty | choices; each <=64 bytes", "!choose tea|coffee"},
   {BotCommand::Public, "convert", "convert", "value:string:32,from:string:4,to:string:4", "Case-sensitive units; scalar value; 10 significant digits", "!convert 32 F C"},
+#if !ONCHIP_BOT_COMPACT_PROFILE
+  {BotCommand::Public, "find-best-path", "find_best_path", "prefix:string:64", "Compare routes; two probes each, up to 5min", "!find-best-path d2"},
+#endif
   {BotCommand::Public, "find-path", "find_path", "prefix:string:64", "Fresh route; waits up to 30s, probes 10s", "!find-path d2"},
   {BotCommand::Public, "forget", "forget", "key:string:32", "Delete private key", "!forget camp"},
   {BotCommand::Public, "help", "help", "name?:string:24,page?:int:1:40", "Commands/arguments; !help PAGE or NAME [PAGE]", "!help remember"},

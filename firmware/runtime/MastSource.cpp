@@ -850,6 +850,15 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     respond("Repeater CLI command(alias,text) owner-DM ACL=admin route=known global-min=30s wait=30s reply=15..60s quiet=2.5s bytes=256 retry=none io=16");
     return;
   }
+  if (!strcmp(input, "api find-best-path")) {
+#if ONCHIP_BOT_COMPACT_PROFILE
+    respond("Error: Route comparison requires Aspen or a native host");
+#else
+    if (wasmRuntime_) { respond("Error: Route comparison requires Lua"); return; }
+    respond("Best-path prefix=1..64 routes=current,seed,flood trials=2 spacing=30s max=300s reply=15..60s select=delivery,latency-25% permission=action_trace");
+#endif
+    return;
+  }
   if (!strcmp(input, "api mesh")) {
     static constexpr char meshApi[] =
         "Mesh compose=dm,channel,trace dm=caller+owner-fullkey[1-4] "

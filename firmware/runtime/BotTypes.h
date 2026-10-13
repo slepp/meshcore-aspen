@@ -183,7 +183,7 @@ struct BotIoRequest {
                         ReminderSet, ReminderList, ReminderCancel, List, Cas, Transaction,
                         Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility,
                         RepeaterNext, RepeaterStatus, RepeaterLogin, FindPath,
-                        RepeaterCommand } kind = Sleep;
+                        RepeaterCommand, FindBestPath } kind = Sleep;
   enum Scope : uint8_t { Caller, Conversation, Bot, Channel,
                         CallerThread, ConversationThread, BotThread, ChannelThread } scope = Caller;
   BotIoToken token{};

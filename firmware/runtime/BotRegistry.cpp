@@ -157,6 +157,7 @@ bool botIdentifier(const char *name) {
   return true;
 }
 bool botReservedCommand(const char *name) {
+  if (!ONCHIP_BOT_COMPACT_PROFILE && (!strcmp(name, "find-best-path") || !strcmp(name, "find_best_path"))) return true;
   for (const char *reserved : {"ping", "test", "path", "mt", "trace", "help", "remind", "reminders", "cancel",
                              "remember", "recall", "forget", "notes", "list-memories",
                              "calc", "convert", "roll", "choose", "weather", "service", "board",

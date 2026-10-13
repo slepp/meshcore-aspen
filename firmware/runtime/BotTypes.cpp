@@ -546,7 +546,14 @@ command("plugins","page?:int:1:4","Active source/manifest/modules; shared Lua na
 command("neighbors","page?:int:1:16","Contacts from signed adverts and cached routes","neighbors","public","!neighbors 2")
 command("find-path","prefix:string:64","Fresh route; waits up to 30s, probes 10s","find_path","public","!find-path d2")
 command("admin","text?:text:155","Trusted-owner DM: bot status/help/cancel","admin","owner","!admin bot status")
-)lua";
+)lua"
+#if !ONCHIP_BOT_COMPACT_PROFILE
+R"lua(
+function find_best_path(prefix) return node.find_best_path(prefix) end
+command("find-best-path","prefix:string:64","Compare routes; two probes each, up to 5min","find_best_path","public","!find-best-path d2")
+)lua"
+#endif
+;
 static_assert(sizeof(BotDiagnosticSource) <= 2048, "Keep compiled diagnostics independently bounded");
 bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
                          const char *luaVersion, char *output, size_t capacity) {

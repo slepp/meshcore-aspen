@@ -33,6 +33,9 @@ BOT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder 
 .PHONY: bot-find-path-test
 bot-find-path-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --find-path-test
+.PHONY: bot-best-path-test
+bot-best-path-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --best-path-test
 .PHONY: bot-repeater-test
 bot-repeater-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --repeater-test

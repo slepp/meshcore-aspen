@@ -409,6 +409,7 @@ and [reminder route/time rules](#reboot-autonomous-personal-dm-reminders).
 | `mesh.forward(packet)` | Terminal TX result | One separately granted sender/destination pair; latest eligible follow-up DM, re-encrypted as the bot |
 | `request_trace([width_hex])`, `mesh.trace([width_hex])`, `trace([width_hex])` | Bounded native TRACE-result text | Direct route; explicit widths 1/2/4/8, not ordinary width 3 |
 | `mesh.find_path(hex_prefix)` | Fresh repeater route or labelled cached fallback | 1..64 case-insensitive hex digits; up to 30 seconds waiting for admission, then a 10-second asynchronous probe; `action_trace` permission and radio budgets |
+| `mesh.find_best_path(hex_prefix)` | Compare learned, saved and flood-discovered routes | Aspen/native host; two tagged probes per distinct route, 30-second spacing, up to five minutes; command and `action_trace` permissions |
 | `mesh.multitrace([width_hex[, count]])` | Bounded numbered text summary | Count 1..3, default 2; sequential yielding operations share invocation budget |
 | `mesh.advert()`, `advert()` | Bounded completion text | Actual advert TX completion; 15-minute public advert gate and shared airtime |
 
@@ -718,7 +719,7 @@ full public key in the bot's signed contacts, the companion's saved signed
 adverts or the owner's monitor targets. A hash seen only in an RF path does not
 identify a destination. Receive or share its signed advert first if it is unknown.
 
-Both `!find-path` and `!trace` are public commands: callers need no bot admin
+`!find-path`, `!find-best-path` and `!trace` are public commands: callers need no bot admin
 password or owner grant. A DM identifies its sender through native encryption;
 a channel invocation verifies the channel key without authenticating the
 nickname. Command and `action_trace` permissions control both forms. For a
@@ -727,6 +728,7 @@ selected membership with default access `0`, allow bare and addressed calls with
 ```text
 bot access 1 trace 15
 bot access 1 find-path 15
+bot access 1 find-best-path 15
 bot access 1 action_trace 15
 ```
 
@@ -762,6 +764,24 @@ reply reports its hop count rather than a partial route. Learned routes use the
 [bounded checkpoint cache](#learned-contacts-and-routes) across restarts.
 Lua handlers can use the same
 asynchronous operation through `mesh.find_path(prefix)`.
+
+Use `!find-best-path d2` on Aspen or a native host to compare routes to a fixed
+repeater. It starts with the learned route and the owner's saved seed, then
+adds a fresh flood-discovered route when discovery is due. Duplicate paths are
+tested once. The command sends two tagged base-telemetry requests per candidate
+in round-robin order, sharing the existing 30-second start spacing and airtime
+budget. Each probe waits 15..60 seconds according to the companion's airtime
+and hop estimate. The comparison takes up to five minutes after admission;
+scheduled monitoring waits while it runs.
+
+The reply reports successes/attempts for each candidate, the selected path and
+its mean round-trip time. More successful replies win. When both paths answer
+twice, a new path must improve mean latency by more than 25%; otherwise the
+learned route stays. A comparison that runs out of time keeps the learned
+route. Paths and their original ages survive failed probes; a confirmed
+selection uses the existing delayed checkpoint. Flood cooldowns, command and
+`action_trace` permissions apply throughout. Lua handlers use the same operation
+through `mesh.find_best_path(prefix)` or `node.find_best_path(prefix)`.
 
 Configure target aliases through authenticated administration:
 
@@ -929,6 +949,7 @@ without resetting role identities, channels, destinations or airtime settings.
 | `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
 | `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Three-byte hashes shorten to two bytes when needed and unambiguous; further shortening retains whole hashes and marks truncation. Ninth paths, missing paths and RX queue overflow also mark the result truncated |
 | `!find-path PREFIX` | Waits up to 30 seconds for admission, then probes for 10 seconds; case-insensitive key prefix; explicit cached fallback on timeout |
+| `!find-best-path PREFIX` | Aspen/native host: compare up to three distinct routes with two probes each; report delivery and mean latency, retaining the learned route unless a candidate improves it |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Bot introduction and pointers to command help and installed programs |
 | `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
