@@ -248,13 +248,13 @@ Base companion in the Go sidecar when Willow owns the observer.
   connect-only. Hew drives the nonblocking connection and write deadlines;
   libcurl supplies asynchronous DNS, verified TLS and optional WebSocket
   framing, not MQTT or roles.
-  The native boundary restricts destinations to loopback and
-  `mqtt-meshcore-1.ve6slp.ca`, disables proxies, and enables certificate and
-  hostname verification with TLS1.2 or newer. Tests use only loopback.
+  The native boundary accepts the configured broker destination, restricts
+  transport schemes, disables proxies, and enables certificate and hostname
+  verification with TLS1.2 or newer. Tests use only loopback.
 * `meshproto.mqtt_endpoint` validates operator `tcp`, `tls`, `ssl`, `ws` and
   `wss` URLs without dialing. TCP/TLS URLs require an explicit port, as the Go
   publisher's dialer does; WebSocket defaults are 80/443. Credentials, queries,
-  fragments, invalid ports and other destinations are rejected with typed
+  fragments, malformed hosts and invalid ports are rejected with typed
   errors. The publisher uses the configured host/path; no replacement endpoint
   is selected.
 * WebSocket connections require the `mqtt` subprotocol, verified TLS for WSS,

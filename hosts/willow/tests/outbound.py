@@ -26,7 +26,7 @@ class TLSFixture(unittest.TestCase):
         subprocess.run([
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
             "-keyout", str(cls.key), "-out", str(cls.cert),
-            "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "2",
+            "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,DNS:broker.localhost", "-days", "2",
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         cls.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         cls.tls.load_cert_chain(cls.cert, cls.key)
@@ -131,7 +131,7 @@ class Outbound(TLSFixture):
         self.exercise()
 
     def test_verified_tls_and_echo(self):
-        self.exercise(tls=True)
+        self.exercise(tls=True, hostname="broker.localhost")
 
     def test_untrusted_certificate_is_rejected(self):
         output = self.exercise(tls=True, trusted=False, reject=True)
@@ -170,7 +170,7 @@ class Outbound(TLSFixture):
 
     def test_endpoint_policy_rejects_before_dial(self):
         for url in (
-            "http://invalid.example:1883", "http://localhost.invalid.example:1883",
+            "http://[invalid]:1883", "http://localhost:not-a-port",
             "http://user@127.0.0.1:1883", "http://127.0.0.1:1883?secret=value",
             "http://127.0.0.1:1883#fragment", "mqtt://127.0.0.1:1883",
         ):

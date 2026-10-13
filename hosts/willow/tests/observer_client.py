@@ -307,11 +307,11 @@ class Broker:
 
 
 class ObserverClient(TLSFixture):
-    def exercise(self, mode, tls=False, websocket=False):
+    def exercise(self, mode, tls=False, websocket=False, hostname="localhost"):
         broker = Broker(mode, self.tls if tls else None, websocket)
         try:
             scheme = ("wss" if tls else "ws") if websocket else ("tls" if tls else "tcp")
-            url = f"{scheme}://localhost:{broker.port}" + ("/mqtt" if websocket else "")
+            url = f"{scheme}://{hostname}:{broker.port}" + ("/mqtt" if websocket else "")
             result = subprocess.run([str(BINARY), mode, url, str(self.cert) if tls else ""],
                                     capture_output=True, text=True, timeout=18)
         finally:
@@ -384,7 +384,7 @@ class ObserverClient(TLSFixture):
     def test_identity_auth_renews_before_expiration(self): self.exercise("jwt-renew", tls=True)
     def test_identity_auth_reconnects_after_clock_reversal(self): self.exercise("jwt-rollback", tls=True)
     def test_websocket_binary_mqtt(self): self.exercise("basic", websocket=True)
-    def test_verified_secure_websocket_mqtt(self): self.exercise("jwt", tls=True, websocket=True)
+    def test_verified_secure_websocket_mqtt(self): self.exercise("jwt", tls=True, websocket=True, hostname="broker.localhost")
     def test_websocket_fragmented_binary_with_control_ping(self): self.exercise("ws-fragments", websocket=True)
     def test_websocket_puback_retry_is_unchanged(self): self.exercise("retry", tls=True, websocket=True)
     def test_websocket_publisher_panic_retains_pending_event(self): self.exercise("panic", tls=True, websocket=True)

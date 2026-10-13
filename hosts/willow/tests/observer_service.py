@@ -90,7 +90,7 @@ class IntegratedObserver(unittest.TestCase):
         try:
             service = ObserverService(extra_config=(
                 "observer.enabled=1\n"
-                f"observer.url=tcp://127.0.0.1:{broker.port}\n"
+                f"observer.url=tcp://broker.localhost:{broker.port}\n"
                 "observer.format=capture-v1\nobserver.iata=YYC\n"
                 "observer.topic_prefix=willow-local\nobserver.audience=willow-local\n"
                 "observer.packet_filter=16\nobserver.queue_size=16\n"))

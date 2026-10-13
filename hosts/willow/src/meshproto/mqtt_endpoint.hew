@@ -2,6 +2,8 @@ import std.encoding.utf8;
 
 import std.string;
 
+import std.net.ipnet;
+
 pub type Endpoint {
     transport_url: string;
     host: string;
@@ -26,8 +28,41 @@ fn hex_digit(value: u8) -> bool {
     (value >= 48 && value <= 57) || (value >= 65 && value <= 70) || (value >= 97 && value <= 102)
 }
 
-/// Checked operator URL policy. The transport independently enforces the host
-/// restriction; errors never echo credentials or the supplied URL.
+fn valid_host(host: string) -> bool {
+    if host.starts_with("[") && host.ends_with("]") {
+        return ipnet.is_v6(host.slice(1, host.len() - 1));
+    }
+    let name = if host.ends_with(".") {
+        host.slice(0, host.len() - 1)
+    } else {
+        host
+    };
+    if name.is_empty() || name.to_bytes().len() > 253 {
+        return false;
+    }
+    var numeric = true;
+    for byte in name.to_bytes() {
+        if byte != 46 && !(byte >= 48 && byte <= 57) {
+            numeric = false;
+        }
+    }
+    if numeric {
+        return ipnet.is_v4(name);
+    }
+    for label in string.split(lower_ascii(name), ".") {
+        if label.is_empty() || label.len() > 63 || label.starts_with("-") || label.ends_with("-") {
+            return false;
+        }
+        for byte in label.to_bytes() {
+            if !(byte >= 97 && byte <= 122) && !(byte >= 48 && byte <= 57) && byte != 45 && byte != 95 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Checked operator URL; errors never echo credentials or the supplied URL.
 pub fn parse(text: string) -> Result<Endpoint, string> {
     if text.is_empty() || text.to_bytes().len() > 4096 {
         return .Err("MQTT URL is required and must not exceed 4096 bytes");
@@ -59,16 +94,19 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
     }
     var host = authority;
     var suffix = "";
-    if authority.starts_with("[::1]") {
-        host = "[::1]";
-        suffix = authority.slice(5, authority.len());
+    if authority.starts_with("[") {
+        let closing = match authority.find("]") {
+            .Some(value) => value + 1,
+            .None => return .Err("MQTT IPv6 address requires closing bracket"),
+        };
+        host = authority.slice(0, closing);
+        suffix = authority.slice(closing, authority.len());
     } else if let .Some(colon) = authority.find(":") {
         host = authority.slice(0, colon);
         suffix = authority.slice(colon, authority.len());
     }
-    let normalized = lower_ascii(host);
-    if normalized != "localhost" && normalized != "127.0.0.1" && normalized != "[::1]" && normalized != "mqtt-meshcore-1.ve6slp.ca" {
-        return .Err("MQTT broker must be loopback or mqtt-meshcore-1.ve6slp.ca");
+    if !valid_host(host) {
+        return .Err("MQTT broker requires a hostname, IPv4 address or bracketed IPv6 address");
     }
     var port: i64 = if tls {
         443

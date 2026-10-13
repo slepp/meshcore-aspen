@@ -473,7 +473,7 @@ observer.packet_filter=65535
 | Setting | Contract |
 | --- | --- |
 | `observer.enabled` | `0` by default; `1` reserves port 3 and starts the native publisher. |
-| `observer.url` | Required when enabled. `tcp`, `tls`, `ssl`, `ws`, `wss`; explicit TCP/TLS port. Allowed destinations: localhost and `mqtt-meshcore-1.ve6slp.ca`. No embedded credentials, query or fragment. |
+| `observer.url` | Required when enabled. `tcp`, `tls`, `ssl`, `ws`, `wss`; DNS hostname, IPv4 or bracketed IPv6 address. TCP/TLS requires an explicit port; WebSockets default to 80/443. No embedded credentials, query or fragment. |
 | `observer.format` | `internal-v1` default, `observer-v1` or `capture-v1`, matching Go's `mqtt.format`. |
 | `observer.iata` | Required three uppercase letters for observer/capture formats. |
 | `observer.topic_prefix` | Default `meshcore`; copy Go's `mqtt.topic_prefix` to retain topics. |
@@ -484,6 +484,15 @@ observer.packet_filter=65535
 | `observer.origin`, `observer.model`, `observer.firmware_version`, `observer.radio` | Copy the corresponding Go MQTT metadata unchanged. |
 | `observer.queue_size` | 1–4096, default 256; plus one pending encoded observation. |
 | `observer.packet_filter` | Decimal uint16 packet-kind bit mask. Empty/absent means all kinds, `0` means none. Applies to observer/capture formats, as in Go. |
+
+Choose your own broker, for example `tls://mqtt.example.net:8883`,
+`wss://mqtt.example.net/mqtt` or `tcp://[fd00::10]:1883`. Use TCP/WS only on
+a trusted network. TLS/WSS checks the certificate against the configured
+hostname or IP address, using the system CA store unless `observer.ca_file`
+selects a private CA. Put credentials in their separate settings above.
+After changing the stopped host's private configuration, run
+`python3 -B tools/willow.py check --state /absolute/private-state` before
+restarting. This checks the same endpoint rules as startup without dialing.
 
 Observer/capture topics are `PREFIX/IATA/UPPERCASE_PUBLIC_KEY/packets` and
 `.../status`; internal topics omit IATA and use the lowercase public key.

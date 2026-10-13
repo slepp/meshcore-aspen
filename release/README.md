@@ -9,10 +9,10 @@ upstream base and is recorded separately.
 | Aspen | Maintenance | `0.1.12` | `aspen-v0.1.13` |
 | Birch | Maintenance | `0.1.1` | `birch-v0.1.2` |
 | Pine | Experimental | `0.1.0` | `pine-v0.1.1` |
-| Willow | Experimental | `0.0.7` | `willow-v0.0.8` |
+| Willow | Experimental | `0.0.8` | `willow-v0.0.9` |
 
 Source versions can be ahead of published releases. The latest published
-Willow source release is [0.0.7](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.7);
+Willow source release is [0.0.8](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.8);
 the current published Aspen firmware is [0.1.11](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11).
 
 Show users **Aspen 0.1.12 · based on MeshCore 1.17.1**. Release candidates
@@ -216,6 +216,15 @@ relink material. It does not commission or erase a board, replace the
 bootloader/SoftDevice, or migrate the QSPI layout. Interrupted BLE updates can
 require USB recovery; keep the node physically accessible. Start with the
 [Pine update prerequisites](../firmware/nrf52840/README.md).
+
+## Willow 0.0.8
+
+Publish observations to your own MQTT broker by setting `observer.url` to its
+hostname, IPv4 address or bracketed IPv6 address. TCP, TLS, WS and WSS use the
+existing publisher, credentials and topics. TLS certificate and hostname
+verification remain enabled; use `observer.ca_file` for a private CA.
+Migration retains the configured broker and observer identity. Stored data
+and wire protocols remain compatible. See [observer setup](../hosts/willow/docs/SERVICE.md#native-mqtt-observer).
 
 ## Willow 0.0.7
 

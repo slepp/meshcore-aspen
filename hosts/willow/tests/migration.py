@@ -165,13 +165,14 @@ class Migration(unittest.TestCase):
         settings = self.root/"observer-settings"
         self.write_config(settings, 1)
         with settings.open("a") as out:
-            out.write("observer.enabled=1\nobserver.url=tcp://127.0.0.1:1883\n"
+            out.write("observer.enabled=1\nobserver.url=tcp://mqtt.example.net:1883\n"
                       "observer.format=capture-v1\nobserver.iata=YYC\n"
                       "observer.topic_prefix=willow-local\nobserver.packet_filter=65535\nobserver.username=fixture\n"
                       "observer.password=" + "fixture-"*10 + "\n")
         destination = self.root/"observer-converted"
         report = migrate(source, settings, destination)
         self.assertEqual(check(destination)["observer.packet_filter"], "65535")
+        self.assertEqual(check(destination)["observer.url"], "tcp://mqtt.example.net:1883")
         self.assertEqual(report["roles"]["observer"]["public_key"], public(3).hex())
         self.assertNotIn("observer", report["retained_compatibility_roles"])
         self.assertIn("base", report["retained_compatibility_roles"])

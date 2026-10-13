@@ -51,8 +51,6 @@ static int allowed_url(const char *text) {
     if (ok) {
         ok = (!strcmp(scheme, "http") || !strcmp(scheme, "https") ||
               !strcmp(scheme, "ws") || !strcmp(scheme, "wss")) &&
-            (!strcasecmp(host, "localhost") || !strcmp(host, "127.0.0.1") ||
-             !strcmp(host, "[::1]") || !strcasecmp(host, "mqtt-meshcore-1.ve6slp.ca")) &&
             curl_url_get(url, CURLUPART_USER, &user, 0) != CURLUE_OK &&
             curl_url_get(url, CURLUPART_PASSWORD, &password, 0) != CURLUE_OK &&
             curl_url_get(url, CURLUPART_QUERY, &query, 0) != CURLUE_OK &&

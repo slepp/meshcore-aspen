@@ -1,4 +1,4 @@
-//! Restricted TCP/TLS/WebSocket transport; MQTT framing and policy live in Hew.
+//! TCP/TLS/WebSocket transport; MQTT framing and policy live in Hew.
 //! The native boundary uses libcurl connect-only, never its MQTT implementation.
 
 import willow.src.hostlib.binary;

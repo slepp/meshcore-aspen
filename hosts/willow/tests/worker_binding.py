@@ -61,6 +61,11 @@ class WorkerBinding(unittest.TestCase):
                 (base+"relay.bogus=1\n", "invalid relay settings"),
                 (base+"room.preference_profile=bogus\n", "invalid room settings"),
                 (base+"observer.queue_size=0\n", "observer"),
+                (base.replace("observer.url=tcp://127.0.0.1", "observer.url=tcp://broker.localhost"), None),
+                (base.replace("observer.url=tcp://127.0.0.1", "observer.url=tcp://[2001:db8::1]"), None),
+                (base.replace("observer.url=tcp://127.0.0.1", "observer.url=tcp://[invalid]"), "MQTT broker"),
+                (base.replace("observer.url=tcp://127.0.0.1", f"observer.url=tcp://{SECRET}@broker.localhost"), "MQTT credentials"),
+                (base.replace(f"observer.url=tcp://127.0.0.1:{listener.getsockname()[1]}", "observer.url=tls://broker.localhost"), "explicit port"),
             )
             for text, error in cases:
                 with self.subTest(error=error):

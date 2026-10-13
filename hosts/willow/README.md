@@ -6,7 +6,7 @@ queues and persistence are native Hew.
 For the default bot, it uses the same local C++ Lua/Wasm extension boundary
 as the Go host. A smaller all-Hew bot is also available.
 
-Get the [Willow 0.0.7 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.7).
+Get the [Willow 0.0.8 source release](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.8).
 Build the
 [current repository source](https://github.com/slepp/meshcore-aspen) at the final
 installation path with the current Hew compiler and matching libraries. The native worker is bound to that
@@ -36,7 +36,7 @@ python3 -B tools/willow.py check --state /path/to/private/willow
 python3 -B tools/willow.py run --release --state /path/to/private/willow
 ```
 
-Expected: `Willow 0.0.7`; the state check verifies the retained role identities
+Expected: `Willow 0.0.8`; the state check verifies the retained role identities
 and configuration, and startup connects to the configured shared modem without
 retuning it. `make release` builds the host, Base, broker and dashboard with
 the current Hew installation. The launcher defaults to four scheduler workers; set
@@ -198,7 +198,7 @@ KISS stream fragments, queued-modem submissions, and time advancement.
 | Shared modem | TCP/MKISS HELLO, extended CAPACITY, read-only CONFIG, SOURCE_POLICY, ROLE_PRESENCE warning, signal reporting, full airtime table, PHY statistics; correlated queued TX; reconnect and periodic profile fencing | Numeric IPv4 TCP only; no serial, TLS or modem configuration ownership. Three logical ports, or four with observer enabled. Required profile readback never retunes. Presence is advisory. Base uses its own ordinary connection rather than an aggregate port. |
 | Base companion | Separate native process, retained identity, protocol-13 TCP endpoint, contacts, channels, message cursors, RF traffic and read-only health | Protocol coverage is partial; select destructive and key-management operations explicitly. See [Base setup and contracts](docs/BASE.md). |
 | Owner and dashboard | Private owner/admin sockets; native-bot DM send/inbox, role commands and local region controls; six-role status and combined readiness | Owner commands retain authentication and permission checks. Dashboard monitoring does not own or retune the modem; see [service controls](docs/SERVICE.md). |
-| MQTT observer | Port-3 RF observations; independently supervised outbox and publisher; Go-compatible topics, payloads and filtering; retained identity migration; QoS1 replay across broker reconnect; verified TLS/WebSockets and optional identity JWT | Output-only; no RF TX or MQTT commands. Bounded queue with batched durable checkpoints and a controlled-stop flush. Crash recovery starts at the last completed checkpoint. Endpoints restricted to localhost and `mqtt-meshcore-1.ve6slp.ca`. |
+| MQTT observer | Port-3 RF observations; independently supervised outbox and publisher; Go-compatible topics, payloads and filtering; retained identity migration; QoS1 replay across broker reconnect; verified TLS/WebSockets and optional identity JWT | Configure your broker hostname or IP with `observer.url`. Output-only; no RF TX or MQTT commands. Bounded queue with batched durable checkpoints and a controlled-stop flush. Crash recovery starts at the last completed checkpoint. |
 | Persistence | Private identities; atomic state replacement; directory sync; lock exclusion; persisted ACL/replay/cursors/paths/counters/notes; optional durable history; stopped role on commit failure; offline Birch migration and [final-state reconciliation into a new Go candidate](docs/MIGRATION.md#rollback) | Active sessions/pending ACKs/dedup/deferred calls are cleared. Native-retention history remains volatile; durable-replay history persists. Unsupported migration data is refused explicitly. No encryption at rest or guaranteed private-buffer zeroization in Hew. |
 
 The supported bot subset is `!ping`, `!about`, `!path`, `!mt [1..30]`,

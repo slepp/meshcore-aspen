@@ -99,7 +99,9 @@ release: build/hew-host-release build/hew-base-release build/hew-dashboard-relea
 # Run the production processes, retained fault cases and Birch comparisons.
 # Missing compilers, libraries and fixture binaries are errors, never skips.
 check: export HEW_WORKERS = 4
-check: release acceptance-test packet-workflow-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release build/hew-dashboard
+check: release acceptance-test packet-workflow-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release build/hew-dashboard build/endpoint-checks build/endpoint-checks-release
+	./build/endpoint-checks
+	./build/endpoint-checks-release
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/dashboard.py Dashboard.test_health_refresh_is_demand_driven_shared_and_bounded
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_service.py IntegratedObserver.test_restart_retains_pending_and_queued_observations
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/worker_binding.py

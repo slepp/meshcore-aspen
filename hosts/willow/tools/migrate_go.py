@@ -73,8 +73,6 @@ def observer_config(values):
             fail("observer.url port must be 1..65535")
         if url.scheme in ("tcp", "tls", "ssl") and url.port is None:
             fail("observer.url requires an explicit TCP/TLS port")
-        if url.hostname not in ("localhost", "127.0.0.1", "::1", "mqtt-meshcore-1.ve6slp.ca"):
-            fail("observer.url destination must be localhost or mqtt-meshcore-1.ve6slp.ca")
         ca = values.get("observer.ca_file", "")
         if ca and not Path(ca).is_absolute(): fail("observer.ca_file must be absolute")
     return enabled == "1"
