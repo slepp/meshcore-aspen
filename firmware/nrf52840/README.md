@@ -12,7 +12,7 @@ connected to another companion radio: open Pine-Relay's authenticated admin
 console for `bot status` and `source status`, then send Pine-Bot `!ping` and
 `!help` as encrypted DMs. No wired host, WiFi or nearby BLE connection is needed.
 Start with [production Lua setup, limits and recovery](PRODUCTION-LUA.md).
-Current source profiles also offer a [bounded native Room](ROOM.md): choose
+The download also offers a [bounded native Room](ROOM.md): choose
 Room instead of the Lua command worker, retaining Lua source/data and the
 existing repeater and companion identities.
 Choose [packet programs](PACKET-PROGRAMS.md) for bounded Lua modem hooks, or
@@ -20,13 +20,13 @@ Choose [packet programs](PACKET-PROGRAMS.md) for bounded Lua modem hooks, or
 independently configured LoRa zones. These are alternative roles, not additional
 Lua/Room workers. [Host-verified updates](HOST-UPDATES.md) verify signed app-only
 packages without replacing the installed bootloader or saved node state.
-Current Lua source builds also provide `backup help` through authenticated
+The Lua profile also provides `backup help` through authenticated
 repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
 to download InternalFS identities/settings and QSPI source/data without USB
 access; retain the recipient's operator seed.
-The [Pine 0.1.0 application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0)
-uses the `pine-0.1.0` firmware version and `nrfmast_fleet_lua` profile.
-Its signed product tag is `pine-v0.1.0`;
+The [Pine 0.1.1 application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.1)
+uses the `pine-0.1.1` firmware version and `nrfmast_fleet_lua` profile.
+Its signed product tag is `pine-v0.1.1`;
 the attached manifest records the full public source commit and image hashes.
 Pine has its own release series, independent of Aspen and Birch.
 The download is **update-only**. It requires
@@ -48,13 +48,12 @@ PIN. [BLE field updates](BLE-FIELD-UPDATE.md) covers provisioning, package check
 and aborted-transfer recovery. Entry expires after 120 seconds; the retained
 single-bank bootloader has no rollback or transfer deadline, so keep power
 stable and the phone available until Pine returns. **Keep USB recovery
-accessible: an interrupted transfer can require USB, so inaccessible
-installation remains on hold.** No bootloader, SoftDevice or QSPI layout
+accessible: an interrupted transfer can require USB.** No bootloader, SoftDevice or QSPI layout
 change is needed.
 
 These on-device nRF builds use the **Pine** profile. Repeater `ver`,
 native owner information and companion device information identify
-`pine-0.1.0`; the companion protocol remains v13. `help` lists the
+`pine-0.1.1`; the companion protocol remains v13. `help` lists the
 administration entry points. WiFi commands report that this platform has no
 WiFi rather than exposing nonfunctional configuration.
 

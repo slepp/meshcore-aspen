@@ -44,12 +44,15 @@ def container_command(image, source, go_root, command, *, network="none", epoch=
     if network not in ("none", "bridge"):
         raise ValueError("Unexpected native build network mode")
     return ["docker", "run", "--rm", "--pull", "never", "--network", network,
+            "--cpus", "2", "--memory", "4g", "--memory-swap", "4g",
             "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--user", f"{os.getuid()}:{os.getgid()}", "--workdir", "/src",
             "--mount", f"type=bind,source={source},target=/src",
             "--mount", f"type=bind,source={go_root},target=/opt/go,readonly",
             "--env", "HOME=/src/.tmp/native-home", "--env", "TMPDIR=/src/.tmp",
             "--env", "GOROOT=/opt/go", "--env", "GOTOOLCHAIN=local",
+            "--env", "GOMAXPROCS=2", "--env", "GOFLAGS=-p=2",
+            "--env", "CMAKE_BUILD_PARALLEL_LEVEL=2",
             "--env", "GOPATH=/src/.tmp/gopath", "--env", "GOCACHE=/src/.tmp/go-cache",
             "--env", "PATH=/opt/go/bin:/usr/local/bin:/usr/bin:/bin",
             "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", f"SOURCE_DATE_EPOCH={epoch}",

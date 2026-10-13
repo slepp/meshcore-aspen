@@ -3,7 +3,7 @@
 Use an original LilyGO T-Beam v1.2 as the shared radio for Willow or another
 host role. The host runs the repeater, room, companion and command bot and owns
 their identities. The T-Beam provides queued KISS TCP on port 8001 and a web
-dashboard. These profiles build the Birch 0.1.1 modem application, rather than
+dashboard. These profiles build the Birch 0.1.2 modem application, rather than
 the standalone Aspen application.
 
 The original T-Beam has **4 MB flash and 8 MB QSPI PSRAM**, an ESP32 and an
@@ -61,12 +61,48 @@ Keep the configuration and compiled credential-bearing application private.
 
 The application is
 `.tmp/tbeam-v12-modem/.pio/build/ENVIRONMENT/firmware.bin`.
-Before installing on an existing radio, identify its USB serial/MAC, preserve
-valuable state and inspect its current partition table. Replacing the flash
-layout or SPIFFS can destroy saved identities and settings. These modem
-profiles have been compiled; physical boot, RF, WiFi/dashboard memory use and
-recovery still need testing on the actual board. They do not include Aspen's
-signed application-update service.
+
+## Install over USB
+
+Build the private configuration above before uploading. Connect the antenna
+and a USB data cable, then list the serial devices:
+
+```sh
+pio device list
+ls -l /dev/serial/by-id/
+```
+
+Match the board's USB serial number to its device entry. Unplug and reconnect
+that board if needed to identify it. Close serial terminals using the port.
+Set the complete device path below; do not use a different attached radio's
+port.
+
+**This USB installation replaces the firmware, bootloader and partition table.**
+On an existing node, preserve valuable identities, settings and data before
+continuing: changing the layout can overwrite them or make them inaccessible.
+Use this first-install path for a new board or a radio you intend to repurpose;
+it is not an Aspen application-only update.
+
+From the repository root, upload the configured build to that exact device:
+
+```sh
+UPLOAD_PORT='/dev/serial/by-id/REPLACE_WITH_THIS_BOARD_USB_SERIAL'
+test -c "$UPLOAD_PORT" && \
+  TMPDIR="$PWD/.tmp/tbeam-v12-modem" \
+  PLATFORMIO_CACHE_DIR="$PWD/.tmp/tbeam-v12-modem/.cache" \
+  pio run -d .tmp/tbeam-v12-modem -e "$MODEM_ENV" \
+    -j 2 -t upload --upload-port "$UPLOAD_PORT"
+```
+
+PlatformIO selects the bootloader, partition table and application offsets
+from this board's profile. Do not upload only `firmware.bin` at address zero.
+If the uploader cannot enter download mode, hold BOOT, press and release RESET,
+then release BOOT and retry the upload. Press RESET after a completed upload
+if the board remains in download mode.
+
+These profiles have been compiled; physical boot, RF, WiFi/dashboard memory
+use and recovery still need testing on the actual board. The modem does not
+include Aspen's signed application-update service.
 
 After installation and a successful WiFi join, open the reported address for
 the dashboard and point the host at `ADDRESS:8001`. See the

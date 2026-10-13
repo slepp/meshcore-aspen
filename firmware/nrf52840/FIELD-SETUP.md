@@ -6,9 +6,9 @@ USB recovery accessible. The XIAO application updates retain the installed
 bootloader, identities, settings and QSPI data. They do not commission a blank
 board or repair missing identity records.
 
-The published [Pine 0.1.0 download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0)
-runs the Lua command bot. Room, packet programs, durable companion contacts and
-channels, and BLE peer mode require a current source build. There is also a
+The [Pine 0.1.1 download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.1)
+includes the Lua command bot, Room, packet programs, retained companion contacts
+and channels, and BLE peer mode. Select one optional role below. There is also a
 `nrfmast_solar_lua` source profile for SenseCAP Solar Node P1/P1 Pro; the guarded
 serial update helper currently supports the inventoried XIAO only. Solar
 owners must use their board's established app-only update and recovery path.
@@ -93,9 +93,9 @@ recommendation. Saved tuning takes precedence. `get repeat` must be `on` if
 the node is intended to forward packets. The BAT sensor is battery voltage;
 MCU temperature is not an ambient temperature measurement.
 
-In Lua mode, advertise your companion once after Pine restarts, then send
-Pine-Bot `!ping` and `!help` as ordinary encrypted DMs. The separate Lua contact
-cache is volatile even when BLE companion contacts are retained. Keep native
+In Lua mode, advertise your companion if its contact is missing or expired,
+then send Pine-Bot `!ping` and `!help` as ordinary encrypted DMs. The separate Lua contact
+cache retains verified contacts and learned routes across restarts. Keep native
 repeater administration available for source recovery; it does not depend on
 a working Lua program. Nearby [BLE pairing](STATE-BLE.md#provision-and-connect-ble)
 uses a locally provisioned PIN and grants no repeater administrator permission.

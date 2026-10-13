@@ -5,25 +5,9 @@ bundled commands and other installed sources. The catalog includes a greeting,
 private DM notes, received repeater signal reports and an Aspen repeater monitor.
 Each download includes its install commands, requirements and licence notices.
 
-`catalog.json` owns the library version and entry metadata. Code remains in
-`firmware/runtime/plugins/`; the signal sampler comes from the existing
-`firmware/runtime/wasm/examples/repeater_snr.c`. The packager copies those
-canonical files into ZIPs and uses Willow's existing C-only sampler target.
-It does not change a connected radio, a host service or any permission.
-
-From the repository root, with Python 3, make, clang and wasm-opt installed:
-
-```sh
-python3 command-library/package.py --output .tmp/command-library
-```
-
-The ignored output contains one `meshcore-command-ID-vVERSION.zip` per entry,
-a downloadable `catalog.json` with ZIP sizes/hashes and `SHA256SUMS`. Each ZIP
-has a matching top-level directory containing `README.md`, canonical Lua (and
-Wasm where required), `manifest.json`, `SHA256SUMS`, `LICENSE` and notices.
-Manifests identify the source commit, whether the working tree was dirty,
-source/API requirements and file hashes. The library has its own version;
-firmware and host product versions stay in `release/products.json`.
+Open the [command library](https://ve6slp.ca/projects/meshcore/extend/library/),
+choose a command and download its ZIP. Extract it and follow the included
+`README.md` to install the named source, then try the example command.
 
 Use `source-install NAME FILE` from the included instructions. It preserves
 other named sources; do not use whole-set `install` or `source replace` for
@@ -41,6 +25,25 @@ configuration and event permission; its polling consumes RF airtime. Installatio
 retains saved enablement and grants, so an already enabled monitor can start
 polling immediately when the source activates. Follow
 its linked guide before enabling it.
+
+## Build the command downloads
+
+The library metadata lives in `catalog.json`. Lua sources live in
+`firmware/runtime/plugins/`; the signal sampler uses
+`firmware/runtime/wasm/examples/repeater_snr.c`. The packager copies these
+sources into ZIPs and builds the sampler with Willow's C target.
+
+From the repository root, with Python 3, make, clang and wasm-opt installed:
+
+```sh
+python3 command-library/package.py --output .tmp/command-library
+```
+
+The output contains one `meshcore-command-ID-vVERSION.zip` per entry,
+`catalog.json` with download sizes and hashes, and `SHA256SUMS`. Each ZIP
+includes its instructions, code, manifest, licence and notices.
+
+## Test changes
 
 Check the ZIP contents and hashes locally:
 

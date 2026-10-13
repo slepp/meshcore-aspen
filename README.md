@@ -1,334 +1,118 @@
 # MeshCore Aspen
 
-Run independent MeshCore roles through one LoRa radio: a repeater, room,
-companion/base and command bot can keep separate identities while sharing
-one antenna, radio profile and airtime budget. Use a Go or Hew host for the roles,
-run them directly on an ESP32-S3, or choose a smaller nRF52840 repeater/bot.
-Other MeshCore radios exchange adverts, encrypted messages and routes with
-these roles over RF.
+Run a repeater, room, companion and programmable bot together through one LoRa
+radio. Each role keeps its own identity, contacts and settings while sharing
+one antenna, radio profile and airtime budget. Connect the MeshCore app,
+exchange messages with other radios and add commands without reflashing.
 
-Aspen is both the project name and its lead standalone ESP32 firmware.
-Willow runs the roles off-chip on a Hew host connected over WiFi to the shared
-modem. Birch is the Go host implementation, with downloadable Linux binaries.
-Pine is the nRF52840 variation of Aspen, with a smaller repeater/bot feature set. Cedar is a lab
-companion used for RF checks, not a shipped setup.
+Use **Aspen** for a standalone ESP32 node, or **Willow** to run the roles on a
+Linux computer connected to a WiFi shared modem at the antenna.
 
-The project and community documentation are public at
-[ve6slp.ca/projects/meshcore](https://ve6slp.ca/projects/meshcore/).
-Get the [published Aspen release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
-for the XIAO ESP32-S3R8 + Wio SX1262, or see
-[other firmware downloads](https://ve6slp.ca/projects/meshcore/#downloads).
-The host/device releases are
-[Birch 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.1),
-[Pine 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.0) and
-[Willow 0.0.7](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.7).
-Birch includes Linux binaries; Pine is an initialized-node application update;
-Willow is a source-build release. Willow 0.0.7 uses
-the Hew compiler and matching libraries on `PATH`.
-First-install procedures differ
-from application-only updates that retain an existing node's identities and
-settings. Follow the selected bundle's installation or update procedure.
+[Install Aspen](https://ve6slp.ca/projects/meshcore/install/) ·
+[Run Willow](hosts/willow/README.md) ·
+[Download bot commands](https://ve6slp.ca/projects/meshcore/extend/library/) ·
+[Operator guide](https://ve6slp.ca/projects/meshcore/operate/)
 
-## Choose a setup
+## Choose your hardware
 
-| Setup | Supported hardware | Use it when | Next step |
-| --- | --- | --- | --- |
-| Aspen: standalone ESP32 | XIAO ESP32-S3R8 + Wio SX1262; [Heltec V4 R8 and T-Beam Supreme SX1262 source ports](firmware/esp32/BOARDS.md) | You want a self-contained repeater, room, companion and Lua/Wasm bot | [Prepare a new board in your browser](https://ve6slp.ca/projects/meshcore/install/), [use offline USB setup](firmware/esp32/PUBLIC_SETUP.md), or [build an ESP32 image](firmware/esp32/README.md#choose-an-image) |
-| Willow: WiFi modem + Hew host | Configured queued-v1 WiFi/TCP shared modem; Linux x86-64 host and current Hew compiler | You want host roles, filesystem state, a Lua/Wasm bot, Base companion, MQTT broker and browser dashboard | [Build and run Willow](hosts/willow/README.md), or [retain an existing Birch node](hosts/willow/docs/MIGRATION.md) |
-| Birch: WiFi modem + Go host | The same shared modem; Linux x86_64 Debian 12 host | You need the existing prebuilt Go host download | [Install the host download](HOST_GUIDE.md#install-the-birch-host-download), or [build WiFi and the host](#start-a-wifi-radio-and-go-host) |
-| Pine: standalone nRF | XIAO nRF52840 + Wio SX1262 | You want a constrained native repeater/bot, personal notes and optional BLE companion | [nRF setup and update prerequisites](firmware/nrf52840/README.md), [notes and BLE](firmware/nrf52840/STATE-BLE.md) |
-| ESP32 role with a remote modem | XIAO ESP32-S3 indoors; ESP32 + SX1262 at the radio site | You want a repeater, room or companion on an indoor board, connected over WiFi | [Remote-radio roles](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) |
-
-The nRF `nrfmast_fleet_lua` image runs the compact production Lua bot and
-repeater; native-note images remain available. The default `nrfmast_rx` build
-is receive-only; select the guide's RF-capable image to transmit.
-**Aspen needs a private setup record before its roles start.** The browser
-wizard prepares a new board's image locally for the MeshCore flasher; it erases
-the board. For an existing node, use an application-only update instead.
-**Birch's host
-download includes the host and native worker, not modem firmware.** Use an
-already configured WiFi/TCP shared modem or privately build the WiFi modem
-below. Existing UART modems serve wired queued-protocol clients; see
-[UART wiring](HOST_GUIDE.md#connect-the-public-birch-uart-modem).
-**The Pine download updates an initialized node**:
-it requires initialized identities and credential records and preserves its
-QSPI Lua state. Keep USB recovery accessible if using Pine BLE updates:
-an interrupted transfer can require USB. Follow each bundle's installation
-guide.
-The generic Aspen source image includes native roles, Lua/Wasm, HTTPS and the
-native shared-room frontend. Select services through saved configuration;
-network calls need approved endpoints and room frontends need private aliases.
-See [generic Aspen setup](firmware/esp32/PUBLIC_SETUP.md) and
-[frontend configuration](services/shared-room/NATIVE.md).
-Custom ESP32 and native host builds can select Wasm alongside Lua; see the
-[Wasm runtime and build flags](firmware/runtime/WASM_RUNTIME.md).
-Aspen source builds also support two saved Lua/Wasm programs on the shared
-modem's packet path. Use the
-[packet-program guide](firmware/runtime/PACKET_ENGINES.md) to install one,
-select its hooks and grant system, PHY or owned-identity composition access.
-Download ready-to-install Lua commands and the repeater signal sampler from the
-[command library](https://ve6slp.ca/projects/meshcore/extend/library/), or
-[build its ZIPs from source](command-library/README.md). Named installation
-retains bundled commands and unrelated sources.
-For autonomous fleet status and battery voltage through Aspen's existing
-metrics receiver, [install a remote-repeater Lua monitor](firmware/runtime/REMOTE_REPEATERS.md).
-For MQTT packet collection, choose the host or on-device
-[observer output contract](firmware/esp32/OBSERVER.md).
-For shared room history across radio frontends and desktop/mobile web clients, the
-[shared room Worker/API](services/shared-room/README.md) provides one canonical
-backend with several advertised room identities, login catch-up and live push.
-Its **Aspen Rooms** interface connects directly over IP: open
-`https://aspen.ve6slp.ca`, choose a channel and sign in with your account's
-passkey. The [Linux terminal download](clients/room-tui/README.md#install-on-linux)
-supports amd64 and arm64 and shows a five-minute
-QR/copy code to approve in your signed-in browser. Each browser or terminal
-device keeps its own keypair; radio names are
-resolved from signed adverts received by the frontends.
-The Worker holds room keys and verifies native packets; the native Wi-Fi/WSS
-frontend carries opaque radio bytes and final transmission receipts.
-The [native service boundary](firmware/runtime/NATIVE_SERVICES.md) keeps the
-room frontend separate from bot execution; desktop RF identities and DMs
-remain [deferred](services/shared-room/DESKTOP_RF_DM.md).
-Additional role instances can run on a host, but each enabled built-in ESP32
-role runs at most once. A second repeater can duplicate forwarding and consume
-extra airtime; choose placement deliberately.
-
-The full Aspen image requires PSRAM and room for two OTA application slots.
-The [ESP32 board guide](firmware/esp32/BOARDS.md) provides complete source
-profiles for Heltec V4 **R8** and LilyGO T-Beam Supreme **SX1262**, including
-board-specific setup and update targets. Both ports compile; physical boot,
-RF and OTA testing remain to be done. The regular Heltec WiFi LoRa 32 V3 has
-no PSRAM: use its [shared-modem profile](firmware/esp32/HELTEC-V3-MODEM.md)
-with host roles. The published Aspen firmware and browser installer remain
-for the XIAO ESP32-S3R8 + Wio SX1262.
-Willow sources are included in `hosts/willow`. Willow is the primary
-host implementation; it remains beta software and currently requires a source
-build. Check the [supported services and limits](hosts/willow/README.md)
-before replacing an existing installation. For a fresh host, the native Hew
-`hew-host init` command creates private role identities and generated or imported admin and
-room credentials, with the native worker enabled. Initialization stays
-offline; it neither connects to nor retunes the modem. Follow the
-[Willow service guide](hosts/willow/docs/SERVICE.md) for its required radio
-profile and startup commands. Use the migration procedure instead to retain
-an existing Birch installation's identities. Aspen, Birch and Pine retain
-their own setup guides.
-
-Use the [command guide](COMMANDS.md) for bot, Management and native role
-syntax, parameters and permissions. The [architecture and sequence diagrams](ARCHITECTURE.md)
-show current service ownership, packet hooks, saved configuration and room
-delivery, with the proposed desktop DM path kept separate.
-
-### Where the software and radio run
-
-| Arrangement | Runs the roles | Connects to the RF mesh |
+| Hardware | Run it as | Start here |
 | --- | --- | --- |
-| Go host | Indoor Linux computer, with several selected roles | ESP32 + SX1262 shared modem over LAN/WiFi TCP |
-| Willow host | Linux x86-64 computer running Hew services and a native Lua/Wasm worker | ESP32 + SX1262 shared modem over LAN/WiFi TCP |
-| Remote ESP32 role | Indoor ESP32 running a selected repeater, room or companion | Separate ESP32 + SX1262 shared modem over WiFi TCP |
-| Aspen | ESP32 runs the selected roles and bot | Its local SX1262 |
-| Pine | nRF52840 runs the repeater and Lua bot | Its local SX1262 |
+| Seeed XIAO ESP32-S3R8 + Wio SX1262 | Aspen: standalone repeater, room, companion and Lua/Wasm bot | [Browser setup and USB installation](https://ve6slp.ca/projects/meshcore/install/), or [offline USB setup](firmware/esp32/PUBLIC_SETUP.md) |
+| Linux x86-64 computer + configured WiFi/TCP shared modem | Willow: host roles, Base companion, dashboard, MQTT and Lua/Wasm applications | [Willow installation](hosts/willow/README.md) |
+| Original LilyGO T-Beam v1.2 **SX1262 or SX1276**, or Heltec WiFi LoRa 32 **V3** | Shared modem for Willow or another host | [T-Beam modem](firmware/esp32/TBEAM-V12-MODEM.md) · [Heltec V3 modem](firmware/esp32/HELTEC-V3-MODEM.md) |
+| Heltec WiFi LoRa 32 **V4 R8**, or LilyGO T-Beam **Supreme SX1262** | Aspen with the board's own wiring and update target | [Board-specific setup](firmware/esp32/BOARDS.md) |
+| Seeed XIAO nRF52840 + Wio SX1262 | Pine: compact repeater and separately addressed Lua bot | [Pine installation and updates](firmware/nrf52840/README.md) |
 
-Aspen, Birch, Pine and Willow use independent product versions, separately
-from their MeshCore base. This source reports Aspen 0.1.11, Birch 0.1.1,
-Pine 0.1.0 and Willow 0.0.2. Product tags are `NAME-vVERSION`.
-Birch contains a matching host and native worker for a separately configured
-modem. Pine's `pine-0.1.0` firmware identity replaces the older
-`1.17.1-slp-pine` version label without changing saved radio identities.
-The [release guide](release/README.md) lists compatibility contracts, candidate
-build commands and publication steps.
-Choose enabled roles and features in the build and saved configuration.
+Match the exact board and radio variant. The XIAO firmware image is for the
+XIAO; use the linked board profile for Heltec and LilyGO hardware. Full Aspen
+uses PSRAM and two application slots. Heltec V3 has no PSRAM, and the original
+T-Beam's 4 MB flash is better suited to the shared modem with roles on a host.
 
-To retain a node's identities, settings, programs and saved data, use the
-[encrypted node backup workflow](NODE_BACKUP.md). Aspen and Birch can download
-over WiFi; Aspen, Birch and Pine also support paced authenticated RF retrieval.
-Keep the matching operator seed to inspect or extract an encrypted archive.
+## Put Aspen on a new board
 
-## Start a WiFi radio and Go host
+**First installation erases the board.** On an existing Aspen, use an
+[application-only update](firmware/esp32/ESP_FIELD_UPDATES.md) to retain its
+keys, settings, programs and data. Save an
+[encrypted node backup](NODE_BACKUP.md) before maintenance, and keep the private
+setup ZIP and operator seed outside public source and downloads.
 
-If the WiFi modem is already configured, use the
-[Birch host download](HOST_GUIDE.md#install-the-birch-host-download). Install
-into a new prefix, select the modem address and roles, run the installed
-`meshcore-host -config PATH -check`, then start the host. No compiler or Go
-installation is needed to run that download.
+1. Fit the antenna and open the [Aspen browser installer](https://ve6slp.ca/projects/meshcore/install/).
+2. Download its firmware ZIP, choose your network's frequency, bandwidth,
+   spreading factor, coding rate and permitted power, then enter your WiFi and
+   administrator settings.
+3. Save the private setup ZIP and first-install BIN. Select that BIN under
+   **Custom Firmware** in the MeshCore flasher and flash over USB.
+4. Open `http://aspen.local/admin`, or the DHCP address shown by your router.
+   Sign in and check the radio profile and ready roles.
+5. In the MeshCore app, choose **Connect → WiFi**, enter the node's address and
+   port **5000**, and skip radio setup. Send an advert, then a private `!ping`
+   to the command bot. Expect `Pong`; `!help` lists the available commands.
 
-With Git, Python 3, PlatformIO and Go installed, run from the repository root:
+A separate companion radio on the same PHY can message the bot over RF.
+Companion TCP, KISS and HTTP administration belong on a trusted LAN or
+protected tunnel. Port **8001** is the shared KISS modem connection; port
+**5000** is the companion app connection.
 
-```sh
-make firmware-config
-$EDITOR firmware/platformio.local.ini
-make firmware
-make firmware-upload UPLOAD_PORT='/dev/serial/by-id/<radio-device>'
-make host-config
-$EDITOR meshcore-host.json
-make host-run
-```
+## Run the roles on a computer
 
-Set WiFi and the hostname in the private firmware configuration. In the host
-configuration, set `radio_address`, enable the roles you need, choose a legal
-shared LoRa profile and supply the room password through `MESHCORE_ROOM_PASSWORD`
-before starting an enabled room. Use `room_public: true` for a deliberately
-password-free room. Match that profile
-on the companion radio you will use for RF. If the modem is an administrable
-standalone mast, select `"phy_authority": "modem"` rather than trying to retune
-it from the host.
+Willow keeps role identities and durable state on the host while the shared
+modem handles RF. Run a repeater, room, command bot and observer, then add a
+Base companion, browser dashboard or MQTT broker as needed.
 
-Expected: the modem serves KISS at `RADIO_IP:8001` and a read-only dashboard
-at `http://RADIO_IP/`. The host serves role status at
-`http://127.0.0.1:9080/status`; `/readyz` returns HTTP 200 when its enabled
-applications and connections are ready. If mDNS is unavailable, use the
-modem's DHCP address. Choose the upload device explicitly, especially when
-several radios are attached.
+Follow the [Willow guide](hosts/willow/README.md) to install the host, create
+private state, select the modem address and radio profile, check the settings
+and start the services. Expect ready roles, a connected modem and a bot that
+answers `!ping`. To retain an existing node, use the
+[migration procedure](hosts/willow/docs/MIGRATION.md) and stop the previous
+owner before starting the same identities on Willow.
 
-See the [Go host and radio guide](HOST_GUIDE.md) for capacity, configuration,
-service installation, backup and rollback. To run the Lua bot on the host,
-follow [native Lua setup](HOST_GUIDE.md#host-status). The KISS bot proxy
-provides a connection for an external bot application.
+[Birch](HOST_GUIDE.md#install-the-birch-host-download) provides the Go host
+implementation with a prebuilt Debian 12 x86-64 download. An
+[indoor ESP32 role](HOST_GUIDE.md#esp32-roles-with-a-remote-modem) can also use a
+separate WiFi modem. Both use the same shared-radio protocol.
 
-## Use a companion or bot
+## Make the node useful
 
-- **Companion application:** connect to the selected Base's companion TCP
-  endpoint, normally `127.0.0.1:5000` on the host or `MAST_IP:5000` on a radio.
-  For a LAN connection to the host, set `companion_listen` to its LAN address
-  and set `companion_allow_remote: true`.
-  Applications on this endpoint share one Base identity and contacts.
-  For Android, choose **Connect → WiFi** and enable **Auto Reconnect**;
-  see [connection settings](firmware/shared/ANDROID.md).
-- **Command bot over RF:** let the sending companion advertise so the bot
-  learns its contact, then send the bot a private `!ping` DM. Expect `Pong`.
-  `!help` lists commands permitted for that request; `!help NAME` gives usage.
-  On an Aspen radio, announce the bot through the mesh with authenticated
-  `role advert bot flood`; use `role advert bot zerohop` for radios in range.
-  The host bot's owner console uses `advert` and `advert.zerohop`.
-  See [role adverts](firmware/esp32/MAST_ADMIN.md#runtime-role-names-and-keys)
-  for region selection and rate limits.
-  Personal notes use `!remember`, `!recall` and `!notes`. Reminders and
-  network commands require separate owner grants; see
-  [bot usage and API](firmware/runtime/BOT_RUNTIME.md).
-- **External bot:** use a dedicated companion endpoint or KISS connection
-  according to the bot's protocol. Python companion bots use the companion
-  endpoint. See [external bot setup](HOST_GUIDE.md#bot-connection).
+- **Connect and administer:** use the [operator guide](https://ve6slp.ca/projects/meshcore/operate/)
+  for role names, status, app connections, backups and updates.
+- **Add commands:** download [greeting, private notes, repeater signal and monitoring modules](https://ve6slp.ca/projects/meshcore/extend/library/).
+  Named installation retains bundled commands and other installed sources.
+- **Automate the mesh:** [write Lua commands](firmware/runtime/BOT_DEVELOPMENT.md)
+  or use the [C/Rust Wasm SDK](firmware/runtime/WASM_RUNTIME.md). Store private
+  caller data, use timers and call owner-configured HTTPS services.
+- **Watch your network:** collect [MQTT observations](firmware/esp32/OBSERVER.md),
+  [monitor repeaters](firmware/runtime/REMOTE_REPEATERS.md) and view
+  [Grafana dashboards](dashboards/grafana/README.md).
+- **Share room history:** [Aspen Rooms](https://aspen.ve6slp.ca) connects browser
+  and [terminal clients](clients/room-tui/README.md) with radio frontends through
+  a shared room service.
 
-Keep companion TCP, KISS and the dashboard on a trusted LAN or protected tunnel.
+All roles share one RF channel and its capacity. A dashboard TX completion
+means the local radio sent a packet; a recipient ACK or reply confirms that
+another radio received it. Local reflections are labelled separately from RF
+reception.
 
-## Who owns what?
+Pine's download is an application update for an initialized node. Keep its
+existing identities, credential records and Lua storage, and retain USB access
+when performing a BLE update. The
+[Pine guide](firmware/nrf52840/PRODUCTION-LUA.md) covers initial setup, limits
+and recovery.
 
-The MeshCore native roles and over-air protocols are upstream behavior.
-This project adds concurrent independent roles sharing one PHY, app runtimes,
-administration, scoped storage and configured networking.
+## Build and contribute
 
-| Service | Identity and responsibility |
+The [contributor guide](CONTRIBUTING.md) covers dependencies, source layout and
+local checks. Use the [command reference](COMMANDS.md) for endpoints and
+permissions, [architecture guide](ARCHITECTURE.md) for service ownership and
+[release guide](release/README.md) for packaging.
+
+| Source | What it contains |
 | --- | --- |
-| Shared modem / KISS | Physical tuning, carrier access, queue and aggregate airtime; each role owns its separate crypto identity |
-| Repeater / Relay | Its own key and preferences; forwards eligible RF traffic |
-| Room | Its own key, login policy, members and bounded history |
-| Companion / Base | Its own key, contacts, channels and messages; connected applications share that identity |
-| Lua command bot | Its own key, selected source and scoped data; independent of Base and external bots |
-| Management | ESP32 mast-wide administration and shared PHY authority; native role ACLs do not grant this authority |
-| Observer | Publishes received RF packets to the configured MQTT broker |
-
-All roles share **one RF channel and capacity**. Local reflections carry
-completed local transmissions to colocated roles and are labelled separately
-from measured RF receptions. Status distinguishes queue admission, confirmed
-transmission and recipient acknowledgement. After an uncertain operation,
-inspect its outcome before submitting another request.
-
-Role identities and durable state survive ordinary firmware/host updates.
-Contacts/routes cached only in the Lua bot's RAM must be learned again after
-restart. Source replacement cancels suspended Lua jobs but retains scoped
-data; source rollback does not roll back data. See
-[ESP32 persistence and recovery](firmware/esp32/README.md#what-survives-a-restart)
-and [host state](HOST_GUIDE.md#state-compatibility-and-credentials).
-
-## Administer a node
-
-Start with [ESP32 provisioning and image selection](firmware/esp32/README.md),
-then [mast administration](firmware/esp32/MAST_ADMIN.md) for roles, names,
-keys, grants, source lifecycle and scoped backups. Use encrypted authenticated
-RF, the host bot's private owner Unix socket, or the ESP32
-[trusted-LAN web page](firmware/esp32/MAST_WEB_UI.md).
-The web page is **plaintext HTTP**: credentials and private backups are visible
-to the network. Secret imports use encrypted RF or the protected Unix socket,
-not HTTP. Configure [approved HTTPS services](firmware/runtime/NETWORK_API.md)
-and [optional metrics](firmware/esp32/TELEMETRY.md) only when needed.
-Use the [Grafana fleet dashboard](dashboards/grafana/README.md) to view
-existing native and companion-bot metrics in VictoriaMetrics.
-For an individual node, use `stats help` and the read-only
-[CLI stats API](firmware/shared/STATS.md) for board measurements, radio counters,
-memory and running-service diagnostics.
-
-**Before erasing or restoring:** back up identity/state and source. SPIFFS
-provisioning replaces role files and bot data; NVS erasure can destroy identities.
-Scheduler restores use explicit **no-rearm** and do not replay consumed or
-uncertain sends. Read the relevant recovery procedure before acting.
-
-## Develop an application
-
-To embed Lua or WebAssembly in another Hew application, use the optional
-[hew.lua and hew.wamr packages](packages/README.md). They build independently
-and share their engine cores with Willow and Aspen.
-
-For a clean Linux checkout, follow [contributor setup](CONTRIBUTING.md), then
-run `make check` to build the host tools and run offline Python, Go race and
-native smoke tests without opening a radio. Firmware and Lua/Wasm validation
-have additional dependencies described in their focused guides.
-
-Test a Lua command in the native runtime without flashing or transmitting:
-
-```sh
-make -s -C firmware/esp32 bot-local \
-  SOURCE=firmware/runtime/plugins/template.lua \
-  SCENARIO=firmware/runtime/plugins/examples/hello.scenario.json
-```
-
-The scenario checks the replies and exits nonzero if an assertion fails.
-Follow the [Lua package and local replay workflow](firmware/runtime/BOT_DEVELOPMENT.md)
-to test your own source, permissions, state and restart behavior. Use the
-[capability-organized Lua reference](firmware/runtime/BOT_RUNTIME.md#lua-api-by-capability)
-for signatures, results, authorization and asynchronous limits.
-
-The optional [Wasm runtime and C/Rust SDK](firmware/runtime/WASM_RUNTIME.md)
-run one Wasm package alongside Lua on ESP32 and the native host worker.
-Bot builds default to `ONCHIP_BOT_WASM=1`; choose `ONCHIP_BOT_WASM=0` to omit
-the interpreter. The guide covers package installation, shared permissions,
-runtime-specific recovery and field validation procedures.
-
-### Host status
-
-The [native-host setup and status reference](HOST_GUIDE.md#host-status) explains
-`native_lua`, worker installation, the owner socket and `/status` fields.
-
-For implementation work, use the
-[queued TX contract](firmware/shared/QUEUED_TX_PROTOCOL.md),
-[remote radio adapter](firmware/shared/RemoteKissRadio.md),
-[mast wire contract](firmware/esp32/MAST_BETA_PROTOCOL_V1.md) and
-[native host-worker contract](internal/nativebot/PROTOCOL.md).
-The [roadmap](ROADMAP.md) separates current code from planned capabilities.
-
-### Find source and tools
-
-Run the root `Makefile` targets from the repository root. For a component's
-own targets, use `make -C DIRECTORY` as shown in its guide.
-
-| Entry point | Use it for |
-| --- | --- |
-| [`firmware/esp32`](firmware/esp32/README.md), [`firmware/nrf52840`](firmware/nrf52840/README.md) | Aspen and Pine board integration, preparation and builds |
-| [`firmware/runtime`](firmware/runtime/BOT_DEVELOPMENT.md) | Shared bot engine, Lua examples in `examples/`, package examples in `plugins/`, and Wasm SDK |
-| [Bot recipes](firmware/runtime/BOT_RECIPES.md) | Guided Lua/Wasm command installation, private data, timers and channel conversations |
-| [`firmware/shared`](firmware/shared/QUEUED_TX_PROTOCOL.md), [`firmware/remote-radio/esp32`](firmware/shared/RemoteKissRadio.md) | Shared modem contracts and the ESP32 remote-radio adapter |
-| [`cmd`](cmd), [`internal`](internal) | Host commands and libraries; Python chat in [`cmd/meshcore-chat`](cmd/meshcore-chat/README.md) |
-| [Willow: `hosts/willow`](hosts/willow/README.md) | Experimental Hew host services, migration and native runtime contracts |
-| [`tools/hardware/admin.py`](tools/hardware/admin.py) | Node administration and Lua/Wasm package operations |
-| [Directed MeshCore link](tools/meshcore_link/GUIDE.md) | Persistent Base-feed DM send, inbox and session notifications |
-| [`meshcore_kiss_monitor.py`](meshcore_kiss_monitor.py) | Standalone serial and TCP packet monitor |
-
-Configuration files such as `firmware/platformio.local.ini` and
-`firmware/platformio.onchip.ini` are generated by `make firmware-config` and
-`make aspen-config`; edit those private files, not the tracked examples.
-The `aspen-*`, `remote-radio-*` and `pine-*` targets select the current setups.
-Existing `onchip-*`, `phyless-*` and `nrf52-*` commands remain available;
-`nrf52-*` builds the upstream companion, not the Pine on-device role.
-See [contributor layout and offline checks](CONTRIBUTING.md#source-layout)
-for test runners and build staging.
+| [ESP32 firmware](firmware/esp32/README.md) · [nRF52840 firmware](firmware/nrf52840/README.md) | Aspen and Pine board setup and builds |
+| [Willow](hosts/willow/README.md) · [Go host](HOST_GUIDE.md) | Host roles, services and saved state |
+| [Shared runtime](firmware/runtime/BOT_DEVELOPMENT.md) · [Hew Lua/Wasm packages](packages/README.md) | Command engines, examples and application APIs |
+| [Command library](command-library/README.md) | Downloadable modules built from canonical examples |
+| [Shared modem protocol](firmware/shared/QUEUED_TX_PROTOCOL.md) | Queueing, PHY control and radio integration |
+| [Administration tool](tools/hardware/admin.py) | Authenticated management and named source operations |
 
 ## Licence
 

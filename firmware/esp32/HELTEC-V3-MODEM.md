@@ -38,11 +38,48 @@ booting. Keep the file and compiled credential-bearing application private.
 
 The application is
 `.tmp/heltec-v3-modem/.pio/build/Heltec_v3_kiss_wifi_build/firmware.bin`.
-Before installing on an existing radio, identify its USB serial/MAC, preserve
-valuable state and check its current partition table. Replacing flash layout
-or SPIFFS can destroy settings and identities. This port has been compiled;
-physical boot, RF, free heap during WiFi/dashboard use and recovery still need
-testing on a Heltec V3.
+
+## Install over USB
+
+Build the private configuration above before uploading. Connect the antenna
+and a USB data cable, then list the serial devices:
+
+```sh
+pio device list
+ls -l /dev/serial/by-id/
+```
+
+Match the board's USB serial number to its device entry. Unplug and reconnect
+that board if needed to identify it. Close serial terminals using the port.
+Set the complete device path below; do not use a different attached radio's
+port.
+
+**This USB installation replaces the firmware, bootloader and partition table.**
+On an existing node, preserve valuable identities, settings and data before
+continuing: changing the layout can overwrite them or make them inaccessible.
+Use this first-install path for a new board or a radio you intend to repurpose;
+it is not an Aspen application-only update.
+
+From the repository root, upload the configured build to that exact device:
+
+```sh
+UPLOAD_PORT='/dev/serial/by-id/REPLACE_WITH_THIS_BOARD_USB_SERIAL'
+test -c "$UPLOAD_PORT" && \
+  TMPDIR="$PWD/.tmp/heltec-v3-modem" \
+  PLATFORMIO_CACHE_DIR="$PWD/.tmp/heltec-v3-modem/.cache" \
+  pio run -d .tmp/heltec-v3-modem -e "Heltec_v3_kiss_wifi_build" \
+    -j 2 -t upload --upload-port "$UPLOAD_PORT"
+```
+
+PlatformIO selects the bootloader, partition table and application offsets
+from this board's profile. Do not upload only `firmware.bin` at address zero.
+If the uploader cannot enter download mode, hold BOOT, press and release RESET,
+then release BOOT and retry the upload. Press RESET after a completed upload
+if the board remains in download mode.
+
+These profiles have been compiled; physical boot, RF, WiFi/dashboard memory
+use and recovery still need testing on the actual board. The modem does not
+include Aspen's signed application-update service.
 
 After installation and a successful WiFi join, open the reported address for
 the dashboard and configure the host's modem endpoint as `ADDRESS:8001`.

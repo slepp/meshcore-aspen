@@ -358,6 +358,11 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(args[args.index("--network") + 1], "none")
         self.assertIn("--read-only", args)
         self.assertIn("no-new-privileges", args)
+        self.assertEqual(args[args.index("--cpus") + 1], "2")
+        self.assertEqual(args[args.index("--memory") + 1], "4g")
+        self.assertEqual(args[args.index("--memory-swap") + 1], "4g")
+        for setting in ("GOMAXPROCS=2", "GOFLAGS=-p=2", "CMAKE_BUILD_PARALLEL_LEVEL=2"):
+            self.assertIn(setting, args)
         self.assertFalse(any("docker.sock" in arg or "/dev/tty" in arg for arg in args))
         with self.assertRaises(ValueError):
             native.container_command("image", Path("/src"), Path("/go"), ["make"], network="host")

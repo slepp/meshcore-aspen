@@ -15,8 +15,9 @@ send `bot status`, `bot limits`, then `source status`. Send ordinary encrypted
 DMs to **Pine-Bot** for `!ping` and `!help`. Bundled source also provides
 `!remember KEY TEXT` and `!recall KEY`; installed packages select their own
 custom handlers.
-Advertise the companion first so Pine learns its full public key. Repeat this
-after Pine restarts: its contact and route caches are volatile.
+Advertise the companion first so Pine learns its full public key. Pine retains
+verified contacts and learned routes across restarts; advertise again if that
+contact is missing or expired.
 
 For a host companion using a shared modem, the existing RF administration
 tool can use Pine's native console without command tags or automatic replay:
@@ -120,7 +121,7 @@ enable HTTPS or create extra job/heap capacity.
 | Editable package | 4,096 bytes, including declared modules |
 | Custom exports / modules | 8 / 8; native command metadata remains complete |
 | Concurrent Lua jobs | 2 total; at most 1 custom/event job, keeping a slot for native commands |
-| Lua bot contact/route cache | 16 contacts; volatile |
+| Lua bot contact/route cache | 16 verified contacts with checkpointed routes |
 | BLE companion contact cache | 8 contacts |
 | BLE companion channels | 4, separate from Lua bot memberships; no channel joined by default |
 | Bot radio packet capacity | 4; incoming and outgoing packets share the pool |
