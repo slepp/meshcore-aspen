@@ -240,7 +240,7 @@ def ensure():
             f"BUILD={output/'mesh'}", f"PHY_BUILD={output/'phy'}", f"BOT_BUILD={output/'bot'}",
             f"BOT_WAMR={wasm.CACHE}", f"CRYPTO={NATIVE/'deps/Crypto'}",
             f"LPP={NATIVE/'deps/CayenneLPP/src'}", f"BASE64={NATIVE/'usb-deps/base64/src'}",
-            f"BOT_JSON_INCLUDE={json_include}", "ONCHIP_BOT_WASM=1",
+            f"BOT_JSON_INCLUDE={json_include}", "ONCHIP_BOT_WASM=1", "BOT_HOST_PREPARE=",
             f"CC=python3 {HERE/'tools/compiler_capture.py'} cc",
             f"CXX=python3 {HERE/'tools/compiler_capture.py'} c++",
             f"TMPDIR={BUILD}"]
