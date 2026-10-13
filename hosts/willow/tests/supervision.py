@@ -176,14 +176,15 @@ class Supervision(unittest.TestCase):
             modem.send(1,0,login(stamp=900))
             modem.receive(lambda job:job["port"]==1 and parse(job["raw"])[0]==1)
             committed=(service.root/"room.state").read_bytes()
-            modem.hold=True
+            # Other roles can submit concurrently; keep this relay job pending.
+            modem.hold_all=True
             modem.send(0,0,packet(5,b"old-supervised-epoch",route=1,width=3))
             job=modem.receive(lambda item:item["port"]==0 and parse(item["raw"])[4]==b"old-supervised-epoch")
             service.wait(f"generation={job['generation']} job={job['job']} state=1")
             marker=len(service.logs)
             write_private(service.root/"modem.inject",b"\1")
             service.wait(f"generation={job['generation']} job={job['job']} state=4",after=marker)
-            modem.hold=False
+            modem.hold_all=False
             service.wait("ONLINE epoch=2",timeout=15,after=marker)
             modem.receive(lambda item:item["port"]==1 and item["epoch"]==2 and parse(item["raw"])[0]==4)
             before=snapshot(committed,public(4),3,"before reconnect")
