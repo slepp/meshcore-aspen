@@ -80,8 +80,7 @@ func TestFollowRetuneFencesSubmissionsUntilAirtimeModelIsAdopted(t *testing.T) {
 
 	release()
 	waitUntil(t, "retune adoption", func() bool {
-		state, ok := effective(link)
-		return ok && state.ConfigurationGeneration == 2
+		return settledPHY(link, 2)
 	})
 	if estimate := link.AirtimeEstimator()(10); estimate != 9010 {
 		t.Fatalf("adopted with stale airtime model: %d", estimate)

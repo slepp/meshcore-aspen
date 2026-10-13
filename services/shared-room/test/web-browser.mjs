@@ -455,7 +455,7 @@ try {
     "dev", "--local", "--config", resolve(scratch, "wrangler.json"), "--port", String(port), "--inspector-port", "0",
     "--persist-to", resolve(scratch, "state")]);
   await until(async () => {
-    if (worker.child.exitCode !== null) throw new Error(worker.output());
+    if (worker.child.exitCode !== null || worker.child.signalCode !== null) throw new Error(worker.output());
     try {return (await fetch(`${base}/v1/web/rooms`)).ok;}
     catch {return false;}
   }, "local Worker startup", 30000);
@@ -464,11 +464,15 @@ try {
     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
     `--user-data-dir=${resolve(scratch, "chrome")}`,
   ]);
-  await until(() => {
-    if (errors.length) throw errors[0];
-    if (chrome.child.exitCode !== null) throw new Error(chrome.output());
-    return /DevTools listening on (ws:\/\/[^\s]+)/.test(chrome.output());
-  }, "Chrome startup");
+  try {
+    await until(() => {
+      if (errors.length) throw errors[0];
+      if (chrome.child.exitCode !== null || chrome.child.signalCode !== null) throw new Error("Chrome exited before its debug endpoint opened");
+      return /DevTools listening on (ws:\/\/[^\s]+)/.test(chrome.output());
+    }, "Chrome startup");
+  } catch (error) {
+    throw new Error(`${error.message}\n${chrome.output()}`, {cause: error});
+  }
   cdp = await devtools(chrome.output().match(/DevTools listening on (ws:\/\/[^\s]+)/)[1]);
   const desktopContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
   const mobileContext = (await cdp.call("Target.createBrowserContext")).browserContextId;
@@ -630,11 +634,11 @@ try {
 } finally {
   cdp?.close();
   for (const child of children.reverse()) {
-    if (child.exitCode === null) {
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
       const stopped = once(child, "exit");
       child.kill("SIGTERM");
       await Promise.race([stopped, sleep(5000)]);
-      if (child.exitCode === null) {child.kill("SIGKILL"); await stopped;}
+      if (child.exitCode === null && child.signalCode === null) {child.kill("SIGKILL"); await stopped;}
     }
   }
   await rm(scratch, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});

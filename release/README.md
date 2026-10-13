@@ -136,7 +136,7 @@ Willow packaging is documented with its [host setup](../hosts/willow/README.md).
 2. Test changed behaviour and the relevant install/update path, including
    retained identities, settings and programs. Reuse established results for
    unchanged code. Check the exact Birch worker on its supported Debian 12 host.
-3. With publication approval, create the signed product tag and GitHub release.
+3. Create the signed product tag and GitHub release.
    Attach packages, manifests, signatures where used and checksums. Verify
    downloaded asset hashes. Exclude private keys, credentials and node backups
    from assets. Use `--latest=false` for Birch, Pine and Willow so
