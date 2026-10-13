@@ -267,7 +267,7 @@ struct CommandBot::Core : mesh::Mesh {
     BotEvent event{};
     uint8_t secret[32]{};
     mesh::GroupChannel groupChannel{};
-    PeerRoute route;
+    PeerRoute route, returnRoute;
     BotIoRequest io{};
     BotIoResult result{};
     mesh::Packet *outbound = nullptr;
@@ -859,15 +859,9 @@ struct CommandBot::Core : mesh::Mesh {
     learnedPath(contact);
     if (monitored) {
       if (packet->isRouteFlood()) {
-        auto *reply = createPathReturn(contact.id, secret, packet->path, packet->path_len, 0, nullptr, 0);
-        if (reply) {
-          if (capacity(replyAirtime(reply, contact.route), true, false, reply, contact.id.pub_key))
-            sendDirect(reply, path, length, 500);
-          else {
-            releasePacket(reply);
-            owner.fault("Repeater return path not sent: bot airtime budget exhausted");
-          }
-        } else owner.fault("Repeater return path packet capacity exhausted");
+        auto *reply = makeReturnPath(contact, secret, packet->path, packet->path_len,
+                                     contact.route, contact.id.pub_key);
+        if (reply) sendDirect(reply, path, length, 500);
       }
       return false;
     }
@@ -876,6 +870,41 @@ struct CommandBot::Core : mesh::Mesh {
       memcpy(&ack, extra, 4);
       onAckRecv(packet, ack);
     }
+    return true;
+  }
+  mesh::Packet *makeReturnPath(const Contact &contact, const uint8_t *secret,
+                               const uint8_t *path, uint8_t length,
+                               const PeerRoute &outbound, const uint8_t *account) {
+    auto *reply = createPathReturn(contact.id, secret, path, length, 0, nullptr, 0);
+    if (!reply) { owner.fault("Return path packet capacity exhausted"); return nullptr; }
+    if (!capacity(replyAirtime(reply, outbound), true, false, reply, account)) {
+      releasePacket(reply);
+      owner.fault("Return path not sent: bot airtime budget exhausted");
+      return nullptr;
+    }
+    return reply;
+  }
+  bool sendFindPathReturn(Invocation &job) {
+    if (job.returnRoute.length == 0xff) return false;
+    // Keep the login TX owner until its completion, then send the reciprocal
+    // PATH before confirmation. REQ packets otherwise outrank PATH packets.
+    if (job.outbound) return true;
+    auto *contact = findPathContact(job);
+    if (!contact || !owner.worker_.ioCurrent(job.io.token) || !routeSearchCurrent(job) ||
+        int32_t(millis() - job.deadline) >= 0) {
+      finishRadio(job, "Return path cancelled or deadline expired"); return true;
+    }
+    PeerRoute outbound;
+    outbound.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
+                                        (job.io.routeSize / job.io.routeWidth)));
+    uint8_t secret[32]{}; self_id.calcSharedSecret(secret, contact->id);
+    auto *reply = makeReturnPath(*contact, secret, job.returnRoute.bytes,
+                                job.returnRoute.length, outbound, principal(job.event));
+    wipe(secret, sizeof(secret));
+    if (!reply) { finishRadio(job, "Route return path could not be queued"); return true; }
+    job.returnRoute.length = 0xff;
+    job.outbound = reply; job.result.transmitted = false;
+    sendDirect(reply, outbound.bytes, outbound.length, 500);
     return true;
   }
   int repeaterIndex(const uint8_t *key) const {
@@ -1311,6 +1340,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (job.best.next == job.best.count * 2) finishBestPath(job);
   }
   void startBestPathProbe(Invocation &job) {
+    if (sendFindPathReturn(job)) return;
     if (int32_t(millis() - job.best.until) >= 0) { finishBestPath(job); return; }
     if (repeaterSent && uint32_t(millis() - repeaterAt) < 30000) return;
     if (!job.best.count) { finishBestPath(job); return; }
@@ -1346,6 +1376,7 @@ struct CommandBot::Core : mesh::Mesh {
     finishRadio(job, nullptr, !fresh);
   }
   void confirmFindPath(Invocation &job) {
+    if (sendFindPathReturn(job)) return;
     const bool best = job.io.kind == BotIoRequest::FindBestPath;
     if (job.io.revision != 1 || job.outbound || (!best && !job.result.transmitted)) return;
     if (!owner.worker_.ioCurrent(job.io.token) || int32_t(millis() - job.deadline) >= 0) {
@@ -1549,12 +1580,14 @@ struct CommandBot::Core : mesh::Mesh {
             job.io.routeWidth = uint8_t((length >> 6) + 1);
             job.io.routeSize = uint8_t((length & 63) * job.io.routeWidth);
             memcpy(job.io.route, path, job.io.routeSize);
+            if (packet->isRouteFlood()) job.returnRoute.learn(packet->path, packet->path_len);
           }
           if (job.io.kind == BotIoRequest::FindBestPath) {
             PeerRoute route; route.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
                                                              (job.io.routeSize / job.io.routeWidth)));
             route.scoped = routing.scope(packet); addBestPath(job, route, "flood");
             job.io.revision = 3; job.deadline = job.best.until;
+            sendFindPathReturn(job);
             // A very fast reply can precede the local TX completion. Keep its
             // packet ownership until the terminal receipt arrives.
           } else {
@@ -1906,7 +1939,7 @@ struct CommandBot::Core : mesh::Mesh {
           {job.event.engineOrigin, job.event.reflectionOrigin});
 #endif
       job.repeaterIndex = -1;
-      job.io = request; resetBotIoResult(job.result); job.result.token = request.token;
+      job.io = request; job.returnRoute = {}; resetBotIoResult(job.result); job.result.token = request.token;
       job.ioPending = true; job.deadline = millis() + request.delayMs;
       const char *action = request.kind == BotIoRequest::Trace || routeSearchIo(job) ? "action_trace" :
                            request.kind == BotIoRequest::Advert ? "action_advert" :

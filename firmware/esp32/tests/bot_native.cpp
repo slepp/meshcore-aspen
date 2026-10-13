@@ -2586,7 +2586,8 @@ static void native_board() {
 
 static void native_find_path() {
   assert(saveBotEnabled(true) && saveBotRadioPolicy({}) && saveBotRepeaterPolicy({}));
-  Fixture f; f.start();
+  Fixture::Options options; options.captureTxForTest = true;
+  Fixture f(options); f.start();
   Peer caller, peer, stranger;
   f.learn(caller); f.learn(peer); f.learn(stranger);
   char key[65]{}, command[160]{}, reply[192]{};
@@ -2602,17 +2603,27 @@ static void native_find_path() {
     }
     return count;
   };
-  const auto ask = [&]() {
+  const auto ask = [&](unsigned steps = 300) {
     timeMs += 61000; f.radio.sent.clear();
     snprintf(command, sizeof(command), "!find-path %s", key);
-    f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+    f.deliver(caller.command(f.bot.publicKey(), command)); f.step(steps);
   };
   // Clock readiness is a native admission check, before either packet is sent.
   ask(); assert(probes() == 0 && !f.bot.jobsInUse());
   auto replies = caller.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 1 && replies[0].find("trusted clock") != std::string::npos);
   beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
-  ask(); assert(probes() == 1 && f.bot.jobsInUse());
+  ask(1);
+  for (unsigned i = 0; i < 100 && !probes(); ++i) f.step(1);
+  assert(probes() == 1 && f.bot.jobsInUse());
+  f.setManualTxCompletionForTest(true);
+  bot_native_test::TxFrame loginFrame;
+  bool loginCaptured = false;
+  while (f.takeTxFrame(loginFrame)) {
+    mesh::Packet packet; assert(packet.readFrom(loginFrame.packet.data(), loginFrame.packet.size()));
+    if (packet.getPayloadType() == PAYLOAD_TYPE_ANON_REQ) { loginCaptured = true; break; }
+  }
+  assert(loginCaptured);
   for (const auto &raw : f.radio.sent) {
     mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
     if (p.getPayloadType() != PAYLOAD_TYPE_ANON_REQ) continue;
@@ -2623,6 +2634,7 @@ static void native_find_path() {
     assert(size == 16 && plain[4] == 0); // Only an empty guest password.
   }
   const Bytes path{0xcc, 0x26, 0x8a, 0xd1, 0x26, 0x00};
+  const Bytes returnPath{0xd1, 0x26, 0x00, 0xcc, 0x26, 0x8a};
   const auto response = [&](Peer &sender, uint32_t tag, bool login, bool withPath, const Bytes &route, uint8_t sample = 120) {
     uint8_t secret[32]{}, plain[16]{};
     sender.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, tag);
@@ -2632,13 +2644,42 @@ static void native_find_path() {
         (route.empty() ? secret : route.data()), uint8_t(0x80 | route.size() / 3), PAYLOAD_TYPE_RESPONSE, plain, login ? 13 : 8) :
         sender.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, login ? 13 : 8);
     assert(packet);
-    packet->header |= !login && !withPath ? ROUTE_TYPE_FLOOD : ROUTE_TYPE_DIRECT;
-    packet->path_len = 0x80;
+    packet->header |= !withPath || login ? ROUTE_TYPE_FLOOD : ROUTE_TYPE_DIRECT;
+    packet->path_len = login && withPath ? 0x82 : 0x80;
+    if (login && withPath) memcpy(packet->path, returnPath.data(), returnPath.size());
     return sender.wire(packet);
   };
-  f.deliver(response(stranger, 1800000000, true, true, path)); f.step();
-  assert(probes() == 1);
-  f.deliver(response(peer, 1800000000, true, true, path)); f.step(300);
+  const auto returns = [&]() {
+    unsigned count = 0;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() != PAYLOAD_TYPE_PATH) continue;
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      const int size = mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2);
+      if (size <= 0) continue; // Exclude command replies to the caller.
+      assert(size == 16 && plain[0] == 0x82 && !memcmp(plain + 1, returnPath.data(), returnPath.size()) &&
+             plain[1 + returnPath.size()] == 0xff);
+      assert(packet.isRouteDirect() && packet.path_len == 0x82 && !memcmp(packet.path, path.data(), path.size()));
+      ++count;
+    }
+    return count;
+  };
+  f.deliver(response(stranger, 1800000000, true, true, path)); f.step(1);
+  f.deliver(response(peer, 1700000000, true, true, path)); f.step(1);
+  assert(probes() == 1 && returns() == 0);
+  f.deliver(response(peer, 1800000000, true, true, path)); f.step(1);
+  assert(returns() == 0 && probes() == 1); // Login reply precedes local TX completion.
+  bot_native_test::TxFrame frame;
+  assert(f.completeSimulatedTxForTest(loginFrame.token, 10));
+  f.setManualTxCompletionForTest(true);
+  for (unsigned i = 0; i < 500 && !returns(); ++i) f.step(1);
+  assert(returns() == 1 && probes() == 1);
+  assert(f.takeTxFrame(frame));
+  mesh::Packet reciprocal; assert(reciprocal.readFrom(frame.packet.data(), frame.packet.size()));
+  assert(reciprocal.getPayloadType() == PAYLOAD_TYPE_PATH);
+  assert(f.completeSimulatedTxForTest(frame.token, 20));
+  f.setManualTxCompletionForTest(false); f.step(300);
   assert(probes() == 2 && f.bot.jobsInUse());
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
   assert(!strcmp(reply, "pilot route=3:112233 repair=0")); // Provisional only.
@@ -2655,13 +2696,21 @@ static void native_find_path() {
     tag = queued_tx::get32(plain);
   }
   assert(tag);
+  // PATH must finish before the higher-priority telemetry request is sent.
+  size_t returnAt = 0, probeAt = 0;
+  for (size_t i = 0; i < f.radio.sent.size(); ++i) {
+    mesh::Packet packet; assert(packet.readFrom(f.radio.sent[i].data(), f.radio.sent[i].size()));
+    if (packet.getPayloadType() == PAYLOAD_TYPE_PATH) returnAt = i;
+    if (packet.getPayloadType() == PAYLOAD_TYPE_REQ) probeAt = i;
+  }
+  assert(returnAt < probeAt);
   // A delayed login can have the exact same UTC/tag. It is not telemetry.
   f.deliver(response(peer, tag, true, true, path)); f.step();
   f.deliver(response(stranger, tag, false, false, {})); f.step();
   f.deliver(response(peer, tag - 1, false, true, path)); f.step();
   f.reflect(response(peer, tag, false, false, {})); f.step();
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
-  assert(!strcmp(reply, "pilot route=3:112233 repair=0") && f.bot.jobsInUse());
+  assert(!strcmp(reply, "pilot route=3:112233 repair=0") && f.bot.jobsInUse() && returns() == 1);
   f.deliver(response(peer, tag, false, true, {})); f.step();
   assert(f.bot.jobsInUse()); // A telemetry PATH cannot claim a false direct route.
   f.deliver(response(peer, tag, false, false, {}, 121)); f.step(300);
@@ -2721,12 +2770,12 @@ static void native_find_path() {
   ask(); assert(probes() == 1 && f.bot.jobsInUse());
   f.bot.cancelJobs(); f.step();
   f.deliver(response(peer, 1800000200, true, true, path)); f.step(300);
-  assert(!f.bot.jobsInUse() && probes() == 1);
+  assert(!f.bot.jobsInUse() && probes() == 1 && returns() == 0);
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
   assert(!strcmp(reply, "pilot route=3:445566 repair=0"));
   // Restore the original monitor authority after this isolated test process.
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
-  puts("PASS find-path: empty guest flood, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
+  puts("PASS find-path: empty guest flood, reciprocal PATH before confirmation, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
 }
 static void native_best_path() {
   BotRadioPolicy policy; policy.airtimeMs = 3600;
@@ -2753,7 +2802,9 @@ static void native_best_path() {
     auto *packet = login ? sender.createPathReturn(mesh::Identity(f.bot.publicKey()), secret,
         route.data(), uint8_t(0x80 | route.size() / 3), PAYLOAD_TYPE_RESPONSE, plain, 13) :
         sender.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, 8);
-    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    assert(packet); packet->header |= login ? ROUTE_TYPE_FLOOD : ROUTE_TYPE_DIRECT;
+    packet->path_len = login ? uint8_t(0x80 | route.size() / 3) : 0x80;
+    if (login) memcpy(packet->path, route.data(), route.size());
     return sender.wire(packet);
   };
   const auto ask = [&]() {
