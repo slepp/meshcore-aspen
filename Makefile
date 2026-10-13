@@ -40,9 +40,15 @@ help:
 		'  make test-python        Python monitor tests' \
 		'  make host-test          Go race tests (live tests require explicit environment opt-ins)' \
 		'  make test-native-smoke  Local C++ firmware and storage tests' \
-		'  make host-build         Build the host and check commands into bin/' \
+		'  make host-build         Build the Birch Go host and check commands into bin/' \
+		'' \
+		'Willow source builds (prerequisites in hosts/willow/README.md):' \
+		'  make willow-build       Build the Willow host, Base, dashboard and MQTT broker' \
+		'  make willow-check       Build and check Willow with private loopback fixtures' \
 		'  make hew-base           Build the separate native Base candidate (see hosts/willow/docs/BASE.md)' \
 		'  make hew-base-test      Run synthetic Base differential/TCP/source/state checks' \
+		'' \
+		'Firmware source builds:' \
 		'  make aspen-config       Create the ESP32 standalone build configuration' \
 		'  make aspen-firmware     Build the configured ESP32 standalone radio' \
 		'  make pine-firmware      Build the selected nRF52840 on-device profile' \
@@ -90,6 +96,12 @@ release-check:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test_support/release -v
 
 .PHONY: hew-base hew-base-test hew-base-symbols
+.PHONY: willow-build willow-check
+willow-build:
+	$(MAKE) -C hosts/willow release
+willow-check:
+	$(MAKE) -C hosts/willow check
+
 hew-base:
 	$(MAKE) -C hosts/willow base-service
 hew-base-test:

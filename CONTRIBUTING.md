@@ -28,6 +28,18 @@ dependencies, Node.js and Chrome; consult the relevant Makefile and guide.
 `requirements-linux.lock` pins the Python 3.13 Linux x86_64 dependencies used
 by CI and release checks. For another platform, install from `requirements.txt`.
 
+For Willow, install the [Hew toolchain and host dependencies](hosts/willow/README.md#build-from-source),
+then build and check from the repository root:
+
+```sh
+make -j2 willow-check
+```
+
+This builds the host, Base, dashboard and MQTT broker, then runs their private
+loopback, persistence, recovery and Birch comparison checks.
+Use `make -j2 willow-build` when you only need the service binaries. The component targets
+`make -C hosts/willow release` and `make -C hosts/willow check` remain available.
+
 To replay an application locally:
 
 ```sh
@@ -69,9 +81,12 @@ Edit tracked source in the directories above, not staged copies.
 The configuration targets generate private `firmware/platformio.*.ini` files
 from tracked board-specific examples; keep those generated files untracked.
 
-The native Go host worker builds the same C++ bot engine used on the radios.
-Python stages firmware sources, drives the existing hardware toolchains and
-runs integration checks. The monitor, broker and chat are standalone operator
+Birch and Willow share the native C++ bot worker and the engine used on the radios.
+Willow's production Hew modules live in `hosts/willow/src`, its C bridges in
+`native`, Python launch/build/migration helpers in `tools`, and checks and
+compiler probes in `tests`. Python stages firmware sources, drives the
+existing hardware toolchains and runs integration checks.
+The monitor, broker and chat are standalone operator
 tools; chat uses the shared standard-library TCP client in `tools/companion.py`.
 Lua programs and optional Wasm packages use the runtime's application API.
 JavaScript implements the browser administration pages.

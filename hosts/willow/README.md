@@ -67,14 +67,17 @@ and [docs/BROKER.md](docs/BROKER.md). Their executables are under `build/`.
 
 ```sh
 git clone https://github.com/slepp/meshcore-aspen.git
-cd meshcore-aspen/hosts/willow
-make -j2 release
+cd meshcore-aspen
+make -j2 willow-check
+cd hosts/willow
 python3 -B tools/willow.py --version
 ```
 
 Expected: `Willow 0.0.9`. Use the new-node initialization, check and run commands
-above, or migrate an existing stopped node. `make release` builds the host, Base, broker and dashboard with
-the current Hew installation. The launcher defaults to four scheduler workers; set
+above, or migrate an existing stopped node. From the repository root, `make
+willow-build` builds the host, Base, broker and dashboard without running the
+checks. The component's `make release` and `make check` targets remain available.
+The launcher defaults to four scheduler workers; set
 `HEW_WORKERS` explicitly to choose another count.
 For production builds, build Hew with its supported `make hew` target and put
 its `build/bin` directory on `PATH`. This selects matching optimized runtime
@@ -82,13 +85,7 @@ libraries. `hew build --release` optimizes the application; a compiler launched
 from `target/debug` still uses that toolchain's debug runtime libraries.
 For a new installation, [create private state](docs/SERVICE.md#start-with-new-identities)
 with `build/hew-host-release init`, then use the state check and launcher above.
-Build and test the complete host before connecting a radio:
-
-```sh
-make -j2 check
-```
-
-This runs the Hew applications against private loopback modem emulators,
+`make willow-check` runs the Hew applications against private loopback modem emulators,
 checks restart and native-worker recovery, exercises interrupted persistence,
 and compares protocol behaviour with Birch. Missing prerequisites fail the
 command. The selected compiler, runtime and standard-library hashes are
