@@ -409,7 +409,7 @@ async function messageDetailsFlow(desktop) {
     assert.equal(await desktop.evaluate(`document.querySelector('.message-details').getAttribute('aria-label').includes('1 radio acknowledgement')`), true);
     assert.equal(await desktop.evaluate(`document.activeElement.id`), "close-message-details");
     await key(desktop, "Escape", "Escape");
-    assert.equal(await desktop.evaluate(`document.activeElement.classList.contains('message-details')`), true);
+    await desktop.wait(`document.activeElement.classList.contains('message-details')`, "desktop message details focus return");
     rf = {...rf, queued: 8, failed: 1};
     await desktop.wait(`document.querySelector('.message-details').classList.contains('attention')`, "exception icon");
     assert.equal(await desktop.evaluate(`document.activeElement.classList.contains('message-details')`), true);
