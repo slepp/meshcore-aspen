@@ -459,10 +459,12 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `node.admin(command)` | Yielded bounded backend result text | Authenticated trusted-owner private DM only; limited bot admin operations |
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
 | `tostring(number[, places])` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; optional 0..6 decimal places, rounded half away from zero; not Lua's general-purpose `tostring` |
+| `string.sub(text, first[, last])`, `string.lower(text)` | Lua substring and case folding | Input ≤4096 bytes; Lua's byte indexing and negative indices |
+| `string.find(text, literal, start, true)` | First and last byte indices, or `nil` | Inputs ≤4096 bytes; literal searches only; the fourth argument must be true |
 | `ping()`, `test()`, `path()`, `mt()`, `help(...)` | Composable bundled diagnostic text | Current invocation context; nested calls share quotas and do not independently reply |
 
-Compact Pine omits `node.packet_report` (`nil`); numeric packet-report inspection
-is available on Aspen and the host.
+Compact Pine omits `node.packet_report` and `string` (`nil`); these APIs are
+available on Aspen and the host.
 
 Utilities require authenticated DM or verified selected-channel context and
 allow eight calls per invocation. Unsupported arguments are errors.
@@ -507,7 +509,8 @@ recovery remain separate. Source is text-only, at most **4096 B including its
 metadata**, with eight custom commands and eight declared modules.
 
 Four job slots include one reserved native diagnostic slot. Each invocation
-has at most eight native I/O operations, a 10,000-instruction bound and 100 ms
+has at most eight native I/O operations (16 for Lua commands in a trusted owner's
+private DM), a 10,000-instruction bound and 100 ms
 cumulative active execution budget across resumes. The source generation has a 96 KiB allocator budget
 and a 16,384-step parser bound; installed-source loading is limited to one second
 and initialization to 100 ms. Compact profiles retain 20 ms invocation, 50 ms initialization and a 330 ms installed-source
@@ -1167,7 +1170,7 @@ invocation. Returning text instead leaves final delivery to the native core.
 its optional `width:hex` argument uses the same native route validator as
 `!trace`. Scripts never supply arbitrary radio bytes. By default one final
 reply is submitted. Explicit mesh sends/traces/adverts share the invocation's
-eight-operation bound and existing airtime policy; they do not get free
+operation bound and existing airtime policy; they do not get free
 replies or automatic retries. Installing a custom command set replaces the
 previous installed generation, including its explicit builtin overrides. Native
 `ping`, `test`, `path`, `mt`, `trace`, `help`, `remind`, `reminders`, `cancel`,
@@ -1307,7 +1310,10 @@ recovery heap dispatches addressed builtin names without an explicit override,
 even if custom globals exhaust their heap.
 It is not a per-function/plugin sandbox.
 
-The sandbox opens no standard libraries. Native helpers provide command
+The sandbox exposes bounded `sub`, `lower` and literal `find` operations from
+Lua's string library, through an immutable `string` table and string methods.
+Pattern matching, bytecode dumping and other standard libraries are unavailable.
+Native helpers provide command
 registration, reply/trace/help, numeric `tostring`, `kv` and timer sleep.
 The frozen `utility` table supplies bounded arithmetic, conversion and random
 selection helpers; these do not expose a compiler or general math library.
@@ -2185,7 +2191,8 @@ owner grant; it never silently falls back to a nickname or private scope.
 
 `sleep(ms)` and `timer.sleep(ms)` yield the current invocation for 1..30,000 ms.
 They preserve nested Lua call stacks and free the VM/radio workers for other
-jobs. Each invocation admits at most eight I/O operations; timer completion
+jobs. Each invocation admits at most eight I/O operations, or 16 for a Lua
+command in a trusted owner's private DM; timer completion
 over one second late fails visibly. These sleep timers are transient, not
 durable reminders; the distinct named deadline API follows below.
 Runtime incarnation + invocation + operation tokens fence completions, including
@@ -2242,7 +2249,7 @@ explicit errors, never automatic write retries.
 `wait` suspends its coroutine, polling the native journal at most every 250ms
 per live wait without blocking the VM, radio dispatcher or other storage
 requests. The existing four invocation slots (three for custom commands),
-eight I/O operations per invocation and radio airtime budget still apply.
+invocation's I/O bound and radio airtime budget still apply.
 Replacement/cancellation invalidates a waiting revision. Source replacement
 or bot stop cancels the live coroutine but does not delete its saved deadline.
 There is no automatic interpreter/coroutine restart after reboot.
@@ -2849,7 +2856,7 @@ a partial write/cancellation may have an unknown remote outcome.
 
 Four bounded network mailboxes feed one connection; at most two requests per
 authenticated caller and four globally per minute are admitted. The invocation's
-existing eight-I/O limit also applies. Echo is narrowed to 256 bytes and place
+invocation's I/O limit also applies. Echo is narrowed to 256 bytes and place
 to 80 bytes. Requests use a random native transport-instance nonce plus generation/job/operation as the service
 request ID without exporting the caller's key. Response headers total at most
 2048 bytes, each line 511 bytes; JSON bodies at most 2048 bytes, nesting at most

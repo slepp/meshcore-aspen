@@ -842,7 +842,12 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     return;
   }
   if (!strcmp(input, "api find-path")) {
-    respond("Find-path mesh.find_path(hex-prefix) digits=1..64 case=insensitive admission-wait=30s response-wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
+    respond("digits=1..64 case=insensitive admission-wait=30s response-wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
+    return;
+  }
+  if (!strcmp(input, "api repeater-cli")) {
+    if (wasmRuntime_) { respond("Error: Repeater CLI requires Lua"); return; }
+    respond("Repeater CLI command(alias,text) owner-DM ACL=admin route=known global-min=30s wait=30s reply=15..60s quiet=2.5s bytes=256 retry=none io=16");
     return;
   }
   if (!strcmp(input, "api mesh")) {

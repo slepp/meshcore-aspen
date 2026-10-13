@@ -25,7 +25,7 @@ BOT_WASM_SOURCE :=
 endif
 BOT_HOST_RUNNER := $(BOT_BUILD)/bot-host-runner
 BOT_LUA_C := lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject \
-	lopcodes lparser lstate lstring ltable ltm lundump lvm lzio lauxlib
+	lopcodes lparser lstate lstring ltable ltm lundump lvm lzio lauxlib lstrlib
 BOT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder \
 	-ffunction-sections -fdata-sections -Wl,--gc-sections -pthread \
 	-DMESHCORE_ONCHIP_BOT=1 -DONCHIP_BOT_WASM=$(ONCHIP_BOT_WASM) $(BOT_WAMR_INCLUDES) $(TEST_FLAGS)
@@ -36,6 +36,9 @@ bot-find-path-test: bot-host-runner
 .PHONY: bot-repeater-test
 bot-repeater-test: bot-host-runner
 	"$(BOT_HOST_RUNNER)" --repeater-test
+.PHONY: bot-repeater-cli-test
+bot-repeater-cli-test: bot-host-runner
+	"$(BOT_HOST_RUNNER)" --repeater-cli-test ../runtime/plugins/examples/repeater-cli.lua
 .PHONY: bot-repeater-storage-test
 .PHONY: bot-radio-policy-test
 bot-radio-policy-test: bot-prepare-phy
@@ -368,6 +371,7 @@ BOT_HOST_PACKET_SOURCES := $(ROOT)/internal/nativebot/PacketPrograms.cpp ../runt
     ../runtime/PacketProgramWorker.cpp ../runtime/PacketLua.cpp ../runtime/PacketWasm.cpp
 BOT_HOST_NETWORK_FLAGS = -DONCHIP_BOT_HTTPS=1 -DONCHIP_BOT_NATIVE_HTTPS=1 -I. -I$(BOT_JSON_INCLUDE)
 BOT_HOST_ADMIN_FLAGS = $(BOT_FLAGS) -DMESHCORE_HOST_BOT_SOURCE=1 -DMESHCORE_MAST_ADMIN=1 $(BOT_HOST_NETWORK_FLAGS)
+$(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o: | bot-prepare
 $(BOT_BUILD)/host-worker.o: $(ROOT)/internal/nativebot/worker.cpp $(ROOT)/internal/nativebot/NativeClock.h \
 		$(ROOT)/internal/nativebot/SavedContacts.h \
 		../runtime/MastSource.h ../runtime/CommandBot.h ../runtime/BotWorker.h ../runtime/BotSignal.h bot.mk

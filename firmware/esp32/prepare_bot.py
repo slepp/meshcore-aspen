@@ -8,7 +8,7 @@ import shutil
 from prepare import check_target
 
 CORE = """lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject
-lopcodes lparser lstate lstring ltable ltm lundump lvm lzio lauxlib""".split()
+lopcodes lparser lstate lstring ltable ltm lundump lvm lzio lauxlib lstrlib""".split()
 
 
 def generate(target: Path, c_stack_limit: int = 40):

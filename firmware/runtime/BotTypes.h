@@ -51,6 +51,7 @@ constexpr unsigned BotObservationLimit = 8;
 #define ONCHIP_BOT_JOB_LIMIT 4
 #endif
 constexpr unsigned BotJobLimit = ONCHIP_BOT_JOB_LIMIT, BotIoLimit = 8;
+constexpr unsigned BotOwnerIoLimit = 16;
 static_assert(BotJobLimit >= 1 && BotJobLimit <= 4, "Bot worker job capacity is 1..4");
 constexpr size_t BotKeyLimit = 32;
 #if ONCHIP_BOT_COMPACT_PROFILE
@@ -181,7 +182,8 @@ struct BotIoRequest {
                         TimerSet, TimerGet, TimerCancel, TimerWait, Forward,
                         ReminderSet, ReminderList, ReminderCancel, List, Cas, Transaction,
                         Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility,
-                        RepeaterNext, RepeaterStatus, RepeaterLogin, FindPath } kind = Sleep;
+                        RepeaterNext, RepeaterStatus, RepeaterLogin, FindPath,
+                        RepeaterCommand } kind = Sleep;
   enum Scope : uint8_t { Caller, Conversation, Bot, Channel,
                         CallerThread, ConversationThread, BotThread, ChannelThread } scope = Caller;
   BotIoToken token{};

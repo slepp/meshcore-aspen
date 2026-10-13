@@ -13,6 +13,7 @@
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>
 }
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,6 +165,37 @@ void freeze(lua_State *state) {
   lua_setmetatable(state, -2);
   lua_remove(state, -2);
 }
+#if !ONCHIP_BOT_COMPACT_PROFILE
+int boundedStringOperation(lua_State *s) {
+  size_t size = 0;
+  luaL_checklstring(s, 1, &size);
+  if (size > onchip::BotSourceLimit) return luaL_error(s, "String operation exceeds 4096 bytes");
+  if (lua_toboolean(s, lua_upvalueindex(2))) {
+    luaL_checklstring(s, 2, &size);
+    if (size > onchip::BotSourceLimit || lua_gettop(s) != 4 || !lua_toboolean(s, 4))
+      return luaL_error(s, "Use string.find(text, literal, start, true)");
+  }
+  const int args = lua_gettop(s);
+  lua_pushvalue(s, lua_upvalueindex(1)); lua_insert(s, 1);
+  lua_call(s, args, LUA_MULTRET);
+  return lua_gettop(s);
+}
+void stringApi(lua_State *s) {
+  luaopen_string(s);
+  lua_newtable(s);
+  for (const char *name : {"sub", "lower", "find"}) {
+    lua_getfield(s, -2, name);
+    lua_pushboolean(s, !strcmp(name, "find"));
+    lua_pushcclosure(s, boundedStringOperation, 2); lua_setfield(s, -2, name);
+  }
+  freeze(s);
+  // luaopen_string installs a string metatable; replace its full-library view.
+  lua_pushliteral(s, ""); lua_getmetatable(s, -1);
+  lua_pushvalue(s, -3); lua_setfield(s, -2, "__index");
+  lua_pop(s, 2);
+  lua_setglobal(s, "string"); lua_pop(s, 1);
+}
+#endif
 #if !ONCHIP_BOT_COMPACT_PROFILE
 struct PacketReportView {
   const mp_report *report;
@@ -458,6 +490,7 @@ int contextIndex(lua_State *s) {
   return 1;
 }
 bool nativeName(const char *name) {
+  if (!ONCHIP_BOT_COMPACT_PROFILE && !strcmp(name, "string")) return true;
   for (const char *helper : {"reply", "command", "override_command", "call_original", "request_trace", "command_help",
                              "tostring", "ctx", "kv", "timer", "reminder", "sleep", "mesh", "advert", "rpc", "http", "json", "utility", "node",
                              "module", "require", "events", "repeater"})
@@ -882,6 +915,18 @@ void jsonApi(lua_State *s) {
 }
 int finishIo(lua_State *s, int, lua_KContext) {
   auto &call = context(s);
+  if (call.io->kind == onchip::BotIoRequest::RepeaterCommand && call.completion) {
+    const auto &r = *call.completion;
+    lua_newtable(s);
+    boolean(s, "ok", r.ok); text(s, "text", r.value); text(s, "error", r.error);
+    char printable[sizeof(r.value)]{};
+    snprintf(printable, sizeof(printable), "%s", r.value);
+    for (auto &c : printable) if (c == '\n' || c == '\r') c = ' ';
+    text(s, "reply", printable);
+    boolean(s, "queued", r.queued); boolean(s, "transmitted", r.transmitted);
+    boolean(s, "truncated", r.truncated);
+    freeze(s); return 1;
+  }
   if (call.io->kind == onchip::BotIoRequest::RepeaterNext && call.completion) {
     if (!call.completion->ok) return luaL_error(s, "%s", call.completion->error);
     if (call.completion->found) lua_pushstring(s, call.completion->value);
@@ -1111,7 +1156,9 @@ onchip::BotIoRequest &prepareIo(lua_State *s, onchip::BotIoRequest::Kind kind) {
       call.subscriptionOwner->eventEpoch &&
       call.event->eventEpoch != call.subscriptionOwner->eventEpoch->load())
     luaL_error(s, "Event epoch revoked before I/O");
-  if (++call.operations > onchip::BotIoLimit)
+  const unsigned limit = call.event->owner && call.event->authenticated && !call.event->channel[0] && !call.event->local ?
+      onchip::BotOwnerIoLimit : onchip::BotIoLimit;
+  if (++call.operations > limit)
     luaL_error(s, "Invocation I/O limit exceeded");
   if (call.event->kind != onchip::BotEvent::Command &&
       kind != onchip::BotIoRequest::Sleep && kind != onchip::BotIoRequest::Get &&
@@ -1305,11 +1352,20 @@ int repeaterRequest(lua_State *s) {
   strcpy(request.key, alias); request.delayMs = 30000;
   return lua_yieldk(s, 0, 0, finishIo);
 }
+int repeaterCommand(lua_State *s) {
+  if (lua_gettop(s) != 2) return luaL_error(s, "repeater.command requires an alias and command");
+  auto &request = prepareIo(s, onchip::BotIoRequest::RepeaterCommand);
+  boundedString(s, 1, request.key, 17);
+  boundedString(s, 2, request.value, onchip::BotTextLimit - 2);
+  request.delayMs = 30000;
+  return lua_yieldk(s, 0, 0, finishIo);
+}
 void repeaterApi(lua_State *s) {
   lua_newtable(s);
   lua_pushcfunction(s, repeaterNext); lua_setfield(s, -2, "next");
   lua_pushboolean(s, false); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "status");
   lua_pushboolean(s, true); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "login");
+  lua_pushcfunction(s, repeaterCommand); lua_setfield(s, -2, "command");
   freeze(s); lua_setglobal(s, "repeater");
 }
 void networkAuthority(lua_State *s, onchip::BotIoRequest &request) {
@@ -2511,6 +2567,9 @@ int execute(lua_State *s) {
   moduleApi(s);
   eventApi(s);
   repeaterApi(s);
+#if !ONCHIP_BOT_COMPACT_PROFILE
+  stringApi(s);
+#endif
   jsonApi(s);
   networkApi(s);
   if (luaL_loadbufferx(s, call.source, call.size, "registered-commands", "t") != LUA_OK)
@@ -2796,6 +2855,9 @@ struct BotSession::Impl {
     moduleApi(s);
     eventApi(s);
     repeaterApi(s);
+#if !ONCHIP_BOT_COMPACT_PROFILE
+    stringApi(s);
+#endif
     jsonApi(s);
     networkApi(s);
     lua_newtable(s);

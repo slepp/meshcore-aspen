@@ -122,6 +122,65 @@ Import the [remote-repeater Grafana dashboard](../../dashboards/grafana/README.m
 to view voltage, sample age, monitor errors, signal, packet counts and airtime
 from this native feed.
 
+## Run commands on selected repeaters
+
+Install the fleet command on Aspen to send a CLI command to selected repeaters
+and receive each repeater's response in a private owner conversation. Check
+`source api repeater-cli` through authenticated management before installing.
+
+On each remote repeater, use its existing administrator session to grant the
+command bot administrator access:
+
+```text
+setperm COMMAND_BOT_FULL_PUBLIC_KEY 3
+```
+
+Keep the existing configured targets and learned routes. A disabled target or
+one on another frequency remains unavailable to fleet commands. If its route
+is unknown, run `!find-path` with its public-key prefix first. CLI requests use
+the known route without flooding or changing the monitor's due times.
+
+Install the source additively:
+
+```sh
+python3 -B tools/hardware/admin.py \
+  --web http://RADIO_IP --password-file /path/to/private/management-password \
+  source-install rcli firmware/runtime/plugins/examples/repeater-cli.lua
+```
+
+In an authenticated private DM from a trusted owner:
+
+```text
+!rcmd d1,d2,d4,d7,wye ver
+!rcmd d1,d2 neighbors
+!rcmd-write d1,d2 set flood.max 4
+```
+
+Select 1..5 distinct configured aliases, separated by commas; alias case does
+not matter. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
+Identity, access, radio and restart commands run on one target at a time.
+Existing command and radio-action permissions still apply.
+
+Requests share the monitor and route-discovery spacing of one start per
+30 seconds. Each request can wait up to 30 seconds for admission, then collects
+matching replies for 15..60 seconds, using the companion's airtime-and-hop
+estimate for longer paths and finishing after 2.5 seconds of silence.
+Replies identify their target and split to fit the RF payload. Native capture
+holds 256 bytes per target and marks longer responses as truncated. An `ok`
+result means a matching response arrived; the remote response itself reports
+whether the command succeeded.
+
+A timed-out write may have applied. It is sent once: read back the affected
+setting before deciding whether to repeat it. Passwords and private keys do
+not belong in the installed Lua source.
+
+For another Lua command, `repeater.command(alias, text)` yields
+`{ok, text, reply, error, queued, transmitted, truncated}`. `text` retains line
+breaks; `reply` replaces them with spaces for RF output. Native code checks the
+current trusted-owner DM, target enable state, frequency and policy generation
+at admission and completion. Scheduled events cannot execute remote CLI.
+The monitor can remain off while the owner uses this API.
+
 ## Replace or compose Lua sources
 
 `source-install NAME FILE` adds or updates one named Lua source.

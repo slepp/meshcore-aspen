@@ -13,6 +13,7 @@
 #include "BotLearnedState.h"
 #include "MastAdmin.h"
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/TxtDataHelpers.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/SensorManager.h>
 #include <cmath>
@@ -226,6 +227,7 @@ struct CommandBot::Core : mesh::Mesh {
     bool flooded = false;
   } repeaters[BotRepeaterLimit];
   uint32_t repeaterGrant = 1, repeaterAt = 0;
+  uint32_t repeaterCliSequence = 0;
   bool repeaterSent = false;
   mesh::Packet *adminReplyPacket = nullptr;
   uint32_t adminReplyTicket = 0;
@@ -261,6 +263,9 @@ struct CommandBot::Core : mesh::Mesh {
     uint32_t deadline = 0, expectedAck = 0, rxAckAt = 0, traceTag = 0, traceAuth = 0;
     bool ioPending = false, ackExpected = false, acked = false, overflow = false;
     bool findPathWaiting = false;
+    bool repeaterCommandWaiting = false;
+    uint32_t repeaterQuietAt = 0;
+    char repeaterCliPrefix[3]{};
     struct Received {
       BotPacketInfo info{};
       char text[BotReplyLimit + 1]{};
@@ -925,6 +930,10 @@ struct CommandBot::Core : mesh::Mesh {
   bool repeaterIo(const Invocation &job) const {
     return job.io.kind == BotIoRequest::RepeaterStatus || job.io.kind == BotIoRequest::RepeaterLogin;
   }
+  bool repeaterRadioIo(const Invocation &job) const {
+    return repeaterIo(job) || job.io.kind == BotIoRequest::FindPath ||
+        job.io.kind == BotIoRequest::RepeaterCommand;
+  }
   void failRepeater(Invocation &job, BotRepeaterError code, const char *message) {
     job.result.repeater.error = code;
     if (job.repeaterIndex >= 0) {
@@ -971,7 +980,7 @@ struct CommandBot::Core : mesh::Mesh {
   }
   void startRepeater(Invocation &job) {
     for (const auto &waiting : invocations)
-      if (waiting.used && waiting.ioPending && waiting.findPathWaiting) {
+      if (waiting.used && waiting.ioPending && (waiting.findPathWaiting || waiting.repeaterCommandWaiting)) {
         failRepeater(job, BotRepeaterError::NotDue, "An interactive route command is waiting"); return;
       }
     if (!repeaterPolicy.enabled) {
@@ -984,6 +993,10 @@ struct CommandBot::Core : mesh::Mesh {
       return;
     }
     if (job.io.kind == BotIoRequest::RepeaterNext) {
+      for (const auto &other : invocations)
+        if (&other != &job && other.used && other.ioPending && repeaterRadioIo(other)) {
+          finishRadio(job); return;
+        }
       if (!repeaterSent || uint32_t(millis() - repeaterAt) >= 30000)
         for (unsigned i = 0; i < BotRepeaterLimit; ++i) if (repeaterReady(i)) {
           snprintf(job.result.value, sizeof(job.result.value), "%s", repeaterPolicy.targets[i].alias);
@@ -1010,7 +1023,7 @@ struct CommandBot::Core : mesh::Mesh {
     }
     for (const auto &other : invocations)
       if (&other != &job && other.used && other.ioPending &&
-          (repeaterIo(other) || other.io.kind == BotIoRequest::FindPath)) {
+          repeaterRadioIo(other)) {
         failRepeater(job, BotRepeaterError::Busy, "Another repeater request is pending"); return;
       }
     if (!owner.radio_.queuedReady() || owner.radio_.hasPendingWork()) {
@@ -1076,6 +1089,108 @@ struct CommandBot::Core : mesh::Mesh {
       state.flooded = true; state.floodAt = millis();
       routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
     } else sendDirect(packet, contact->route.bytes, contact->route.length);
+  }
+  bool repeaterCommandCurrent(const Invocation &job) const {
+    if (!ownerKey(job.event) || job.io.grant != repeaterGrant || job.repeaterIndex < 0) return false;
+    const auto flags = policy.flags(job.event, "action_send");
+    if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute))) return false;
+    const auto index = unsigned(job.repeaterIndex);
+    const auto &target = repeaterPolicy.targets[index];
+    return target.used && repeaterPolicy.targetEnabled(index) &&
+        (!target.frequencyHz || target.frequencyHz == owner.radio_.configuration().freq_hz);
+  }
+  void startRepeaterCommand(Invocation &job) {
+    if (!ownerKey(job.event)) {
+      finishRadio(job, "Repeater CLI requires a currently trusted-owner private DM"); return;
+    }
+    int index = -1;
+    for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+      if (repeaterPolicy.targets[i].used && !strcmp(job.io.key, repeaterPolicy.targets[i].alias)) index = int(i);
+    if (index < 0) { finishRadio(job, "Repeater alias is not configured by the owner"); return; }
+    job.repeaterIndex = int8_t(index); job.io.grant = repeaterGrant;
+    if (!repeaterCommandCurrent(job)) {
+      finishRadio(job, "Repeater CLI denied by current radio policy, target enable state or frequency"); return;
+    }
+    const auto *end = static_cast<const char *>(memchr(job.io.value, 0, sizeof(job.io.value)));
+    if (!end || end == job.io.value || size_t(end - job.io.value) > BotTextLimit - 3) {
+      finishRadio(job, "Repeater CLI command exceeds native text capacity"); return;
+    }
+    for (const char *p = job.io.value; p != end; ++p) if (*p < 32 || *p > 126) {
+      finishRadio(job, "Repeater CLI requires one printable command without line breaks"); return;
+    }
+    bool busy = repeaterSent && uint32_t(millis() - repeaterAt) < 30000;
+    for (const auto &other : invocations) if (&other != &job && other.used && other.ioPending &&
+        repeaterRadioIo(other)) {
+      if (other.findPathWaiting || other.repeaterCommandWaiting) {
+        finishRadio(job, "Another interactive repeater command is waiting"); return;
+      }
+      busy = true;
+    }
+    if (busy) { job.repeaterCommandWaiting = true; return; }
+    job.repeaterCommandWaiting = false;
+    auto *contact = repeaterContact(unsigned(index));
+    if (!contact || contact->route.length == 0xff) {
+      finishRadio(job, "Repeater route unknown; run !find-path with its public-key prefix first"); return;
+    }
+    uint32_t timestamp = 0, earliest = 0, latest = 0;
+    if (!trustedNetworkTime(earliest, latest) || !messageTimestamp(timestamp)) {
+      finishRadio(job, "Repeater CLI requires a trusted clock"); return;
+    }
+    if (!owner.radio_.queuedReady()) { finishRadio(job, "Shared modem unavailable; command was not sent"); return; }
+    static constexpr char alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    if (!repeaterCliSequence) owner.rng_.random(reinterpret_cast<uint8_t *>(&repeaterCliSequence), sizeof(repeaterCliSequence));
+    const uint32_t sequence = ++repeaterCliSequence;
+    job.repeaterCliPrefix[0] = alphabet[sequence / 62 % 62];
+    job.repeaterCliPrefix[1] = alphabet[sequence % 62]; job.repeaterCliPrefix[2] = '|';
+    uint8_t data[5 + BotTextLimit]{}, secret[32]{};
+    memcpy(data, &timestamp, 4); data[4] = TXT_TYPE_CLI_DATA << 2;
+    memcpy(data + 5, job.repeaterCliPrefix, sizeof(job.repeaterCliPrefix));
+    const size_t size = size_t(end - job.io.value);
+    memcpy(data + 8, job.io.value, size);
+    self_id.calcSharedSecret(secret, contact->id);
+    auto *packet = createDatagram(PAYLOAD_TYPE_TXT_MSG, contact->id, secret, data, 8 + size);
+    wipe(secret, sizeof(secret));
+    if (!packet) { finishRadio(job, "Repeater CLI packet capacity exhausted"); return; }
+    if (!capacity(replyAirtime(packet, contact->route), true, false, packet, contact->id.pub_key)) {
+      releasePacket(packet); finishRadio(job, capacityError); return;
+    }
+    // Companion timeout estimate, including hops, with reply quiet time and a
+    // 25% allowance. Short paths retain 15 seconds; long paths can use 60.
+    const uint64_t estimate = 500 + (uint64_t(owner.radio_.getEstAirtimeFor(packet->getRawLength())) * 6 + 250) *
+                                    ((contact->route.length & 63) + 1);
+    job.deadline = millis() + uint32_t(std::clamp<uint64_t>(estimate * 5 / 4 + 2500, 15000, 60000));
+    job.outbound = packet; job.repeaterQuietAt = 0;
+    job.hashCount = 0; job.io.revision = timestamp;
+    repeaterSent = true; repeaterAt = millis();
+    rememberOutbound(packet);
+    sendDirect(packet, contact->route.bytes, contact->route.length);
+  }
+  void repeaterCommandResponse(mesh::Packet *packet, Contact &sender, const uint8_t *data, size_t size) {
+    if (packet->_localReflection || size < 9) return;
+    uint32_t timestamp = 0; memcpy(&timestamp, data, 4);
+    for (auto &job : invocations) if (job.used && job.ioPending && job.io.kind == BotIoRequest::RepeaterCommand &&
+        !job.repeaterCommandWaiting && repeaterCommandCurrent(job) && owner.worker_.ioCurrent(job.io.token) &&
+        int32_t(millis() - job.deadline) < 0 &&
+        sender.id.matches(repeaterPolicy.targets[unsigned(job.repeaterIndex)].key) &&
+        !memcmp(data + 5, job.repeaterCliPrefix, sizeof(job.repeaterCliPrefix)) &&
+        timestamp != job.io.revision) {
+      const auto *end = static_cast<const uint8_t *>(memchr(data + 8, 0, size - 8));
+      const size_t length = end ? size_t(end - data - 8) : size - 8;
+      if (!length) return;
+      for (size_t i = 0; i < length; ++i)
+        if ((data[8 + i] < 32 && data[8 + i] != '\n' && data[8 + i] != '\r') || data[8 + i] > 126) return;
+      uint8_t digest[16]; mesh::Utils::sha256(digest, sizeof(digest), data, size);
+      for (unsigned i = 0; i < job.hashCount; ++i) if (!memcmp(job.hashes[i], digest, sizeof(digest))) return;
+      if (job.hashCount == BotReceiveDedupLimit) { job.result.truncated = true; return; }
+      memcpy(job.hashes[job.hashCount++], digest, sizeof(digest));
+      size_t used = strlen(job.result.value);
+      if (used && used < BotIoTextLimit) job.result.value[used++] = '\n';
+      const size_t copied = std::min(length, BotIoTextLimit - used);
+      memcpy(job.result.value + used, data + 8, copied); job.result.value[used + copied] = 0;
+      job.result.truncated = job.result.truncated || copied != length;
+      job.repeaterQuietAt = millis() + 2500;
+      return;
+    }
   }
   Contact *findPathContact(const Invocation &job) {
     for (auto &contact : contacts)
@@ -1202,8 +1317,8 @@ struct CommandBot::Core : mesh::Mesh {
     bool busy = repeaterSent && uint32_t(millis() - repeaterAt) < 30000;
     for (const auto &other : invocations)
       if (&other != &job && other.used && other.ioPending &&
-          (repeaterIo(other) || other.io.kind == BotIoRequest::FindPath)) {
-        if (other.findPathWaiting) {
+          repeaterRadioIo(other)) {
+        if (other.findPathWaiting || other.repeaterCommandWaiting) {
           finishRadio(job, "A route command is already waiting; retry after it completes"); return;
         }
         busy = true;
@@ -1507,6 +1622,8 @@ struct CommandBot::Core : mesh::Mesh {
       error = "Forward grant revoked; remote outcome may be unknown";
     if (!meshIoCurrent(invocation))
       error = "Mesh grant revoked; admitted TX may already have occurred";
+    if (!error && invocation.io.kind == BotIoRequest::RepeaterCommand && !repeaterCommandCurrent(invocation))
+      error = "Repeater CLI authority revoked; remote outcome may be unknown";
     if (repeaterIo(invocation) && invocation.repeaterIndex >= 0 &&
         (invocation.io.grant != repeaterGrant || !repeaterAuthority(invocation))) {
       invocation.result.repeater.error = BotRepeaterError::Cancelled;
@@ -1521,6 +1638,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!owner.worker_.completeRadio(invocation.result))
       reject("Native radio completion ownership lost");
     invocation.ioPending = false; invocation.outbound = nullptr;
+    invocation.findPathWaiting = invocation.repeaterCommandWaiting = false;
     if (error && (invocation.io.kind == BotIoRequest::Trace ||
                   (invocation.io.kind == BotIoRequest::Wait && invocation.io.waitKind == BotIoRequest::TraceWait)))
       invocation.traceActive = false;
@@ -1577,6 +1695,8 @@ struct CommandBot::Core : mesh::Mesh {
             else confirmFindPath(invocation);
           } else if (repeaterIo(invocation)) {
             if (invocation.repeaterResponse) finishRadio(invocation);
+          } else if (invocation.io.kind == BotIoRequest::RepeaterCommand) {
+            // CLI replies have no ACK; collect matching parts until quiet.
           } else finishRadio(invocation);
         } else if (repeaterIo(invocation))
           failRepeater(invocation, BotRepeaterError::Transmission,
@@ -1628,7 +1748,7 @@ struct CommandBot::Core : mesh::Mesh {
       job.ioPending = true; job.deadline = millis() + request.delayMs;
       const char *action = request.kind == BotIoRequest::Trace || request.kind == BotIoRequest::FindPath ? "action_trace" :
                            request.kind == BotIoRequest::Advert ? "action_advert" :
-                           request.kind == BotIoRequest::Send ? "action_send" :
+                           request.kind == BotIoRequest::Send || request.kind == BotIoRequest::RepeaterCommand ? "action_send" :
                            request.kind == BotIoRequest::Forward ? "action_forward" : nullptr;
       if (action) {
         const auto flags = policy.flags(job.event, action);
@@ -1649,6 +1769,9 @@ struct CommandBot::Core : mesh::Mesh {
       }
       if (request.kind == BotIoRequest::FindPath) {
         startFindPath(job); continue;
+      }
+      if (request.kind == BotIoRequest::RepeaterCommand) {
+        startRepeaterCommand(job); continue;
       }
       if (request.kind == BotIoRequest::RepeaterNext || repeaterIo(job)) {
         startRepeater(job); continue;
@@ -1866,13 +1989,23 @@ struct CommandBot::Core : mesh::Mesh {
 #endif
       if (!owner.worker_.ioCurrent(job.io.token)) {
         finishRadio(job, "Radio operation cancelled; outcome may be unknown");
+      } else if (job.io.kind == BotIoRequest::RepeaterCommand && !repeaterCommandCurrent(job)) {
+        finishRadio(job, "Repeater CLI authority revoked; remote outcome may be unknown");
+      } else if (job.io.kind == BotIoRequest::RepeaterCommand && job.result.transmitted && job.repeaterQuietAt &&
+                 (int32_t(millis() - job.repeaterQuietAt) >= 0 || int32_t(millis() - job.deadline) >= 0)) {
+        if (int32_t(millis() - job.repeaterQuietAt) < 0) job.result.truncated = true;
+        finishRadio(job, nullptr, true);
       } else if (repeaterIo(job) && (job.io.grant != repeaterGrant || !repeaterAuthority(job))) {
         failRepeater(job, BotRepeaterError::Cancelled, "Repeater grant revoked; request outcome may be unknown");
       } else if (job.io.kind == BotIoRequest::Forward && !forwardAllowed(job)) {
         finishRadio(job, "Forward grant revoked; remote outcome may be unknown");
       } else if (!meshIoCurrent(job)) {
         finishRadio(job, "Mesh grant revoked; admitted TX may already have occurred");
-      } else if (int32_t(millis() - job.deadline) >= (job.findPathWaiting ? 1 : 0)) {
+      } else if (int32_t(millis() - job.deadline) >= (job.findPathWaiting || job.repeaterCommandWaiting ? 1 : 0)) {
+        if (job.io.kind == BotIoRequest::RepeaterCommand) {
+          finishRadio(job, job.repeaterCommandWaiting ? "Repeater CLI waited 30 seconds; no command sent" :
+                      "Repeater CLI timed out; command may have applied; not retried"); continue;
+        }
         if (job.io.kind == BotIoRequest::FindPath && (job.result.transmitted || job.io.revision == 2)) {
           finishFindPath(job, false); continue;
         }
@@ -1888,6 +2021,8 @@ struct CommandBot::Core : mesh::Mesh {
                     (job.io.kind == BotIoRequest::Trace && !job.result.transmitted) ?
                     "Native TX deadline; outcome unknown" :
                     job.io.kind == BotIoRequest::Trace ? "Native TRACE timed out" : "Native packet wait timed out");
+      } else if (job.repeaterCommandWaiting) {
+        startRepeaterCommand(job);
       } else if (job.findPathWaiting) {
         const auto flags = policy.flags(job.event, "action_trace");
         if (!(flags & (job.event.targeted ? BotRadioPolicy::AddressedExecute : BotRadioPolicy::BareExecute)))
@@ -2135,6 +2270,9 @@ struct CommandBot::Core : mesh::Mesh {
   }
   void onPeerDataRecv(mesh::Packet *packet, uint8_t type, int index,
                       const uint8_t *secret, uint8_t *data, size_t size) override {
+    if (type == PAYLOAD_TYPE_TXT_MSG && size >= 6 && (data[4] >> 2) == TXT_TYPE_CLI_DATA) {
+      repeaterCommandResponse(packet, contacts[matches[index]], data, size); return;
+    }
     if (type == PAYLOAD_TYPE_RESPONSE) {
       if (!findPathResponse(packet, contacts[matches[index]], data, size))
         repeaterResponse(packet, contacts[matches[index]], data, size);
@@ -3060,8 +3198,10 @@ uint32_t CommandBot::hostWaitMs() const {
     if (job.collecting) botEarlier(wait, now, job.collectionStart + job.event.windowMs);
     else if (job.deferred) botEarlier(wait, now, job.notBefore);
     if (job.ioPending) botEarlier(wait, now, job.deadline);
-    if (job.findPathWaiting) botEarlier(wait, now,
+    if (job.findPathWaiting || job.repeaterCommandWaiting) botEarlier(wait, now,
         core_->repeaterSent ? core_->repeaterAt + 30000 : now);
+    if (job.ioPending && job.io.kind == BotIoRequest::RepeaterCommand && job.result.transmitted && job.repeaterQuietAt)
+      botEarlier(wait, now, job.repeaterQuietAt);
   }
   if (core_->reminderActive) botEarlier(wait, now, core_->reminderDeadline);
   const uint32_t scheduled = worker_.scheduleSeconds();
@@ -3504,10 +3644,10 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       const uint32_t wait = core_->repeaterSent && elapsed < 30000 ? (30000 - elapsed + 999) / 1000 : 0;
       unsigned pending = 0, waiting = 0;
       for (const auto &job : core_->invocations) {
-        pending += job.used && job.ioPending && (core_->repeaterIo(job) || job.io.kind == BotIoRequest::FindPath);
-        waiting += job.used && job.ioPending && job.findPathWaiting;
+        pending += job.used && job.ioPending && core_->repeaterRadioIo(job);
+        waiting += job.used && job.ioPending && (job.findPathWaiting || job.repeaterCommandWaiting);
       }
-      snprintf(reply, capacity, "Probe wait=%us pending=%u waiting=%u; starts share 30s; command waits 30s then probes 10s", wait, pending, waiting);
+      snprintf(reply, capacity, "Probe wait=%us pending=%u waiting=%u; starts share 30s; admission 30s; path reply 10s; CLI reply 15..60s", wait, pending, waiting);
       return;
     }
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters timing [ALIAS]"); return; }
