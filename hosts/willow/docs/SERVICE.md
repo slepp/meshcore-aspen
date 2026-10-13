@@ -426,10 +426,11 @@ worker offline and refuses an existing path. It creates new relay, room and bot
 identities, so do not use it to move a Birch node (see [MIGRATION.md](MIGRATION.md)).
 
 ```sh
-make -j2 release
+MODEM_IPV4=192.168.1.50
+PROFILE_HEX=$(python3 -c 'import struct; print(struct.pack("<IIBBBfBh", 912525000, 250000, 7, 5, 2, 1.0, 1, 0).hex())')
 ./build/hew-host-release init /path/to/private/willow \
-  --address 127.0.0.1 --port 5000 \
-  --profile c806643690d003000705020000803f010000
+  --address "$MODEM_IPV4" --port 8001 \
+  --profile "$PROFILE_HEX"
 python3 -B tools/willow.py check --state /path/to/private/willow
 python3 -B tools/willow.py run --release --state /path/to/private/willow
 ```
@@ -457,12 +458,12 @@ To write the config by hand instead, use the same keys, for example
 `worker=-` to run without the native bot. Keep the directory 0700 and the
 config 0600.
 
-Set `port` to the lab modem's TCP listener. The sample profile encodes
-912.525 MHz, BW 250 kHz, SF7, CR5, TX 2 dBm, aggregate factor 1, CAD enabled,
-and interference threshold 0. It is a **required readback**, not a request to
-change the modem. Set all 18 bytes to the intended lab configuration.
-The service sends only CONFIG GET and never claims configuration ownership.
-HELLO is opcode `0x20`; CONFIG is `0x22`. Ordinary role delays are unchanged.
+Set `MODEM_IPV4` and `port` to the shared modem's KISS TCP listener. The sample
+profile encodes 912.525 MHz, BW 250 kHz, SF7, CR5, TX 2 dBm, aggregate factor 1, CAD enabled,
+and interference threshold 0. Set the frequency, bandwidth, spreading factor,
+coding rate and transmit power in the Python expression to match your radio
+network. Willow checks this profile against the modem's settings at startup;
+it does not retune the modem.
 
 ## Native MQTT observer
 

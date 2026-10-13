@@ -1,0 +1,45 @@
+# See ../docs/CONTAINERS.md before initializing or importing state.
+x-willow: &willow
+  image: ghcr.io/slepp/meshcore-willow:0.0.9
+  platform: linux/amd64
+  user: "${WILLOW_UID:-1000}:${WILLOW_GID:-1000}"
+  init: true
+  cpus: 2
+  mem_limit: 4g
+  memswap_limit: 4g
+  restart: unless-stopped
+  stop_grace_period: 30s
+  volumes:
+    - type: bind
+      source: ${WILLOW_STATE_DIR:-./state}
+      target: /state
+      bind:
+        create_host_path: false
+
+services:
+  host:
+    <<: *willow
+    ports:
+      - "127.0.0.1:9080:9080"
+      - "127.0.0.1:5000:5000"
+  dashboard:
+    <<: *willow
+    profiles: [dashboard]
+    network_mode: service:host
+    depends_on: [host]
+    command: [build/hew-dashboard-release, /state/dashboard.conf]
+    environment:
+      MESHCORE_HOST_ADMIN_HTTP: "1"
+      MESHCORE_LAB_ADMIN_PASSWORD: ${MESHCORE_LAB_ADMIN_PASSWORD:-}
+  base:
+    <<: *willow
+    profiles: [base]
+    network_mode: service:host
+    depends_on: [host]
+    command: [build/hew-base-release, /state/base.json]
+  broker:
+    <<: *willow
+    profiles: [broker]
+    network_mode: service:host
+    depends_on: [host]
+    command: [build/hew-broker-release, /state/broker.conf]

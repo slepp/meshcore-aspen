@@ -1,0 +1,78 @@
+name: Publish Willow container
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published Willow binary release tag
+        required: true
+        default: willow-v0.0.9
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: willow-container
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'slepp/meshcore-aspen' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'willow-v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+      IMAGE: ghcr.io/slepp/meshcore-willow
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download published binary bundle
+        run: |
+          [[ "$RELEASE_TAG" =~ ^willow-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          version="${BASH_REMATCH[1]}"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "willow-v${version}-linux-x86_64.tar.gz" --dir /tmp/willow-release
+          mkdir /tmp/willow-manifest
+          tar -xzf "/tmp/willow-release/willow-v${version}-linux-x86_64.tar.gz" \
+            -C /tmp/willow-manifest --strip-components=1
+          python3 /tmp/willow-manifest/install-willow.py --bundle /tmp/willow-manifest --prefix /tmp/willow-verified
+          python3 - "$version" <<'PY'
+          import json, os, re, sys
+          manifest = json.load(open('/tmp/willow-verified/manifest.json'))
+          revision = manifest['source']['commit']
+          assert manifest['version'] == sys.argv[1]
+          assert re.fullmatch('[0-9a-f]{40}', revision)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f"VERSION={sys.argv[1]}\nSOURCE_REVISION={revision}\n")
+          PY
+          cp "/tmp/willow-release/willow-v${version}-linux-x86_64.tar.gz" hosts/willow/container/willow-bundle.tar.gz
+      - name: Build image
+        run: |
+          docker build --platform linux/amd64 --memory 4g --memory-swap 4g --cpu-period 100000 --cpu-quota 200000 \
+            --build-arg VERSION="$VERSION" --build-arg SOURCE_REVISION="$SOURCE_REVISION" \
+            --tag "$IMAGE:$VERSION" --tag "$IMAGE:sha-$SOURCE_REVISION" hosts/willow/container
+      - name: Check packaged commands
+        run: |
+          docker run --rm --cpus 2 --memory 4g --memory-swap 4g "$IMAGE:$VERSION" \
+            python3 -B tools/willow.py --version
+          docker run --rm --cpus 2 --memory 4g --memory-swap 4g "$IMAGE:$VERSION" \
+            python3 -c 'from tools.build_worker import verify; verify()'
+          docker run --rm --cpus 2 --memory 4g --memory-swap 4g \
+            --tmpfs /state:uid=1000,gid=1000,mode=0700 "$IMAGE:$VERSION" sh -ec '
+              build/hew-host-release init /state/check --address 127.0.0.1 --port 8001 \
+                --profile c806643690d003000705020000803f010000
+              python3 -B tools/willow.py check --state /state/check
+            '
+      - name: Publish version and source tags
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:sha-$SOURCE_REVISION"
+          echo "Published $IMAGE:$VERSION and $IMAGE:sha-$SOURCE_REVISION" >> "$GITHUB_STEP_SUMMARY"

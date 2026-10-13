@@ -10,6 +10,10 @@ to install without a compiler. It includes all four services, the program
 worker, dashboard page, migration tools and source. Start below, or
 [build from source](#build-from-source).
 
+For Docker, use `ghcr.io/slepp/meshcore-willow:0.0.9` with the
+[container setup and Compose example](docs/CONTAINERS.md). The same image runs
+the host, Base, dashboard or broker with private persistent state.
+
 ## Install the Linux bundle
 
 Install the runtime libraries and Python helpers. On Debian 12:
