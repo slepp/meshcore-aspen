@@ -18,7 +18,7 @@ heltec-modem-build tbeam-modem-build:
 	@test -n "$(MODEM_ENV)" || { echo "Select MODEM_ENV=TBeam_v12_SX1276_kiss_wifi_build or TBeam_v12_SX1262_kiss_wifi_build." >&2; exit 1; }
 	$(MAKE) -C $(ROOT) onchip-upstream
 	@test "$$(git -C "$(UPSTREAM)" rev-parse HEAD)" = "$(PIN)"
-	@mkdir -p "$(MODEM_BUILD)"
+	@install -d -m 700 "$(MODEM_BUILD)"
 	git -C "$(UPSTREAM)" archive "$(PIN)" | tar -x -C "$(MODEM_BUILD)"
 	git -C "$(MODEM_BUILD)" apply "$(ROOT)/firmware/shared/radio-reconfigure.patch"
 	cp wifi_kiss_main.cpp "$(MODEM_BUILD)/examples/kiss_modem/main.cpp"
