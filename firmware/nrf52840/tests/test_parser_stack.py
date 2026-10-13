@@ -24,7 +24,8 @@ class ParserStackTest(unittest.TestCase):
         self.assertEqual(worker, HERE.parent / "runtime/BotWorker.cpp")
         self.assertTrue(worker.is_file())
 
-    def check(self, depth=32, initialize=72, missing=False, nrf_words=4096, esp_bytes=16384):
+    def check(self, depth=32, initialize=72, missing=False, nrf_words=4096, esp_bytes=16384,
+              mapped_limit=True):
         scratch = HERE / ".build/native"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
@@ -57,7 +58,10 @@ class ParserStackTest(unittest.TestCase):
                 "void onchip::BotWorker::entry(void*)": 8,
                 "void onchip::BotWorker::run()": 408})
             config = root / "luaconf.h"
-            config.write_text(f"#define LUAI_MAXCCALLS {depth}\n")
+            config.write_text((HERE.parents[1] / "packages/hew-lua/native/lua/luaconf.h").read_text() +
+                              f"\n#undef HLUA_C_STACK_LIMIT\n#define HLUA_C_STACK_LIMIT {depth}\n")
+            if not mapped_limit:
+                config.write_text(config.read_text().replace("#define LUAI_MAXCCALLS HLUA_C_STACK_LIMIT", ""))
             worker = root / "BotWorker.cpp"
             worker.write_text(
                 '#ifdef ARDUINO_ARCH_ESP32\n'
@@ -94,6 +98,10 @@ class ParserStackTest(unittest.TestCase):
     def test_unsafe_depth_rejected(self):
         with self.assertRaisesRegex(ValueError, "exceeds VM task stack"):
             self.check(depth=40)
+
+    def test_unmapped_limit_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Missing staged Lua C-call limit"):
+            self.check(mapped_limit=False)
 
     def test_missing_frame_rejected(self):
         with self.assertRaisesRegex(ValueError, "Expected one ARM"):

@@ -1,8 +1,8 @@
-# Set up a public Aspen radio
+# Install Aspen on a XIAO ESP32-S3
 
-Use a Seeed XIAO ESP32S3R8 with a Wio SX1262 and the generic
-Aspen application. The application needs your **private setup record in SPIFFS
-before it starts RF or administration**.
+Run Aspen on a Seeed XIAO ESP32-S3R8 with a Wio SX1262, an antenna and
+a 2.4 GHz WiFi network. Prepare its radio profile and private credentials
+with the browser wizard or the offline USB procedure below.
 For Heltec V4 R8 or LilyGO T-Beam Supreme SX1262, follow the
 [board-specific source build and USB install](BOARDS.md); the published ZIP
 and browser installer select XIAO hardware.
@@ -11,11 +11,12 @@ For a new board, use the
 [browser setup wizard](https://ve6slp.ca/projects/meshcore/install/):
 download the published release ZIP, choose your network's radio profile and
 services, and save the private setup ZIP and combined BIN. Image preparation
-and key generation stay in your browser. Open
+and key generation stay in your browser.
+
+**First installation erases the entire board, including existing identities
+and data. Use this route for a new board.** Open
 [the MeshCore flasher](https://flasher.meshcore.io), select the private
-`-merged.bin` through **Custom Firmware**, and flash over USB.
-**This combined-image route erases the entire board, including any existing
-identities and data. Use it only for a new board.** Keep the private setup ZIP
+`-merged.bin` through **Custom Firmware**, and flash over USB. Keep the private setup ZIP
 securely: it contains credentials and the operator signing seed, not a backup
 of the radio identities created after first boot.
 
@@ -26,20 +27,19 @@ application address can overwrite the wrong OTA slot.
 
 The offline USB procedure below provisions a blank board's credentials
 without the website. This ESP32-S3 profile uses `.bin` files with esptool.
-Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
+Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.12)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
 per-node setup image. See the
 [release guide](../../release/README.md) for source builds.
 
-The current source's `public_aspen` image includes repeater, room, companion,
+The Aspen image includes repeater, room, companion,
 observer, Management, Lua/Wasm, HTTPS and the native shared-room frontend.
 Select roles, programs and network services through saved configuration.
 The companion service is TCP port 5000 when WiFi is
 enabled; KISS is port 8001. Management uses your initial password and optional
 trusted companion public key. Each on-device identity is generated locally
-after valid setup; no identity seed is in the public application or setup
-profile.
+after valid setup.
 One external KISS connection on port 8001 supports multiple logical MKISS
 ports; two companion clients and two live dashboard viewers remain available.
 The [shared-room frontend guide](../../services/shared-room/NATIVE.md) covers
@@ -108,7 +108,7 @@ Windows or macOS path.
 
 On a Linux host, install Python 3.11 or newer with its `venv` support, `unzip`
 and `tar`. Download the Aspen ZIP, manifest and SHA256SUMS from the
-[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11) into
+[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.12) into
 one new working directory. Extract the ZIP **before** checking SHA256SUMS:
 the checksums cover both the ZIP and its extracted manifest.
 
@@ -117,15 +117,15 @@ WORK="$HOME/aspen-install"
 mkdir -p "$WORK"
 cd "$WORK"
 # Put the three downloaded release files here.
-unzip aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399.zip
-sha256sum --check aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399.SHA256SUMS
-APP="$WORK/aspen-v0.1.11-xiao-esp32s3-sx1262-22354d079399"
+unzip aspen-v0.1.12-xiao-esp32s3-sx1262-985530d5507c.zip
+sha256sum --check aspen-v0.1.12-xiao-esp32s3-sx1262-985530d5507c.SHA256SUMS
+APP="$WORK/aspen-v0.1.12-xiao-esp32s3-sx1262-985530d5507c"
 mkdir "$WORK/source"
 tar -xzf "$APP/source.tar.gz" -C "$WORK/source"
 cd "$WORK/source"
 ```
 
-These filenames identify Aspen 0.1.11, source `22354d079399`. For another
+These filenames identify Aspen 0.1.12, source `985530d5507c`. For another
 Aspen release, use its own filenames and instructions; this repository also
 publishes Birch, Pine, Willow and other builds, so GitHub’s global “Latest”
 release can belong to a different product. The commands

@@ -37,8 +37,9 @@ def measure(build: Path, config: Path, worker_source: Path):
     calls = frames(lua / "ldo.c.su")
     vm = frames(build / "examples/nrfmast/onchip/BotVm.cpp.su")
     worker = frames(build / "examples/nrfmast/onchip/BotWorker.cpp.su")
-    limits = re.findall(r"^#define LUAI_MAXCCALLS (\d+)$", config.read_text(), re.MULTILINE)
-    if not limits:
+    configuration = config.read_text()
+    limits = re.findall(r"^#define HLUA_C_STACK_LIMIT (\d+)$", configuration, re.MULTILINE)
+    if not limits or not re.search(r"^#define LUAI_MAXCCALLS HLUA_C_STACK_LIMIT$", configuration, re.MULTILINE):
         raise ValueError("Missing staged Lua C-call limit")
     depth = int(limits[-1])
     stacks = re.findall(
