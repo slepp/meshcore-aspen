@@ -18,8 +18,9 @@ namespace onchip {
 // The native mesh remains the only protocol handler. Call its loop from one
 // dispatch task; this adapter's separate task owns every socket operation.
 // Keep native checkSerialInterface and offline-queue methods unchanged.
-// A reader starts at its first AppStart/sync and replays retained RAM history,
-// not a durable/exactly-once cursor. Unread eviction disconnects active readers.
+// Readers resume retained RAM history by IPv4 address and optional app name.
+// Cursors advance after complete socket writes, not queueing.
+// This is not an application acknowledgement; unread eviction disconnects readers.
 // Native RF queries share one admission lease until a matching push or SENT's
 // estimated timeout. Expiry does not cancel queued RF work; native legacy
 // peer-prefix replies cannot disambiguate late same-peer requests.
@@ -108,15 +109,21 @@ private:
     int slot = -1;
     uint32_t generation = 0;
   };
+  struct Reader {
+    uint32_t address = 0;
+    char appName[32]{};
+    uint64_t cursor = 0;
+  };
   struct Session {
     ClientInfo info;
     Frame command;
     unsigned head = 0, count = 0;
     uint32_t generation = 0;
-    uint64_t cursor = 0;
+    uint64_t cursor = 0, deliveredCursor = 0;
     uint8_t version = 0;
     bool active = false, closing = false, pending = false;
     bool appStarted = false, notified = false, cursorStarted = false;
+    bool resumeEligible = false;
   };
   struct Socket {
     int fd = -1;
@@ -154,6 +161,8 @@ private:
   void publish(const uint8_t* data, size_t size);
   void notify(unsigned slot);
   void sync(unsigned slot);
+  void startReader(unsigned slot);
+  void rememberReader(unsigned slot);
   bool matchesRFReply(const uint8_t* data, size_t size) const;
   uint64_t oldest() const;
 
@@ -171,6 +180,8 @@ private:
   int listener = -1;
   bool enabled = false, stopping = false, running = false, networkAvailable = true;
   Session clients[MaxClients];
+  Reader readers[8]{};
+  unsigned nextReader = 0;
   Socket sockets[MaxClients];
   Journal* journal = nullptr;
   uint64_t sequence = 0;

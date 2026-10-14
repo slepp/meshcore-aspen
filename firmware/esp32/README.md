@@ -946,6 +946,15 @@ See [the queued adapter contract](../shared/RemoteKissRadio.md) for lifecycle de
   client cursors; it owns version conversion, asynchronous fanout and TCP
   backpressure on its own network task. No second transport or native queue
   override is installed by the role integration.
+  Reconnecting with the same IPv4 address and app name resumes after the last
+  completely written message. Eight recent reader positions stay in RAM while
+  the companion role runs, including across WiFi outages. A new reader receives
+  retained history. Apps that omit their name resume by address. Changed
+  addresses and simultaneous clients with identical names at one address
+  receive independent history instead.
+  A native role restart clears the journal and reader positions. TCP delivery
+  does not acknowledge that an app saved a message; an interrupted connection
+  can still leave the final delivery uncertain.
   RF queries that clear native pending-request state share one admission lease;
   conflicting clients receive native `ERR/BAD_STATE`. Requester disconnection
   does not release it. Its native SENT timeout releases admission, not queued

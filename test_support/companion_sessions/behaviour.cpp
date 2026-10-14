@@ -25,6 +25,7 @@ using Clock = std::chrono::steady_clock;
 
 static std::atomic<unsigned> sendChunk{0};
 static std::atomic<unsigned> blockedPort{0};
+static std::atomic<unsigned> blockedBytes{0};
 static std::atomic<unsigned> shortWrites{0};
 static bool failJournalAllocation;
 static unsigned journalAllocations;
@@ -40,18 +41,23 @@ extern "C" void* __wrap__ZnwmRKSt9nothrow_t(size_t size, const std::nothrow_t& t
 
 extern "C" ssize_t __real_send(int, const void*, size_t, int);
 extern "C" ssize_t __wrap_send(int fd, const void* data, size_t size, int flags) {
+  bool blocked = false;
   if (flags & MSG_DONTWAIT) {
     sockaddr_in peer{};
     socklen_t length = sizeof(peer);
     if (blockedPort.load() && getpeername(fd, reinterpret_cast<sockaddr*>(&peer), &length) == 0 &&
         ntohs(peer.sin_port) == blockedPort.load()) {
-      errno = EAGAIN;
-      return -1;
+      blocked = true;
+      const unsigned allowance = blockedBytes.load();
+      if (!allowance) { errno = EAGAIN; return -1; }
+      if (size > allowance) size = allowance;
     }
     const unsigned chunk = sendChunk.load();
     if (chunk && size > chunk) { size = chunk; ++shortWrites; }
   }
-  return __real_send(fd, data, size, flags);
+  const ssize_t written = __real_send(fd, data, size, flags);
+  if (blocked && written > 0) blockedBytes.fetch_sub(written);
+  return written;
 }
 
 template<class Condition> void until(Condition condition) {
@@ -75,8 +81,14 @@ class Client {
     }
   }
 public:
-  explicit Client(uint16_t port) : fd(socket(AF_INET, SOCK_STREAM, 0)) {
+  explicit Client(uint16_t port, uint32_t sourceAddress = 0) : fd(socket(AF_INET, SOCK_STREAM, 0)) {
     REQUIRE(fd >= 0);
+    if (sourceAddress) {
+      sockaddr_in local{};
+      local.sin_family = AF_INET;
+      local.sin_addr.s_addr = htonl(sourceAddress);
+      REQUIRE(bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0);
+    }
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -327,6 +339,117 @@ void independentReplay() {
   REQUIRE(reconnected.sync() == message('B', true));
   REQUIRE(reconnected.sync() == Bytes{10});
   REQUIRE(!sessions.stats().nativeFault);
+}
+
+void namedReadersResumeAfterReconnectAndNetworkLoss() {
+  CompanionSessions sessions(0);
+  REQUIRE(sessions.begin());
+  NativeFrames native(sessions);
+  const Bytes phoneName{'i', 'O', 'S'}, otherName{'t', 'e', 's', 't'};
+  native.receive(message('A'));
+  native.receive(message('B'));
+  until([&] { return sessions.stats().collectedMessages == 2; });
+  Client phone(sessions.port()), other(sessions.port());
+  phone.handshake(3, phoneName);
+  other.handshake(3, otherName);
+  REQUIRE(phone.sync() == message('A'));
+  REQUIRE(other.sync() == message('A'));
+  REQUIRE(other.sync() == message('B'));
+  phone.disconnect();
+  until([&] { return sessions.stats().connectedClients == 1; });
+  native.receive(message('C', true));
+  until([&] { return sessions.stats().collectedMessages == 3; });
+  Client resumed(sessions.port());
+  resumed.handshake(3, phoneName);
+  REQUIRE(resumed.sync() == message('B'));
+  REQUIRE(resumed.sync() == message('C', true));
+  resumed.handshake(3, phoneName);
+  REQUIRE(resumed.sync() == Bytes{10});
+  REQUIRE(other.sync() == message('C', true));
+  sessions.setNetworkAvailable(false);
+  until([&] { return sessions.stats().connectedClients == 0; });
+  resumed.closed(); other.closed();
+  native.receive(message('D'));
+  until([&] { return sessions.stats().collectedMessages == 4; });
+  sessions.setNetworkAvailable(true);
+  Client restored(sessions.port());
+  restored.handshake(2, phoneName);
+  auto legacy = restored.sync();
+  REQUIRE(legacy[0] == 7 && legacy.back() == 'D');
+  REQUIRE(restored.sync() == Bytes{10});
+  Client anotherPhone(sessions.port(), 0x7f000002);
+  anotherPhone.handshake(3, phoneName);
+  REQUIRE(anotherPhone.sync() == message('A'));
+  anotherPhone.disconnect();
+  until([&] { return sessions.stats().connectedClients == 1; });
+  restored.disconnect();
+  until([&] { return sessions.stats().connectedClients == 0; });
+  for (unsigned i = 1; i <= CompanionSessions::JournalDepth + 1; ++i)
+    native.receive(message(i));
+  until([&] { return sessions.stats().collectedMessages == CompanionSessions::JournalDepth + 5; });
+  Client expired(sessions.port());
+  expired.handshake(3, phoneName);
+  for (unsigned i = 2; i <= CompanionSessions::JournalDepth + 1; ++i)
+    REQUIRE(expired.sync() == message(i));
+  REQUIRE(expired.sync() == Bytes{10});
+}
+
+void reconnectRetainsQueuedButUnwrittenMessages() {
+  CompanionSessions sessions(0);
+  REQUIRE(sessions.begin());
+  NativeFrames native(sessions);
+  const Bytes name{'p', 'h', 'o', 'n', 'e'};
+  Client phone(sessions.port());
+  phone.handshake(3, name);
+  native.receive(message('A'));
+  until([&] { return sessions.stats().collectedMessages == 1; });
+  REQUIRE(phone.sync() == message('A'));
+  REQUIRE(phone.sync() == Bytes{10});
+  native.receive(message('B'));
+  until([&] { return sessions.stats().collectedMessages == 2; });
+  REQUIRE(phone.frame() == Bytes{0x83});
+  blockedBytes.store(2);
+  blockedPort.store(phone.localPort());
+  phone.command({10});
+  until([&] { return sessions.stats().replayedMessages == 2; });
+  until([&] { return blockedBytes.load() == 0; });
+  phone.disconnect();
+  until([&] { return sessions.stats().connectedClients == 0; });
+  blockedPort.store(0);
+  Client resumed(sessions.port());
+  resumed.handshake(3, name);
+  REQUIRE(resumed.sync() == message('B'));
+  REQUIRE(resumed.sync() == Bytes{10});
+  resumed.disconnect();
+  until([&] { return sessions.stats().connectedClients == 0; });
+  sessions.resetNativeSession();
+  sessions.enable();
+  native.receive(message('N'));
+  until([&] { return sessions.stats().collectedMessages == 3; });
+  Client newIdentity(sessions.port());
+  newIdentity.handshake(3, name);
+  REQUIRE(newIdentity.sync() == message('N'));
+  REQUIRE(newIdentity.sync() == Bytes{10});
+}
+
+void identicalConcurrentLabelsDoNotShareResumeCursors() {
+  CompanionSessions sessions(0);
+  REQUIRE(sessions.begin());
+  NativeFrames native(sessions);
+  const Bytes name{'s', 'a', 'm', 'e'};
+  native.receive(message('A'));
+  until([&] { return sessions.stats().collectedMessages == 1; });
+  Client first(sessions.port()), second(sessions.port());
+  first.handshake(3, name);
+  REQUIRE(first.sync() == message('A'));
+  second.handshake(3, name);
+  REQUIRE(second.sync() == message('A'));
+  first.disconnect(); second.disconnect();
+  until([&] { return sessions.stats().connectedClients == 0; });
+  Client ambiguous(sessions.port());
+  ambiguous.handshake(3, name);
+  REQUIRE(ambiguous.sync() == message('A'));
+  REQUIRE(ambiguous.sync() == Bytes{10});
 }
 
 void contactsOwnershipAndReuse() {
@@ -742,8 +865,8 @@ void networkLossPreservesNativeJournal() {
   sessions.setNetworkAvailable(true);
   Client after(sessions.port());
   after.handshake();
-  REQUIRE(after.sync() == message('B'));
   REQUIRE(after.sync() == message('D'));
+  REQUIRE(after.sync() == Bytes{10});
   REQUIRE(sessions.stats().nativeResets == 0);
   REQUIRE(!sessions.stats().nativeFault);
   sessions.disable();
@@ -817,6 +940,9 @@ int main() {
   try {
     journalAllocationAndLifetime();
     independentReplay();
+    namedReadersResumeAfterReconnectAndNetworkLoss();
+    reconnectRetainsQueuedButUnwrittenMessages();
+    identicalConcurrentLabelsDoNotShareResumeCursors();
     contactsOwnershipAndReuse();
     partialIOAndMalformedFrames();
     boundedSlowClients();
@@ -828,7 +954,7 @@ int main() {
     nativeRestartRetiresClientsAndState();
     nativeRestartClearsIncompleteInternalExchange();
     networkLossPreservesNativeJournal();
-    std::puts("CompanionSessions: thirteen TCP/session behaviour scenarios passed");
+    std::puts("CompanionSessions: sixteen TCP/session behaviour scenarios passed");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "FAIL: %s\n", error.what());
     return 1;

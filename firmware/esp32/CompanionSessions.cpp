@@ -137,10 +137,13 @@ void CompanionSessions::resetNativeSession() {
   for (auto& client : clients) {
     if (client.active) client.closing = true;
     client.pending = client.appStarted = client.notified = client.cursorStarted = false;
+    client.resumeEligible = false;
     client.command = Frame{};
     client.head = client.count = client.version = 0;
-    client.cursor = 0;
+    client.cursor = client.deliveredCursor = 0;
   }
+  for (auto& reader : readers) reader = Reader{};
+  nextReader = 0;
   if (journal) {
     for (auto& frame : journal->frames) frame = Frame{};
     for (auto& output : journal->output)
@@ -232,13 +235,45 @@ void CompanionSessions::publish(const uint8_t* data, size_t size) {
   ++counters.collectedMessages;
   for (unsigned i = 0; i < MaxClients; ++i) notify(i);
 }
+void CompanionSessions::startReader(unsigned slot) {
+  auto& client = clients[slot];
+  client.cursor = oldest();
+  if (client.resumeEligible) {
+    for (unsigned i = 0; i < MaxClients; ++i) {
+      auto& other = clients[i];
+      if (i != slot && other.active && other.appStarted &&
+          other.info.address == client.info.address &&
+          !strcmp(other.info.appName, client.info.appName)) {
+        other.resumeEligible = client.resumeEligible = false;
+      }
+    }
+    for (auto& reader : readers) {
+      if (reader.address != client.info.address ||
+          strcmp(reader.appName, client.info.appName)) continue;
+      if (client.resumeEligible)
+        client.cursor = std::max(oldest(), std::min(reader.cursor, sequence));
+      else reader = Reader{};
+    }
+  }
+  client.deliveredCursor = client.cursor;
+  client.cursorStarted = true;
+}
+void CompanionSessions::rememberReader(unsigned slot) {
+  const auto& client = clients[slot];
+  if (!client.active || !client.appStarted || !client.resumeEligible) return;
+  Reader* saved = nullptr;
+  for (auto& reader : readers)
+    if (reader.address == client.info.address && !strcmp(reader.appName, client.info.appName))
+      saved = &reader;
+  if (!saved) saved = &readers[nextReader++ % (sizeof(readers) / sizeof(readers[0]))];
+  saved->address = client.info.address;
+  memcpy(saved->appName, client.info.appName, sizeof(saved->appName));
+  saved->cursor = client.deliveredCursor;
+}
 void CompanionSessions::sync(unsigned slot) {
   auto& client = clients[slot];
   client.pending = false;
-  if (!client.cursorStarted) {
-    client.cursor = oldest();
-    client.cursorStarted = true;
-  }
+  if (!client.cursorStarted) startReader(slot);
   if (client.cursor < oldest()) { drop(slot, JournalFull); return; }
   if (client.cursor == sequence) {
     enqueue(slot, &NoMessages, 1);
@@ -323,10 +358,7 @@ size_t CompanionSessions::writeFrame(const uint8_t* data, size_t size) {
     if (!enqueue(owner.slot, data, size)) return 0;
     if (code == SelfInfo && currentCommand == AppStart) {
       auto& client = clients[owner.slot];
-      if (!client.cursorStarted) {
-        client.cursor = oldest();
-        client.cursorStarted = true;
-      }
+      if (!client.cursorStarted) startReader(owner.slot);
       client.appStarted = true;
       client.notified = false;
       notify(owner.slot);
@@ -414,6 +446,12 @@ size_t CompanionSessions::checkRecvFrame(uint8_t* data) {
       data[1] = 3;
     }
     if (data[0] == AppStart && size >= 8) {
+      const size_t nameLength = strnlen(reinterpret_cast<const char*>(data + 8), size - 8);
+      if (!client.cursorStarted)
+        client.resumeEligible = nameLength < sizeof(client.info.appName);
+      else if (nameLength != strlen(client.info.appName) ||
+               memcmp(client.info.appName, data + 8, nameLength))
+        client.resumeEligible = false;
       memset(client.info.appName, 0, sizeof(client.info.appName));
       const size_t length = std::min(size - 8, sizeof(client.info.appName) - 1);
       memcpy(client.info.appName, data + 8, length);
@@ -515,6 +553,7 @@ void CompanionSessions::closeSocket(unsigned slot) {
   socket.received = socket.expected = socket.size = socket.written = 0;
   Guard guard(*this);
   auto& client = clients[slot];
+  rememberReader(slot);
   client.active = client.closing = client.pending = false;
   client.count = client.head = 0;
 }
@@ -572,7 +611,15 @@ void CompanionSessions::networkPass() {
                          MSG_DONTWAIT | MSG_NOSIGNAL);
       if (n > 0) {
         peer.written += n;
-        if (peer.written == peer.size) peer.size = peer.written = 0;
+        if (peer.written == peer.size) {
+          if (messageFrame(peer.output[3])) {
+            Guard guard(*this);
+            auto& client = clients[i];
+            if (client.active && !client.closing && client.cursorStarted)
+              ++client.deliveredCursor;
+          }
+          peer.size = peer.written = 0;
+        }
       } else if (!n || !wouldBlock()) {
         Guard guard(*this); drop(i, SocketFailure); continue;
       }
@@ -633,9 +680,10 @@ void CompanionSessions::networkPass() {
           ++client.generation;
           client.active = true;
           client.closing = client.pending = client.appStarted = client.notified = client.cursorStarted = false;
+          client.resumeEligible = false;
           client.head = client.count = 0;
           client.version = 0;
-          client.cursor = oldest();
+          client.cursor = client.deliveredCursor = oldest();
           collecting = true;
           ++counters.acceptedClients;
           slot = i;
