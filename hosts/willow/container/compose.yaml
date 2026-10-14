@@ -1,6 +1,6 @@
 # See ../docs/CONTAINERS.md before initializing or importing state.
 x-willow: &willow
-  image: ghcr.io/slepp/meshcore-willow:0.0.9
+  image: ghcr.io/slepp/meshcore-willow:0.0.10
   platform: linux/amd64
   user: "${WILLOW_UID:-1000}:${WILLOW_GID:-1000}"
   init: true

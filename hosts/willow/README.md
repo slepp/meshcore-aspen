@@ -5,12 +5,12 @@ WiFi shared modem. Add a Base companion for the MeshCore app, a browser
 dashboard and an MQTT broker. An optional observer publishes received radio
 packets to your broker.
 
-Download the [Willow 0.0.9 Linux bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.9)
+Download the [Willow 0.0.10 Linux bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.10)
 to install without a compiler. It includes all four services, the program
 worker, dashboard page, migration tools and source. Start below, or
 [build from source](#build-from-source).
 
-For Docker, use `ghcr.io/slepp/meshcore-willow:0.0.9` with the
+For Docker, use `ghcr.io/slepp/meshcore-willow:0.0.10` with the
 [container setup and Compose example](docs/CONTAINERS.md). The same image runs
 the host, Base, dashboard or broker with private persistent state.
 
@@ -23,14 +23,14 @@ sudo apt-get install python3 python3-cryptography python3-nacl \
   libssl3 libcjson1 libsodium23 libstdc++6 zlib1g ca-certificates
 ```
 
-Download `willow-v0.0.9-linux-x86_64.tar.gz` from the release above, extract it,
+Download `willow-v0.0.10-linux-x86_64.tar.gz` from the release above, extract it,
 and select a new versioned installation directory:
 
 ```sh
-tar -xzf willow-v0.0.9-linux-x86_64.tar.gz
-cd willow-v0.0.9-linux-x86_64
-python3 install-willow.py --prefix "$HOME/.local/lib/willow/0.0.9"
-cd "$HOME/.local/lib/willow/0.0.9/hosts/willow"
+tar -xzf willow-v0.0.10-linux-x86_64.tar.gz
+cd willow-v0.0.10-linux-x86_64
+python3 install-willow.py --prefix "$HOME/.local/lib/willow/0.0.10"
+cd "$HOME/.local/lib/willow/0.0.10/hosts/willow"
 ```
 
 The installer checks bundle files and never replaces an existing installation
@@ -73,7 +73,7 @@ cd hosts/willow
 python3 -B tools/willow.py --version
 ```
 
-Expected: `Willow 0.0.9`. Use the new-node initialization, check and run commands
+Expected: `Willow 0.0.10`. Use the new-node initialization, check and run commands
 above, or migrate an existing stopped node. From the repository root, `make
 willow-build` builds the host, Base, broker and dashboard without running the
 checks. The component's `make release` and `make check` targets remain available.

@@ -8,7 +8,7 @@ version and release tag; an update to one does not require updating the others.
 | Aspen | `0.1.12` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
 | Birch | `0.1.2` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
 | Pine | `0.1.1` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
-| Willow | `0.0.9` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
+| Willow | `0.0.10` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
 
 Get packages from the [GitHub releases](https://github.com/slepp/meshcore-aspen/releases).
 Source versions can be ahead of published downloads. Product tags use
