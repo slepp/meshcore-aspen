@@ -1,24 +1,32 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MeshCore host administration</title>
+<title>Willow | Host observatory</title>
+<meta name="color-scheme" content="dark light">
 <style>
-body{font:16px/1.5 system-ui,sans-serif;max-width:1000px;margin:auto;padding:24px;background:#101a28;color:#edf4ff}
-section{border:1px solid #52657e;border-radius:8px;padding:18px;margin:18px 0}button,input,select,textarea{font:inherit;margin:5px;padding:8px}
-textarea{display:block;width:95%;min-height:180px;font:14px monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}
-.warning{color:#ffd18a}.error{color:#ff9b9b}label{display:block}button:disabled{opacity:.5}a{color:#5ee0bd}
-table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px;border-bottom:1px solid #52657e}.table-scroll{overflow-x:auto}
+:root{--bg:#f3f1e9;--panel:#faf9f4;--line:#cbd3c7;--text:#26362e;--muted:#59685e;--accent:#276746;--warning:#865f12;--error:#a3372f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}main{max-width:1180px;margin:auto;padding:28px 24px 48px}
+header,.actions,nav{display:flex;align-items:center;gap:14px;flex-wrap:wrap}header{justify-content:space-between;margin-bottom:24px}header p{margin:4px 0}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}h1{font-size:30px;line-height:1.15;margin:0}h1{font-family:Georgia,serif}h2{font-size:19px;margin:0 0 12px}h3{font-size:15px;margin:0}p{margin:10px 0;max-width:90ch}a{color:var(--accent)}nav{border-bottom:1px solid var(--line);padding:0 0 14px;margin-bottom:18px}
+section{background:var(--panel);border-top:1px solid var(--line);padding:20px;margin:16px 0;scroll-margin-top:20px}button,input,select,textarea{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 10px}button{cursor:pointer;margin:4px 5px 4px 0}button:disabled{opacity:.5;cursor:not-allowed}label{display:block;margin:12px 0}label input, label select{max-width:100%}textarea{display:block;width:100%;min-height:220px;font:13px/1.5 ui-monospace,monospace;margin-top:6px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;max-height:440px;overflow:auto}code{font:12px ui-monospace,monospace}
+.warning{color:var(--warning)}.error{color:var(--error)}.muted{color:var(--muted)}.good{color:var(--accent)}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;white-space:nowrap;font-size:13px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}td:first-child,th:first-child{padding-left:0}details{margin:12px 0}summary{cursor:pointer;color:var(--muted)}.role-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.role{border-bottom:1px solid var(--line);padding:12px 0}.role p{margin:4px 0;font-size:13px}.role .state{font-size:19px}.disclosure{border:0;background:none;padding:0;margin:0;color:var(--accent);font:inherit}.signal-child{color:var(--muted)}.signal-child td:first-child{padding-left:20px}.note{font-size:12px;color:var(--muted)}#result{max-height:200px}#session{color:var(--muted)}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}
+@media(max-width:700px){main{padding:20px 12px}.role-grid{grid-template-columns:repeat(2,minmax(0,1fr))}section{padding:14px}input[size]{width:100%}}
+@media(prefers-color-scheme:dark){:root{--bg:#131b19;--panel:#19231f;--line:#35463b;--text:#edf1e8;--muted:#a8b6aa;--accent:#91c6a1;--warning:#ffd18a;--error:#ff9b9b}}
 </style></head><body>
-<h1>Host administration</h1>
-<p>Monitor host roles and configure the native bot through its existing owner console.
-The companion radio's WiFi, firmware, physical sensors and identities belong to that radio, not this host.</p>
+<main><header><div><h1>Willow</h1><p class="eyebrow">Aspen / Host observatory</p></div><div class="actions"><span id="live-state" role="status">Connecting</span><button id="live-refresh">Refresh</button><a href="/metrics">Metrics</a></div></header>
+<nav aria-label="Host sections"><a href="#overview">Host roles</a><a href="#signals">Repeater signal</a><a href="#administration">Administration</a><a href="#programs">Programs</a><a href="#backups">Backups</a></nav>
+<section id="overview"><h2>Host roles</h2><div id="role-overview" class="role-grid"></div><p class="note" id="live-updated">Waiting for host status.</p></section>
+<section id="signals"><h2>Repeater signal</h2><p id="signal-status">Waiting for packet reports.</p><div class="table-scroll" id="signal-reports"></div><p class="note">Expand a first-byte prefix to see individual windows. Means use retained sample counts; grouped P95 shows the range of prefix P95s.</p></section>
+<h2 id="administration">Administration</h2><p>Configure roles and bot programs, or download an encrypted backup.</p>
 <p class="warning">Use localhost or a trusted TLS tunnel. Plain HTTP exposes the login credential, session and source/private data.
 An authenticated session grants owner access to bot settings, source and scoped backups. Reusing a role admin password also exposes that role's credential if HTTP is intercepted.
 Never paste private keys or service credentials into the console.</p>
 <section><label>Configured host admin password or token <input id="token" type="password" autocomplete="current-password" maxlength="256"></label>
 <button id="login">Connect</button><button id="logout">Logout / forget session</button><span id="session">Disconnected</span>
 <p>Login sends this credential once; subsequent requests use a random ten-minute session retained only in this tab. Four sessions and five login attempts per minute are allowed.</p></section>
-<section><h2>Repeater signal</h2><p id="signal-status">Refresh host monitoring to read installed packet reports.</p><div class="table-scroll" id="signal-reports"></div></section>
-<section><h2>Roles and capabilities</h2><button id="monitor">Refresh host monitoring</button><pre id="monitoring"></pre>
+
+<section aria-live="polite"><button id="inspect">Inspect affected outcome</button><pre id="result"></pre>
+<p class="warning">Accepted means pending. A lost reply blocks writes in this tab; no automatic retry.
+Inspection unlocks only a matching durable source hash and terminal status. Other unknown writes require scoped readback through the owner CLI; do not repeat them.</p></section>
+<section><h2>Owner connections</h2><button id="monitor">Read owner capabilities</button><details><summary>Full status JSON</summary><pre id="monitoring"></pre></details>
 <p>Host role selection, listeners, MQTT and PHY authority remain in the operator's host configuration; activate those changes with an explicit service restart.
 This page never overwrites that configuration. Running state is shown below; bot settings and source save through native durable helpers.</p></section>
 <section><h2>Relay and room role configuration</h2>
@@ -41,7 +49,7 @@ use <code>region default ab</code> only when that role should originate ab-scope
 <label>Grant <select id="grant"><option>shared</option><option>home</option><option>reminders</option><option>channel-wait</option><option>discovery</option></select>
 <select id="grant-value"><option>off</option><option>on</option></select></label><button id="grant-save">Save grant</button>
 <p>Grant revocation fences live work; read native replies for persistence failures. HTTPS uses the already provisioned host service; this page cannot provision credentials.</p></section>
-<section><h2>Lua command source</h2><button id="source-status">Read source API and durable selection</button>
+<section id="programs"><h2>Lua command source</h2><button id="source-status">Read source API and durable selection</button>
 <label>Lua draft (1..4096 UTF-8 bytes)<textarea id="source" spellcheck="false"></textarea></label>
 <button id="draft-download">Download draft</button><button id="upload">Upload / resume exact draft</button><button id="install">Verify and install uploaded snapshot</button>
 <pre id="upload-info">No snapshot uploaded.</pre>
@@ -54,16 +62,14 @@ Backups contain private values; use <code>mast_cli.py --unix-socket … data-exp
 Whole-host encrypted exports are available below. Role identities, private keys, passwords, channel provisioning and radio retuning are not accepted as console inputs.</p>
 <p>The native MeshCore app connects to the companion TCP endpoint for chats, contacts, channels and role-specific radio administration.
 Use the local owner CLI for additional host-role settings reported by its help.</p></section>
-<section><h2>Node backup</h2>
+<section id="backups"><h2>Node backup</h2>
 <p>Download this host's role identities, configuration, configured credentials, programs and saved data, compressed and encrypted to your operator public key.
 Keep the matching private seed to inspect or extract the file with <code>tools/node_backup.py</code>. This export does not include the companion radio's state.</p>
 <label>Recipient public key<input id="backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
 <button id="backup-create">Create and download node backup</button><button id="backup-download">Download saved node backup</button>
 <pre id="backup-status">A new snapshot replaces the saved encrypted backup; host settings remain unchanged.</pre></section>
-<section aria-live="polite"><button id="inspect">Inspect affected outcome</button><pre id="result"></pre>
-<p class="warning">Accepted means pending. A lost reply blocks writes in this tab; no automatic retry.
-Inspection unlocks only a matching durable source hash and terminal status. Other unknown writes require scoped readback through the owner CLI; do not repeat them.</p></section>
-<script>
+
+</main><script>
 'use strict';
 const $=id=>document.getElementById(id);
 let token='',expires=0,busy=false,nativeOwner=false,nodeBackup=false,uncertain=false,uploaded=null,pending=null,roleOwners=[];
@@ -129,24 +135,81 @@ async function write(text){
   if(!window.confirm('Send this native setting change? A lost reply is not safe to repeat.'))return 'Cancelled; no command sent.';
   return command(text);
 }
+const expandedSignals=new Set();
 function renderPacketReports(reports){
   const container=$('signal-reports');container.replaceChildren();
-  const titles={mean_db:'SNR mean (dB)',p95_db:'SNR P95 (dB)',rssi_mean_dbm:'RSSI mean (dBm)',samples:'Samples',window:'Window',heard_total:'Heard',last_seen_ms:'Last heard (uptime ms)',last_seen_utc:'Last heard'};
+  const format=value=>Number.isFinite(value)?Number(value.toFixed(2)).toString():'—';
   for(const report of Array.isArray(reports)?reports.slice(0,2):[]){
     if(!Array.isArray(report.fields)||!Array.isArray(report.rows))continue;
-    const table=document.createElement('table'),caption=document.createElement('caption');
-    caption.textContent=`${report.name} · slot ${report.slot}`;table.appendChild(caption);
-    const head=table.createTHead().insertRow();
-    for(const name of ['Hop',...report.fields.slice(0,8)]){const cell=document.createElement('th');cell.scope='col';cell.textContent=titles[name]||name;head.appendChild(cell);}
-    const body=table.createTBody();
+    const snr=report.name==='repeater_snr',groups=new Map();
     for(const item of report.rows.slice(0,16)){
-      const row=body.insertRow();row.insertCell().textContent=item.label;
-      for(const [index,value] of (Array.isArray(item.values)?item.values:[]).slice(0,8).entries())row.insertCell().textContent=!Number.isFinite(value)?'—':report.fields[index]==='last_seen_utc'?(value>0?new Date(value*1000).toLocaleString():'Unavailable'):Number(value.toFixed(2)).toString();
+      const label=snr&&/^(?:[0-9a-f]{2}){1,3}$/i.test(item.label)?item.label.slice(0,2).toUpperCase():item.label;
+      if(!groups.has(label))groups.set(label,[]);groups.get(label).push(item);
+    }
+    const table=document.createElement('table'),head=table.createTHead().insertRow(),body=table.createTBody();
+    for(const name of snr?['Hop','Mean SNR (dB)','P95 by prefix (dB)','Mean RSSI (dBm)','Samples','Heard','Last heard']:['Label',...report.fields.slice(0,8)]){
+      const cell=document.createElement('th');cell.scope='col';cell.textContent=name;head.appendChild(cell);
+    }
+    const values=item=>Object.fromEntries(report.fields.map((name,i)=>[name,item.values?.[i]]));
+    const add=(label,v,p95,children,key,child=false)=>{
+      const row=body.insertRow();if(child)row.className='signal-child';const first=row.insertCell();first.textContent=label;
+      if(children.length>1){
+        const toggle=document.createElement('button');toggle.className='disclosure';toggle.type='button';
+        toggle.textContent=(expandedSignals.has(key)?'▾ ':'▸ ')+label+' · '+children.length;
+        toggle.setAttribute('aria-expanded',String(expandedSignals.has(key)));
+        toggle.onclick=()=>{if(expandedSignals.has(key))expandedSignals.delete(key);else expandedSignals.add(key);renderPacketReports(reports);};
+        first.textContent='';first.appendChild(toggle);
+      }
+      const age=v.last_seen_utc>0?Math.max(0,Math.floor((Date.now()/1000-v.last_seen_utc)/60))+'m ago':'—';
+      for(const value of [format(v.mean_db),p95,format(v.rssi_mean_dbm),format(v.samples)+' / '+format(v.window),format(v.heard_total),age])row.insertCell().textContent=value;
+    };
+    for(const [label,items] of [...groups].sort((a,b)=>b[1].reduce((n,r)=>n+(values(r).heard_total||0),0)-a[1].reduce((n,r)=>n+(values(r).heard_total||0),0))){
+      if(!snr){for(const item of items){const row=body.insertRow();row.insertCell().textContent=item.label;for(const v of (item.values||[]).slice(0,8))row.insertCell().textContent=format(v);}continue;}
+      const vs=items.map(values),sum=key=>vs.reduce((n,v)=>n+(Number.isFinite(v[key])?v[key]:0),0);
+      const mean=key=>{const valid=vs.filter(v=>v.samples>0&&Number.isFinite(v[key])),weight=valid.reduce((n,v)=>n+v.samples,0);return weight?valid.reduce((n,v)=>n+v[key]*v.samples,0)/weight:NaN;};
+      const p95=vs.filter(v=>v.samples>0).map(v=>v.p95_db).filter(Number.isFinite),key=report.slot+':'+label;
+      const v={mean_db:mean('mean_db'),rssi_mean_dbm:mean('rssi_mean_dbm'),samples:sum('samples'),window:sum('window'),heard_total:sum('heard_total'),last_seen_utc:Math.max(0,...vs.map(v=>v.last_seen_utc||0))};
+      add(label,v,p95.length?[...new Set([format(Math.min(...p95)),format(Math.max(...p95))])].join('…'):'—',items,key);
+      if(expandedSignals.has(key)&&items.length>1)for(const item of items)add(item.label,values(item),format(values(item).p95_db),[],key,true);
     }
     container.appendChild(table);
   }
-  $('signal-status').textContent=container.children.length?'Current packet reports. Signal history starts again when the packet worker restarts.':'No packet report is available from the current worker.';
+  $('signal-status').textContent=container.children.length?'Received flood packets, grouped by their last repeater hop.':'No repeater signal report is available.';
 }
+function renderRoles(roles){
+  const cards=[];
+  for(const [name,role] of Object.entries(roles)){
+    const card=document.createElement('article');card.className='role';
+    const title=document.createElement('h3');title.textContent=({bot:'Command bot',bot_companion:'Bot companion',companion:'Companion',observer:'Observer',repeater:'Repeater',room:'Room'})[name]||name;card.appendChild(title);
+    const state=document.createElement('p');state.className='state '+(role.state==='running'&&role.radio_connected?'good':'warning');
+    const issue=role.radio_connected===false?'Radio disconnected':role.listener_active===false?'Listener stopped':name==='observer'&&role.mqtt_connected===false?'Broker disconnected':'';
+    state.textContent=issue||role.state||'Unavailable';if(issue)state.className='state warning';card.appendChild(state);
+    const detail=document.createElement('p');detail.className='muted';
+    detail.textContent=role.observer_stats?'Observed '+role.observer_stats.observed+' · published '+role.observer_stats.published+' · queued '+role.observer_stats.queued:
+      role.role_tx?.available?'RF sent '+role.role_tx.succeeded+' · unconfirmed '+role.role_tx.unknown:
+      Number.isFinite(role.airtime_ms)?'TX airtime '+Number((role.airtime_ms/1000).toFixed(2))+' s':'Waiting for counters';
+    card.appendChild(detail);cards.push(card);
+  }
+  $('role-overview').replaceChildren(...cards);
+}
+window.addEventListener('load',()=>{
+  let timer=null,reading=false;
+  const refresh=async()=>{
+    clearTimeout(timer);timer=null;if(reading||document.hidden)return;reading=true;
+    try{
+      const response=await fetch('/status',{cache:'no-store',credentials:'omit',redirect:'error',signal:AbortSignal.timeout(5000)});
+      if(!response.ok)throw Error('Host status returned HTTP '+response.status);
+      const roles=await response.json();renderRoles(roles);renderPacketReports(roles.bot?.packet_reports);
+      $('live-state').textContent='Live';$('live-state').className='good';
+      const modem=Object.values(roles).find(role=>role.telemetry?.has_counters)?.telemetry.counters;
+      $('live-updated').textContent='Updated '+new Date().toLocaleTimeString()+(modem?' · Shared modem RX '+modem.PacketsRecv+' / TX '+modem.PacketsSent:'');
+    }catch(error){$('live-state').textContent='Stale';$('live-state').className='warning';$('live-updated').textContent=error.message+'; showing the last received status.';}
+    finally{reading=false;if(!document.hidden)timer=setTimeout(refresh,5000);}
+  };
+  $('live-refresh').onclick=refresh;
+  document.addEventListener('visibilitychange',()=>{clearTimeout(timer);timer=null;if(!document.hidden)refresh();});
+  refresh();
+});
 async function monitor(){
   const value=JSON.parse(await request('/admin/status'));
   nativeOwner=value.capabilities.native_owner===true;
@@ -157,6 +220,7 @@ async function monitor(){
   for(const role of roleOwners){const option=document.createElement('option');option.value=role;option.textContent=role;$('host-role').appendChild(option);}
   if(roleOwners.includes(selected))$('host-role').value=selected;
   $('monitoring').textContent=JSON.stringify(value,null,2);
+  renderRoles(value.roles||{});
   renderPacketReports(value.roles?.bot?.packet_reports);
   return 'Monitoring connected. Native bot owner '+(nativeOwner?'available':'disabled')+'; role owners: '+(roleOwners.join(', ')||'unavailable')+'.';
 }

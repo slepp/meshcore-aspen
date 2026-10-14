@@ -17,8 +17,8 @@ requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.11** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.11`,
+New source builds use the **Aspen 0.1.12** product version, based on MeshCore
+1.17.1. `ver` and companion device information report `aspen-0.1.12`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
@@ -30,6 +30,27 @@ See the [release guide](../../release/README.md) for tags, manifests and builds.
 For a host-based setup, use the [Go guide](../../HOST_GUIDE.md).
 For nRF native notes/BLE, use the [nRF guide](../nrf52840/README.md);
 the ESP32 Lua images below do not run on nRF.
+
+## Radio dashboard
+
+Open `http://NODE_IP/` to see the radio profile, available companion slots,
+repeater signals and recent packets. Use **Administration** for settings,
+programs, backups and application updates.
+
+With the repeater signal sampler installed, matching first-byte prefixes share
+one row: `CC`, `CC26` and `CC268A` appear under `CC`. Expand the row to see each
+prefix. Means are weighted by retained sample count; grouped P95 shows the range
+of individual P95 values. Sparklines track mean SNR while the page is open.
+
+**Mesh paths** connects hops from complete received flood paths. Node size and
+link width show observation frequency; coloured links show the final hop's
+measured SNR. The diagram shows up to 24 frequent first-byte prefixes from the
+latest packet window; **Observed links** lists every observed link. Hover a
+node to see its full observed prefixes. These prefixes can match multiple nodes.
+
+In **Recent activity**, each packet shows its type, route and visible envelope.
+Expand **Bytes** for the colour-coded wire preview. Encrypted message contents
+remain encrypted.
 
 ## Choose an image
 

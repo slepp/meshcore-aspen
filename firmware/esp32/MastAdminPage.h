@@ -7,12 +7,12 @@ static const char MastAdminPage[] = R"html(<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light"><title>MeshCore mast administration</title>
 <style>
-:root{--bg:#0b1220;--panel:#131e30;--border:#2a3b53;--text:#edf4ff;--muted:#a6b7ce;--ok:#5ee0bd;--warn:#ffd18a;--bad:#ff9b9b}
+:root{--bg:#131b19;--panel:#19231f;--border:#35463b;--text:#edf1e8;--muted:#a8b6aa;--ok:#91c6a1;--warn:#ffd18a;--bad:#ff9b9b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
-main{max-width:1120px;margin:auto;padding:24px 18px 48px}h1{margin:0;font-size:28px}h2{font-size:20px;margin:0 0 12px}h3{font-size:16px}
+main{max-width:1120px;margin:auto;padding:24px 18px 48px}h1{margin:0;font: bold 28px Georgia,serif}h2{font-size:20px;margin:0 0 12px}h3{font-size:16px}
 a{color:var(--ok)}p{margin:10px 0}.muted,small{color:var(--muted)}.warning{color:var(--warn)}.error{color:var(--bad)}.success{color:var(--ok)}
 header,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}header{justify-content:space-between}
-section,.notice{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin:18px 0}
+section,.notice{background:var(--panel);border-top:1px solid var(--border);padding:20px;margin:18px 0}
 nav{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0}fieldset{border:0;padding:0;margin:0;min-width:0}
 button,input,select,textarea{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 10px}
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}label{display:block;margin:10px 0}
@@ -25,9 +25,9 @@ code{overflow-wrap:anywhere}details{margin:14px 0}summary{cursor:pointer}#sessio
 nav{position:sticky;top:0;background:var(--bg);padding:12px 0;z-index:1}section{scroll-margin-top:72px}
 :focus-visible{outline:2px solid #88c6ff;outline-offset:3px}[hidden]{display:none!important}
 @media(max-width:680px){.grid,.fields{grid-template-columns:1fr}main{padding:18px 12px}section{padding:14px}}
-@media(prefers-color-scheme:light){:root{--bg:#f2f5fa;--panel:#fff;--border:#d3ddeb;--text:#18283e;--muted:#52657e;--ok:#007b62;--warn:#926000;--bad:#b33232}}
+@media(prefers-color-scheme:light){:root{--bg:#f3f1e9;--panel:#faf9f4;--border:#cbd3c7;--text:#26362e;--muted:#59685e;--ok:#276746;--warn:#926000;--bad:#b33232}}
 </style></head><body><main>
-<header><div><h1>Mast administration</h1><p class="muted">Configure roles, radio settings and bot programs</p></div><a href="/">Radio stats</a></header>
+<header><div><h1>Aspen administration</h1><p class="muted">Roles, radio settings and bot programs</p></div><a href="/">Radio observatory</a></header>
 <p class="notice warning">This connection is unencrypted. Use a trusted LAN or an encrypted tunnel.</p>
 <section aria-label="Admin login"><form id="login-form" class="actions">
 <label>Admin password <input id="password" type="password" maxlength="15" autocomplete="current-password" required></label>

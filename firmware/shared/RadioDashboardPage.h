@@ -11,8 +11,8 @@ static const char RADIO_DASHBOARD_PAGE[] = R"HTML(<!doctype html>
 <title>MeshCore radio stats</title>
 <style>
 :root {
-  --bg: #0b1220; --panel: #131e30; --panel-alt: #19263b; --border: #2a3b53;
-  --text: #edf4ff; --muted: #a6b7ce; --tx: #5ee0bd; --rx: #aeb3ff;
+  --bg: #131b19; --panel: #19231f; --panel-alt: #25332c; --border: #35463b;
+  --text: #edf1e8; --muted: #a8b6aa; --tx: #91c6a1; --rx: #b1bfd1;
   --warn: #ffd18a; --bad: #ff9b9b; --focus: #88c6ff;
   --field-header: #ffd18a; --field-route: #c5a7ff; --field-src: #88c6ff;
   --field-dst: #ffb38a; --field-mac: #f5a6d6;
@@ -23,13 +23,14 @@ main { max-width: 1320px; margin: auto; padding: 30px 24px 48px; }
 header, .section-head, .actions, .legend, .key-value { display: flex; align-items: center; gap: 12px; }
 header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 24px; }
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; max-width: 100%; }
-.mark { border: 1px solid var(--tx); border-radius: 12px; padding: 8px 13px; color: var(--tx); font: bold 22px monospace; }
+.mark { color: var(--tx); font: 38px/1 Georgia, serif; }
 h1 { font-size: clamp(22px, 3vw, 30px); line-height: 1.15; margin: 0 0 5px; overflow-wrap: anywhere; }
+h1 { font-family: Georgia, serif; }
 h2 { font-size: 16px; margin: 0; }
 p { margin: 0; }
 .muted, .eyebrow, small { color: var(--muted); }
 .eyebrow { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; }
-.pill { display: inline-block; padding: 3px 10px; border: 1px solid var(--border); border-radius: 20px; font-size: 12px; white-space: nowrap; }
+.pill { display: inline-block; padding: 3px 8px; border-left: 2px solid currentColor; font-size: 12px; white-space: nowrap; }
 .good { color: var(--tx); } .warning { color: var(--warn); } .bad { color: var(--bad); }
 button, select { font: inherit; color: var(--text); background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
 button { cursor: pointer; } button:disabled { opacity: .55; cursor: wait; }
@@ -41,7 +42,7 @@ details { margin-top: 10px; } summary { cursor: pointer; color: var(--muted); }
 .grid { display: grid; gap: 16px; }
 .summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
 .two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-width: 0; }
+.card { background: var(--panel); border-top: 1px solid var(--border); padding: 18px; min-width: 0; }
 .number { font-size: 29px; line-height: 1.3; font-variant-numeric: tabular-nums; margin: 6px 0; }
 .section-head { justify-content: space-between; flex-wrap: wrap; margin-bottom: 16px; }
 .key-value { justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
@@ -66,7 +67,25 @@ tr:last-child td { border-bottom: 0; }
 code { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
 #events td { vertical-align: top; padding: 6px 8px; font-variant-numeric: tabular-nums; }
 #events td:first-child { padding-left: 0; }
-.packet-detail { white-space: pre-line; min-width: 32em; max-width: 44em; font-size: 12px; line-height: 1.3; }
+.packet-detail { min-width: 24em; max-width: 44em; font-size: 12px; line-height: 1.35; }
+.packet-heading { display: block; font-size: 13px; color: var(--text); }
+.packet-route { display: block; color: var(--muted); }
+.packet-route:last-of-type { display: inline; }
+.packet-detail details { display: inline-block; margin: 0 0 0 10px; vertical-align: top; }
+.packet-detail details[open] { display: block; margin: 8px 0; }
+.packet-detail summary { font-size: 11px; }
+.disclosure { padding: 0; border: 0; background: none; font: inherit; color: var(--tx); text-align: left; }
+.signal-child { color: var(--muted); }
+.signal-child td:first-child { padding-left: 22px; }
+.spark { width: 100px; height: 26px; display: block; color: var(--tx); }
+.spark polyline { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.signal-note { font-size: 12px; max-width: 85ch; margin: 8px 0; }
+#topology { width: 100%; height: auto; max-height: 390px; color: var(--muted); }
+.topology-edge { stroke: var(--muted); opacity: .45; }
+.topology-edge.strong { stroke: var(--tx); opacity: .85; }
+.topology-edge.weak { stroke: var(--warn); opacity: .8; }
+.topology-node { fill: var(--panel-alt); stroke: var(--tx); stroke-width: 1.5; }
+.topology-label { fill: var(--text); font: 16px ui-monospace, monospace; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
 .packet-bytes { display: block; white-space: normal; min-width: 20em; max-width: 30em; line-height: 1.5; }
 .packet-bytes span { display: inline-block; margin-right: .4em; }
 .packet-bytes span:last-child { margin-right: 0; }
@@ -88,8 +107,8 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
 @media (max-width: 850px) { .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .two { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { main { padding: 20px 12px; } .card { padding: 15px; } .number { font-size: 23px; } .actions { flex-wrap: wrap; } }
 @media (prefers-color-scheme: light) {
-  :root { --bg: #f2f5fa; --panel: #fff; --panel-alt: #edf2f9; --border: #d3ddeb; --text: #18283e;
-    --muted: #52657e; --tx: #007b62; --rx: #6350b5; --warn: #926000; --bad: #b33232; --focus: #176eb5; }
+  :root { --bg: #f3f1e9; --panel: #faf9f4; --panel-alt: #e7ece3; --border: #cbd3c7; --text: #26362e;
+    --muted: #59685e; --tx: #276746; --rx: #4d6382; --warn: #926000; --bad: #b33232; --focus: #176eb5; }
   :root { --field-header: #926000; --field-route: #6841a5; --field-src: #176eb5; --field-dst: #a34215; --field-mac: #9a2973; }
 }
 </style>
@@ -97,8 +116,8 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
 <body>
 <main>
   <header>
-    <div class="brand"><div class="mark" aria-hidden="true">M</div><div>
-      <h1 id="device-name">MeshCore Radio</h1><p class="muted">Radio stats</p>
+    <div class="brand"><div class="mark" aria-hidden="true">A</div><div>
+      <h1 id="device-name">MeshCore Radio</h1><p class="eyebrow">Aspen / Radio observatory</p>
     </div></div>
     <div class="actions">
       <a id="admin-link" href="/admin" hidden>Administration</a>
@@ -109,6 +128,7 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
   </header>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
   <noscript><p class="notice">Enable JavaScript for live updates, or view <a href="/api/status">status JSON</a>.</p></noscript>
+  <nav class="legend wide" aria-label="Dashboard sections"><a href="#packet-report-panel">Repeater signal</a><a href="#topology-panel">Mesh paths</a><a href="#activity-panel">Packet decoder</a><a href="#connections">Connections</a></nav>
 
   <section class="grid summary" aria-label="Radio overview">
     <article class="card"><p class="eyebrow">Radio profile</p><p id="frequency" class="number">-</p><p id="modulation" class="muted">Awaiting profile</p></article>
@@ -118,6 +138,11 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
     <article class="card"><p class="eyebrow">KISS clients</p><p id="client-count" class="number">-</p><p id="owner" class="muted">-</p>
       <div id="companion-overview" hidden><p class="eyebrow">Companion clients</p><p id="companion-count" class="number">-</p><p id="companion-status" role="status">-</p></div></article>
     <article class="card"><p class="eyebrow">Transmit queue</p><p id="queue" class="number">-</p><p id="radio-state" class="muted">Waiting for status</p></article>
+  </section>
+
+  <section id="packet-report-panel" class="card wide" hidden>
+    <div class="section-head"><h2>Repeater signal</h2><span class="muted">Heard over RF</span></div>
+    <div id="packet-reports"></div>
   </section>
 
   <div class="grid two">
@@ -163,9 +188,11 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
       <table><thead><tr><th>Role</th><th>Name</th><th>Status</th><th>Identity</th><th>Radio session</th></tr></thead><tbody id="roles"></tbody></table>
     </div>
   </section>
-  <section id="packet-report-panel" class="card wide" hidden>
-    <div class="section-head"><h2>Packet reports</h2></div>
-    <div id="packet-reports"></div>
+  <section id="topology-panel" class="card wide">
+    <div class="section-head"><h2>Mesh paths</h2><span id="topology-status" class="muted"></span></div>
+    <div class="scroll" tabindex="0" aria-label="Mesh path diagram"><svg id="topology" style="min-width:700px" viewBox="0 0 900 340" role="img" aria-label="Observed repeater paths"></svg></div>
+    <p class="signal-note muted">Arrows follow received flood paths toward this radio. Larger nodes and thicker links appear more often in the recent packet window. Green / amber links show last-hop mean SNR above / below 0 dB; grey links have no measured signal. Prefixes share their first byte.</p>
+    <details><summary>Observed links</summary><div class="scroll"><table><thead><tr><th>From</th><th>To</th><th>Observations</th><th>Last-hop SNR</th></tr></thead><tbody id="topology-links"></tbody></table></div></details>
   </section>
   <section id="companion-panel" class="card wide" hidden>
     <div class="section-head"><h2>Connected companions</h2><span id="companion-endpoint" class="muted"></span></div>
@@ -175,19 +202,19 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
     </div>
     <p id="companion-empty" class="empty">No connected companions.</p>
   </section>
-  <section class="card wide">
+  <section id="connections" class="card wide">
     <div class="section-head"><h2>Connected KISS clients</h2></div>
     <div class="scroll" tabindex="0" aria-label="Connected KISS clients">
       <table><thead><tr><th>Client</th><th>Session</th><th>Protocol</th><th>Airtime factor</th><th>TX allowance</th><th>TX airtime</th></tr></thead><tbody id="clients"></tbody></table>
     </div>
     <p id="clients-empty" class="empty">No connected KISS clients.</p>
   </section>
-  <section class="card">
+  <section id="activity-panel" class="card">
     <div class="section-head"><div><h2>Recent activity</h2><p id="history-detail" class="muted">-</p></div>
       <label class="muted">Show <select id="filter"><option value="all">All events</option><option value="rx">RX only</option><option value="tx">TX only</option></select></label>
     </div>
     <div class="scroll" tabindex="0" aria-label="Recent packet events">
-      <table><thead><tr><th>Age</th><th>RF</th><th>Bytes / source</th><th>Queue</th><th>Air</th><th title="RSSI (dBm) / SNR (dB)">RSSI / SNR</th><th>Packet / route</th><th>Hex</th></tr></thead><tbody id="events"></tbody></table>
+      <table><thead><tr><th>Age</th><th>RF</th><th>Bytes / source</th><th>Queue</th><th>Air</th><th title="RSSI (dBm) / SNR (dB)">RSSI / SNR</th><th>Decoded packet</th></tr></thead><tbody id="events"></tbody></table>
     </div>
     <p id="events-empty" class="empty">No matching events yet.</p>
     <details class="chart-note"><summary>Decode key</summary>
@@ -468,6 +495,7 @@ function chart(id, bins, fields, airtime) {
 }
 
 let eventSignature = null, eventAges = [];
+const openPacketBytes = new Set();
 function renderEvents(data) {
   const filter = byId('filter').value;
   const signature = JSON.stringify([filter, data.history.events, (data.roles || []).map(r =>
@@ -485,6 +513,7 @@ function renderEvents(data) {
     (identities.incomplete ? ' (incomplete).' : '.') :
     'Companion contacts unavailable; using on-device names.');
   const rows = [];
+  const retainedBytes = new Set();
   eventAges = [];
   for (const e of data.history.events) {
     if (filter !== 'all' && e.direction !== filter) continue;
@@ -510,56 +539,243 @@ function renderEvents(data) {
     const rssi = cell(row, signal ? number(e.rssi_dbm) + ' / ' + number(e.snr_db) : '-');
     rssi.title = 'RSSI (dBm) / SNR (dB)';
     const fields = [];
-    cell(row, decodePacket(e, identities, fields), 'packet-detail');
-    const td = document.createElement('td'); td.appendChild(packetBytes(e, fields)); row.appendChild(td);
+    const decoded = decodePacket(e, identities, fields).split('\n');
+    const td = cell(row, '', 'packet-detail');
+    decoded.forEach((line, i) => {
+      const part = document.createElement(i ? 'span' : 'strong');
+      part.className = i ? 'packet-route' : 'packet-heading';
+      part.textContent = line; td.appendChild(part);
+    });
+    const bytes = document.createElement('details'), summary = document.createElement('summary');
+    const packetKey = e.sequence + ':' + e.at_ms;
+    retainedBytes.add(packetKey); bytes.open = openPacketBytes.has(packetKey);
+    bytes.ontoggle = () => { if (bytes.open) openPacketBytes.add(packetKey); else openPacketBytes.delete(packetKey); };
+    summary.textContent = 'Bytes · ' + Math.min(e.length, 16) + ' of ' + e.length;
+    bytes.appendChild(summary); bytes.appendChild(packetBytes(e, fields)); td.appendChild(bytes);
     rows.push(row);
   }
   byId('events').replaceChildren(...rows);
   byId('events-empty').hidden = rows.length !== 0;
   eventSignature = signature;
+  for (const key of openPacketBytes) if (!retainedBytes.has(key)) openPacketBytes.delete(key);
 }
 
+const expandedSignals = new Set(), signalHistory = new Map();
+let signalUptime = 0, signalSignature = '', signalAges = [];
+function signalAge(v, data) {
+  return v.last_seen_utc > 0 ? activityAge(Date.now() - v.last_seen_utc * 1000) :
+    Number.isFinite(v.last_seen_ms) ? activityAge(((data.uptime_ms % 4294967296) - v.last_seen_ms + 4294967296) % 4294967296) : '—';
+}
+function signalGroups(report) {
+  const groups = new Map();
+  for (const item of report.rows) {
+    const label = /^(?:[0-9a-f]{2}){1,3}$/i.test(item.label) ? item.label.slice(0, 2).toUpperCase() : item.label;
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(item);
+  }
+  return [...groups].map(([label, rows]) => {
+    const values = rows.map(row => Object.fromEntries(report.fields.map((name, i) => [name, row.values[i]])));
+    const sum = key => values.reduce((n, v) => n + (Number.isFinite(v[key]) ? v[key] : 0), 0);
+    const mean = key => {
+      const valid = values.filter(v => v.samples > 0 && Number.isFinite(v[key]));
+      const weight = valid.reduce((n, v) => n + v.samples, 0);
+      return weight ? valid.reduce((n, v) => n + v[key] * v.samples, 0) / weight : NaN;
+    };
+    const p95 = values.filter(v => v.samples > 0).map(v => v.p95_db).filter(Number.isFinite);
+    return {label, rows, samples: sum('samples'), window: sum('window'), heard_total: sum('heard_total'),
+      mean_db: mean('mean_db'), rssi_mean_dbm: mean('rssi_mean_dbm'),
+      p95: p95.length ? [Math.min(...p95), Math.max(...p95)] : [],
+      last_seen_utc: Math.max(0, ...values.map(v => v.last_seen_utc || 0))};
+  }).sort((a, b) => b.heard_total - a.heard_total);
+}
+function sparkline(key, value, at, revision) {
+  let series = signalHistory.get(key) || [];
+  if (Number.isFinite(value) && Number.isFinite(at) && at > 0 &&
+      (!series.length || series[series.length - 1].revision !== revision)) {
+    if (series.length && at < series[series.length - 1].at) series = [];
+    series.push({value, at, revision});
+    series = series.slice(-60); signalHistory.set(key, series);
+  }
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 26'); svg.setAttribute('class', 'spark');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', series.length < 2 ? 'Waiting for another signal observation' :
+    'Mean SNR while this page is open: ' + number(series[0].value) + ' to ' + number(series[series.length - 1].value) + ' dB');
+  if (series.length > 1) {
+    const min = Math.min(...series.map(p => p.value)) - .5, max = Math.max(...series.map(p => p.value)) + .5;
+    const span = Math.max(1, series[series.length - 1].at - series[0].at);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    path.setAttribute('points', series.map(p =>
+      (2 + 96 * (p.at - series[0].at) / span).toFixed(1) + ',' +
+      (24 - 22 * (p.value - min) / (max - min)).toFixed(1)).join(' '));
+    svg.appendChild(path);
+  }
+  return svg;
+}
 function renderPacketReports(data) {
+  if (data.uptime_ms < signalUptime) { signalHistory.clear(); signalSignature = ''; }
+  signalUptime = data.uptime_ms;
+  const signature = JSON.stringify([data.packet_reports, [...expandedSignals]]);
+  if (signature === signalSignature) {
+    for (const [td, v] of signalAges) td.textContent = signalAge(v, data);
+    return;
+  }
+  signalSignature = signature; signalAges = [];
+  const focused = document.activeElement?.id;
+  const retained = new Set();
   const sections = (data.packet_reports || []).map(report => {
     const section = document.createElement('section');
     const snr = report.name === 'repeater_snr';
     const title = document.createElement('h3');
-    title.textContent = snr ? 'Nearby repeater SNR' : report.name;
+    title.textContent = snr ? 'Nearby repeaters' : report.name;
     section.appendChild(title);
     const detail = document.createElement('p'); detail.className = 'muted';
     detail.textContent = snr ?
-      'Received flood packets grouped by their last repeater hop. Average and P95 use the last ' +
-      (report.rows.length ? report.rows[0].values[report.fields.indexOf('window')] : 256) +
-      ' samples per hop. Samples reset when the program reloads or Aspen restarts.' : 'Packet slot ' + report.slot;
+      'Last repeater hops, grouped by first byte. Expand a prefix to see its individual signal windows.' : 'Packet slot ' + report.slot;
     section.appendChild(detail);
     const scroll = document.createElement('div'); scroll.className = 'scroll'; scroll.setAttribute('tabindex', '0');
     const table = document.createElement('table');
     const head = document.createElement('thead'), heading = document.createElement('tr');
-    const columns = snr ? ['Repeater hop', 'Samples', 'Heard', 'Average SNR', 'P95 SNR', 'Average RSSI', 'Last heard'] : ['Label', ...report.fields];
+    const columns = snr ? ['Hop', 'Samples', 'Heard', 'Mean SNR', 'P95 by prefix', 'Mean RSSI', 'SNR trend', 'Last heard'] : ['Label', ...report.fields];
     for (const name of columns) { const th = document.createElement('th'); th.textContent = name; heading.appendChild(th); }
     head.appendChild(heading); table.appendChild(head);
     const body = document.createElement('tbody');
-    for (const item of report.rows) {
-      const row = document.createElement('tr'); cell(row, item.label);
-      if (snr) {
-        const v = Object.fromEntries(report.fields.map((name, i) => [name, item.values[i]]));
-        cell(row, number(v.samples) + ' / ' + number(v.window)); cell(row, number(v.heard_total));
-        cell(row, number(v.mean_db) + ' dB'); cell(row, number(v.p95_db) + ' dB');
-        cell(row, number(v.rssi_mean_dbm) + ' dBm');
-        cell(row, activityAge(((data.uptime_ms % 4294967296) - v.last_seen_ms + 4294967296) % 4294967296));
-      } else for (const value of item.values) cell(row, number(value));
+    const signalRow = (item, v, key, child = false) => {
+      const row = document.createElement('tr'); if (child) row.className = 'signal-child';
+      const label = cell(row, item.label);
+      if (item.rows && item.rows.length > 1) {
+        const toggle = document.createElement('button'); toggle.className = 'disclosure'; toggle.type = 'button';
+        toggle.id = 'signal-' + key;
+        toggle.textContent = (expandedSignals.has(key) ? '▾ ' : '▸ ') + item.label + ' · ' + item.rows.length;
+        toggle.setAttribute('aria-expanded', String(expandedSignals.has(key)));
+        toggle.onclick = () => { if (expandedSignals.has(key)) expandedSignals.delete(key); else expandedSignals.add(key); renderPacketReports(data); };
+        label.textContent = ''; label.appendChild(toggle);
+      }
+      const metric = (value, unit) => Number.isFinite(value) ? number(Math.round(value * 100) / 100) + unit : '—';
+      cell(row, number(v.samples) + ' / ' + number(v.window)); cell(row, number(v.heard_total));
+      cell(row, metric(v.mean_db, ' dB'));
+      cell(row, item.p95 ? item.p95.map(p => metric(p, '')).filter((p, i, a) => i === 0 || p !== a[0]).join('…') + (item.p95.length ? ' dB' : '—') : metric(v.p95_db, ' dB'));
+      cell(row, metric(v.rssi_mean_dbm, ' dBm'));
+      retained.add(key);
+      cell(row, '').appendChild(sparkline(key, v.mean_db, v.last_seen_utc,
+        JSON.stringify(item.rows ? item.rows.map(r => r.values) : item.values)));
+      signalAges.push([cell(row, signalAge(v, data)), v]);
       body.appendChild(row);
+    };
+    if (snr) for (const group of signalGroups(report)) {
+      const key = report.slot + ':' + group.label;
+      // Record every child on updates, so expanding does not start its trend from scratch.
+      for (const item of group.rows) {
+        const v = Object.fromEntries(report.fields.map((name, i) => [name, item.values[i]]));
+        const childKey = key + ':' + item.label; retained.add(childKey);
+        sparkline(childKey, v.mean_db, v.last_seen_utc, JSON.stringify(item.values));
+      }
+      signalRow(group, group, key);
+      if (expandedSignals.has(key) && group.rows.length > 1) for (const item of group.rows)
+        signalRow(item, Object.fromEntries(report.fields.map((name, i) => [name, item.values[i]])), key + ':' + item.label, true);
+    } else for (const item of report.rows) {
+      const row = document.createElement('tr'); cell(row, item.label);
+      for (const value of item.values) cell(row, number(value)); body.appendChild(row);
     }
     table.appendChild(body); scroll.appendChild(table); section.appendChild(scroll);
     if (snr) {
       const note = document.createElement('p'); note.className = 'muted chart-note';
-      note.textContent = 'Most frequently heard retained hops appear first. Direct-route packets are excluded. Hop prefixes can collide.';
+      note.textContent = 'Means are weighted by retained sample count. Grouped P95 shows the range of prefix P95s. Trends follow mean SNR while this page is open (last 60 observations). Prefixes can represent more than one node; direct packets are excluded.';
       section.appendChild(note);
     }
     return section;
   });
   byId('packet-reports').replaceChildren(...sections);
   byId('packet-report-panel').hidden = sections.length === 0;
+  if (focused?.startsWith('signal-')) byId(focused)?.focus();
+  for (const key of signalHistory.keys()) if (!retained.has(key)) signalHistory.delete(key);
+  for (const key of expandedSignals) if (!retained.has(key)) expandedSignals.delete(key);
+}
+
+function observedTopology(events) {
+  const nodes = new Map(), edges = new Map();
+  let paths = 0;
+  for (const event of events) {
+    if (event.direction !== 'rx' || typeof event.preview_hex !== 'string' ||
+        !/^(?:[0-9a-f]{2}){2,16}$/i.test(event.preview_hex)) continue;
+    const raw = event.preview_hex.match(/../g).map(byte => parseInt(byte, 16));
+    const route = raw[0] & 3, offset = route === 0 ? 5 : 1;
+    if ((route !== 0 && route !== 1) || raw[0] >> 6 || raw.length <= offset) continue;
+    const width = (raw[offset] >> 6) + 1, count = raw[offset] & 63, end = offset + 1 + width * count;
+    if (width > 3 || !count || width * count > 64 || end > raw.length || end >= event.length) continue;
+    const path = [];
+    for (let i = 0; i < count; i++) {
+      const prefix = event.preview_hex.slice((offset + 1 + i * width) * 2, (offset + 1 + (i + 1) * width) * 2).toUpperCase();
+      const label = prefix.slice(0, 2);
+      if (!nodes.has(label)) nodes.set(label, {label, prefixes: new Set(), count: 0, distance: 0});
+      const node = nodes.get(label); node.prefixes.add(prefix); node.count++; node.distance += count - i;
+      path.push(label);
+    }
+    path.push('radio'); paths++;
+    for (let i = 1; i < path.length; i++) {
+      if (path[i - 1] === path[i]) continue;
+      const key = path[i - 1] + ':' + path[i];
+      if (!edges.has(key)) edges.set(key, {from: path[i - 1], to: path[i], count: 0, signal: 0, measured: 0});
+      const edge = edges.get(key); edge.count++;
+      if (i === path.length - 1 && Number.isFinite(event.snr_db) && Number.isFinite(event.rssi_dbm) &&
+          !(event.snr_db === -32 && event.rssi_dbm === 127)) {
+        edge.signal += event.snr_db; edge.measured++;
+      }
+    }
+  }
+  return {nodes: [...nodes.values()], edges: [...edges.values()], paths};
+}
+let topologySignature = '';
+function renderTopology(data) {
+  const signature = JSON.stringify(data.history.events);
+  if (signature === topologySignature) return;
+  topologySignature = signature;
+  const graph = observedTopology(data.history.events), svg = byId('topology');
+  svg.replaceChildren();
+  text('topology-status', graph.paths + ' flood paths / latest ' + data.history.events.length + ' events');
+  svg.setAttribute('aria-label', graph.paths ? 'Observed mesh: ' + graph.nodes.length + ' prefixes, ' + graph.edges.length + ' directed links' : 'Waiting for complete received flood paths');
+  svg.style.display = graph.paths ? '' : 'none';
+  const draw = (tag, attributes, content) => {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+    if (content !== undefined) element.textContent = content;
+    return element;
+  };
+  const defs = draw('defs', {}), marker = draw('marker', {id: 'path-arrow', viewBox: '0 0 10 10', refX: 10, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse'});
+  marker.appendChild(draw('path', {d: 'M0 0L10 5L0 10z', fill: 'currentColor'})); defs.appendChild(marker); svg.appendChild(defs);
+  const positions = new Map([['radio', {x: 450, y: 170, radius: 13}]]);
+  const shown = graph.nodes.sort((a, b) => b.count - a.count).slice(0, 24).sort((a, b) => a.label.localeCompare(b.label));
+  svg.setAttribute('aria-label', graph.paths ? 'Observed mesh: showing ' + shown.length + ' of ' + graph.nodes.length + ' prefixes; all links listed below' : 'Waiting for complete received flood paths');
+  if (shown.length < graph.nodes.length) text('topology-status', graph.paths + ' flood paths / showing ' + shown.length + ' of ' + graph.nodes.length + ' prefixes');
+  shown.forEach((node, i) => {
+    const angle = -Math.PI / 2 + i * 2 * Math.PI / shown.length;
+    const distance = Math.min(310, 110 + 65 * (node.distance / node.count - 1));
+    positions.set(node.label, {x: 450 + Math.cos(angle) * distance, y: 170 + Math.sin(angle) * distance * .43,
+      radius: 5 + Math.min(11, Math.sqrt(node.count) * 2)});
+  });
+  const rows = [];
+  for (const edge of graph.edges.sort((a, b) => b.count - a.count)) {
+    const from = positions.get(edge.from), to = positions.get(edge.to);
+    const snr = edge.measured ? edge.signal / edge.measured : null;
+    const row = document.createElement('tr'); cell(row, edge.from); cell(row, edge.to === 'radio' ? 'This radio' : edge.to);
+    cell(row, edge.count); cell(row, snr === null ? '—' : number(Math.round(snr * 100) / 100) + ' dB'); rows.push(row);
+    if (!from || !to) continue;
+    const dx = to.x - from.x, dy = to.y - from.y, distance = Math.max(1, Math.hypot(dx, dy));
+    const line = draw('line', {x1: from.x + dx / distance * from.radius, y1: from.y + dy / distance * from.radius,
+      x2: to.x - dx / distance * (to.radius + 4), y2: to.y - dy / distance * (to.radius + 4),
+      'stroke-width': 1 + Math.min(4, Math.sqrt(edge.count)), 'marker-end': 'url(#path-arrow)',
+      class: 'topology-edge' + (snr === null ? '' : snr >= 0 ? ' strong' : ' weak')});
+    line.appendChild(draw('title', {}, edge.from + ' → ' + (edge.to === 'radio' ? data.device_name : edge.to) + ': ' + edge.count + ' observations' + (snr === null ? '' : ', mean SNR ' + number(snr) + ' dB')));
+    svg.appendChild(line);
+  }
+  for (const node of [...shown, {label: 'radio', prefixes: new Set()}]) {
+    const p = positions.get(node.label), group = draw('g', {});
+    group.appendChild(draw('circle', {cx: p.x, cy: p.y, r: p.radius, class: 'topology-node'}));
+    group.appendChild(draw('text', {x: p.x, y: p.y + p.radius + 16, 'text-anchor': 'middle', class: 'topology-label'}, node.label === 'radio' ? 'This radio' : node.label));
+    group.appendChild(draw('title', {}, node.label === 'radio' ? data.device_name : [...node.prefixes].join(', ') + ' · ' + node.count + ' appearances'));
+    svg.appendChild(group);
+  }
+  byId('topology-links').replaceChildren(...rows);
 }
 
 function render(data) {
@@ -573,6 +789,7 @@ function render(data) {
   text('wifi', data.wifi.connected ? 'WiFi ' + data.wifi.rssi_dbm + ' dBm / up ' + duration(data.wifi.uptime_ms) : 'WiFi disconnected');
   text('client-count', data.kiss.connected + ' / ' + data.kiss.capacity);
   renderPacketReports(data);
+  renderTopology(data);
   const companion = data.companion;
   byId('companion-overview').hidden = byId('companion-panel').hidden = !companion;
   const companionRows = [];

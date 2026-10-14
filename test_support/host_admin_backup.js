@@ -8,7 +8,7 @@ const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 class Element {
   constructor() { this.value=''; this.disabled=false; this.files=[]; this.children=[]; }
-  replaceChildren() {this.children=[];}
+  replaceChildren(...children) {this.children=children;}
   appendChild(child) {this.children.push(child);}
   click() {return this.onclick?.();}
   set innerHTML(value) {assert.fail('Untrusted text must not be interpreted as HTML: '+value);}
@@ -20,18 +20,26 @@ async function tests() {
     return elements.get(id);
   };
   const recipient='56'.repeat(32), requests=[], downloads=[];
+  let loadPage, visibility, publicReads=0;
   const archive=Buffer.alloc(384);
   Buffer.from('MCB\x01\x01\0\0\0').copy(archive);
   Buffer.from(recipient,'hex').copy(archive,40);
   let tampered=false;
   const context={
-    document:{getElementById:element,createElement:()=>new Element()},
-    window:{confirm:()=>true,addEventListener(){}},
-    console,TextEncoder,Uint8Array,Blob,AbortController,Date,
+    document:{getElementById:element,createElement:()=>new Element(),hidden:false,
+      addEventListener(name,handler){if(name==='visibilitychange')visibility=handler;}},
+    window:{confirm:()=>true,addEventListener(name,handler){if(name==='load')loadPage=handler;}},
+    console,TextEncoder,Uint8Array,Blob,AbortController,AbortSignal,Date,
     crypto:crypto.webcrypto,
     URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:private';},revokeObjectURL(){}},
     setTimeout,clearTimeout,
     fetch:async(path,options)=>{
+      if(path==='/status'){
+        publicReads++;
+        assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');
+        assert.equal(options.headers,undefined,'Public monitoring must not send an admin session');
+        return {ok:true,json:async()=>({observer:{state:'running',radio_connected:true,mqtt_connected:false}})};
+      }
       requests.push({path,body:options.body});
       assert.equal(options.redirect,'error');
       assert.equal(options.credentials,'omit');
@@ -72,6 +80,18 @@ async function tests() {
   await element('backup-create').click();
   assert.equal(requests.length,before);
   assert.match(element('result').textContent,/operator public key/);
+  loadPage();
+  try{
+    await new Promise(setImmediate);
+    assert.equal(publicReads,1);assert.equal(element('live-state').textContent,'Live');
+    assert.equal(element('role-overview').children[0].children[1].textContent,'Broker disconnected');
+    await Promise.all([element('live-refresh').click(),element('live-refresh').click()]);
+    assert.equal(publicReads,2,'At most one public read may be in flight');
+    context.document.hidden=true;visibility();
+    await element('live-refresh').click();
+    assert.equal(publicReads,2,'Hidden pages must not refresh');
+  }finally{context.document.hidden=true;visibility?.();}
   console.log('PASS Birch backup UI: authenticated whole-host export without native bot, saved download, digest and recipient checks');
+  console.log('PASS host overview: credential-free reads, broker fault visibility, one request at a time and hidden-page pause');
 }
 tests().catch(error=>{console.error(error);process.exitCode=1;});

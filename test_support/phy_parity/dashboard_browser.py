@@ -142,16 +142,17 @@ try:
             assert 'aria-label="Sent over RF"' in dom
             assert 'class="rf-result rf-rx"' in dom and 'class="rf-icon"' in dom
             decode = re.search(r'<td class="packet-detail">(.*?)</td>', dom, re.S)
-            assert decode and html.unescape(decode[1]) == (
-                "Request / Flood / v0 / encrypted\n"
-                "Path 4 × 2 B: 5600 → 0700 → d726 → b726 (SLP AR1?)\n"
-                "src 9a → dst 55"
-            )
+            assert decode
+            decoded = html.unescape(re.sub(r'<[^>]+>', '', decode[1]))
+            assert "Request / Flood / v0 / encrypted" in decoded
+            assert "Path 4 × 2 B: 5600 → 0700 → d726 → b726 (SLP AR1?)" in decoded
+            assert "src 9a → dst 55" in decoded
+            assert '<details><summary>Bytes' in decode[1] and '<details open' not in decode[1]
             assert "Companion contacts: 1 of 40 (incomplete)." in dom
             assert 'id="companion-count" class="number warning">2 / 2</p>' in dom
             assert "Full: new connections are rejected." in dom
             assert "10.16.1.95:34922" in dom and "&lt;meshcore-link&gt;" in dom
-            assert "Nearby repeater SNR" in dom and "D12600" in dom
+            assert "Nearby repeaters" in dom and ">D1</td>" in dom
             assert "-2.25 dB" in dom and "4.5 dB" in dom and "256 / 256" in dom
             assert "No connected KISS clients." in dom
             assert "contact list incomplete" not in decode[1]

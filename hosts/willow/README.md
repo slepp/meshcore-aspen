@@ -119,13 +119,17 @@ and rollback using the latest stopped state.
 For the browser dashboard, follow [the host dashboard setup](docs/SERVICE.md#run-the-host-dashboard).
 It defaults to `http://127.0.0.1:9080/`; set `address=0.0.0.0` in its private
 configuration for LAN access at `http://HOST_LAN_ADDRESS:9080/`. `/admin` opens
-the same login page.
+the same dashboard. View live role and repeater signal status without logging
+in; connect under Administration to change settings or manage programs.
 `/status` shows public state and `/readyz` reports readiness. Restarting only the
 dashboard leaves the host roles, identities and companion listeners running.
 
 To track repeater SNR and RSSI, [install the packet sampler and commands](docs/PACKET_GUESTS.md).
 The bot replies, dashboard and signal metrics share its report; saved programs
 and settings remain after restart, while signal sample rings start empty.
+Signal rows combine matching first-byte prefixes by default. Expand a row to
+see individual prefixes; means are weighted by sample count and grouped P95
+shows the range of the individual P95 values.
 
 For an isolated modem-to-broker trial, run `make observer-service-test`. It uses
 localhost only and checks broker reconnect, modem reconnect and room login in

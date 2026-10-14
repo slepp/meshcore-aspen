@@ -8,6 +8,10 @@ const elements = new Map();
 class Element {
   constructor() { this.children = []; this.style = {}; this.clientWidth = 0; this.value = 'all'; this.replacements = 0; }
   addEventListener() {}
+  insertRow() { const row = new Element(); this.appendChild(row); return row; }
+  insertCell() { const cell = new Element(); this.appendChild(cell); return cell; }
+  createTHead() { const head = new Element(); this.appendChild(head); return head; }
+  createTBody() { const body = new Element(); this.appendChild(body); return body; }
   setAttribute(name, value) { this[name] = value; }
   appendChild(child) { this.children.push(child); }
   replaceChildren(...children) { this.children = children; this.replacements++; }
@@ -179,8 +183,14 @@ const before = JSON.stringify(snapshot);
 call('renderEvents', snapshot);
 assert.equal(element('events').children[0].children[0].textContent, '0s');
 assert.equal(element('events').children[1].children[0].textContent, '1m');
-assert.equal(element('events').children[0].children[7].children[0].textContent, '09 00 00 00');
+assert.equal(element('events').children[0].children[6].children.at(-1).children[1].textContent, '09 00 00 00');
 assert.equal(JSON.stringify(snapshot), before, 'retain newest-first order and all raw API fields');
+const openBytes = element('events').children[0].children[6].children.at(-1);
+openBytes.open = true; openBytes.ontoggle();
+snapshot.history.events.push({...snapshot.history.events[0], sequence: 800, at_ms: 123});
+call('renderEvents', snapshot);
+assert.equal(element('events').children[0].children[6].children.at(-1).open, true,
+  'a new packet must not close another packet’s byte disclosure');
 const meshContacts = {
   capacity: 32, total: 3, truncated: false,
   items: [
@@ -221,7 +231,6 @@ assert.equal(compact.split('\n').length, 3);
 assert.ok(compact.length < 130, 'four-hop screenshot packet stays compact');
 assert.doesNotMatch(compact, /incomplete|candidate|prefix match|preview|Repeater/);
 const page = fs.readFileSync(process.argv[2], 'utf8');
-assert.match(page, /\.packet-detail \{ white-space: pre-line;/);
 assert.match(page, /#events td \{ vertical-align: top; padding: 6px 8px;/);
 assert.equal((page.match(/Names match public-key prefixes/g) || []).length, 1);
 const ranges = (hex, length = hex.length / 2) => {
@@ -290,3 +299,66 @@ call('renderPacketReports', {uptime_ms: 3123, packet_reports: [{slot: 0, name: '
 assert.match(element('packet-reports').textContent, /D12600<img>/);
 assert.match(element('packet-reports').textContent, /-2.25 dB/);
 assert.match(element('packet-reports').textContent, /4.5 dB/);
+
+// Different path widths share a first-byte summary without inventing a pooled P95.
+const report = {slot: 0, name: 'repeater_snr',
+  fields: ['samples','heard_total','mean_db','p95_db','rssi_mean_dbm','last_seen_ms','window','last_seen_utc'],
+  rows: [{label:'CC268A',values:[10,4,-10,-3,-110,100,256,1791500000]},
+         {label:'cc26',values:[30,7,2,6,-90,200,256,1791500001]},
+         {label:'CC',values:[0,2,999,999,999,300,256,1791500002]},
+         {label:'D12600',values:[5,1,1,2,-100,400,256,1791500003]}]};
+const grouped = call('signalGroups', report);
+assert.equal(grouped.length, 2);
+assert.equal(grouped[0].label, 'CC');
+assert.equal(grouped[0].samples, 40);
+assert.equal(grouped[0].heard_total, 13);
+assert.equal(grouped[0].mean_db, -1);
+assert.equal(grouped[0].rssi_mean_dbm, -95);
+assert.deepEqual(Array.from(grouped[0].p95), [-3,6]);
+const data = {uptime_ms: 4000, packet_reports: [report]};
+call('renderPacketReports', data);
+const descend = node => [node, ...node.children.flatMap(descend)];
+let nodes = descend(element('packet-reports'));
+assert.equal(nodes.filter(n => n['aria-expanded'] === 'false').length, 1);
+assert.equal(nodes.some(n => n.className === 'signal-child'), false);
+nodes.find(n => n['aria-expanded'] === 'false').onclick();
+assert.equal(descend(element('packet-reports')).filter(n => n.className === 'signal-child').length, 3);
+call('renderPacketReports', data);
+assert.equal(descend(element('packet-reports')).filter(n => n.className === 'signal-child').length, 3, 'expansion survives updates');
+const historySize = vm.runInContext("signalHistory.get('0:CC').length", context);
+call('renderPacketReports', data);
+assert.equal(vm.runInContext("signalHistory.get('0:CC').length", context), historySize, 'unchanged snapshots do not invent observations');
+report.rows[0].values[2] = -6; report.rows[0].values[7] += 10;
+call('renderPacketReports', {...data, uptime_ms: 5000});
+assert.equal(vm.runInContext("signalHistory.get('0:CC').length", context), historySize + 1);
+call('renderPacketReports', {...data, uptime_ms: 100});
+assert.equal(vm.runInContext("signalHistory.get('0:CC').length", context), 1, 'reboot clears browser trend');
+// A complete flood path can be observed even when ciphertext is truncated.
+const reception = {direction:'rx',preview_hex:'0182cc268ad12600bbaa',length:30,snr_db:-2,rssi_dbm:-111};
+const graph = call('observedTopology', [reception, {...reception,snr_db:4},
+  {...reception,direction:'local'}, {...reception,preview_hex:'0282cc268ad12600bbaa'},
+  {...reception,preview_hex:'0183cc268ad12600'}, {...reception,preview_hex:'0182cc268ad1'},
+  {...reception,preview_hex:'01c1cc268ad12600'}]);
+assert.equal(graph.paths, 2);
+assert.equal(graph.nodes.length, 2);
+assert.equal(graph.edges.length, 2);
+assert.equal(graph.edges[0].measured, 0, 'intermediate links have no inferred SNR');
+assert.equal(graph.edges[1].count, 2);
+assert.equal(graph.edges[1].signal / graph.edges[1].measured, 1);
+call('renderTopology', {device_name:'<radio>',history:{events:[reception]}});
+assert.match(element('topology-links').textContent, /This radio/);
+assert.match(element('topology-status').textContent, /1 flood paths/);
+// Exercise the host page with the same report and actual disclosure handlers.
+elements.clear();
+const hostContext = vm.createContext({document: context.document,window:{addEventListener(){}},
+  Intl,Date,Math,console,setTimeout(){},clearTimeout(){},TextEncoder,Uint8Array});
+const hostPage = fs.readFileSync(require('node:path').resolve(require('node:path').dirname(process.argv[2]), '../../internal/app/admin_page.html'), 'utf8');
+vm.runInContext(hostPage.split('<script>')[1].split('</script>')[0], hostContext);
+hostContext.reports = [report]; vm.runInContext('renderPacketReports(reports)', hostContext);
+let hostNodes = descend(element('signal-reports'));
+assert.match(element('signal-reports').textContent, /-95/);
+assert.equal(hostNodes.some(n => n.className === 'signal-child'), false);
+hostNodes.find(n => n['aria-expanded'] === 'false').onclick();
+assert.equal(descend(element('signal-reports')).filter(n => n.className === 'signal-child').length, 3);
+assert.match(element('signal-reports').textContent, /CC268A/);
+console.log('Dashboard signals: weighted prefix groups, P95 ranges, disclosure state, bounded observation trends and measured-only topology passed');

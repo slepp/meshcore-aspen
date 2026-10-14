@@ -244,7 +244,9 @@ password_env=MESHCORE_LAB_ADMIN_PASSWORD
 Save this configuration in an owned mode-0600 file. Run
 `MESHCORE_HOST_ADMIN_HTTP=1 ./build/hew-dashboard-release /path/to/dashboard.conf`
 with the role admin password already supplied by the service environment.
-Open `http://127.0.0.1:9080/` and log in. `/admin` opens the same page. Do not put the password in a
+Open `http://127.0.0.1:9080/` to view live roles and repeater signals. Log in under
+Administration to change settings or manage programs. `/admin` opens the same
+page. Do not put the password in a
 command argument or the dashboard configuration. Alternatively, set
 `token_env` to the name of an environment variable holding an explicit
 32-256-character admin token. Password login requires 12-256 printable
