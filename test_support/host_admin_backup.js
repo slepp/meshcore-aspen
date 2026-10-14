@@ -38,7 +38,7 @@ async function tests() {
         publicReads++;
         assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');
         assert.equal(options.headers,undefined,'Public monitoring must not send an admin session');
-        return {ok:true,json:async()=>({observer:{state:'running',radio_connected:true,mqtt_connected:false}})};
+        return {ok:true,json:async()=>({observer:{state:'running',radio_connected:true,mqtt_connected:false},bot:{state:'running',radio_connected:true,airtime_ms:[0,10,50],public_key:'56'.repeat(32)}})};
       }
       requests.push({path,body:options.body});
       assert.equal(options.redirect,'error');
@@ -85,6 +85,7 @@ async function tests() {
     await new Promise(setImmediate);
     assert.equal(publicReads,1);assert.equal(element('live-state').textContent,'Live');
     assert.equal(element('role-overview').children[0].children[1].textContent,'Broker disconnected');
+    assert.equal(element('role-overview').children[1].children[2].textContent,'ID 565656565656','The modem airtime lookup table is not a role TX counter');
     await Promise.all([element('live-refresh').click(),element('live-refresh').click()]);
     assert.equal(publicReads,2,'At most one public read may be in flight');
     context.document.hidden=true;visibility();

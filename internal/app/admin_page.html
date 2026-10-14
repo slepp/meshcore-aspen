@@ -187,7 +187,7 @@ function renderRoles(roles){
     const detail=document.createElement('p');detail.className='muted';
     detail.textContent=role.observer_stats?'Observed '+role.observer_stats.observed+' · published '+role.observer_stats.published+' · queued '+role.observer_stats.queued:
       role.role_tx?.available?'RF sent '+role.role_tx.succeeded+' · unconfirmed '+role.role_tx.unknown:
-      Number.isFinite(role.airtime_ms)?'TX airtime '+Number((role.airtime_ms/1000).toFixed(2))+' s':'Waiting for counters';
+      typeof role.public_key==='string'&&/^[0-9a-f]{64}$/i.test(role.public_key)?'ID '+role.public_key.slice(0,12).toUpperCase():role.radio_connected?'Shared modem connected':'No radio connection';
     card.appendChild(detail);cards.push(card);
   }
   $('role-overview').replaceChildren(...cards);
