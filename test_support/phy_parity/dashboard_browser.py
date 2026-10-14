@@ -23,7 +23,15 @@ renderEvents = data => {
   measuredRenderEvents(data);
   const row = document.getElementById('events').firstElementChild;
   if (row) row.setAttribute('data-row-height', row.getBoundingClientRect().height.toFixed(1));
+  if (!FIXTURE_STALE) fetch('/fixture-rendered');
 };
+const measuredDisconnected = showDisconnected;
+showDisconnected = message => {
+  measuredDisconnected(message);
+  if (FIXTURE_STALE && latest) fetch('/fixture-rendered');
+};
+// Keep virtual time paused until the real loopback response has been rendered.
+fetch('/fixture-wait');
 </script>""")
 expected = json.loads((build / "dashboard.json").read_bytes())
 expected["kiss"]["connected"] = 0
@@ -56,6 +64,14 @@ if not chrome:
 
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path in ("/fixture-wait", "/fixture-rendered"):
+            if self.path == "/fixture-rendered":
+                self.server.rendered.set()
+            else:
+                self.server.rendered.wait(5)
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path == "/api/live":
             self.server.stream_calls += 1
             if self.server.fail_after_first and self.server.stream_calls > 1:
@@ -93,7 +109,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             return
         if self.path == "/api/status":
             self.server.api_calls += 1
-        body = page if self.path == "/" else status
+        body = page.replace(b"FIXTURE_STALE", b"true" if self.server.fail_after_first else b"false") if self.path == "/" else status
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8" if self.path == "/" else "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -116,6 +132,7 @@ try:
         server.api_calls = 0
         server.stream_calls = 0
         server.fail_after_first = name == "stale"
+        server.rendered = threading.Event()
         with tempfile.TemporaryDirectory(prefix="dashboard-browser-", dir=build) as profile:
             result = subprocess.run([
                 chrome, "--headless=new", "--disable-gpu", "--disable-background-networking",
