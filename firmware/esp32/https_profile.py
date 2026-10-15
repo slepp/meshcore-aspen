@@ -227,7 +227,9 @@ def compile_image(native, target, profile=ENV, cloud_config_fd=None, spiffs_writ
         if spiffs_write_trace:
             # Keep the temporary linker hook out of ordinary firmware profiles.
             traced = config.read_text().replace("build_flags =\n", "build_flags =\n"
-                "  -D ONCHIP_SPIFFS_WRITE_TRACE=1\n  -Wl,--wrap=SPIFFS_write\n", 1)
+                "  -D ONCHIP_SPIFFS_WRITE_TRACE=1\n"
+                "  -Wl,--wrap=SPIFFS_write\n  -Wl,--wrap=SPIFFS_open\n"
+                "  -Wl,--wrap=SPIFFS_close\n  -Wl,--wrap=spiffs_cb_object_event\n", 1)
             config = target / "platformio.spiffs-trace.ini"
             config.write_text(traced)
             config.chmod(0o600)

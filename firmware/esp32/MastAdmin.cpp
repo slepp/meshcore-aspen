@@ -2021,6 +2021,16 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       snprintf(reply.text + size, sizeof(reply.text) - size, "; SPIFFS error=%ld write=%ld fd=%d",
                long(failure.error), long(failure.length), int(failure.file));
     }
+#if defined(ARDUINO_ARCH_ESP32) && ONCHIP_SPIFFS_WRITE_TRACE
+  } else if (!strcmp(command, "storage error")) {
+    const auto failure = spiffsWriteFailure();
+    if (!failure.error) strcpy(reply.text, "No filesystem write failure recorded");
+    else snprintf(reply.text, sizeof(reply.text),
+        "SPIFFS %ld %s len=%ld fd=%d open=%u opened=%s closed=%s rc=%ld; delete=%u/%u/%u by=%s",
+        long(failure.error), failure.path, long(failure.length), int(failure.file), unsigned(failure.open),
+        failure.openedBy, failure.closedBy, long(failure.closeResult), unsigned(failure.deletedObject),
+        unsigned(failure.deletedSpan), unsigned(failure.deletedPage), failure.deletedBy);
+#endif
   } else if (!strcmp(command, "storage check")) {
     if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
         !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
