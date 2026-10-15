@@ -741,25 +741,30 @@ changing a nickname does not create a new allowance. Ordinary channel packets
 cannot provide trustworthy per-person accounting. Use DMs when that distinction
 matters. TRACE requires a supplied or received route, but no destination login.
 
-The bot sends one anonymous empty-password guest login by flood, then confirms
-the returned route with a tagged base-telemetry request sent directly along it.
-Default open-guest repeaters can admit the bot through this normal login; a
-closed guest password requires the repeater owner to grant the bot access.
-A login reply alone never counts as a fresh route. Both packets share the
-existing airtime admission and `action_trace` permission. One command can wait
-up to 30 seconds for admission, then has ten seconds for the probe outside the
-Lua VM, with no automatic retries.
+For a monitored repeater with a fresh successful status sample, the bot sends
+a tagged base-telemetry request by flood using its existing session. Other
+contacts first receive an anonymous empty-password guest login by flood.
+Default open-guest repeaters can admit the bot through this login; a closed
+guest password requires the repeater owner to grant the bot access. Either
+discovery response supplies only a provisional route: the bot returns the
+reciprocal PATH, then confirms the route with a new tagged base-telemetry
+request sent directly along it. All packets share the existing airtime
+admission and `action_trace` permission. One command can wait up to 30 seconds
+for admission, then has ten seconds for the probe outside the Lua VM, with no
+automatic retries.
 
 Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
 diagnostic can still probe it under the command permissions and radio budget.
 Route discovery and monitor requests share one start per 30 seconds. Monitored
 targets also retain their saved flood-discovery cooldown across restarts. While
 that cooldown runs, a known route can be tested directly and is labelled
-`cached route confirmed`; an unknown route reports the cooldown without sending.
+`cached route confirmed`; a fresh successful monitor sample allows one tagged
+telemetry confirmation without logging in again. Other contacts use guest
+login followed by confirmation. An unknown route reports the cooldown without sending.
 A successful new flood route is labelled `fresh`, followed by `WIDTH:HEX`.
-If an actual transmitted attempt times out, the reply labels any retained route
-`probe timed out; cached`. With no cached route, it reports that the repeater may
-be offline or may not permit guest discovery. A long route that cannot fit the
+If an actual transmitted attempt times out, the reply says `no discovery reply`
+or `route confirmation timed out`, and labels any retained route `cached`.
+Silence does not identify the cause. A long route that cannot fit the
 reply reports its hop count rather than a partial route. Learned routes use the
 [bounded checkpoint cache](#learned-contacts-and-routes) across restarts.
 Lua handlers can use the same

@@ -145,7 +145,7 @@ static void native_find_path_queue() {
     timeMs += 8000; f.step(300); assert(f.bot.jobsInUse());
     timeMs += 3000; f.step(300); assert(!f.bot.jobsInUse());
     const auto response = second.replies(f.bot.publicKey(), f.radio);
-    assert(response.size() == 1 && response[0].find("no fresh path (10s)") != std::string::npos);
+    assert(response.size() == 1 && response[0].find("no discovery reply (10s); no cached route") != std::string::npos);
     // Revoke the permission while a new command waits for the shared spacing.
     timeMs += 61000; ask(first); timeMs += 10000; f.step(300);
     ask(second); const auto admitted = probes();

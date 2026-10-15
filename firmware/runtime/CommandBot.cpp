@@ -1372,19 +1372,32 @@ struct CommandBot::Core : mesh::Mesh {
     const unsigned size = fresh ? job.io.routeSize : cached ? (contact->route.length & 63) * width : 0;
     const uint8_t *bytes = fresh ? job.io.route : cached ? contact->route.bytes : nullptr;
     const size_t capacity = job.event.replyLimit + 1;
+    const char *timeout = job.io.revision == 0 || job.io.revision == 4 ?
+        "no discovery reply" : "route confirmation timed out";
+    char fallback[64]{}; snprintf(fallback, sizeof(fallback), "%s; cached", timeout);
     if (!fresh && !cached) {
-      snprintf(job.result.value, capacity, "%s no fresh path (10s); offline or guest discovery not permitted", key);
+      snprintf(job.result.value, capacity, "%s %s (10s); no cached route", key, timeout);
     } else {
       const int used = snprintf(job.result.value, capacity, "%s %s %u:", key,
-                                fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : "probe timed out; cached", unsigned(width));
+                                fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : fallback, unsigned(width));
       if (used < 0 || size_t(used) + 2 * size >= capacity)
         snprintf(job.result.value, capacity, "%s %s %u hops (%u-byte); route exceeds reply limit", key,
-                 fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : "probe timed out; cached", size / width, unsigned(width));
+                 fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : fallback, size / width, unsigned(width));
       else for (unsigned i = 0; i < size; ++i)
         snprintf(job.result.value + used + 2 * i, capacity - used - 2 * i, "%02x", bytes[i]);
     }
     // A timeout is a completed probe result, but cancellation still wins.
     finishRadio(job, nullptr, !fresh);
+  }
+  mesh::Packet *findPathTelemetry(const Contact &contact, uint32_t tag) {
+    uint8_t secret[32]{}, data[13]{};
+    self_id.calcSharedSecret(secret, contact.id);
+    memcpy(data, &tag, 4);
+    data[4] = NativeTelemetryRequest; data[5] = uint8_t(~TELEM_PERM_BASE);
+    getRNG()->random(data + 9, 4);
+    auto *packet = createDatagram(PAYLOAD_TYPE_REQ, contact.id, secret, data, sizeof(data));
+    wipe(secret, sizeof(secret));
+    return packet;
   }
   void confirmFindPath(Invocation &job) {
     if (sendFindPathReturn(job)) return;
@@ -1397,13 +1410,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!contact || !messageTimestamp(job.repeaterTag)) {
       finishRadio(job, "Route confirmation identity/clock unavailable"); return;
     }
-    uint8_t secret[32]{}, data[13]{};
-    self_id.calcSharedSecret(secret, contact->id);
-    memcpy(data, &job.repeaterTag, 4);
-    data[4] = NativeTelemetryRequest; data[5] = uint8_t(~TELEM_PERM_BASE);
-    getRNG()->random(data + 9, 4);
-    auto *packet = createDatagram(PAYLOAD_TYPE_REQ, contact->id, secret, data, sizeof(data));
-    wipe(secret, sizeof(secret));
+    auto *packet = findPathTelemetry(*contact, job.repeaterTag);
     if (!packet) { finishRadio(job, "Route confirmation packet capacity exhausted"); return; }
     if (!capacity(owner.radio_.getEstAirtimeFor(2 + packet->payload_len + job.io.routeSize), true,
                   false, packet, principal(job.event))) {
@@ -1497,6 +1504,7 @@ struct CommandBot::Core : mesh::Mesh {
     }
     const int index = repeaterIndex(selected);
     bool directProbe = false;
+    bool knownSession = false;
     if (index >= 0) {
       const auto &target = repeaterPolicy.targets[unsigned(index)];
       if (target.frequencyHz && target.frequencyHz != owner.radio_.configuration().freq_hz) {
@@ -1504,7 +1512,9 @@ struct CommandBot::Core : mesh::Mesh {
       }
       auto *targetContact = repeaterContact(unsigned(index));
       if (!targetContact) { finishRadio(job, "Bot contact table full"); return; }
-      if (repeaterSnapshot(unsigned(index)).nextDiscoverySeconds) {
+      const auto snapshot = repeaterSnapshot(unsigned(index));
+      knownSession = snapshot.fresh;
+      if (snapshot.nextDiscoverySeconds) {
         if (targetContact->route.length == 0xff) {
           finishRadio(job, "Repeater flood cooldown active and no cached route; inspect bot repeaters timing"); return;
         }
@@ -1565,13 +1575,19 @@ struct CommandBot::Core : mesh::Mesh {
         startBestPathProbe(job); return;
       }
     }
-    uint8_t secret[32]{}, data[5]{};
-    self_id.calcSharedSecret(secret, contact->id);
-    memcpy(data, &tag, 4);
-    // Standard anonymous empty-password guest login. The reply only supplies
-    // a provisional route; tagged base telemetry must confirm it afterwards.
-    auto *packet = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, contact->id, secret, data, sizeof(data));
-    wipe(secret, sizeof(secret));
+    mesh::Packet *packet = nullptr;
+    if (knownSession) {
+      packet = findPathTelemetry(*contact, tag);
+      job.repeaterTag = tag;
+    } else {
+      uint8_t secret[32]{}, data[5]{};
+      self_id.calcSharedSecret(secret, contact->id);
+      memcpy(data, &tag, 4);
+      // Contacts without a recent successful monitor response first need the
+      // standard anonymous empty-password guest login.
+      packet = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, contact->id, secret, data, sizeof(data));
+      wipe(secret, sizeof(secret));
+    }
     if (!packet) { finishRadio(job, "Route probe packet capacity exhausted"); return; }
     job.io.routeType = directProbe ? 1 : 0;
     if (directProbe) {
@@ -1598,7 +1614,10 @@ struct CommandBot::Core : mesh::Mesh {
       finishRadio(job, "Route probe cancelled or deadline expired before queue admission"); return;
     }
     repeaterSent = true; repeaterAt = millis();
-    job.io.revision = 0; job.pathReady = false; job.outbound = packet;
+    // Revision 4 waits for a tagged telemetry PATH from flood discovery;
+    // revision 2 confirms the cached direct route without a second request.
+    job.io.revision = knownSession ? (directProbe ? 2 : 4) : 0;
+    job.pathReady = false; job.outbound = packet;
     if (directProbe) sendDirect(packet, contact->route.bytes, contact->route.length);
     else routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
   }
@@ -1606,15 +1625,21 @@ struct CommandBot::Core : mesh::Mesh {
                         size_t size, const uint8_t *path = nullptr, uint8_t length = 0xff) {
     if (packet->_localReflection || size < 5) return false;
     uint32_t tag = 0; memcpy(&tag, data, 4);
+    const bool baseTelemetry = size >= 8 && data[4] == TELEM_CHANNEL_SELF &&
+        (data[5] == 116 || data[5] == 103);
     for (auto &job : invocations)
       if (job.used && job.ioPending && routeSearchIo(job) &&
           contact.id.matches(job.io.principal) && owner.worker_.ioCurrent(job.io.token) &&
           int32_t(millis() - job.deadline) < 0 && routeSearchCurrent(job)) {
-        if (job.io.revision == 0) {
-          const uint32_t now = owner.rtc_.getCurrentTime();
-          if ((!path && !job.io.routeType) || size < 13 || size >= 13 + CIPHER_BLOCK_SIZE || data[4] || !(data[7] & 3) ||
-              uint64_t(tag) + 120 < now || uint64_t(now) + 120 < tag) return false;
-          for (size_t i = 13; i < size; ++i) if (data[i]) return false;
+        if (job.io.revision == 0 || job.io.revision == 4) {
+          if (job.io.revision == 4) {
+            if (!path || tag != job.repeaterTag || !baseTelemetry) return false;
+          } else {
+            const uint32_t now = owner.rtc_.getCurrentTime();
+            if ((!path && !job.io.routeType) || size < 13 || size >= 13 + CIPHER_BLOCK_SIZE || data[4] || !(data[7] & 3) ||
+                uint64_t(tag) + 120 < now || uint64_t(now) + 120 < tag) return false;
+            for (size_t i = 13; i < size; ++i) if (data[i]) return false;
+          }
           if (path) {
             job.io.routeWidth = uint8_t((length >> 6) + 1);
             job.io.routeSize = uint8_t((length & 63) * job.io.routeWidth);
@@ -1633,8 +1658,7 @@ struct CommandBot::Core : mesh::Mesh {
             job.io.revision = 1;
             confirmFindPath(job);
           }
-        } else if (job.io.revision == 2 && !path && tag == job.repeaterTag && size >= 8 &&
-                   data[4] == TELEM_CHANNEL_SELF && (data[5] == 116 || data[5] == 103)) {
+        } else if (job.io.revision == 2 && !path && tag == job.repeaterTag && baseTelemetry) {
           // Base telemetry starts with self voltage (116) or temperature (103).
           // A delayed login has byte 4 == 0 and must never confirm a route,
           // even if its server timestamp happens to equal our request tag.
@@ -2240,7 +2264,7 @@ struct CommandBot::Core : mesh::Mesh {
         finishRadio(job, "Mesh grant revoked; admitted TX may already have occurred");
       } else if (int32_t(millis() - job.deadline) >= (job.findPathWaiting || job.repeaterCommandWaiting ? 1 : 0)) {
         if (job.io.kind == BotIoRequest::FindBestPath && !job.findPathWaiting) {
-          if (job.io.revision == 0) {
+          if (job.io.revision == 0 || job.io.revision == 4) {
             job.io.revision = 3; job.deadline = job.best.until;
           } else if (job.io.revision == 2 && job.result.transmitted) {
             bestPathProbeDone(job);

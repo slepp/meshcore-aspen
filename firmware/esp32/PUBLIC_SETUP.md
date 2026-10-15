@@ -27,7 +27,7 @@ application address can overwrite the wrong OTA slot.
 
 The offline USB procedure below provisions a blank board's credentials
 without the website. This ESP32-S3 profile uses `.bin` files with esptool.
-Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.14)
+Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.15)
 or build the generic image using the
 offline checks below. Keep public application files separate from your private
 per-node setup image. See the
@@ -108,7 +108,7 @@ Windows or macOS path.
 
 On a Linux host, install Python 3.11 or newer with its `venv` support, `unzip`
 and `tar`. Download the Aspen ZIP, manifest and SHA256SUMS from the
-[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.14) into
+[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.15) into
 one new working directory. Extract the ZIP **before** checking SHA256SUMS:
 the checksums cover both the ZIP and its extracted manifest.
 
@@ -117,15 +117,15 @@ WORK="$HOME/aspen-install"
 mkdir -p "$WORK"
 cd "$WORK"
 # Put the three downloaded release files here.
-unzip aspen-v0.1.14-xiao-esp32s3-sx1262-*.zip
-sha256sum --check aspen-v0.1.14-xiao-esp32s3-sx1262-*.SHA256SUMS
-APP=$(find "$WORK" -maxdepth 1 -type d -name 'aspen-v0.1.14-xiao-esp32s3-sx1262-*')
+unzip aspen-v0.1.15-xiao-esp32s3-sx1262-*.zip
+sha256sum --check aspen-v0.1.15-xiao-esp32s3-sx1262-*.SHA256SUMS
+APP=$(find "$WORK" -maxdepth 1 -type d -name 'aspen-v0.1.15-xiao-esp32s3-sx1262-*')
 mkdir "$WORK/source"
 tar -xzf "$APP/source.tar.gz" -C "$WORK/source"
 cd "$WORK/source"
 ```
 
-Use the Aspen 0.1.14 files together in this directory. The filename suffix
+Use the Aspen 0.1.15 files together in this directory. The filename suffix
 identifies the source revision. The commands
 below run from this extracted source directory; no Git checkout or firmware
 compiler is needed. The release bundle supplies all four initial-install BIN
