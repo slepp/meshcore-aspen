@@ -209,7 +209,8 @@ def upload_snapshot(package, port):
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("Pine upload timed out; completion uncertain; inspect the running hash or bootloader before retrying") from error
     if result.returncode or b"Device programmed." not in result.stdout + result.stderr:
-        raise RuntimeError("Pine upload completion uncertain; inspect running application or retained bootloader before retrying")
+        detail = (result.stdout + result.stderr).decode("utf-8", errors="replace").strip()[-2048:]
+        raise RuntimeError("Pine upload completion uncertain; inspect running application or retained bootloader before retrying\n" + detail)
 
 
 def check_application(data, port, before):

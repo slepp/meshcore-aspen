@@ -276,6 +276,13 @@ class PineUpdateTests(unittest.TestCase):
                 pine_update.recover_snapshot(self.data, args)
             upload.assert_not_called()
 
+    def test_failed_uploader_keeps_its_diagnostic_without_retry(self):
+        result = SimpleNamespace(returncode=0, stdout=b"Failed to upgrade target: DFU protocol error", stderr=b"")
+        with patch.object(pine_update.subprocess, "run", return_value=result) as upload:
+            with self.assertRaisesRegex(RuntimeError, "completion uncertain.*\\nFailed to upgrade target: DFU protocol error"):
+                pine_update.upload_snapshot(self.package, "/dev/inventoried-pine")
+        upload.assert_called_once()
+
     def test_post_update_and_recovery_check_running_hash_and_retained_state(self):
         import hardware
         args, record = self.recovery()
