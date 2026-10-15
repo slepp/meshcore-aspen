@@ -13,6 +13,7 @@
 #include "CommandBot.h"
 #include "CompanionSessions.h"
 #include "Runtime.h"
+#include "SpiffsWriteTrace.h"
 #include "Syslog.h"
 #include "Management.h"
 #include "ServiceName.h"
@@ -2014,6 +2015,12 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     const size_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
     snprintf(reply.text, sizeof(reply.text), "Filesystem used=%u total=%u free=%u bytes",
              unsigned(used), unsigned(total), unsigned(used <= total ? total - used : 0));
+    const auto failure = spiffsWriteFailure();
+    if (failure.error) {
+      const size_t size = strlen(reply.text);
+      snprintf(reply.text + size, sizeof(reply.text) - size, "; SPIFFS error=%ld write=%ld fd=%d",
+               long(failure.error), long(failure.length), int(failure.file));
+    }
   } else if (!strcmp(command, "storage check")) {
     if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
         !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {

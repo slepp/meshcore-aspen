@@ -200,7 +200,7 @@ def readiness():
     return report
 
 
-def compile_image(native, target, profile=ENV, cloud_config_fd=None):
+def compile_image(native, target, profile=ENV, cloud_config_fd=None, spiffs_write_trace=False):
     private_directory(DIRECTORY)
     private_directory(target)
     env = os.environ.copy()
@@ -223,11 +223,19 @@ def compile_image(native, target, profile=ENV, cloud_config_fd=None):
     fd = memory_header(definitions)
     try:
         env["ONCHIP_OPERATOR_HEADER"] = f"/proc/{os.getpid()}/fd/{fd}"
+        config = ROOT / "firmware/esp32/platformio.ini.example"
+        if spiffs_write_trace:
+            # Keep the temporary linker hook out of ordinary firmware profiles.
+            traced = config.read_text().replace("build_flags =\n", "build_flags =\n"
+                "  -D ONCHIP_SPIFFS_WRITE_TRACE=1\n  -Wl,--wrap=SPIFFS_write\n", 1)
+            config = target / "platformio.spiffs-trace.ini"
+            config.write_text(traced)
+            config.chmod(0o600)
         log = DIRECTORY / (target.name + ".log")
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
         with os.fdopen(os.open(log, flags, 0o600), "w") as output:
             subprocess.run(["make", "-s", "-C", str(ROOT / "firmware/esp32"), "bot-firmware",
-                            f"BUILD={target}", f"CONFIG={ROOT / 'firmware/esp32/platformio.ini.example'}",
+                            f"BUILD={target}", f"CONFIG={config}",
                             f"ENV={profile}"], env=env, stdout=output, stderr=subprocess.STDOUT, check=True)
     finally:
         os.close(fd)
