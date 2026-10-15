@@ -414,10 +414,10 @@ bool {cls}::onchipAdvertise(bool zeroHop) {{
                                         "      if (saveChannels()) writeOKFrame();\n      else writeErrFrame(ERR_CODE_FILE_IO_ERROR);")
                     text += """
 bool OnchipCompanion::onchipFlush() {
-  if (!_store->savePrefs(_prefs)) return onchip::runtimeFlushFailed("companion preferences");
-  if (!pending_adverts.flush(*_store)) return onchip::runtimeFlushFailed("companion advert blob");
-  if (!_store->saveContacts(this, save_filter)) return onchip::runtimeFlushFailed("companion contact metadata");
-  if (!_store->saveChannels(this)) return onchip::runtimeFlushFailed("companion channels");
+  if (!_store->savePrefs(_prefs)) return onchip::companionFlushFailed("companion preferences");
+  if (!pending_adverts.flush(*_store)) return onchip::companionFlushFailed("companion advert blob");
+  if (!_store->saveContacts(this, save_filter)) return onchip::companionFlushFailed("companion contact metadata");
+  if (!_store->saveChannels(this)) return onchip::companionFlushFailed("companion channels");
   dirty_contacts_expiry = 0;
   return true;
 }
@@ -556,6 +556,7 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
 #undef ADMIN_PASSWORD
 #define ADMIN_PASSWORD onchip::adminPassword()
 namespace onchip {{
+{"bool companionFlushFailed(const char *affected);" if role == "companion" else ""}
 LocalRadio& {role}Radio() {{ static LocalRadio radio; return radio; }}
 namespace {role}_pool {{
 #define ONCHIP_PACKET_CAPACITY {16 if role == "companion" else 32}
@@ -594,6 +595,13 @@ static void report() {{
 }}
 """
         if role == "companion":
+            wrapper += """bool companionFlushFailed(const char *affected) {
+  if (!roleFS.error()) return runtimeFlushFailed(affected);
+  char reason[96];
+  snprintf(reason, sizeof(reason), "%s errno=%d", affected, roleFS.error());
+  return runtimeFlushFailed(reason);
+}
+"""
             wrapper += f"""static DataStore store(roleFS, {role}Clock());
 static void construct() {{
   meshInstance = new (storage->mesh) OnchipCompanion({role}Radio(), rng, {role}Clock(), storage->tables, store);

@@ -10,6 +10,8 @@ namespace onchip {
 
 struct ScopedIOState {
   bool failed = false;
+  int error = 0;
+  void remember(int code) { if (!error && code) error = code; }
 };
 class ScopedFile final : public fs::FileImpl {
   File file;
@@ -19,18 +21,30 @@ public:
   ScopedFile(File value, std::shared_ptr<ScopedIOState> status)
       : file(value), state(status) {}
   size_t write(const uint8_t *p, size_t n) override {
+    errno = 0;
     const size_t written = file.write(p, n);
-    if (written != n)
+    const int code = errno;
+    if (written != n) {
       state->failed = true;
+      state->remember(code);
+    }
     return written;
   }
   size_t read(uint8_t *p, size_t n) override { return file.read(p, n); }
-  void flush() override { file.flush(); }
+  void flush() override {
+    errno = 0;
+    file.flush();
+    state->remember(errno);
+  }
   bool seek(uint32_t p, SeekMode m) override { return file.seek(p, m); }
   size_t position() const override { return file.position(); }
   size_t size() const override { return file.size(); }
   bool setBufferSize(size_t n) override { return file.setBufferSize(n); }
-  void close() override { file.close(); }
+  void close() override {
+    errno = 0;
+    file.close();
+    state->remember(errno);
+  }
   time_t getLastWrite() override { return file.getLastWrite(); }
   const char *path() const override { return file.path(); }
   const char *name() const override { return file.name(); }
@@ -64,11 +78,16 @@ public:
     char full[96];
     if (!path(p, full)) {
       state->failed = true;
+      state->remember(EINVAL);
       return {};
     }
+    errno = 0;
     auto f = base.open(full, mode, create);
-    if (!f && (mode[0] != 'r' || strchr(mode, '+')))
+    const int code = errno;
+    if (!f && (mode[0] != 'r' || strchr(mode, '+'))) {
       state->failed = true;
+      state->remember(code);
+    }
     return f ? fs::FileImplPtr(new ScopedFile(f, state)) : fs::FileImplPtr{};
   }
   bool exists(const char *p) override {
@@ -103,8 +122,9 @@ class ScopedFS final : public fs::FS {
 public:
   ScopedFS(fs::FS &base, const char *prefix)
       : ScopedFS(base, prefix, std::make_shared<ScopedIOState>()) {}
-  void clearErrors() { state->failed = false; }
+  void clearErrors() { state->failed = false; state->error = 0; }
   bool failed() const { return state->failed; }
+  int error() const { return state->error; }
 };
 
 class ScopedErase {
