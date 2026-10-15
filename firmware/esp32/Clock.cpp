@@ -150,10 +150,6 @@ void beginClocks(RoleProfile profile) {
   consumedVersion = 0;
   pendingNetworkTime.store(0);
   loopClocks();
-  Serial.printf(
-      "On-chip clocks initialized from build baseline %u; "
-      "ESP system RTC and contact timestamps are not time authorities\n",
-      unsigned(ONCHIP_CLOCK_BUILD_EPOCH));
 }
 void receiveNetworkTime(uint32_t epoch) {
   // One SNTP producer; sequence fencing pairs epoch with its receipt time.
@@ -340,7 +336,7 @@ bool trustedNetworkTime(uint32_t &earliest, uint32_t &latest, const char **reaso
   const bool gps = snapshot.gps_epoch && gpsAge < 3600000u;
   const uint64_t age = gps ? gpsAge : snapshot.network_age_ms + lag;
   if (!gps && (!snapshot.network_enabled || !snapshot.network_epoch))
-    return denied("UTC unsynchronized; obtain GPS fix or SNTP; build/native/system RTC is not trusted");
+    return denied("UTC unavailable; waiting for GPS or SNTP");
   if (lag > 3000) return denied("UTC publication stale");
   if (!gps && age > uint64_t(snapshot.network_interval_seconds) * 2000)
     return denied("SNTP sample expired");
