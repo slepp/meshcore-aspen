@@ -47,13 +47,14 @@ account-password or room-password development flows.
 Joined channels remain connected while you switch, with unread counts for
 other channels. Messages show the author's name and key fingerprint. Radio names
 come from signed adverts verified by the Worker; repeated names remain separate
-full-key identities. A saved post confirms shared-history storage, not RF
-reception. [Account setup and the shared API](../../services/shared-room/WEB.md)
+full-key identities. **Saved** means the service stored the post in room history.
+Check its RF and recipient-ACK status for radio delivery.
+[Account setup and the shared API](../../services/shared-room/WEB.md)
 also apply to this client.
 
 Message status separates **Saved**, RF queueing, confirmed or uncertain
 transmission, native recipient ACKs, paused retries and an exhausted retry
-budget. A confirmed transmission alone is not a recipient ACK. The active
+budget. Recipient ACKs confirm reception after transmission. The active
 channel refreshes its latest 100 messages' status every five seconds; older
 pages show status when loaded. If the retry budget is exhausted, a late ACK
 still completes delivery, or the companion can rejoin to request history

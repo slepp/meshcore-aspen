@@ -11,9 +11,9 @@ session to that network; the application signature does not encrypt HTTP.
 Keep USB recovery accessible. Automatic rollback depends on the installed
 bootloader; see [ESP field updates](../../firmware/esp32/ESP_FIELD_UPDATES.md).
 Use an application built for the same hardware, update target, operator key and
-saved setup mode. A build manifest checks the selected file's size and SHA256;
-it does not establish who supplied the build. Obtain the application and its
-manifest from a trusted release or your own build before signing it.
+saved setup mode. Obtain the application and its manifest from a trusted release
+or your own build before signing it. The tool checks the file's size and SHA256
+against that manifest.
 
 Run on a POSIX host such as Linux or macOS; on Windows, use WSL. The command
 uses POSIX file locks and directory syncing for its private maintenance receipt.
@@ -32,8 +32,7 @@ source. A companion identity key cannot sign an application update.
 
    Download validates the encrypted archive. The maintenance command checks its
    authentication and archive again before connecting to the radio. The backup
-   should contain this radio's current valuable state; a backup of another radio
-   encrypted to the same operator is not a substitute.
+   must contain this radio's current identities, configuration and useful data.
 2. Read the running application:
 
    ```sh
@@ -61,7 +60,7 @@ source. A companion identity key cannot sign an application update.
    must contain the selected field target (`xiao-esp32s3` by default; override
    with `--target`). An existing receipt is never overwritten by `update`.
 
-The command reads retained state, pauses a pinned sampler if requested,
+The command records identities and settings, pauses a pinned sampler if requested,
 requests `bot contacts flush`, signs and uploads the application, checks its verified hash/size, then requests one
 restart. It waits up to 240 seconds for the intended application to become
 healthy and compares the retained state. Administrator commands are spaced

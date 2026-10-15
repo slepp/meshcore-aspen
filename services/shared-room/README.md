@@ -1,21 +1,26 @@
 # Shared Aspen rooms
 
-Run one Cloudflare Worker with one SQLite Durable Object per backend room.
-The Worker owns the room keys, canonical membership, ordered messages,
-deduplication and ACK-confirmed radio cursors. Open the Worker's HTTPS address
-on a desktop or phone to use **Aspen Rooms**: select a channel and sign in with
-your operator-created account's passkey. The
+Use **Aspen Rooms** from a desktop, phone or terminal to share a conversation
+with radio users. Open the service's HTTPS address, select a channel and sign
+in with your operator-created account's passkey. The
 [terminal client](../../clients/room-tui/README.md) shows a five-minute QR/copy
 code to approve on a signed-in browser. Each device keeps its own local
 message-author keypair; the `Accounts` Durable Object links those keys to
-accounts across room backends.
-Thin radio frontends connect with inbound hibernating WebSockets and carry
-opaque MeshCore packets. Both paths use the same stored conversation.
+accounts across rooms. Radio frontends carry MeshCore packets between the
+service and the mesh; browser, terminal and radio users share the same stored
+conversation.
 
+Browser and terminal device keys identify message authors within the room.
+They do not advertise companion identities or provide private radio DMs.
+See [web accounts and delivery](WEB.md) for access and message status.
+
+## Run the room service
+
+Deploy one Cloudflare Worker with one SQLite Durable Object per backend room.
+The Worker stores room keys, membership, ordered messages, duplicate detection
+and radio delivery cursors. Radio frontends use hibernating WebSockets.
 The [on-device service hooks](../../firmware/runtime/NATIVE_SERVICES.md)
-separate the room frontend from bot execution. Desktop RF identities,
-home-tower selection and DMs remain [deferred](DESKTOP_RF_DM.md); the current
-browser/TUI device keys are room-message authors, not advertised companions.
+let a radio run the frontend alongside its other roles.
 
 ```sh
 cd services/shared-room

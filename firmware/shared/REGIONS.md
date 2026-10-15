@@ -34,7 +34,7 @@ their region tables.
 - **Pine:** use the serial repeater console or authenticated encrypted repeater
   administration. The separate bot identity is not the repeater.
 - **Birch:** use its existing local role owner command surface, or the host
-  admin page's **Scoped role command** field. Select the running repeater.
+  admin page's **Role command** field. Select the running repeater.
   The same field accepts `region`, `region home`, `region default`,
   `region put`, `region def`, `region allowf`, `region denyf`, `region remove`
   and `region save`. Interactive `region load` is not accepted by the HTTP

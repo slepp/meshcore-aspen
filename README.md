@@ -76,7 +76,7 @@ separate WiFi modem. Both use the same shared-radio protocol.
 - **Connect and administer:** use the [operator guide](https://ve6slp.ca/projects/meshcore/operate/)
   for role names, status, app connections, backups and updates.
 - **Add commands:** download [greeting, private notes, repeater signal and monitoring modules](https://ve6slp.ca/projects/meshcore/extend/library/).
-  Named installation retains bundled commands and other installed sources.
+  Installing a named module keeps bundled commands and other installed sources.
 - **Automate the mesh:** [write Lua commands](firmware/runtime/BOT_DEVELOPMENT.md)
   or use the [C/Rust Wasm SDK](firmware/runtime/WASM_RUNTIME.md). Store private
   caller data, use timers and call owner-configured HTTPS services.

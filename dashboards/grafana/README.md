@@ -10,8 +10,8 @@ over RF by an on-device Lua monitor. Select **Monitor device / Remote repeater**
 to see battery voltage, RF sample age, monitor errors, uptime, queues, signal,
 packet counters, duplicates, receive errors and airtime. **Poll wait** and
 **Next eligible poll** distinguish discovery cooldown from interval/backoff.
-**Sample hold** shows last-known gauge values for a bounded window, default
-15 minutes, instead of breaking a line at every missed poll. Configure the
+**Sample hold** keeps the last-known gauge value visible for 15 minutes by
+default, so a missed poll does not immediately break the line. Configure the
 [remote repeater monitor](../../firmware/runtime/REMOTE_REPEATERS.md) first.
 The fleet dashboard links to this focused view.
 
@@ -52,9 +52,9 @@ of charge. These inputs apply to every selected repeater; select batteries with
 the same limits when comparing several. **Approximate time to voltage limit · history**
 projects the trailing linear trend at each point in time to the low battery
 limit while falling or the full limit while rising. A reached limit shows zero.
-This is a voltage projection,
-not measured state of charge, remaining energy or a charging completion time.
-Solar input, load, battery chemistry and temperature can change the estimate.
+Use this estimate to compare voltage trends and decide when to inspect a node.
+It cannot measure remaining energy or state of charge. Solar input, load,
+battery chemistry and temperature can change the estimate.
 Projections are displayed in days. The axis is linear up to one day, then
 logarithmically compressed so near-flat trends do not hide shorter projections. Long
 projections remain visible. Reported and smoothed voltage share each peer’s
@@ -75,7 +75,7 @@ colour across the voltage, trend and projection graphs.
 3. Start with the report-age panels. Select **Native device / Native role** for
    the ESP32 feed. Select **Bot mesh / Bot site** for a Python bot, then
    **Polled node**, **Probe route** or **RF work class** for its detail panels.
-   These are independent feeds, not an identity join.
+   Select each feed separately; their device names do not link their identities.
 4. The default graph range is 24 hours and refresh is one minute. Variable
    choices are discovered from series in the selected time range. Expand the
    range if a stopped device is missing from a dropdown. **History** controls
@@ -110,18 +110,20 @@ bot and Go host roles share a radio.
 
 - Report age uses VictoriaMetrics `tlast_over_time()` through the normal
   Prometheus datasource. Other queries use ordinary PromQL functions.
-  Native age is receiver receipt age; Python sample age uses original
-  collection timestamps retained during retries. Neither is RF last-heard age.
-  Last-reported uptime is explicitly a historical sample, not an extrapolation.
+  Native age measures time since the receiver accepted a report. Python sample
+  age uses the original collection time, including when an upload is retried.
+  Use RF sample age for time since the repeater answered. Uptime shows the value
+  in the last report.
 - Age colors are green below 180 seconds, yellow to 900 seconds, then red.
-  Change these thresholds for your publishing/poll cadence; no sample is
-  **No sample**, not zero or healthy. Ages cannot find devices outside History.
+  Change these thresholds for your publishing/poll cadence. **No sample** means
+  there is no report in the selected History range; increase History to look
+  farther back.
   The JSON defines no alerts.
 - Repeater gauge graphs hold the last reading for **Sample hold**, then leave
-  a gap. The held segment is not a new RF response or an extrapolated voltage,
-  signal or uptime. Availability/freshness graphs hold reports for at most six
-  minutes to cover normal peer rotation, then show an upload gap. Remote rates
-  use counter observations at their RF sample times, not held gauge values.
+  a gap. During that interval the graph repeats the last measurement.
+  Availability/freshness graphs hold reports for at most six minutes to cover
+  normal peer rotation, then show an upload gap. Remote rates use counter
+  observations at their RF sample times.
 - Other graphs preserve gaps. Grafana's legend shows the last value **in
   the selected range**, which may be old. Check report age before interpreting
   connection, readiness, source state, signal or sensor values as current.
@@ -129,7 +131,7 @@ bot and Go host roles share a radio.
 - Current repeater voltage still requires native freshness and a recent
   monitor report. RF sample age can retain the last measurement across a
   monitor restart within **History**; a current `No RF sample` result means
-  this boot has not collected one, not that the receiver has no older history.
+  this boot has not collected one. Look in History for earlier measurements.
 - Only actual monotonic counters use reset-aware `rate()`. Native/source
   counters reset at reboot or source attachment; some wrap at 32 bits.
   Bot counters reset at process restart, and edge-hook counters also reset on
@@ -137,25 +139,25 @@ bot and Go host roles share a radio.
   polled status counter queries use five minutes (the default status cadence),
   giving Grafana a rate window of at least four intervals. Adjust target
   **Min step** if your cadence differs. Gaps with fewer than two counter
-  samples remain gaps, not zeros.
+  samples remain gaps.
 - `meshcore_packets_total` is a **trailing-window gauge despite its suffix**.
   Its observed packet rate is count/window-seconds, not `rate()`. Message,
   command, graph, population and path-window summaries are gauges too.
 - Physical native RX excludes local TX reflection. Native accepted/rejected
   means scheduler admission; succeeded/failed/unknown is a local TX outcome.
-  Unknown is uncertain, not failed or confirmed. Role RF counters are subsets
-  of the shared radio, not additional traffic. Job outcomes and recorded
-  command replies are not peer acknowledgements.
+  Unknown means the packet may have been sent. Role RF counters count part of
+  the shared radio's traffic; adding them to its counters would count it twice.
+  Use recipient ACKs or replies to check delivery.
 - Native RX airtime is estimated; TX airtime is observed RF duration.
   Heap/DMA pools overlap. Heap minima and worker stack free space are
   low-water gauges. Last-VM fields are the latest completed source load or
-  invocation, not maxima or a record of every operation.
+  invocation. Use the history graphs to compare changes over time.
 - VM phase fractions use the dashboard's **VM load / init / active limit (ms)**
   inputs. Set these from `bot limits`; defaults are the noncompact
   1000/100/100 ms profile (compact: 330/50/20 ms). Cached invokes have zero
   load/init. Suspended I/O, package transfer and RF wait are excluded. Phase
-  fractions do not measure the shared worker compute allowance. Cleanup has
-  no invented budget.
+  fractions compare each phase with its configured limit. The shared worker
+  compute allowance is a separate limit; cleanup has no configured phase limit.
 - Unsupported battery/PSRAM/temperature fields are absent. WiFi RSSI is
   connected-only. Signal-window means are gated by valid sample count.
   Directed probe-link SNR can remain from a previous successful probe after a
@@ -270,8 +272,8 @@ Not every raw series gets a panel. The native complete schema is maintained in
 [TELEMETRY.md](../../firmware/esp32/TELEMETRY.md#stable-schema), including
 `meshcore_info_schema`, WiFi uptime, PHY configuration and the native
 `meshcore_publisher_{attempts,successes,failures,dropped}_total` counters.
-Publisher counters describe the preceding request; they are useful in Explore
-but cannot establish live receiver reachability.
+Publisher counters describe the preceding upload request. Use them in Explore
+to check upload attempts, failures and dropped reports.
 
 The external Python emitter also supplies these families/fields:
 

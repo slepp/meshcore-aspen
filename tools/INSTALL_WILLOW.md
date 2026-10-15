@@ -1,15 +1,16 @@
 # Upgrade Willow user services
 
-Use `install_willow.py` to install a binary bundle or build a new Willow installation and upgrade existing
-Linux systemd user services. It keeps role identities, saved traffic, guest
-selections, grants and guest rollback history. It does not create identities,
-configure a radio or install a compiler. Keep your existing installation for
-rollback.
+Use `install_willow.py` to upgrade existing Linux systemd user services from a
+binary bundle or source checkout. It copies the latest stopped state, including
+role identities, saved traffic, selected programs, grants and program rollback
+history, into a new installation. Keep the previous installation for rollback.
+For a first installation, start with the [Willow guide](../hosts/willow/README.md).
 
 For a downloaded Linux bundle, extract it and set the plan's `source` to that
 bundle directory and `revision` to its manifest's source commit. No compiler is
 needed; the updater checks the manifest and installs into the new `install`
-prefix. The same stop, retained-state, readiness and rollback procedure applies.
+prefix. The updater stops selected services, copies their state and checks the
+new services before reporting completion.
 
 For source builds, install the normal build prerequisites described in
 [the service guide](../hosts/willow/docs/SERVICE.md#build-and-install-from-source).

@@ -1,8 +1,8 @@
 # Embedding engines in Hew
 
-Use these optional packages to run bounded guest code in a native Hew program.
-They include their engine sources and build through Hew's native package support,
-without a MeshCore radio or a Willow installation.
+Run Lua or WebAssembly in a native Hew program with configurable execution limits.
+Both packages include their engine sources and build through Hew's native
+package support. Install the engine you need in your Hew project.
 
 | Package | Guest code | Host interface |
 | --- | --- | --- |

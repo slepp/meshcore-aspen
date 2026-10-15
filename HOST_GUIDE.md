@@ -18,7 +18,7 @@ or [nRF52840 guide](firmware/nrf52840/README.md).
 
 Host roles use the **Birch 0.1.3** product version. Their `ver` command reports the
 MeshCore protocol/reference separately from the host implementation; companion
-and native owner-information replies identify `birch-0.1.2`.
+and native owner-information replies identify `birch-0.1.3`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
 The Birch 0.1.3 download contains the Linux x86_64 host tools and native
 worker. Connect an already configured WiFi/TCP shared modem implementing queued
@@ -61,7 +61,7 @@ Replace `SOURCE12` below with the suffix of the extracted directory.
 
 ```sh
 python3 birch-v0.1.3-linux-x86_64-SOURCE12/install-birch.py \
-  --prefix "$HOME/.local/opt/birch-0.1.2"
+  --prefix "$HOME/.local/opt/birch-0.1.3"
 ```
 
 The installer refuses an existing prefix. It installs four binaries and a
@@ -69,7 +69,7 @@ private example configuration, but does not start services, connect to the
 modem or change an existing host's identities, state or configuration.
 Keep the source and native relink archives from the download.
 
-Edit `~/.local/opt/birch-0.1.2/config/meshcore-host.json`: set
+Edit `~/.local/opt/birch-0.1.3/config/meshcore-host.json`: set
 `radio_address`, select `enabled_roles` for the modem's available client slots,
 and set the room password environment variable if enabling the room.
 The installed example selects the bundled native Lua worker and follows the
@@ -77,10 +77,10 @@ modem's PHY without retuning it. Keep all listeners on trusted interfaces.
 
 ```sh
 export MESHCORE_ROOM_PASSWORD='choose-a-private-room-password'
-~/.local/opt/birch-0.1.2/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.2/config/meshcore-host.json -check
-~/.local/opt/birch-0.1.2/bin/meshcore-host \
-  -config ~/.local/opt/birch-0.1.2/config/meshcore-host.json
+~/.local/opt/birch-0.1.3/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.3/config/meshcore-host.json -check
+~/.local/opt/birch-0.1.3/bin/meshcore-host \
+  -config ~/.local/opt/birch-0.1.3/config/meshcore-host.json
 ```
 
 `-check` validates configuration, required password environments and the
@@ -368,7 +368,7 @@ loopback is not authentication. Plain HTTP exposes the login credential and
 session; interception of a reused password also compromises its RF roles.
 
 Enter the configured password/token in the page and choose **Connect**, then
-**Refresh host monitoring**. The credential is sent once and cleared from the
+**Refresh available controls**. The credential is sent once and cleared from the
 input; subsequent requests use a random ten-minute session kept only in this
 tab. There are four session slots and five login attempts per minute. Logout
 revokes a session; expiry requires login again, without discarding the draft
@@ -633,7 +633,7 @@ The host's status endpoint does not expose passwords or private keys.
 
 State lives in `.state/host` by default, relative to the configuration file.
 Private seed files have mode 0600; state directories have mode 0700. Back up the
-whole state directory, not just the configuration. A corrupt identity fails
+whole state directory, including identities and messages. A corrupt identity fails
 startup instead of silently creating a different node, and a process lock
 prevents two hosts from owning the same state.
 
@@ -648,8 +648,8 @@ in-memory rollback restored disk state.
 
 Role identity replacement uses a single private `identity-state.json` envelope
 containing the native key and complete role document. Once present, that file
-is authoritative for identity loading, export and subsequent state saves.
-Legacy files remain a pre-import rollback snapshot, not another active store.
+supplies the identity for loading, export and subsequent state saves.
+Legacy files stay available for rolling back to the pre-import application.
 A logical reset can atomically publish a new key with an explicitly absent
 document; startup then creates role defaults without reviving old files.
 Malformed envelopes fail closed. Do not delete one to bypass a startup error.
@@ -661,15 +661,15 @@ protocol 13. A client requesting target version 2 or 3 in its device query
 still receives the corresponding message format; that target is separate
 from the device's advertised protocol version.
 The last 256 incoming messages are persisted. Reconnecting applications replay
-that retained journal: the standard companion protocol has no durable client ID
+those saved messages: the standard companion protocol has no durable client ID
 with which to distinguish a reconnect from a new application. Room history is
-bounded to 32 posts and membership to 20 identities. A room does not echo a post
+limited to 32 posts and membership to 20 identities. A room does not echo a post
 to its author; two applications sharing the base identity are the same author.
 
 `companion_retention` selects `durable_replay` (the default host extension) or
-`native_queue`. Existing saved history is preserved during migration. Bounded
-replay is not exactly-once delivery. Battery/storage replies report actual
-used and total KiB on the shared host filesystem, not a separate role quota.
+`native_queue`. Migration keeps existing saved history. Reconnecting clients
+can receive duplicates. Battery/storage replies report used and total KiB on
+the shared host filesystem; all roles share that space.
 
 Private-key export is disabled unless `companion_key_export` is true. Enabling
 it permits connected companion applications to retrieve the base identity's
@@ -1037,7 +1037,7 @@ For example, after installing the next release:
 
 ```sh
 OLD="$HOME/.local/opt/birch-0.1.0"
-NEW="$HOME/.local/opt/birch-0.1.2"
+NEW="$HOME/.local/opt/birch-0.1.3"
 # Stop the old host before these copies.
 umask 077
 cp -a "$OLD/state" "$NEW/state-before-upgrade"

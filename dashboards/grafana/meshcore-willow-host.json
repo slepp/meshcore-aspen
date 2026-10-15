@@ -78,7 +78,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Select a **Willow host**. These metrics come from the native Hew dashboard, separate from Aspen and Python bot feeds. State timelines show sampled transitions; missing scrapes remain gaps. A failed health source reports unavailable and omits its measurements.\n\nObserver rates count MQTT PUBACK-confirmed publications, not RF delivery. Companion TX outcomes describe those roles. Physical modem traffic appears once for the shared radio. CPU/RSS and native-worker process counters are not exported by this endpoint; bot readiness reports the existing bot health boundary."
+        "content": "Select a **Willow host** to view role health and shared modem traffic. State timelines show sampled transitions, with gaps when scrapes stop. A failed health source reports unavailable and omits its measurements.\n\nObserver publications count MQTT broker acknowledgements. Companion TX panels show those roles' transmission outcomes; shared modem traffic counts each physical packet once."
       }
     },
     {
@@ -166,7 +166,7 @@
         "w": 24,
         "h": 6
       },
-      "description": "A bounded refresh requests all six health sources together. Zero means that source failed; its old measurements are omitted.",
+      "description": "Each refresh reads all six health sources together. Zero means the source failed; its previous measurements are omitted.",
       "targets": [
         {
           "refId": "A",
@@ -237,7 +237,7 @@
         "w": 24,
         "h": 7
       },
-      "description": "Reported operational readiness. Missing status/readiness is unknown, not ready. Bot readiness includes the existing native-worker health boundary.",
+      "description": "Readiness reported by each role. Missing status leaves a gap. Bot readiness includes the native command worker.",
       "targets": [
         {
           "refId": "A",
@@ -459,7 +459,7 @@
         "w": 12,
         "h": 8
       },
-      "description": "Reset-aware rates; publications advance only on broker PUBACK. Dropped is actual outbox admission loss, not an absent sample.",
+      "description": "Observer admissions, broker-acknowledged publications and outbox drops. Rates account for counter resets.",
       "targets": [
         {
           "refId": "A",
@@ -679,7 +679,7 @@
         "w": 12,
         "h": 8
       },
-      "description": "Physical modem counters exported once from the repeater health snapshot. Role copies are not summed. Missing hardware callbacks leave gaps.",
+      "description": "Shared modem packet counters from the repeater health snapshot. Missing hardware measurements leave gaps.",
       "targets": [
         {
           "refId": "A",
@@ -862,7 +862,7 @@
         "w": 12,
         "h": 7
       },
-      "description": "Age of the successful demand refresh, not RF last-heard age. Idle periods trigger no refresh; each scrape requests fresh health or reuses at most 500 ms of cache.",
+      "description": "Age of the latest successful health refresh. Each scrape refreshes health or uses a snapshot up to 500 ms old; idle periods trigger no refresh.",
       "targets": [
         {
           "refId": "A",
@@ -1080,7 +1080,7 @@
         "w": 12,
         "h": 7
       },
-      "description": "Gauge of loaded entries, not a counter or delivery rate.",
+      "description": "Observer entries loaded from storage at startup.",
       "targets": [
         {
           "refId": "A",

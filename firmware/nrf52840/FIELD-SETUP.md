@@ -6,7 +6,7 @@ USB recovery accessible. The XIAO application updates retain the installed
 bootloader, identities, settings and QSPI data. They do not commission a blank
 board or repair missing identity records.
 
-The [Pine 0.1.2 download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.2)
+The [Pine 0.1.3 download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.3)
 includes the Lua command bot, Room, packet programs, retained companion contacts
 and channels, and BLE peer mode. Select one optional role below. There is also a
 `nrfmast_solar_lua` source profile for SenseCAP Solar Node P1/P1 Pro; the guarded

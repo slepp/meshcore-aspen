@@ -95,7 +95,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two independent feeds:** ESP32 native publishing uses **device / role**; the Python companion bot uses **mesh / site (bot) / polled node / probe route**. Site must identify one bot. Filters do not join these feeds.\n\nReport ages search the **History** window; no sample means absent or outside that window, not healthy. Age colors assume a 60-second publisher; adjust for your interval. State timelines show sampled flags; poll/probe blocks show sampled outcomes. Gaps remain unknown. Check report age before interpreting a final state. Use the Nearby repeater signal dashboard for the packet-hook SNR/RSSI rings.\n\n**Pine has no direct IP metrics.** A bot can report Pine's returned repeater status only when configured to poll it. Host Lua/Wasm roles have no native VictoriaMetrics exporter here. VM fields are the last Lua operation, not Wasm metrics, per-plugin metrics or task CPU time. See the adjacent dashboard README for coverage."
+        "content": "**Choose a feed:** native Aspen reports use **device / role**; companion bot reports use **mesh / site / polled node / probe route**. Each site identifies one bot. Use the Willow host dashboard for Hew host metrics.\n\nSelect **History** to include the devices you want to inspect. Report ages show whether measurements are current; age colours assume a 60-second publisher. State timelines show the sampled state, with unknown gaps when reports stop. Use Nearby repeater signal for per-hop SNR and RSSI.\n\nTo collect Pine battery and radio status, configure a bot to poll it. Lua panels show the latest completed Lua operation."
       }
     },
     {
@@ -106,7 +106,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Exact VictoriaMetrics sample age, including stale devices within History. Receipt time is not RF last-heard time.",
+      "description": "Age of the latest VictoriaMetrics report within History. Use this to check whether device measurements are current.",
       "gridPos": {
         "x": 0,
         "y": 5,
@@ -178,7 +178,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Original collector timestamps are retained across writer retries. Age can grow even when delivery resumes.",
+      "description": "Age of the original collector measurement. Writer retries keep that timestamp, so collection age can grow while uploads continue.",
       "gridPos": {
         "x": 12,
         "y": 5,
@@ -250,7 +250,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Last reported value, not an extrapolation to current uptime. Read report age alongside this value.",
+      "description": "Device uptime at its last report. Read report age alongside this value.",
       "gridPos": {
         "x": 0,
         "y": 13,
@@ -314,7 +314,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Fixed native role slots. bot is the external KISS endpoint; command-bot is the on-device Lua service. Zero means the sampled role is not ready or has no identity.",
+      "description": "Readiness and identity for each native role. bot is the external KISS endpoint; command-bot runs installed commands. Zero means the sampled role is waiting or has no identity.",
       "gridPos": {
         "x": 12,
         "y": 13,
@@ -518,7 +518,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "DMA-capable memory overlaps internal heap; do not add these pools.",
+      "description": "DMA-capable memory is part of internal heap. Compare each pool separately.",
       "gridPos": {
         "x": 12,
         "y": 22,
@@ -740,7 +740,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "RSSI is emitted only while connected. A retained RSSI does not prove current connectivity; check report age.",
+      "description": "WiFi signal at the last connected report. Read report age and the connection timeline alongside it.",
       "gridPos": {
         "x": 12,
         "y": 30,
@@ -829,7 +829,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Die temperature, not ambient. Unsupported or nonfinite sensor values are absent.",
+      "description": "Temperature measured inside the MCU. A missing value means the sensor is unavailable or returned an invalid reading.",
       "gridPos": {
         "x": 0,
         "y": 38,
@@ -991,7 +991,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Sampled connection flag; this cannot report an outage while the publisher itself is disconnected. Use report age.",
+      "description": "Connection state at each report. Use report age to identify periods when the device could not upload.",
       "gridPos": {
         "x": 0,
         "y": 46,
@@ -1078,7 +1078,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "RX excludes local reflection. Accepted is admission; succeeded is local TX completion, not peer acknowledgement. Unknown is an uncertain local outcome.",
+      "description": "Received counts RF packets. Accepted counts admitted transmissions; succeeded counts completed local radio transmissions. Unknown means completion is uncertain.",
       "gridPos": {
         "x": 0,
         "y": 55,
@@ -1635,7 +1635,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Current scheduler credit, not cumulative airtime.",
+      "description": "Current transmit airtime credit.",
       "gridPos": {
         "x": 0,
         "y": 77,
@@ -1729,7 +1729,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Role counters are subsets of physical RF totals. Do not add them to physical totals. They reset on source reattachment.",
+      "description": "Transmission outcomes by source. Role counters form part of the physical radio totals and reset when the source reconnects.",
       "gridPos": {
         "x": 0,
         "y": 86,
@@ -1980,7 +1980,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Generation changes identify source reattachment and counter resets; this is a gauge, not a label or a counter. Numeric segments distinguish generations; the series colour has no health meaning.",
+      "description": "A new generation marks source reconnection and counter reset. Each numeric segment identifies a generation.",
       "gridPos": {
         "x": 0,
         "y": 100,
@@ -2039,7 +2039,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Observed RF seconds/second attributable to the source. Subsets of the shared radio, not additional airtime.",
+      "description": "RF airtime used by each source, in seconds per second. These sources share the physical radio total.",
       "gridPos": {
         "x": 12,
         "y": 100,
@@ -2215,7 +2215,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Occupied I/O job slots include completions awaiting dispatch. This is not a coroutine count or plugin invocation count.",
+      "description": "Occupied I/O job slots, including completed jobs waiting for dispatch.",
       "gridPos": {
         "x": 0,
         "y": 117,
@@ -2297,7 +2297,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Service-wide counters, not per-plugin series.",
+      "description": "Failures and admission limits across the Lua service.",
       "gridPos": {
         "x": 12,
         "y": 117,
@@ -2457,7 +2457,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Event completion is not a peer acknowledgement; replies are service counters.",
+      "description": "Events completed and replies produced by the command service.",
       "gridPos": {
         "x": 0,
         "y": 125,
@@ -2591,7 +2591,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Latest completed operation, not phase maxima or worker CPU use. Select the limits from bot limits; defaults here are the noncompact 1000/100/100 ms profile. Compact defaults are 330/50/20 ms; bundled Lua can use a 1000 ms load limit. Suspended I/O and RF wait are excluded.",
+      "description": "Time used by the latest completed Lua operation as a fraction of its configured limit. Read limits with bot limits. Defaults are 1000/100/100 ms; compact builds use 330/50/20 ms, and bundled Lua can have a 1000 ms load limit. Time waiting for I/O or RF is excluded.",
       "gridPos": {
         "x": 12,
         "y": 125,
@@ -2704,7 +2704,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Sample of the latest completed source load or invocation; stack is worker-task low-water free space, not every task's stack. Fields appear only after a VM sample.",
+      "description": "Peak allocation and free heap from the latest completed Lua operation, plus the command worker's lowest free stack space. Values appear after the first operation.",
       "gridPos": {
         "x": 0,
         "y": 133,
@@ -2821,7 +2821,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Gauges, not rates. Includes the latest operation's accounted phases, not running-job CPU usage.",
+      "description": "Elapsed time and accounted phases of the latest completed Lua operation.",
       "gridPos": {
         "x": 12,
         "y": 133,
@@ -2950,7 +2950,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Instruction count of the last completed VM operation; a gauge, not cumulative invocations.",
+      "description": "Instructions used by the latest completed Lua operation.",
       "gridPos": {
         "x": 0,
         "y": 141,
@@ -3196,7 +3196,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Process uptime, not companion-radio uptime.",
+      "description": "Time since the host bot process started.",
       "gridPos": {
         "x": 12,
         "y": 150,
@@ -3383,7 +3383,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Counters reset on bot restart. A disconnected receiver cannot receive failure reports until connectivity returns.",
+      "description": "Failures and discarded data reported by the bot. Counters reset when the bot restarts; reports resume when its connection returns.",
       "gridPos": {
         "x": 12,
         "y": 158,
@@ -3517,7 +3517,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Includes in-flight body. Queue is memory-only and is not durable across crashes.",
+      "description": "Queued uploads, including the body currently being sent. This queue is held in RAM and is lost if the bot exits.",
       "gridPos": {
         "x": 0,
         "y": 166,
@@ -3712,7 +3712,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Successful empty collection is 1; unreadable source is 0. This does not initiate device queries.",
+      "description": "Collection availability: 1 includes a successful empty result; 0 means the source could not be read.",
       "gridPos": {
         "x": 0,
         "y": 174,
@@ -3786,7 +3786,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Last-operation duration gauges. Native ESP32 publisher HTTP timing is not exported.",
+      "description": "Duration of the latest collector and writer requests.",
       "gridPos": {
         "x": 12,
         "y": 174,
@@ -3892,7 +3892,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Bot-owned operator/status/probe jobs, not packets. Running exchanges are never pre-empted.",
+      "description": "Operator, status and probe jobs waiting to use the radio. An exchange already running finishes before the next job starts.",
       "gridPos": {
         "x": 0,
         "y": 183,
@@ -3974,7 +3974,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Bot-owned operator/status/probe jobs, not packets. Running exchanges are never pre-empted.",
+      "description": "Operator, status and probe jobs currently using the radio. An exchange already running finishes before the next job starts.",
       "gridPos": {
         "x": 0,
         "y": 191,
@@ -4142,7 +4142,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "One outcome per job or batch, not packet deliveries. Cancelled includes queue timeouts.",
+      "description": "Completed job and batch outcomes. Cancelled includes jobs that timed out in the queue.",
       "gridPos": {
         "x": 12,
         "y": 197,
@@ -4245,7 +4245,7 @@
     {
       "id": 48,
       "type": "row",
-      "title": "Observer · received traffic, commands and retained state",
+      "title": "Observer · received traffic, commands and saved observations",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -4263,7 +4263,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Trailing-window count divided by window seconds. Despite the name _total, this is a window gauge: do not use rate(). Physical captured packets only.",
+      "description": "Captured RF packets per second over the trailing window. This metric is already a rate despite its _total suffix.",
       "gridPos": {
         "x": 0,
         "y": 206,
@@ -4344,7 +4344,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Window gauges. Repeated hashes are extra observations, not packet loss.",
+      "description": "Packet types and repeat observations over the trailing window. Repeated hashes count additional observations of the same packet.",
       "gridPos": {
         "x": 12,
         "y": 206,
@@ -4425,7 +4425,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Gated by sample count so empty windows do not show a retained old signal mean.",
+      "description": "Mean, minimum and maximum SNR in windows containing received samples. Empty windows appear as gaps.",
       "gridPos": {
         "x": 0,
         "y": 214,
@@ -4635,7 +4635,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Trailing-window gauges for registered commands (unknown names become other). Recorded replies are not RF acknowledgements.",
+      "description": "Requests and replies for registered commands over the trailing window. Unknown command names are grouped under other.",
       "gridPos": {
         "x": 0,
         "y": 222,
@@ -4833,7 +4833,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Population of contacts heard during each labelled window; gauges, not rates. Includes nodes beyond individual-series caps.",
+      "description": "Contacts heard during each labelled freshness window, including nodes beyond the individual-series limit.",
       "gridPos": {
         "x": 0,
         "y": 230,
@@ -4909,13 +4909,13 @@
     },
     {
       "id": 56,
-      "title": "Retained graph / path / neighbour populations",
+      "title": "Stored graph / path / neighbour summaries",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Stored summaries, not rateable counters. Exported edges are capped. Prefix-only endpoints are not resolved identities.",
+      "description": "Numbers of stored graph, path and neighbour summaries. Exported edges have a limit; endpoints may be identified only by prefix.",
       "gridPos": {
         "x": 12,
         "y": 230,
@@ -5046,7 +5046,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Age of returned status, not last advert. Polling must already be configured in the bot. Importing this dashboard sends no RF requests.",
+      "description": "Age of the latest successful status response. Configure node polling in the bot to collect these samples.",
       "gridPos": {
         "x": 0,
         "y": 239,
@@ -5118,7 +5118,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Last sampled exchange outcome, not a cumulative counter or packet delivery ratio. Probe route is independent of node filter. Blocks show sampled outcomes, not continuous reachability; repeated uploads can repeat the last outcome.",
+      "description": "Most recent poll or probe outcome at each report. Repeated uploads can show the same outcome. The probe route has its own filter.",
       "gridPos": {
         "x": 12,
         "y": 239,
@@ -5283,7 +5283,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Returned battery millivolts converted to volts. Missing readings are not filled.",
+      "description": "Battery voltage returned by the node, converted from millivolts. Missing readings leave gaps.",
       "gridPos": {
         "x": 12,
         "y": 247,
@@ -5593,7 +5593,7 @@
         "type": "prometheus",
         "uid": "${DS_VM}"
       },
-      "description": "Gauge from the last returned status/local radio stats. Missing node status does not become zero.",
+      "description": "Transmit queue at the latest successful node status response. Missing readings leave gaps.",
       "gridPos": {
         "x": 0,
         "y": 263,

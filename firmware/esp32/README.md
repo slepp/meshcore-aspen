@@ -1,30 +1,31 @@
 # Standalone ESP32 setup and operation
 
-Run a repeater, room, companion/base and optional Lua bot directly on a
+Run a repeater, room, companion/base and Lua/Wasm command bot directly on a
 [supported ESP32-S3 radio](BOARDS.md), including the Seeed XIAO ESP32-S3R8
-with Wio SX1262. Each role owns its key and
-state; all share one LoRa profile, transmit queue and airtime budget.
-Repeater, room, management and bot RF work can continue without a Go host or
-WiFi. WiFi provides KISS, companion TCP, the dashboard and optional networking.
+with Wio SX1262. Each role keeps its own identity and settings; all share one
+LoRa profile, transmit queue and airtime budget. Repeater, room, Management and
+bot RF work continue when WiFi is unavailable. WiFi provides KISS, companion
+TCP, the dashboard and optional networking.
 
 For a new board, [prepare Aspen in your browser](https://ve6slp.ca/projects/meshcore/install/)
 and flash its private combined image with the MeshCore flasher. This first
 install erases the board. For setup without the website, use
 [offline USB first-boot setup](PUBLIC_SETUP.md). Both routes supply a private
-per-node SPIFFS record; application-only updates retain that configuration.
-The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.13)
+per-node setup record; application-only updates keep its configuration.
+The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.16)
 requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.13** product version, based on MeshCore
-1.18.0. `ver` and companion device information report `aspen-0.1.13`,
+New source builds use the **Aspen 0.1.16** product version, based on MeshCore
+1.18.0. `ver` and companion device information report `aspen-0.1.16`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
 
 Download an [encrypted node backup](../../NODE_BACKUP.md) through Management RF
-or the WiFi administration page to retain identities, settings, source and data.
+or the WiFi administration page before maintenance. It includes identities,
+settings, programs and saved data.
 See the [release guide](../../release/README.md) for tags, manifests and builds.
 
 For a host-based setup, use the [Go guide](../../HOST_GUIDE.md).
@@ -39,7 +40,7 @@ programs, backups and application updates.
 
 With the repeater signal sampler installed, matching first-byte prefixes share
 one row: `CC`, `CC26` and `CC268A` appear under `CC`. Expand the row to see each
-prefix. Means are weighted by retained sample count; grouped P95 shows the range
+prefix. Means are weighted by the number of stored samples; grouped P95 shows the range
 of individual P95 values. Sparklines track mean SNR while the page is open.
 
 **Mesh paths** connects hops from complete received flood paths. Node size and
@@ -275,13 +276,13 @@ packet archive or an automatic MeshMapper upload.
 
 | State | Ordinary firmware update or restart |
 | --- | --- |
-| Role/Management/bot keys and saved selections | Retained in NVS; disabling a role does not delete its identity |
-| Native role preferences, ACLs, companion contacts/channels | Retained in their role files; native room history/membership and pending traffic have volatile limits |
+| Role/Management/bot keys and saved selections | Saved in NVS; disabling a role keeps its identity |
+| Native role preferences, ACLs, companion contacts/channels | Saved in role files; room history, membership and pending traffic can be lost on restart |
 | Beta/HTTPS selected source and previous rollback source | Revalidated from the durable source journal; a bad selection needs explicit recovery |
-| KV, named timers and personal reminder records | Retained in verified files with NVS authorities, bound to full bot/scope/principal identity |
+| KV, named timers and personal reminder records | Saved in files with NVS records selecting the current version; each belongs to its bot, scope and caller identity |
 | Lua globals, module cache, coroutines, sleeps and receive waits | Lost; restart or source replacement creates a fresh source generation |
-| Bot contacts and learned direct routes | RAM-only; advertise and establish fresh authenticated routes again |
-| Companion TCP sessions and RAM replay cursors | Clients reconnect; replay is bounded, not exactly-once delivery |
+| Bot contacts and learned direct routes | Up to 16 entries are checkpointed after five minutes of changes; saved observations expire after seven days and restoration waits for trusted UTC |
+| Companion TCP sessions and RAM replay cursors | Clients reconnect; recent messages can replay, including duplicates |
 
 Source rollback changes code, **not data, identities, grants or consumed timer
 claims**. Scoped scheduler restore uses no-rearm; it does not send missed

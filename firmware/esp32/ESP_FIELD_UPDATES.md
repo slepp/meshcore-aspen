@@ -5,13 +5,13 @@ existing `/admin` connection. The radio writes its inactive OTA application
 partition, checks the complete image, then selects it for the next boot.
 Uploading does not reboot the radio. NVS, SPIFFS, role identities, stored bot
 source, WiFi settings, bootloader and partition table are not uploaded or erased.
-Keep a verified retained-state backup before changing firmware.
+Download and check an [encrypted node backup](../../NODE_BACKUP.md) before changing firmware.
 Schedule a low-traffic maintenance window: flash writes can delay radio dispatch
 even though the upload runs outside the dispatch task.
-The retained fleet layout has app0 at `0x10000` and app1 at `0x340000`, each
+The XIAO layout has app0 at `0x10000` and app1 at `0x340000`, each
 `0x330000` bytes. The updater reads the actual inactive partition size and refuses
 an image that does not fit. Do not repartition as an update workaround:
-partition-table changes can erase retained NVS/SPIFFS data and identities.
+partition-table changes can erase identities, settings, programs and data.
 
 The first installation of this updater needs the existing USB application
 flash path. Subsequent compatible applications can be uploaded without a cable.
@@ -28,7 +28,7 @@ verification authority.
 ## Update from the host
 
 The [application maintenance command](../../tools/hardware/ESP32_MAINTENANCE.md)
-checks an encrypted node backup, reads retained identities/settings, uploads one
+checks an encrypted node backup, records current identities and settings, uploads one
 signed application and verifies startup. It saves a private receipt so an
 interrupted attempt can finish without replaying an uncertain upload or restart.
 Use that command for routine maintenance; the wire-level steps below describe

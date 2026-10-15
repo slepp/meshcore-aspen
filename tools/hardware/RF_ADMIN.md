@@ -16,13 +16,12 @@ shows the two connections and labelled example conversations.
 | Manage Pine | Pine-Relay/repeater identity | Pine's authenticated admin console; see the [Pine guide](../../firmware/nrf52840/README.md) for its supported commands and limits |
 | Manage a host role locally | Host owner endpoint | Its private owner socket; see [host setup](../../HOST_GUIDE.md) |
 
-Management and the bot have separate public keys. Use the full Management
-public key from your existing node setup or contact, not the bot's key.
+Management and the bot have separate public keys. Select Management's full
+public key from your existing node setup or contact for administration.
 Management advertises as a repeater-type CLI endpoint but does not forward
 packets. Public channels, nicknames and BLE pairing do not grant admin access.
-Ordinary bot DM `!admin` is not a file-upload or credentials transport.
-Trusted full-key bot owner controls are bounded; use Management for bulk source
-and data administration.
+Use bot DM `!admin` for supported owner controls. Use Management to upload
+files, change credentials or transfer stored data.
 
 The sender and Aspen must use the same frequency, bandwidth, spreading factor
 and coding rate. Retain existing identities and settings. Obtain the existing
@@ -35,8 +34,8 @@ capabilities rather than assuming a download contains every change on `main`.
 
 In a MeshCore app that exposes the native repeater administrator console,
 select the **Management** contact, log in with its admin password and send
-`status`, then `bot status`. Use the repeater/admin console, not ordinary chat
-to the bot. App menu names vary; if your app does not expose this console,
+`status`, then `bot status`. These commands go in the repeater/admin console.
+App menu names vary; if your app does not expose this console,
 use `meshcli` with your companion radio instead.
 
 Connect to a native companion over USB:

@@ -16,9 +16,10 @@ and key generation stay in your browser.
 **First installation erases the entire board, including existing identities
 and data. Use this route for a new board.** Open
 [the MeshCore flasher](https://flasher.meshcore.io), select the private
-`-merged.bin` through **Custom Firmware**, and flash over USB. Keep the private setup ZIP
-securely: it contains credentials and the operator signing seed, not a backup
-of the radio identities created after first boot.
+`-merged.bin` through **Custom Firmware**, and flash over USB. Keep the private
+setup ZIP securely: it contains credentials and the operator signing seed.
+After first boot, download an [encrypted node backup](../../NODE_BACKUP.md)
+to save the radio's generated identities and running configuration.
 
 For an existing node, use the
 [application-only update procedure](https://ve6slp.ca/projects/meshcore/setup/#updates).
@@ -29,7 +30,7 @@ The offline USB procedure below provisions a blank board's credentials
 without the website. This ESP32-S3 profile uses `.bin` files with esptool.
 Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.15)
 or build the generic image using the
-offline checks below. Keep public application files separate from your private
+source-build procedure below. Keep public application files separate from your private
 per-node setup image. See the
 [release guide](../../release/README.md) for source builds.
 

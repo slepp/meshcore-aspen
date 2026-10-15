@@ -148,7 +148,7 @@
         "w": 12,
         "h": 4
       },
-      "description": "Oldest received report among hops retained by Report hold. Expired reports leave the table. Current firmware batches fitting rows; older firmware can take 16 minutes at 16 hops / 60 seconds.",
+      "description": "Age of the oldest hop report still within Report hold. Reports disappear after that interval. Older firmware can take 16 minutes to upload 16 hops at a 60-second reporting interval.",
       "targets": [
         {
           "refId": "A",
@@ -213,7 +213,7 @@
         "w": 24,
         "h": 11
       },
-      "description": "Compare SNR and RSSI from the same exported ring. Counts are per bucket, not packet delivery rates. Results expire after Report hold. Sort by Heard to find the most frequently observed hops.",
+      "description": "Compare SNR and RSSI from each hop's recent samples. Results expire after Report hold. Sort by Heard to find the most frequently observed hops.",
       "targets": [
         {
           "refId": "A",
@@ -732,7 +732,7 @@
         "w": 12,
         "h": 8
       },
-      "description": "Count gauge retained within a packet-program bucket. Do not use rate(): bucket eviction/recreation and report rotation change its lifetime.",
+      "description": "Observations counted since each packet-program bucket was created. A new bucket starts again at zero.",
       "targets": [
         {
           "refId": "A",

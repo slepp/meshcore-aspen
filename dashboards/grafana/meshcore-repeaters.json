@@ -73,7 +73,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Select the **Monitor device** and **Remote repeater**. The monitor collects authenticated status, supported battery voltage and remote radio statistics. Target and monitor must use the same radio profile; **Frequency mismatch** sends no request.\n\nPolls normally run every 300 seconds. Flood discovery defaults to 900 seconds between requests; change it with `bot repeaters discovery SECONDS`. **Poll wait** and **Next eligible poll** explain delays. Adverts do not supply status samples.\n\nThe publisher rotates three peers per 60-second report. **Remote report age** measures upload activity; **RF sample age** measures collection. Measurements retain their RF sample timestamp across failed polls and repeated uploads. **Sample hold** draws last-known gauge values for a bounded window, not new RF readings. Current voltage still requires fresh status; rates use the original counter observations. Missing data is not zero."
+        "content": "Select the **Monitor device** and **Remote repeater** to view authenticated status, battery voltage and radio statistics. Match their radio profiles to enable polling; **Frequency mismatch** pauses requests.\n\nPolls normally run every 300 seconds. Flood discovery defaults to 900 seconds between requests; change it with `bot repeaters discovery SECONDS`. **Poll wait** and **Next eligible poll** explain when a target can be polled.\n\n**Remote report age** measures upload activity; **RF sample age** measures collection. Repeated uploads keep the original RF timestamp. The publisher rotates three peers per 60-second report. **Sample hold** draws the latest measurement for the selected interval, then leaves a gap. Current voltage requires fresh status; packet rates use the original counter observations."
       }
     },
     {
@@ -139,7 +139,7 @@
       "id": 3,
       "type": "stat",
       "title": "RF sample age",
-      "description": "Age of the last RF measurement retained in the selected History window, including across monitor restarts. Older firmware uses its published sample-age field.",
+      "description": "Age of the latest RF measurement within History, including measurements collected before a monitor restart.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -435,7 +435,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Battery voltage history · RF and 30-minute mean",
-      "description": "Compare overnight discharge and solar recovery across the dashboard range. Reported voltage holds the last RF reading for Sample hold, then leaves a gap. The 30-minute time-weighted mean uses one-minute steps with the same bounded hold; it remains visible through flat readings, reversals and failed polls while the latest RF sample remains within Sample hold. Uploads are not new RF observations.",
+      "description": "Compare overnight discharge and solar recovery across the dashboard range. Reported voltage holds the latest RF reading for Sample hold, then leaves a gap. The 30-minute time-weighted mean smooths the same readings at one-minute steps.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -681,7 +681,7 @@
         "mergeValues": true,
         "alignValue": "left"
       },
-      "description": "Sampled available and fresh flags, held for at most six minutes to cover publisher rotation. Upload gaps remain unknown, not offline."
+      "description": "Sample availability and freshness, held for up to six minutes to cover publisher rotation. Upload gaps appear as unknown."
     },
     {
       "id": 8,
@@ -732,7 +732,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Repeater receive signal and noise",
-      "description": "Remote radio's last received packet and noise floor, not the monitor's reception of the reply or a directed-link probe.",
+      "description": "Latest received-packet signal and receiver noise floor measured at the remote repeater.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -873,7 +873,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "Packet rates",
-      "description": "Reset-aware rates of remote counters. Five-minute minimum step gives a rate window spanning at least four normal polls; cached exports do not represent additional RF polls.",
+      "description": "Remote packet counter rates, adjusted for resets. The five-minute minimum step gives a rate window spanning at least four normal polls.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1278,7 +1278,7 @@
       "id": 19,
       "type": "timeseries",
       "title": "Monitor request attempts and failures",
-      "description": "Local monitor counters, not the remote radio's packet counters. Frequency-fenced targets send no requests.",
+      "description": "Status requests and failures counted by the local monitor. Frequency mismatch pauses requests to that target.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1488,7 +1488,7 @@
         "mergeValues": true,
         "alignValue": "left"
       },
-      "description": "Last reported monitor state, held for at most six minutes; gaps are unknown. This is a sampled state, not an RF reception event."
+      "description": "Monitor state at each report, held for up to six minutes. Gaps appear as unknown."
     },
     {
       "id": 24,
@@ -1573,13 +1573,13 @@
         "mergeValues": true,
         "alignValue": "left"
       },
-      "description": "Last reported monitor state, held for at most six minutes; gaps are unknown. This is a sampled state, not an RF reception event."
+      "description": "Poll wait reason at each report, held for up to six minutes. Gaps appear as unknown."
     },
     {
       "id": 26,
       "type": "timeseries",
       "title": "Battery voltage trend · V/hour",
-      "description": "Signed least-squares voltage trend over the trailing 30 minutes, including flat readings and reversals. Uses one-minute steps with Sample hold and at least two distinct RF observations. Gaps mean insufficient observations or an expired RF reading. This is voltage change, not energy use.",
+      "description": "Voltage change per hour calculated over the previous 30 minutes, including flat readings and reversals. Uses one-minute steps with Sample hold and at least two distinct RF observations. Insufficient observations or expired readings leave gaps.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -1715,7 +1715,7 @@
       "id": 27,
       "type": "timeseries",
       "title": "Approximate time to voltage limit · history",
-      "description": "At each point, project the trailing 30-minute voltage rate to the low battery limit while falling or the full voltage limit while rising. Uses at least two distinct RF observations and the latest RF voltage within Sample hold. Exactly flat trends have no estimate; changing solar input or load can quickly change a projection. Defaults are 3.3 V low and 4.2 V full for 1S parallel Li-ion. The low limit is not empty or zero state of charge. This is a voltage projection, not remaining energy or charging completion time. Set either limit to 0 to disable that direction. Projections are displayed in days. The axis is linear up to one day and logarithmically compressed above it; long projections remain visible.",
+      "description": "Projects when voltage will reach the low battery limit while falling or the full voltage limit while rising, using the trailing 30-minute rate and at least two distinct RF observations. Flat trends have no estimate. Estimates change with solar input and load. Defaults for 1S parallel Li-ion are 3.3 V for low battery and 4.2 V for full voltage; edit these for your site, or set a limit to 0 to disable that direction. Values are in days. The axis is linear up to one day and logarithmically compressed above it.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"

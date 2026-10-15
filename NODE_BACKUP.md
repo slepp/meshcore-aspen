@@ -2,8 +2,8 @@
 
 Aspen generates a compressed backup of its identities, settings, programs and
 saved data. Birch exports the host's configuration, configured credentials and
-role state, not the shared modem's state. Pine exports InternalFS identities and
-configuration together with its QSPI Lua files and metadata.
+role state; back up its shared modem separately. Pine exports InternalFS
+identities and configuration together with its QSPI Lua files and metadata.
 
 | Node | Available in | Download through |
 | --- | --- | --- |
@@ -12,8 +12,8 @@ configuration together with its QSPI Lua files and metadata.
 | Pine | Current `nrfmast_fleet_lua` and `nrfmast_solar_lua` source builds | Authenticated repeater RF administration |
 
 Older website images do not gain these commands without an application update.
-The existing scoped `data` export/restore commands remain separate: they transfer
-one bot scope, not a whole node. See the platform's update guide before changing
+Use scoped `data` export/restore to transfer one bot scope. Use a node backup
+when you need identities and configuration too. See the platform's update guide before changing
 firmware; do not erase a filesystem or identity to add backups.
 
 ## Choose your recipient key
@@ -36,7 +36,7 @@ not receive administration permissions; authenticate separately using the
 node's existing owner key or administrator password.
 
 **These exports include private identities and credentials.** Keep both the
-encrypted file and operator seed private and in separate retained storage.
+encrypted file and operator seed private, with a separate copy of each.
 Extracted records are plaintext secrets. Encryption of the file does not
 protect a plaintext HTTP login: use a trusted LAN, localhost or a protected TLS
 tunnel for web administration.

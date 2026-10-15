@@ -1,9 +1,9 @@
 # Lua for Hew
 
-Embed Lua 5.5.1 in a native Hew program with an owned session, scalar values and
-explicit host-operation requests. The package includes the interpreter sources;
-it needs Hew, a C11/C++17 compiler and the platform math library. It builds without
-MeshCore, PlatformIO or a downloaded Lua installation.
+Embed Lua 5.5.1 in a native Hew program, pass scalar values and handle requests
+from Lua in your host application. Each session owns its interpreter and closes
+when it leaves scope. The package includes the interpreter sources; install
+Hew, a C11/C++17 compiler and the platform math library to build it.
 
 Use Hew with its matching runtime and standard library. When building Hew from
 source, run `make hew` and put its `build/bin` directory on `PATH`; this builds
