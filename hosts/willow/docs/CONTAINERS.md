@@ -1,6 +1,6 @@
 # Run Willow with Docker
 
-`ghcr.io/slepp/meshcore-willow:0.0.10` runs the Willow host, Base companion,
+`ghcr.io/slepp/meshcore-willow:0.0.11` runs the Willow host, Base companion,
 dashboard or MQTT broker on Linux x86-64. The image includes the release's
 native Lua/Wasm worker and WebSocket-capable curl library. No Hew compiler
 is needed. Each container runs one service; override its command to select
@@ -165,8 +165,8 @@ Download the Willow Linux x86-64 release bundle, copy it to
 
 ```sh
 docker build --platform linux/amd64 --memory 4g --memory-swap 4g --cpu-period 100000 --cpu-quota 200000 \
-  --build-arg VERSION=0.0.10 --build-arg SOURCE_REVISION=FULL_SOURCE_COMMIT \
-  -t meshcore-willow:0.0.10 hosts/willow/container
+  --build-arg VERSION=0.0.11 --build-arg SOURCE_REVISION=FULL_SOURCE_COMMIT \
+  -t meshcore-willow:0.0.11 hosts/willow/container
 ```
 
 The build checks the complete bundle before installing it at `/opt/willow`.
