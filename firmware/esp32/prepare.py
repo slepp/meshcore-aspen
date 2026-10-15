@@ -250,6 +250,11 @@ def generate(upstream, target):
   void onchipRequestFailed();""")
                 text = replace_once(text, "void saveChannels() { _store->saveChannels(this); }",
                                     "bool saveChannels() { return _store->saveChannels(this); }")
+                text = replace_once(text, "  void savePrefs() {", "  bool savePrefs() {")
+                text = replace_once(text, "    _store->savePrefs(_prefs);", "    _prefs.onchipDirty();\n    _store->savePrefs(_prefs);")
+                text = replace_once(text, "    _store->savePrefs(_prefs);\n    _prefs.clearDirty();",
+                                    "    if (!_store->savePrefs(_prefs)) return false;\n"
+                                    "    _prefs.clearDirty();\n    return true;")
             if path.name == "MyMesh.cpp":
                 cls = f"Onchip{role.title()}"
                 voltage = "telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);"
@@ -412,9 +417,25 @@ bool {cls}::onchipAdvertise(bool zeroHop) {{
                                         "if (!getChannel(channel_idx, channel) || !channel.name[0]) {")
                     text = replace_once(text, "      saveChannels();\n      writeOKFrame();",
                                         "      if (saveChannels()) writeOKFrame();\n      else writeErrFrame(ERR_CODE_FILE_IO_ERROR);")
+                    text = replace_once(text,
+                        "    if (setChannel(channel_idx, channel)) {\n      if (saveChannels()) writeOKFrame();\n      else writeErrFrame(ERR_CODE_FILE_IO_ERROR);",
+                        "    ChannelDetails previous;\n"
+                        "    if (getChannel(channel_idx, previous) && setChannel(channel_idx, channel)) {\n"
+                        "      if (saveChannels()) writeOKFrame();\n"
+                        "      else { setChannel(channel_idx, previous); writeErrFrame(ERR_CODE_FILE_IO_ERROR); }")
+                    start = text.index(f"void {cls}::handleCmdFrame(")
+                    end = text.index(f"void {cls}::saveContacts(", start)
+                    commands = text[start:end].replace(
+                        "savePrefs();", "if (!savePrefs()) { writeErrFrame(ERR_CODE_FILE_IO_ERROR); return; }")
+                    text = text[:start] + commands + text[end:]
+                    start = text.index(f"bool {cls}::handleCommand(")
+                    end = text.index(f"void {cls}::checkCLIRescueCmd(", start)
+                    commands = text[start:end].replace(
+                        "savePrefs();", 'if (!savePrefs()) { strcpy(reply, "Error: companion preferences save failed"); return true; }')
+                    text = text[:start] + commands + text[end:]
                     text += """
 bool OnchipCompanion::onchipFlush() {
-  if (!_store->savePrefs(_prefs)) return onchip::companionFlushFailed("companion preferences");
+  if (!savePrefs()) return onchip::companionFlushFailed("companion preferences");
   if (!pending_adverts.flush(*_store)) return onchip::companionFlushFailed("companion advert blob");
   if (!_store->saveContacts(this, save_filter)) return onchip::companionFlushFailed("companion contact metadata");
   if (!_store->saveChannels(this)) return onchip::companionFlushFailed("companion channels");
@@ -424,7 +445,7 @@ bool OnchipCompanion::onchipFlush() {
 void OnchipCompanion::onchipRequestFailed() {
   writeErrFrame(ERR_CODE_FILE_IO_ERROR);
 }
-bool OnchipCompanion::onchipSavePrefs() { return _store->savePrefs(_prefs); }
+bool OnchipCompanion::onchipSavePrefs() { return savePrefs(); }
 bool OnchipCompanion::onchipAdvertise(bool zeroHop) {
   auto* packet = _prefs.advert_loc_policy == ADVERT_LOC_NONE ?
       createSelfAdvert(_prefs.node_name) :
@@ -480,6 +501,20 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                                     "    if (!saveContacts()) dirty_contacts_expiry = millis() + 300000;")
             if role == "companion" and path.name == "DataStore.cpp":
                 text = body(text, "bool DataStore::formatFileSystem()", "  return false;")
+                text = body(text, "bool DataStore::savePrefs(",
+                            "  return onchip::companion_persistence::savePrefs(*_fs, _prefs);")
+                text = body(text, "void DataStore::loadPrefs(", """  const char *path = nullptr;
+  for (const char *candidate : {"/prefs.json", "/prefs.json-prev"}) {
+    if (onchip::companion_persistence::prefsStatus<OnchipCompanionPrefs>(*_fs, candidate) ==
+        onchip::companion_persistence::Status::Valid) { path = candidate; break; }
+  }
+  if (path) {
+    auto file = openRead(_fs, path);
+    if (file) prefs.loadSerial(file);
+  } else if (!_fs->exists("/prefs.json") && !_fs->exists("/prefs.json-prev") && _fs->exists("/new_prefs")) {
+    loadPrefsInt("/new_prefs", prefs);
+    savePrefs(prefs);
+  }""")
                 start = text.index("void DataStore::saveContacts(")
                 end = text.index("\nvoid DataStore::loadChannels(", start)
                 save = text[start:end].replace("void DataStore::saveContacts(", "bool DataStore::saveContacts(")
@@ -500,7 +535,7 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                                     "    if (file.write(digest, 32) != 32) { file.close(); return false; }\n    file.flush();")
                 save = replace_once(save, "    return true;",
                                     '    return onchip::companion_persistence::publish(*_getContactsChannelsFS(), "/contacts3-writing", "/contacts3",\n'
-                                    '        [&](const char *name) { return onchip::companion_persistence::contactsValid(*_getContactsChannelsFS(), name, MAX_CONTACTS); });')
+                                    '        [&](const char *name) { return onchip::companion_persistence::contactsStatus(*_getContactsChannelsFS(), name, MAX_CONTACTS); });')
                 text = text[:start] + save + text[end:]
                 text = replace_once(text, 'File file = openRead(_getContactsChannelsFS(), "/contacts3");',
                                     'const char *name = onchip::companion_persistence::contactsValid(*_getContactsChannelsFS(), "/contacts3", MAX_CONTACTS) ? "/contacts3" : "/contacts3-prev";\n'
@@ -526,11 +561,26 @@ int OnchipCompanion::searchChannelsByHash(const uint8_t* hash, mesh::GroupChanne
                 save = replace_once(save, "      if (!success) break; // write failed",
                                     "      if (!success) { file.close(); return false; }")
                 save = replace_once(save, "    file.close();\n  }\n}",
-                                    "    file.flush();\n    file.close();\n    return true;\n  }\n  return false;\n}")
+                                    "    file.flush();\n    file.close();\n"
+                                    "    uint8_t digest[32]; checked.hash.finalize(digest, sizeof(digest));\n"
+                                    '    return !checked.failed && onchip::companion_persistence::matches(*_getContactsChannelsFS(), "/channels2-writing", checked.written, digest) &&\n'
+                                    '        onchip::companion_persistence::publish(*_getContactsChannelsFS(), "/channels2-writing", "/channels2",\n'
+                                    '          [&](const char *name) { return onchip::companion_persistence::channelsStatus(*_getContactsChannelsFS(), name, MAX_GROUP_CHANNELS); });\n'
+                                    "  }\n  return false;\n}")
+                save = replace_once(save, 'openWrite(_getContactsChannelsFS(), "/channels2")',
+                                    'openWrite(_getContactsChannelsFS(), "/channels2-writing")')
+                save = replace_once(save, "    uint8_t channel_idx = 0;", "    onchip::companion_persistence::CheckedStream checked(file);\n    uint8_t channel_idx = 0;")
+                save = save.replace("file.write(", "checked.write(")
                 text = text[:start] + save + text[end:]
+                text = replace_once(text, '    File file = openRead(_getContactsChannelsFS(), "/channels2");',
+                                    '    const char *path = onchip::companion_persistence::channelsStatus(*_getContactsChannelsFS(), "/channels2", MAX_GROUP_CHANNELS) == onchip::companion_persistence::Status::Valid ? "/channels2" : "/channels2-prev";\n'
+                                    '    if (onchip::companion_persistence::channelsStatus(*_getContactsChannelsFS(), path, MAX_GROUP_CHANNELS) != onchip::companion_persistence::Status::Valid) return;\n'
+                                    '    File file = openRead(_getContactsChannelsFS(), path);')
             if role == "companion" and path.name == "DataStore.h":
                 text = replace_once(text, "void saveContacts(", "bool saveContacts(")
                 text = replace_once(text, "void saveChannels(", "bool saveChannels(")
+            if role == "companion" and path.name == "NodePrefs.h":
+                text = replace_once(text, "  bool isDirty() const override", "  void onchipDirty() { markDirty(); }\n  bool isDirty() const override")
             # Each native application is included by exactly one wrapper TU.
             name = path.name.replace("MyMesh", f"Onchip{role.title()}")
             if role == "companion":

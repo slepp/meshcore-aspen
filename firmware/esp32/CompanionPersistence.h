@@ -45,56 +45,146 @@ public:
 };
 namespace companion_persistence {
 constexpr size_t ContactBytes = 152;
-inline bool contactsValid(fs::FS &fs, const char *path, unsigned limit) {
+enum class Status { Valid, Invalid, Unreadable };
+inline Status contactsStatus(fs::FS &fs, const char *path, unsigned limit) {
   auto file = fs.open(path, "r");
-  if (!file || file.size() > limit * ContactBytes + 32) return false;
+  if (!file) return Status::Unreadable;
+  if (file.size() > limit * ContactBytes + 32) return Status::Invalid;
   const size_t size = file.size();
   // Older applications may rewrite legacy records or clear all contacts after rollback.
-  if (size % ContactBytes == 0) return strcmp(path, "/contacts3-writing") != 0;
-  if (size % ContactBytes != 32) return false;
+  const bool legacy = size % ContactBytes == 0;
+  if (!legacy && size % ContactBytes != 32) return Status::Invalid;
   SHA256 hash; uint8_t buffer[128], expected[32], actual[32];
-  size_t remaining = size - 32;
+  size_t remaining = legacy ? size : size - 32;
   while (remaining) {
     const size_t count = std::min(remaining, sizeof(buffer));
-    if (file.read(buffer, count) != count) return false;
+    if (file.read(buffer, count) != count) return Status::Unreadable;
     hash.update(buffer, count); remaining -= count;
   }
-  if (file.read(expected, 32) != 32) return false;
-  hash.finalize(actual, 32); return !memcmp(actual, expected, 32);
+  if (legacy) return strcmp(path, "/contacts3-writing") ? Status::Valid : Status::Invalid;
+  if (file.read(expected, 32) != 32) return Status::Unreadable;
+  hash.finalize(actual, 32);
+  return !memcmp(actual, expected, 32) ? Status::Valid : Status::Invalid;
 }
-inline uint8_t blobRead(fs::FS &fs, const char *path, uint8_t *bytes) {
+inline bool contactsValid(fs::FS &fs, const char *path, unsigned limit) {
+  return contactsStatus(fs, path, limit) == Status::Valid;
+}
+inline Status blobStatus(fs::FS &fs, const char *path, uint8_t *bytes, uint8_t &size) {
+  size = 0;
   auto file = fs.open(path, "r");
-  if (!file || file.size() < 100 || file.size() > 255) return 0;
-  const uint8_t size = file.size();
-  if (file.read(bytes, size) != size) return 0;
+  if (!file) return Status::Unreadable;
+  if (file.size() < 100 || file.size() > 255) return Status::Invalid;
+  const uint8_t length = file.size();
+  if (file.read(bytes, length) != length) return Status::Unreadable;
   mesh::Packet packet{};
-  if (!packet.readFrom(bytes, size) || packet.getRawLength() != size ||
+  if (!packet.readFrom(bytes, length) || packet.getRawLength() != length ||
       packet.getPayloadVer() != PAYLOAD_VER_1 || packet.getPayloadType() != PAYLOAD_TYPE_ADVERT ||
-      packet.payload_len < 100 || packet.payload_len > 100 + MAX_ADVERT_DATA_SIZE) return 0;
+      packet.payload_len < 100 || packet.payload_len > 100 + MAX_ADVERT_DATA_SIZE) return Status::Invalid;
   const size_t dataSize = packet.payload_len - 100;
   uint8_t message[36 + MAX_ADVERT_DATA_SIZE]{};
   memcpy(message, packet.payload, 36); memcpy(message + 36, packet.payload + 100, dataSize);
   mesh::Identity identity(packet.payload);
   AdvertDataParser advert(packet.payload + 100, dataSize);
-  return identity.verify(packet.payload + 36, message, 36 + dataSize) &&
-      advert.isValid() && advert.hasName() ? size : 0;
+  if (!identity.verify(packet.payload + 36, message, 36 + dataSize) ||
+      !advert.isValid() || !advert.hasName()) return Status::Invalid;
+  size = length;
+  return Status::Valid;
+}
+inline uint8_t blobRead(fs::FS &fs, const char *path, uint8_t *bytes) {
+  uint8_t size;
+  blobStatus(fs, path, bytes, size);
+  return size;
+}
+class CheckedStream final : public Stream {
+  File &file_;
+public:
+  SHA256 hash;
+  size_t written = 0;
+  bool failed = false;
+  int firstRead = -1, lastRead = -1;
+  explicit CheckedStream(File &file) : file_(file) {}
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+  size_t write(const uint8_t *bytes, size_t size) override {
+    const size_t count = file_.write(bytes, size);
+    hash.update(bytes, size); written += size;
+    failed = failed || count != size;
+    return count;
+  }
+  int read() override {
+    const bool pending = file_.available() > 0;
+    const int value = file_.read();
+    failed = failed || (pending && value < 0);
+    if (value >= 0 && value != ' ' && value != '\r' && value != '\n' && value != '\t') {
+      if (firstRead < 0) firstRead = value;
+      lastRead = value;
+    }
+    return value;
+  }
+  int available() override { return file_.available(); }
+  int peek() override { return -1; }
+  void flush() override { file_.flush(); }
+};
+inline bool matches(fs::FS &fs, const char *path, size_t size, const uint8_t expected[32]) {
+  auto file = fs.open(path, "r");
+  if (!file || file.size() != size) return false;
+  SHA256 hash; uint8_t bytes[128], digest[32];
+  while (size) {
+    const size_t count = std::min(size, sizeof(bytes));
+    if (file.read(bytes, count) != count) return false;
+    hash.update(bytes, count); size -= count;
+  }
+  hash.finalize(digest, sizeof(digest));
+  return !memcmp(digest, expected, sizeof(digest));
+}
+template<class Prefs> Status prefsStatus(fs::FS &fs, const char *path) {
+  auto file = fs.open(path, "r");
+  if (!file) return Status::Unreadable;
+  if (file.size() < 2) return Status::Invalid;
+  Prefs check;
+  CheckedStream stream(file);
+  const bool valid = check.loadSerial(stream);
+  if (stream.failed) return Status::Unreadable;
+  return valid && stream.firstRead == '{' && stream.lastRead == '}' ? Status::Valid : Status::Invalid;
+}
+inline Status channelsStatus(fs::FS &fs, const char *path, unsigned limit) {
+  auto file = fs.open(path, "r");
+  if (!file) return Status::Unreadable;
+  constexpr size_t ChannelBytes = 68;
+  if (file.size() % ChannelBytes || file.size() > limit * ChannelBytes) return Status::Invalid;
+  uint8_t bytes[ChannelBytes];
+  for (size_t remaining = file.size(); remaining; remaining -= sizeof(bytes))
+    if (file.read(bytes, sizeof(bytes)) != sizeof(bytes)) return Status::Unreadable;
+  return Status::Valid;
 }
 inline void previousPath(const char *path, char (&previous)[72]) {
   // The scoped ESP32 primary is already 30 characters; SPIFFS permits 31 plus NUL.
   if (!strncmp(path, "/bl/", 4)) snprintf(previous, sizeof(previous), "/bp/%s", path + 4);
   else snprintf(previous, sizeof(previous), "%s-prev", path);
 }
-template<class Valid> bool publish(fs::FS &fs, const char *stage, const char *path, Valid valid) {
-  if (!valid(stage)) return false;
+template<class Inspect> bool publish(fs::FS &fs, const char *stage, const char *path, Inspect inspect) {
+  if (inspect(stage) != Status::Valid) return false;
   char previous[72]; previousPath(path, previous);
   if (fs.exists(path)) {
-    if (valid(path)) {
+    const Status status = inspect(path);
+    if (status == Status::Unreadable) return false;
+    if (status == Status::Valid) {
       if (fs.exists(previous) && !fs.remove(previous)) return false;
       if (!fs.rename(path, previous)) return false;
     } else if (!fs.remove(path)) return false;
   }
   // The prior valid file survives a reset or failure before this rename.
-  return fs.rename(stage, path) && valid(path);
+  return fs.rename(stage, path) && inspect(path) == Status::Valid;
+}
+template<class Prefs> bool savePrefs(fs::FS &fs, Prefs &prefs) {
+  constexpr const char *stage = "/prefs-writing";
+  auto file = fs.open(stage, "w");
+  if (!file) return false;
+  CheckedStream stream(file);
+  const bool saved = prefs.saveSerial(stream);
+  file.flush(); file.close();
+  uint8_t digest[32]; stream.hash.finalize(digest, sizeof(digest));
+  return saved && !stream.failed && matches(fs, stage, stream.written, digest) &&
+      publish(fs, stage, "/prefs.json", [&](const char *path) { return prefsStatus<Prefs>(fs, path); });
 }
 inline uint8_t blobGet(fs::FS &fs, const char *path, uint8_t *bytes) {
   uint8_t size = blobRead(fs, path, bytes);
@@ -109,7 +199,10 @@ inline bool blobPut(fs::FS &fs, const char *path, const uint8_t *bytes, uint8_t 
   if (file) { file.flush(); file.close(); }
   uint8_t check[255];
   ok = ok && blobRead(fs, stage, check) == size && !memcmp(bytes, check, size);
-  if (ok) ok = publish(fs, stage, path, [&](const char *name) { return blobRead(fs, name, check) != 0; });
+  if (ok) ok = publish(fs, stage, path, [&](const char *name) {
+    uint8_t length;
+    return blobStatus(fs, name, check, length);
+  });
   if (!ok) fs.remove(stage);
   else {
     char previous[72]; previousPath(path, previous);

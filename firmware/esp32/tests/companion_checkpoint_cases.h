@@ -46,6 +46,55 @@ static void companion_checkpoint() {
   std::map<std::string, std::vector<uint8_t>> committed;
   {
     BetaFixture f(true);
+    assert(f.action("role name companion Before failure").find("Saved") == 0);
+    assert(f.action("role channel companion 1 4f7073 0102030405060708090a0b0c0d0e0f10").find("Saved") == 0);
+    const auto preferences = filesystem_test::files.at("/companion/prefs.json");
+    const auto channels = filesystem_test::files.at("/companion/channels2");
+    const auto channel = f.action("role channel companion 1");
+    for (size_t limit : {size_t(0), size_t(1)}) {
+      filesystem_test::writeLimit = limit;
+      assert(f.action("role name companion Failed write").find("Error:") == 0);
+      assert(f.action("role channel companion 1 off").find("Error:") == 0);
+      assert(filesystem_test::files.at("/companion/prefs.json") == preferences);
+      assert(filesystem_test::files.at("/companion/channels2") == channels);
+      assert(f.action("role name companion") == "Name: Before failure");
+      assert(f.action("role channel companion 1") == channel);
+    }
+    filesystem_test::writeLimit = std::numeric_limits<size_t>::max();
+    // The actual companion setter must send ERR, not OK, after a failed save.
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(fd >= 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(companionSessions().port());
+    assert(connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+    const auto appCommand = [&](const Bytes &data) {
+      Bytes request{'<', uint8_t(data.size()), 0};
+      request.insert(request.end(), data.begin(), data.end());
+      assert(send(fd, request.data(), request.size(), MSG_NOSIGNAL) == ssize_t(request.size()));
+      Bytes response;
+      for (unsigned tick = 0; tick < 100 && (response.size() < 3 ||
+           response.size() < size_t(3 + response[1] + (unsigned(response[2]) << 8))); ++tick) {
+        f.step(10); uint8_t buffer[512];
+        const auto size = recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+        if (size > 0) response.insert(response.end(), buffer, buffer + size);
+        else assert(size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+      }
+      assert(response.size() >= 4 && response[0] == '>');
+      return Bytes(response.begin() + 3, response.end());
+    };
+    filesystem_test::writeLimit = 0;
+    assert(appCommand({8, 'A', 'p', 'p'}) == Bytes({1, 5})); // CMD_SET_ADVERT_NAME; file I/O error.
+    assert(filesystem_test::files.at("/companion/prefs.json") == preferences);
+    Bytes setChannel(2 + 32 + 16, 0); setChannel[0] = 32; setChannel[1] = 1;
+    memcpy(setChannel.data() + 2, "Changed", 7);
+    assert(appCommand(setChannel) == Bytes({1, 5}));
+    assert(filesystem_test::files.at("/companion/channels2") == channels);
+    assert(f.action("role channel companion 1") == channel);
+    filesystem_test::writeLimit = std::numeric_limits<size_t>::max();
+    assert(appCommand({8, 'A', 'p', 'p'}) == Bytes({0}));
+    assert(f.action("role name companion") == "Name: App");
+    close(fd);
     const auto before = filesystem_test::files;
     lastAdvert = caller.advert();
     f.mux.received(lastAdvert.data(), lastAdvert.size(), -90, 5); f.step();
@@ -78,7 +127,25 @@ static void companion_checkpoint() {
     char prefix[17]; mesh::Utils::toHex(prefix, caller.self_id.pub_key, 8);
     const std::string primary = std::string("/companion/bl/") + prefix;
     const auto oldBlob = filesystem_test::files.at(primary);
-    filesystem_test::failReadAfterRename = true;
+    const std::string previous = std::string("/companion/bp/") + prefix;
+    filesystem_test::files[previous] = oldBlob;
+    // Staging/readback succeeds, then the current primary cannot be opened.
+    filesystem_test::step = [](const char *phase) {
+      static unsigned readOpens = 0;
+      if (!strcmp(phase, "file.before-open-read") && ++readOpens == 3) filesystem_test::failOpen = true;
+    };
+    onchip::ScopedFS primaryFiles(SPIFFS, "/companion");
+    const std::string blobPath = std::string("/bl/") + prefix;
+    assert(!onchip::companion_persistence::blobPut(primaryFiles, blobPath.c_str(), lastAdvert.data(), lastAdvert.size()));
+    filesystem_test::step = nullptr; filesystem_test::failOpen = false;
+    assert(filesystem_test::files.at(primary) == oldBlob);
+    assert(filesystem_test::files.at(previous) == oldBlob);
+    filesystem_test::step = [](const char *phase) {
+      if (!strcmp(phase, "file.after-open-write") && filesystem_test::files.count("/companion/bl-writing")) {
+        filesystem_test::failReadAfterRename = true;
+        filesystem_test::step = nullptr;
+      }
+    };
     MastAdmin::Reply reboot;
     f.management.admin().execute("reboot", reboot);
     assert(strstr(reboot.text, "Accepted reboot"));
@@ -113,6 +180,8 @@ static void companion_checkpoint() {
   }
   {
     BetaFixture restarted(true);
+    assert(restarted.action("role name companion") == "Name: App");
+    assert(restarted.action("role channel companion 1").find("name=Ops ") != std::string::npos);
     unsigned cursor = 0; uint8_t key[32]{}, raw[255]{}, size = 0;
     assert(companionContactAdvert(caller.self_id.pub_key, cursor, key, raw, size));
     assert(Bytes(raw, raw + size) == lastAdvert);
@@ -123,10 +192,14 @@ static void companion_checkpoint() {
   }
   // A truncated primary metadata file cannot hide the previous complete record set.
   filesystem_test::files = committed;
+  filesystem_test::files["/companion/prefs.json"] = {' ', ' '};
+  filesystem_test::files["/companion/channels2"].resize(3);
   for (auto &entry : filesystem_test::files)
     if (entry.first == "/companion/contacts3") entry.second.resize(3);
   {
     BetaFixture restarted(true);
+    assert(restarted.action("role name companion") == "Name: App");
+    assert(restarted.action("role channel companion 1").find("name=Ops ") != std::string::npos);
     unsigned cursor = 0; uint8_t key[32]{}, raw[255]{}, size = 0;
     assert(companionContactAdvert(caller.self_id.pub_key, cursor, key, raw, size));
     mesh::Packet packet{}; assert(packet.readFrom(raw, size));
@@ -136,13 +209,24 @@ static void companion_checkpoint() {
     restarted.mux.received(request.data(), request.size(), -90, 5); restarted.step(300);
     assert(caller.replies(restarted.bot.publicKey(), restarted.radio) == std::vector<std::string>{"Pong"});
   }
+  // A restart between the two renames loads the old preferences and channels.
+  filesystem_test::files = committed;
+  filesystem_test::files.erase("/companion/prefs.json");
+  filesystem_test::files.erase("/companion/channels2");
+  {
+    BetaFixture restarted(true);
+    assert(restarted.action("role name companion") == "Name: App");
+    assert(restarted.action("role channel companion 1").find("name=Ops ") != std::string::npos);
+  }
   // A rolled-back application can legitimately clear legacy metadata; never resurrect its previous contacts.
   filesystem_test::files = committed;
   filesystem_test::files["/companion/contacts3"].clear();
+  filesystem_test::files["/companion/channels2"].clear();
   {
     BetaFixture restarted(true);
     unsigned cursor = 0; uint8_t key[32]{}, raw[255]{}, size = 0;
     assert(!companionContactAdvert(caller.self_id.pub_key, cursor, key, raw, size));
+    assert(restarted.action("role channel companion 1").find("name=off ") != std::string::npos);
   }
   identity_test::durable = records; filesystem_test::files = files;
   filesystem_test::maxPathLength = oldMaxPathLength;
