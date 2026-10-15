@@ -90,6 +90,10 @@ def prose(path, text):
             if path.suffix == ".json" and re.match(r"\s*:", text[match.end():]):
                 continue  # JSON field names are identifiers.
             first = text.count("\n", 0, match.start()) + 1
+            if match[0].startswith('R"') and re.search(r"<(?:html|!doctype)\b", match[0], re.I):
+                for number, line in prose(Path("embedded.html"), match[0]):
+                    yield first + number - 1, line
+                continue
             for offset, line in enumerate(match[0].splitlines()):
                 yield first + offset, line
 

@@ -14,37 +14,35 @@ section{background:var(--panel);border-top:1px solid var(--line);padding:20px;ma
 <main><header><div><h1>Willow</h1><p class="eyebrow">Aspen / Host observatory</p></div><div class="actions"><span id="live-state" role="status">Connecting</span><button id="live-refresh">Refresh</button><a href="/metrics">Metrics</a></div></header>
 <nav aria-label="Host sections"><a href="#overview">Host roles</a><a href="#signals">Repeater signal</a><a href="#administration">Administration</a><a href="#programs">Programs</a><a href="#backups">Backups</a></nav>
 <section id="overview"><h2>Host roles</h2><div id="role-overview" class="role-grid"></div><p class="note" id="live-updated">Waiting for host status.</p></section>
-<section id="signals"><h2>Repeater signal</h2><p id="signal-status">Waiting for packet reports.</p><div class="table-scroll" id="signal-reports"></div><p class="note">Expand a first-byte prefix to see individual windows. Means use retained sample counts; grouped P95 shows the range of prefix P95s.</p></section>
+<section id="signals"><h2>Repeater signal</h2><p id="signal-status">Waiting for packet reports.</p><div class="table-scroll" id="signal-reports"></div><p class="note">Expand a first-byte prefix to see individual signal histories. Group means use sample counts as weights; grouped P95 shows the range across those histories.</p></section>
 <h2 id="administration">Administration</h2><p>Configure roles and bot programs, or download an encrypted backup.</p>
 <p class="warning">Use localhost or a trusted TLS tunnel. Plain HTTP exposes the login credential, session and source/private data.
 An authenticated session grants owner access to bot settings, source and scoped backups. Reusing a role admin password also exposes that role's credential if HTTP is intercepted.
 Never paste private keys or service credentials into the console.</p>
 <section><label>Configured host admin password or token <input id="token" type="password" autocomplete="current-password" maxlength="256"></label>
 <button id="login">Connect</button><button id="logout">Logout / forget session</button><span id="session">Disconnected</span>
-<p>Login sends this credential once; subsequent requests use a random ten-minute session retained only in this tab. Four sessions and five login attempts per minute are allowed.</p></section>
+<p>Login sends this credential once; subsequent requests use a random ten-minute session stored in this tab. Up to four sessions can be active, with five login attempts per minute.</p></section>
 
 <section aria-live="polite"><button id="inspect">Inspect affected outcome</button><pre id="result"></pre>
-<p class="warning">Accepted means pending. A lost reply blocks writes in this tab; no automatic retry.
-Inspection unlocks only a matching durable source hash and terminal status. Other unknown writes require scoped readback through the owner CLI; do not repeat them.</p></section>
-<section><h2>Owner connections</h2><button id="monitor">Read owner capabilities</button><details><summary>Full status JSON</summary><pre id="monitoring"></pre></details>
-<p>Host role selection, listeners, MQTT and PHY authority remain in the operator's host configuration; activate those changes with an explicit service restart.
-This page never overwrites that configuration. Running state is shown below; bot settings and source save through native durable helpers.</p></section>
+<p class="warning">Accepted commands may still be running. If a reply is lost, this tab pauses changes.
+Use Inspect to check program activation or role settings. Read back other changes through the owner CLI before retrying.</p></section>
+<section><h2>Host connections</h2><button id="monitor">Refresh available controls</button><details><summary>Full status JSON</summary><pre id="monitoring"></pre></details>
+<p>Set host roles, listeners, MQTT and the shared radio profile in the host configuration, then restart the service to apply them.
+Use this page to view running state and save bot settings and programs.</p></section>
 <section><h2>Relay and room role configuration</h2>
 <label>Running role <select id="host-role"></select></label><button id="role-read">Read name, policy and radio</button>
 <label>Display name <input id="host-role-name" maxlength="31"></label><button id="role-name-save">Save role name</button>
 <label>Role forwarding policy <select id="host-repeat"><option>off</option><option>on</option></select></label><button id="role-repeat-save">Save repeat policy</button>
-<label>Scoped role command <input id="role-command" maxlength="160" value="get name" size="60"></label><button id="role-run">Run role command</button>
-<pre id="role-detail">Role owner controls are enabled only when the host provides its existing role command adapter.</pre>
-<p>These commands use the running relay/room engine and its durable save helpers, not a second configuration store.
-Names preserve identities. Use <code>advert</code> to flood the selected role's identity through its default region,
-or <code>advert.zerohop</code> to announce it only to radios in range. Queuing does not confirm RF reception.
-Read help for path-hash and advert intervals; native bounds remain authoritative.
-Shared PHY, credentials, identities, ACLs and restart are unavailable here. Companion settings remain in the native app/CLI.</p></section>
+<label>Role command <input id="role-command" maxlength="160" value="get name" size="60"></label><button id="role-run">Run role command</button>
+<pre id="role-detail">Connect to read the available relay and room controls.</pre>
+<p>Save the selected role's name and forwarding policy here. Changing its name keeps the same public identity.
+Use <code>advert</code> to flood its identity through the default region, or <code>advert.zerohop</code> to announce it only to radios in range.
+Read command help for path-hash and advert intervals. Configure the shared radio profile, credentials, identities and ACLs through the host tools; use the companion app or CLI for companion settings.</p></section>
 <p>In the scoped role console, use <code>region def can ab edm</code>, then
 <code>region home ab</code> and <code>region save</code>. Read <code>region</code>
-to check the tree and <code>ab^</code> home marker. Home does not select an outgoing scope;
-use <code>region default ab</code> only when that role should originate ab-scoped floods.</p>
-<section><h2>Native bot configuration</h2><button id="bot-status">Read bot status and policy</button>
+to check the tree and <code>ab^</code> home marker. Use <code>region default ab</code>
+when that role should originate ab-scoped floods.</p>
+<section><h2>Bot settings</h2><button id="bot-status">Read bot status and policy</button>
 <label>Bot display name <input id="name" maxlength="31"></label><button id="name-save">Save bot name</button>
 <label>Grant <select id="grant"><option>shared</option><option>home</option><option>reminders</option><option>channel-wait</option><option>discovery</option></select>
 <select id="grant-value"><option>off</option><option>on</option></select></label><button id="grant-save">Save grant</button>
@@ -55,11 +53,11 @@ use <code>region default ab</code> only when that role should originate ab-scope
 <pre id="upload-info">No snapshot uploaded.</pre>
 <p>Upload saves resumable staging chunks. Install changes the Lua command set and may cancel running work. Later editor changes are not included in the uploaded snapshot.
 Use the owner CLI to read durable source, roll back, recover or install packages outside this editor's envelope. Wasm is unavailable here.</p></section>
-<section><h2>Scoped owner console</h2>
-<label>Native command (160 printable ASCII bytes)<input id="command" value="help" maxlength="160" size="60"></label><button id="run">Run</button>
-<p>Bot diagnostics, grants, source and scoped <code>data</code> export/stage/restore commands use the existing owner API.
-Backups contain private values; use <code>mast_cli.py --unix-socket … data-export/data-restore</code> for verified files.
-Whole-host encrypted exports are available below. Role identities, private keys, passwords, channel provisioning and radio retuning are not accepted as console inputs.</p>
+<section><h2>Command console</h2>
+<label>Command (up to 160 ASCII bytes)<input id="command" value="help" maxlength="160" size="60"></label><button id="run">Run</button>
+<p>Run bot diagnostics, adjust permissions and manage programs here.
+Use <code>mast_cli.py --unix-socket … data-export/data-restore</code> to export or restore bot data files; these files contain private values.
+Download an encrypted whole-host backup below. Configure role identities, passwords, channels and the radio through the host tools or companion app.</p>
 <p>The native MeshCore app connects to the companion TCP endpoint for chats, contacts, channels and role-specific radio administration.
 Use the local owner CLI for additional host-role settings reported by its help.</p></section>
 <section id="backups"><h2>Node backup</h2>
@@ -92,7 +90,7 @@ function controls(){
   $('backup-download').disabled=busy||!token||!nodeBackup;
 }
 async function request(path,body=''){
-  if(path!=='/admin/login'&&(!token||Date.now()>=expires)){token='';nativeOwner=false;throw Error('Host admin session expired; connect again. Draft and unresolved outcome retained.');}
+  if(path!=='/admin/login'&&(!token||Date.now()>=expires)){token='';nativeOwner=false;throw Error('Host admin session expired; connect again. Your draft and pending outcome stay in this tab.');}
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
   try {
     const response=await fetch(path,{method:'POST',headers:{'X-Host-Admin':token,'X-Host-Intent':'admin-v1'},body,cache:'no-store',credentials:'omit',redirect:'error',signal:controller.signal});
@@ -257,16 +255,17 @@ $('login').onclick=()=>action(async()=>{
   token=await request('/admin/login',credential);
   if(!/^[0-9a-f]{64}$/.test(token)){token='';throw Error('Invalid host admin session response.');}
   expires=Date.now()+600000;
-  const reply=await monitor();$('session').textContent='Authenticated session: ten minutes, retained in this tab only';return reply;
+  const reply=await monitor();$('session').textContent='Authenticated session: ten minutes, stored in this tab';return reply;
 });
 $('logout').onclick=()=>action(async()=>{
   try{if(token)return await request('/admin/logout');return 'Disconnected';}
-  finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; draft and unresolved outcome retained';$('monitoring').textContent='';$('signal-reports').replaceChildren();$('signal-status').textContent='Refresh host monitoring to read installed packet reports.';}
+  finally{token='';expires=0;nativeOwner=false;$('token').value='';$('session').textContent='Disconnected; your draft and pending outcome stay in this tab';$('monitoring').textContent='';$('signal-reports').replaceChildren();$('signal-status').textContent='Refresh host monitoring to read installed packet reports.';}
 });
 $('monitor').onclick=()=>action(monitor);
 async function backupDownload(create){
   const key=$('backup-key').value.trim();
   if(create){
+    // copy-check: allow contrast -- Prevent entering secret key material in a public-key field.
     if(!/^[0-9a-f]{64}$/.test(key)||/^0+$/.test(key))throw Error('Enter your operator public key: 64 lowercase hex characters, not a private seed.');
     if(!window.confirm('Replace the saved node backup with a new encrypted snapshot? Keep the matching operator seed private.'))return 'Cancelled; no backup requested.';
     await command('backup start '+key);
@@ -326,7 +325,7 @@ async function inspectSource(){
   if(!manifest)throw Error('Invalid source hash readback; writes remain blocked.');
   const terminal=/^gen=(\d+) active=[0-3] prev=[0-3] size=(\d+) upload=(?:none|[0-9a-f]{16}) next=\d+\/\d+; source (?:durably saved and active|saved; bot disabled; loads on next enabled boot)$/.exec(status);
   if(pending?.command==='source commit '+pending.snapshot?.id&&manifest[1]===pending.snapshot.hash&&terminal&&manifest[2]===terminal[1]&&+terminal[2]===pending.snapshot.size){uncertain=false;pending=null;}
-  return status+'\n'+hash+'\n'+(uncertain?'Outcome remains unconfirmed; no writes unlocked.':'Durable selection confirmed.');
+  return status+'\n'+hash+'\n'+(uncertain?'Waiting for activation confirmation. Changes are paused.':terminal?'Selected program saved.':'Program status read.');
 }
 $('install').onclick=()=>action(async()=>{
   if(!uploaded)throw Error('Upload the exact snapshot first.');
@@ -343,27 +342,27 @@ $('inspect').onclick=()=>action(async()=>{
     const item={...pending},setting=/^set (name|repeat|path\.hash\.mode|advert\.interval|flood\.advert\.interval) (.+)$/.exec(item.command);
     if(!setting){
       const region=/^region (home|default) ([#a-zA-Z0-9*-]{1,30}|<null>)$/.exec(item.command);
-      if(!region)return await roleCommand(item.role,'region')+'\nRegion tree read; this does not confirm the pending write. No writes unlocked.';
+      if(!region)return await roleCommand(item.role,'region')+'\nPending region change needs confirmation in the role CLI. Changes are paused.';
       const result=await roleCommand(item.role,'region '+region[1]);
       $('role-detail').textContent=item.role+' region '+region[1]+': '+result;
       const name=region[2].replace(/^#/,'');
-      if(result.replace(/^ (home|default scope) is #?/,'')!==name)return 'Region selection remains unconfirmed; writes stay blocked.\n'+$('role-detail').textContent;
-      uncertain=false;pending=null;return 'Region selection confirmed by owner readback; no write replayed.\n'+$('role-detail').textContent;
+      if(result.replace(/^ (home|default scope) is #?/,'')!==name)return 'Region differs from the requested selection. Changes are paused.\n'+$('role-detail').textContent;
+      uncertain=false;pending=null;return 'Region selection saved.\n'+$('role-detail').textContent;
     }
     const result=await roleCommand(item.role,'get '+setting[1]);
     $('role-detail').textContent=item.role+' get '+setting[1]+': '+result;
-    if(result!=='> '+setting[2])return 'Affected role outcome remains unconfirmed; writes stay blocked.\n'+$('role-detail').textContent;
-    uncertain=false;pending=null;return 'Affected '+item.role+' setting confirmed by exact owner readback; no write was replayed.\n'+$('role-detail').textContent;
+    if(result!=='> '+setting[2])return item.role+' setting differs from the requested value. Changes are paused.\n'+$('role-detail').textContent;
+    uncertain=false;pending=null;return item.role+' setting saved.\n'+$('role-detail').textContent;
   }
   if(pending?.command.startsWith('source '))return inspectSource();
   const alias=/^(?:bot )?aliases (.+)$/.exec(pending?.command||'');
   if(alias){
     const result=await command('bot aliases');
-    if(result!=='Aliases: '+alias[1]+'; live=applied')return 'Bot aliases remain unconfirmed; writes stay blocked.\n'+result;
-    uncertain=false;pending=null;return 'Saved and applied bot aliases confirmed; no write replayed.\n'+result;
+    if(result!=='Aliases: '+alias[1]+'; live=applied')return 'Bot aliases differ from the requested value or are waiting to apply. Changes are paused.\n'+result;
+    uncertain=false;pending=null;return 'Bot aliases saved and active.\n'+result;
   }
   return await command('bot status')+'\n'+await command('data status')+'\nUnresolved operation: '+(pending?.command||'none')+
-    (uncertain?'\nGeneric status does not confirm this operation; writes stay blocked. Use scoped owner readback.':'');
+    (uncertain?'\nCheck the pending setting in the role CLI before making another change.':'');
 });
 controls();
 </script></body></html>

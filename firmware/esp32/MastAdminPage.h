@@ -216,7 +216,7 @@ function unknown(message) {
   const e=Error(message+(affected || unresolved.length?' Use Check pending changes before trying again.':'')); e.unknown=true; return e;
 }
 async function post(path, body='', login=false) {
-  if(!login && (!token || Date.now()>=expires)) { forgetSession(); throw Error('Admin session expired; login again. Draft text is retained.'); }
+  if(!login && (!token || Date.now()>=expires)) { forgetSession(); throw Error('Admin session expired; log in again. Your editor draft stays in this tab.'); }
   const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),5000);
   const session=token;
   let response, value;
@@ -552,6 +552,7 @@ function bind(id,label,work) { $(id).onclick=()=>action(label,work); }
 async function nodeBackupDownload(create) {
   if(create) {
     const key=$('node-backup-key').value.trim();
+    // copy-check: allow contrast -- Prevent entering secret key material in a public-key field.
     if(!/^[0-9a-f]{64}$/.test(key) || /^0+$/.test(key)) throw Error('Enter your operator public key: 64 lowercase hex characters, not a private seed.');
     if(!confirmed('Create a new encrypted snapshot? This replaces the saved node backup. Keep the matching operator seed private.')) return 'Cancelled; no snapshot requested.';
     await cmd('backup start '+key);
@@ -676,7 +677,7 @@ bind('firmware-force','Forcing device restart without saving',async()=>{
 bind('firmware-upload','Uploading signed application',async()=>{
   const image=$('firmware-image').files[0],file=$('firmware-manifest').files[0];
   if(!firmwareStatus || !['idle','failed'].includes(firmwareStatus.state)) throw Error('Check firmware update capability and state first.');
-  if(!image || !file || !image.size || image.size>0x330000 || file.size>2048) throw Error('Choose an application up to 3342336 bytes and its bounded signed JSON manifest.');
+  if(!image || !file || !image.size || image.size>0x330000 || file.size>2048) throw Error('Choose an application up to 3342336 bytes and its signed JSON manifest up to 2048 bytes.');
   const bytes=new Uint8Array(await image.arrayBuffer()),meta=JSON.parse(await file.text());
   if(!meta || Array.isArray(meta) || Object.keys(meta).length!==4 || Object.keys(meta).some(k=>!['target','size','sha256','signature'].includes(k)))
     throw Error('Choose the offline signed release manifest with target, size, sha256 and signature only. Private signing keys are never accepted.');
@@ -686,7 +687,7 @@ bind('firmware-upload','Uploading signed application',async()=>{
      !/^[0-9a-f]{64}$/.test(meta.sha256) || !/^[0-9a-f]{128}$/.test(meta.signature) || sha256(bytes)!==meta.sha256 ||
      bytes.length<24 || bytes[0]!==0xe9 || bytes[12]!==9 || bytes[13]!==0 || !hasMarker)
     throw Error('Application target, size, ESP32-S3 image header or digest differs from the signed manifest; no upload sent.');
-  if(!confirmed('Upload this '+meta.target+' application ('+meta.size+' bytes)? It will be verified before a separate restart. Saved roles and bot data are retained.\nSHA256 '+meta.sha256)) return 'Cancelled; no firmware upload sent.';
+  if(!confirmed('Upload this '+meta.target+' application ('+meta.size+' bytes)? It will be verified before a separate restart. Your saved roles and bot data stay on the device.\nSHA256 '+meta.sha256)) return 'Upload cancelled.';
   expectedFirmware={target:meta.target,size:meta.size,sha256:meta.sha256};
   inFlight={command:'firmware upload',runtime:'firmware',mutation:true,image:{...expectedFirmware}}; lastMutation={...inFlight};
   try {
@@ -766,7 +767,7 @@ for(const [id,temp] of [['radio-save',false],['radio-temp',true]]) bind(id,'Chan
 });
 bind('inventory','Reading program inventory / capabilities',inventory);
 bind('hello','Creating a hello draft',()=>{
-  if($('source').value && !window.confirm('Replace this editor draft with the hello template? Download unsaved edits first.')) return 'Cancelled; draft retained.';
+  if($('source').value && !window.confirm('Replace this editor draft with the hello template? Download unsaved edits first.')) return 'Cancelled; editor draft unchanged.';
   $('source').value="function hello(name) reply('Hello '..name) end"; draftInfo(); return 'Hello example ready. Upload and install it to activate the command.';
 });
 $('source').oninput=draftInfo;
@@ -780,7 +781,7 @@ $('wasm-file').onchange=()=>action('Reading Wasm binary file',async()=>{
   const magic=[0,97,115,109,1,0,0,0];
   if(bytes[0]!==0) {
     const end=bytes.indexOf(10);
-    if(end<0 || end>255) throw Error('Wasm package requires a bounded metadata header.');
+    if(end<0 || end>255) throw Error('Wasm package metadata must end within the first 256 bytes.');
     const header=String.fromCharCode(...bytes.slice(0,end));
     if(!header.startsWith('--@meshcore-bot/1;') || !header.includes(';runtime=wamr-2.4.1;api=meshcore-v1;'))
       throw Error('Selected file does not declare the supported Wasm runtime/API.');
@@ -799,9 +800,9 @@ bind('source-install','Verifying / installing uploaded snapshot',installSource);
 for(const op of ['rollback','remove','retry']) bind('source-'+op,'Recovering source: '+op,()=>recoverSource(op));
 bind('help-read','Reading source help',async()=>{
   const old=$('helptext').value;
-  if(old && !window.confirm('Replace local source help edits with saved help?')) return 'Cancelled; help edits retained.';
+  if(old && !window.confirm('Replace local source help edits with saved help?')) return 'Cancelled; help edits unchanged.';
   const text=await sourceCmd('source helptext',true);
-  if($('helptext').value!==old) throw Error('Help editor changed during read; edits retained.');
+  if($('helptext').value!==old) throw Error('Help editor changed during the download; your edits are unchanged.');
   $('helptext').value=text==='(no source help)'?'':text; return 'Saved help read as plain text.';
 });
 bind('help-save','Saving help text',()=>nativeWrite(sourceCommand('source help '+($('helptext').value||'-')),'Save this help text? Program code will stay unchanged.'));

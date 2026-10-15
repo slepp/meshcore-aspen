@@ -165,7 +165,7 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
         <div><p class="muted">Unconfirmed TX</p><p id="tx-unknown" class="number warning">-</p></div>
       </div>
       <div class="key-value"><span class="muted">Radio receive errors</span><span id="rx-errors">-</span></div>
-      <p class="muted chart-note">Sent means the radio completed transmission, not that a recipient acknowledged it.</p>
+      <p class="muted chart-note">Sent counts transmissions completed by this radio.</p>
     </section>
   </div>
 
@@ -220,9 +220,9 @@ footer { margin-top: 24px; display: flex; justify-content: space-between; gap: 1
     <details class="chart-note"><summary>Decode key</summary>
       <p id="contact-detail" class="muted">Companion contacts unavailable.</p>
       <p class="packet-legend"><span class="field-header">Header / transport</span><span class="field-route">Path / route</span><span class="field-src">Source / key</span><span class="field-dst">Destination / channel</span><span class="field-mac">MAC</span><span class="field-payload">Payload</span></p>
-      <p class="muted">↑ TX · ↓ RX · × failed/rejected · ? unconfirmed · … queued. The radio-wave icon marks RF reception or transmission activity; it is not an ACK.</p>
+      <p class="muted">↑ TX · ↓ RX · × failed/rejected · ? unconfirmed · … queued. The radio-wave icon marks activity on the radio.</p>
       <p class="muted">Air: ~ estimated RX time. RSSI / SNR: dBm / dB. Hover an outcome, source or byte group for details.</p>
-      <p class="muted">Names match public-key prefixes, not authenticated senders. ? marks a candidate from an incomplete contact list; [N matches] marks a collision. Path = traversed hops; Route = remaining hops. Hex shows up to 16 bytes; ... marks a truncated preview.</p>
+      <p class="muted">Names are unverified contact matches based on public-key prefixes. ? marks a candidate from an incomplete contact list; [N matches] marks a collision. Path = traversed hops; Route = remaining hops. Hex previews show up to 16 bytes, followed by ... when more bytes remain.</p>
     </details>
   </section>
   <footer><span id="updated">Connecting...</span><span id="firmware-version"></span></footer>
@@ -680,7 +680,7 @@ function renderPacketReports(data) {
     table.appendChild(body); scroll.appendChild(table); section.appendChild(scroll);
     if (snr) {
       const note = document.createElement('p'); note.className = 'muted chart-note';
-      note.textContent = 'Means are weighted by retained sample count. Grouped P95 shows the range of prefix P95s. Trends follow mean SNR while this page is open (last 60 observations). Prefixes can represent more than one node; direct packets are excluded.';
+      note.textContent = 'Expand a prefix to see its individual signal histories. Group means use sample counts as weights; grouped P95 shows the range across those histories. Sparklines show the last 60 mean SNR observations collected while this page is open. This table tracks repeater hops; a prefix may match several nodes.';
       section.appendChild(note);
     }
     return section;

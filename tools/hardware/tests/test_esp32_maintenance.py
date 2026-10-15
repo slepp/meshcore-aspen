@@ -568,7 +568,7 @@ class MaintenanceTests(unittest.TestCase):
 
     def test_retained_identity_mismatch_fails_with_sampler_restored(self):
         self.radio.changed_identity = True
-        with self.assertRaisesRegex(ValueError, "Retained state changed"):
+        with self.assertRaisesRegex(ValueError, "role identities"):
             maintenance.maintain(self.args)
         self.assertFalse(self.receipt()["complete"])
         self.assertTrue(self.radio.sampler_enabled)
@@ -580,7 +580,7 @@ class MaintenanceTests(unittest.TestCase):
         self.args.receipt.unlink()
         self.radio.booted = self.radio.uploaded = self.radio.bundled = False
         self.radio.changed_source = True
-        with self.assertRaisesRegex(ValueError, "Retained state changed"):
+        with self.assertRaisesRegex(ValueError, "source, source wasm"):
             maintenance.maintain(self.args)
         self.assertFalse(self.receipt()["complete"])
 

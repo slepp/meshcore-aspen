@@ -263,7 +263,7 @@ def finish(client, record, receipt, connect, deadline, interval):
                         if after["profile"] != record["before"]["profile"]:
                             changed.append("radio profile")
                         if changed:
-                            raise ValueError("Retained state changed: " + ", ".join(changed))
+                            raise ValueError("Changed after update: " + ", ".join(changed))
                         record["complete"] = True
                         save_receipt(receipt, record)
                         return
@@ -498,7 +498,7 @@ def maintain_locked(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    update = sub.add_parser("update", help="Verify backup and image, upload once, restart once, check retained state")
+    update = sub.add_parser("update", help="Verify backup and image, upload once, restart once, compare saved settings")
     restart = sub.add_parser("force-restart", help="Restart the node once without saving; recent unsaved state may be lost")
     resume = sub.add_parser("resume", help="Finish an earlier attempt; never repeat an upload or attempted restart")
     status = sub.add_parser("status", help="Read current application SHA256 and update/boot state")
@@ -539,7 +539,7 @@ def main():
     if restarted:
         print(f"Node restarted; intended application and roles healthy. Receipt: {args.receipt}")
         return
-    print(f"Application healthy; identities, radio profile, selected programs and settings retained. Receipt: {args.receipt}")
+    print(f"Application healthy. Identities, radio profile, selected programs and settings match. Receipt: {args.receipt}")
 
 
 if __name__ == "__main__":

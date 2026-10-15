@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
@@ -9,7 +10,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..');
-const scratch=path.join(root,'.tmp',`host-admin-browser-${process.pid}`);
+const scratch=await fs.mkdtemp(path.join(tmpdir(),'meshcore-host-admin-'));
 const page=await fs.readFile(path.join(root,'internal/app/admin_page.html'),'utf8');
 const requests=[],token='fixture-token-'.repeat(4);
 const session='ab'.repeat(32);

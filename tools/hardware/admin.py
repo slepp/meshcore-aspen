@@ -143,7 +143,7 @@ class NativeClient:
         if path is not None and (not path or path[0] >> 6 == 3 or not path[0] & 63 or
                                  len(path) != 1 + ((path[0] >> 6) + 1) * (path[0] & 63) or
                                  len(path) > 65):
-            raise ValueError("Explicit native route requires a bounded nonempty encoded path")
+            raise ValueError("Explicit route requires 1..3-byte hops, 1..64 path bytes and a matching hop count")
         seed = private_file(seed_file, 32)
         if len(seed) != 32:
             raise ValueError("Companion seed must be 32 bytes")
