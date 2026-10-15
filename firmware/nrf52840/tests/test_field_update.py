@@ -72,6 +72,13 @@ class FieldUpdateTests(unittest.TestCase):
                 write(image)
                 with self.assertRaises(ValueError):
                     ble_field.validate_package(path)
+            oversized = binary + bytes(ble_field.LEGACY_APP_LIMIT - ble_field.APP_START + 4 - len(binary))
+            data["firmware_crc16"] = binascii.crc_hqx(oversized, 0xFFFF)
+            oversized_init = struct.pack("<HHIHHH", 0x52, 0xFFFF, 0xFFFFFFFF, 1, 0x123, data["firmware_crc16"])
+            write(oversized, oversized_init)
+            with self.assertRaisesRegex(ValueError, "Legacy 0.6.1 DFU capacity"):
+                ble_field.validate_package(path)
+            data["firmware_crc16"] = crc
             write(packet=init[:-1] + b"\x00")
             with self.assertRaises(ValueError):
                 ble_field.validate_package(path)
@@ -82,6 +89,19 @@ class FieldUpdateTests(unittest.TestCase):
             write()
             with self.assertRaises(ValueError):
                 ble_field.validate_package(path)
+
+    def test_embedded_cpp_termination_still_aborts(self):
+        with tempfile.TemporaryDirectory(dir=HERE / ".build") as directory:
+            root = Path(directory)
+            source = root / "terminate.cpp"
+            source.write_text("#include <csignal>\n#include <cstdlib>\n#include <exception>\n"
+                              "int main() { std::signal(SIGABRT, [](int) { std::_Exit(99); }); std::terminate(); }\n")
+            binary = root / "terminate"
+            subprocess.run(["c++", "-std=c++17", "-fno-exceptions", str(source),
+                            str(HERE / "PineTermination.cpp"), "-o", str(binary)], check=True)
+            result = subprocess.run([str(binary)], capture_output=True)
+            self.assertEqual(result.returncode, 99)
+            self.assertEqual(result.stderr, b"")
 
     def test_standard_companion_time_frame_and_valid_range(self):
         self.assertEqual(ble_field.time_frame(1800000000), struct.pack("<BI", 6, 1800000000))

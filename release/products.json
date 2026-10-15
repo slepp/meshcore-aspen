@@ -11,7 +11,7 @@
   "products": {
     "aspen": {"version": "1.18.0"},
     "birch": {"version": "0.1.3"},
-    "pine": {"version": "0.1.2"},
+    "pine": {"version": "0.1.3"},
     "willow": {"version": "0.0.11"}
   },
   "compatibility": {

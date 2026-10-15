@@ -31,7 +31,7 @@ class MemoryTest(unittest.TestCase):
 
     def test_exception_tables_count_toward_application_limit(self):
         with patch.object(memory.subprocess, "check_output", side_effect=[
-            ".text 811004 159744\n.ARM.extab 8 970748\n", ""
+            ".text 798716 159744\n.ARM.extab 8 958460\n", ""
         ]):
-            with self.assertRaisesRegex(ValueError, "811012 > 811008"):
+            with self.assertRaisesRegex(ValueError, "798724 > 798720"):
                 memory.measure(pathlib.Path("fixture.elf"), "size", "nm")

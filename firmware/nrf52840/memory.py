@@ -7,6 +7,8 @@ import pathlib
 import subprocess
 import struct
 
+from ble_field import APP_START, LEGACY_APP_LIMIT
+
 
 def measure(elf, size, nm):
     sections = subprocess.check_output([size, "-A", str(elf)], text=True)
@@ -20,7 +22,7 @@ def measure(elf, size, nm):
         fields = line.split()
         if len(fields) == 3:
             symbols[fields[2]] = int(fields[0], 16)
-    flash_limit = 0xED000 - 0x27000
+    flash_limit = LEGACY_APP_LIMIT - APP_START
     flash_bytes = sum(sizes.get(s, 0) for s in (".text", ".ARM.extab", ".ARM.exidx", ".data", ".svc_data", ".fs_data"))
     if flash_bytes > flash_limit:
         raise ValueError(f"Image exceeds the nRF application flash region: {flash_bytes} > {flash_limit}")

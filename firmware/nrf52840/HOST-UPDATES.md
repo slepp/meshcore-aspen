@@ -3,7 +3,8 @@
 Use `pine_update.py` to verify a signed application manifest before entering
 Pine's retained serial DFU bootloader. It checks the trusted release key,
 Pine product and selected hardware, application layout, dependencies, file hash
-and inner Legacy DFU package. The tool uploads only the application.
+and inner Legacy DFU package. The tool uploads only the application. Legacy 0.6.1 DFU applications must
+end by `0xEA000`; saved InternalFS remains at `0xED000`.
 
 **Signature enforcement is on the host.** The installed Legacy DFU bootloader
 checks CRC, not this signature. It has no transfer timeout or automatic rollback.

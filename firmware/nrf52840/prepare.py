@@ -225,7 +225,6 @@ def prepare(source, output):
         content = content.replace(ota, ota + guard)
         content = content.replace("  return true;\n}\n#endif", "  return true;\n#endif\n}\n#endif")
         board_source.write_text(content)
-    shutil.copyfile(HERE / "pine_size.py", output / "pine_size.py")
     shutil.copyfile(HERE / "platformio.ini", output / "platformio.local.ini")
     print(f"MeshCore {REVISION} -> {output}")
 

@@ -15,6 +15,8 @@ DFU_REVISION = "00001534-1212-efde-1523-785feabcd123"
 UART_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 UART_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 APP_START, APP_LIMIT = 0x27000, 0xED000
+# Legacy 0.6.1 reserves ten flash pages below its 0xF4000 bootloader.
+LEGACY_APP_LIMIT = 0xEA000
 
 
 def validate_package(path):
@@ -32,6 +34,8 @@ def validate_package(path):
         binary, init = archive.read("firmware.bin"), archive.read("firmware.dat")
         if len(binary) < 8 or len(binary) % 4 or len(binary) > APP_LIMIT - APP_START:
             raise ValueError("Application size crosses reserved bootloader/InternalFS boundary")
+        if len(binary) > LEGACY_APP_LIMIT - APP_START:
+            raise ValueError("Application exceeds Legacy 0.6.1 DFU capacity; end must be at or below 0xEA000")
         stack, reset = struct.unpack_from("<II", binary)
         if not (0x20000000 < stack <= 0x20040000 and stack % 8 == 0 and
                 reset & 1 and APP_START <= reset - 1 < APP_START + len(binary)):
