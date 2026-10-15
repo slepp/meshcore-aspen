@@ -188,7 +188,7 @@ Reset Path/relogin when moving between radios.
 ## Focused validation
 
 The generic image builds with native MeshCore
-`d92964352441e53b93e8667b802e04f6e072b39e`, espressif32 6.11.0,
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`, espressif32 6.11.0,
 Arduino 2.0.17 and ESP-IDF4.4.7, with Lua 5.5.1 and WAMR 2.4.1.
 
 ```sh

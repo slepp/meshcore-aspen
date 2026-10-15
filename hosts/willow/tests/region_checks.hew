@@ -54,6 +54,9 @@ fn main() {
     var packet = wire.packet(0, 15, "rotation fixture".to_bytes());
     packet.code1 = wire.region_code(second, packet);
     assert(wire.equal(regions.receive_scope(private, packet).expect("rotation-key admission"), first));
+    packet.code1 = 0;
+    assert(regions.receive_scope(private, packet).is_none());
+    packet.code1 = wire.region_code(second, packet);
     private.entries = regions.execute(private, .None, "region denyf $rotation", "owner", 1234).table.entries;
     assert(private.entries[0].flags == 129 && regions.receive_scope(private, packet).is_none());
     println("REGION_CHECKS_OK");

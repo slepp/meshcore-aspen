@@ -282,8 +282,8 @@ An admitted request has a 30-second deadline. Replies must authenticate to
 the configured full key and match the pending request, generation, grant and
 deadline. Local reflection is not a remote sample. A correlated authenticated
 PATH response can repair the outbound route. Status decoding uses the
-56-byte native v1.17.1 stats layout from MeshCore revision
-`d92964352441e53b93e8667b802e04f6e072b39e`; other wire layouts are not negotiated.
+56-byte native v1.18.0 stats layout from MeshCore revision
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`; other wire layouts are not negotiated.
 
 Timeout, malformed response or TX failure backs off from twice the owner
 interval, up to the larger of that interval and the discovery cooldown. Three failed direct

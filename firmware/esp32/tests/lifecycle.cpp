@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CompanionSessions.h"
 #include "Runtime.h"
+#include "FirmwareIdentity.h"
 #include "Management.h"
 #include "ObserverConfig.h"
 #include "ScopedFS.h"
 #include <SPIFFS.h>
 #include <Utils.h>
+#include <SHA256.h>
 #include <arpa/inet.h>
 #include <atomic>
 #include <cassert>
@@ -726,6 +728,50 @@ static void companion_wire_lifecycle() {
                      [](uint8_t byte) { return byte == 0; }));
 }
 
+static void companion_cli_v14() {
+  Fixture f;
+  const auto identities = identity_test::durable;
+  Client client;
+  client.handshake(f);
+  client.command({22, 14});
+  const auto info = client.response(f);
+  assert(info.size() >= 82 && info[0] == 13 && info[1] == 14);
+  const auto cli = [&](const char *command) {
+    Bytes request{66};
+    request.insert(request.end(), command, command + strlen(command));
+    client.command(request);
+    const auto frame = client.response(f);
+    assert(!frame.empty() && frame[0] == 29);
+    return std::string(frame.begin() + 1, frame.end());
+  };
+  assert(cli("ver").find(MESHCORE_SLP_ASPEN_VERSION) == 0);
+  assert(cli("set name CLI-retained") == "OK");
+  assert(cli("get name") == "> CLI-retained");
+  assert(cli("set tz.offset -7") == "OK");
+  assert(cli("get tz.offset") == "> -7");
+  assert(cli("set tz.offset 15").find("Error") == 0);
+  assert(cli("get tz.offset") == "> -7");
+  for (const char *command : {"poweroff", "shutdown", "set radio 915,250,7,5",
+       "set radio.rxgain on", "set tx 10", "set wifi.enabled 0", "get wifi.pwd"}) {
+    assert(cli(command).find("Error:") == 0);
+  }
+  assert(cli("  ab|set tx 10").find("ab|Error:") == 0);
+  assert(onchip::companionFlush());
+  client.command({19, 'r', 'e', 'b', 'o', 'o', 't'});
+  until(f, [&] { return client.closed() && onchip::rolePhase(Role::Companion) == RolePhase::Running; });
+  Client restarted;
+  restarted.handshake(f);
+  for (const char *command : {"get name", "get tz.offset"}) {
+    Bytes request{66}; request.insert(request.end(), command, command + strlen(command));
+    restarted.command(request);
+    const auto frame = restarted.response(f);
+    const std::string reply(frame.begin() + 1, frame.end());
+    assert(frame[0] == 29 && reply == (!strcmp(command, "get name") ? "> CLI-retained" : "> -7"));
+  }
+  assert(identity_test::durable == identities);
+  puts("PASS companion protocol14 CLI, prefix handling, shared-device fences and retained role preferences");
+}
+
 static void companion_contact_capacity() {
   static_assert(MAX_CONTACTS == 256, "Exercise the combined production contact capacity");
   const auto files = filesystem_test::files;
@@ -790,7 +836,13 @@ static void companion_contact_capacity() {
              std::equal(reply.begin() + 1, reply.end(), contacts[index].begin() + 1));
     };
     for (unsigned i = 0; i < 64; ++i) query(client, i);
-    assert(onchip::companionFlush() && filesystem_test::files.at("/companion/contacts3") == legacy);
+    assert(onchip::companionFlush());
+    const auto migrated = filesystem_test::files.at("/companion/contacts3");
+    assert(migrated.size() == legacy.size() + 32 &&
+           std::equal(legacy.begin(), legacy.end(), migrated.begin()));
+    SHA256 hash; uint8_t digest[32];
+    hash.update(legacy.data(), legacy.size()); hash.finalize(digest, sizeof(digest));
+    assert(!memcmp(migrated.data() + legacy.size(), digest, sizeof(digest)));
     for (unsigned i = 64; i < MAX_CONTACTS; ++i) {
       client.command(contacts[i]);
       assert(client.response(f) == Bytes{0});
@@ -803,7 +855,7 @@ static void companion_contact_capacity() {
     assert(client.response(f) == Bytes{0});
     assert(onchip::companionFlush());
     const auto saved = filesystem_test::files.at("/companion/contacts3");
-    assert(saved.size() == MAX_CONTACTS * 152 &&
+    assert(saved.size() == MAX_CONTACTS * 152 + 32 &&
            std::equal(legacy.begin(), legacy.end(), saved.begin()));
     client.command({19, 'r', 'e', 'b', 'o', 'o', 't'});
     until(f, [&] { return client.closed() && onchip::rolePhase(Role::Companion) == RolePhase::Running; });
@@ -1891,6 +1943,7 @@ int main(int argc, char **argv) {
   authenticated_wire_lifecycle();
   companion_channel_configuration();
   companion_wire_lifecycle();
+  companion_cli_v14();
   companion_contact_capacity();
   observer_and_dashboard(argv[1]);
   role_profile_storage();

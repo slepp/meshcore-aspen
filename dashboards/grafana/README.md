@@ -242,7 +242,7 @@ limited to the configured interval, normally 300 seconds per remote repeater.
 | Monitor attempts / failures and rates | `{attempts,failures}_total` |
 
 These are the native 56-byte status fields returned by the configured
-MeshCore 1.17.1 repeaters. Their last RSSI/SNR describe the remote radio's last
+MeshCore 1.18.0 repeaters. Their last RSSI/SNR describe the remote radio's last
 received packet, not the monitor-to-repeater link. Additional sensors,
 neighbour discovery and firmware-version discovery are not requested.
 Future firmware-specific fields need an explicit target capability contract.

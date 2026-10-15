@@ -757,6 +757,15 @@ static void wireCryptoAndRelay() {
   require(mesh::Utils::MACThenDecrypt(secret, decrypted, packet->payload+2, packet->payload_len-2) == 0,
           "tampered native MAC accepted");
   packet->payload[2] ^= 1;
+  std::vector<uint8_t> unaligned(packet->payload + 2, packet->payload + packet->payload_len - 1);
+  SHA256 mac;
+  mac.resetHMAC(secret, PUB_KEY_SIZE);
+  mac.update(unaligned.data() + CIPHER_MAC_SIZE, unaligned.size() - CIPHER_MAC_SIZE);
+  mac.finalizeHMAC(secret, PUB_KEY_SIZE, unaligned.data(), CIPHER_MAC_SIZE);
+  std::fill(std::begin(decrypted), std::end(decrypted), 0xa5);
+  require(mesh::Utils::MACThenDecrypt(secret, decrypted, unaligned.data(), unaligned.size()) == 0 &&
+          std::all_of(std::begin(decrypted), std::end(decrypted), [](uint8_t b) { return b == 0xa5; }),
+          "authenticated non-block-aligned ciphertext must not decrypt");
   auto advert = f.core.createAdvert(f.core.self_id);
   require(advert != nullptr, "create advert");
   uint8_t signed_message[36];
@@ -811,6 +820,7 @@ protected:
   void onContactPathUpdated(const ContactInfo&) override {}
   void onMessageRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*) override { ++messages; }
   void onCommandDataRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*) override {}
+  void onCLICommandRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*, char*) override {}
   void onSignedMessageRecv(const ContactInfo&, mesh::Packet*, uint32_t, const uint8_t*, const char*) override {
     ++signed_messages;
   }

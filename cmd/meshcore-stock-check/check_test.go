@@ -92,7 +92,7 @@ func TestNativeRadioWireUnitsAndReadback(t *testing.T) {
 }
 
 func TestStockDeviceMustBePinnedAndIndependent(t *testing.T) {
-	device := protocol.DeviceInfoResponse{FirmwareVersion: 13, FirmwareVersionStr: "v1.17.1", Model: "Seeed XIAO"}
+	device := protocol.DeviceInfoResponse{FirmwareVersion: 14, FirmwareVersionStr: "v1.18.0", Model: "Seeed XIAO"}
 	self := protocol.SelfInfoResponse{PublicKey: [32]byte{1}}
 	roles := map[string]meshcore.Identity{"companion": meshcore.NewIdentity([32]byte{2})}
 	if err := verifyStock(device, self, roles); err != nil {

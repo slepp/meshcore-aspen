@@ -237,8 +237,8 @@ rejected. Removal does not erase KV, timers or reminders.
 WAMR **2.4.1**, revision
 `b124f70345d712bead5c0c2393acb2dc583511de`, is fetched with archive SHA256
 `c197d6d811c23b3df0446e91abffba1091caf282e026156d19ace8ba2fc83f3e`.
-Firmware MeshCore remains `companion-v1.17.1`,
-`d92964352441e53b93e8667b802e04f6e072b39e`; Lua remains 5.5.1.
+Firmware MeshCore remains `companion-v1.18.0`,
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`; Lua remains 5.5.1.
 
 Host and device execute the classic interpreter, with fast interpreter,
 AOT, JIT, WASI, built-in libc, guest threads, bulk memory, reference types,

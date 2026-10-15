@@ -10,7 +10,7 @@ struct DiscoveryPeer : NativeChat {
     ++responses;
   }
   int request(ContactInfo &contact, bool flood, uint8_t mask = 0xfe, uint8_t type = 3) {
-    // companion-v1.17.1 MyMesh::CMD_SEND_PATH_DISCOVERY_REQ: inverse BASE
+    // companion-v1.18.0 MyMesh::CMD_SEND_PATH_DISCOVERY_REQ: inverse BASE
     // mask, three reserved zero bytes and four random bytes via sendRequest.
     uint8_t data[9] = {type, mask, 0, 0, 0};
     getRNG()->random(data + 5, 4);

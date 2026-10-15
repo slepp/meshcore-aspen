@@ -10,6 +10,8 @@ public:
 };
 class RoomTestDriver {
 public:
+  void setTxPower(int) { assert(false); }
+  bool setRxBoostedGainMode(bool) { assert(false); return false; }
   float getLastRSSI() const { return -90; }
   float getLastSNR() const { return 0; }
   uint32_t getPacketsRecv() const { return 0; }

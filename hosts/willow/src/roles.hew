@@ -1510,10 +1510,11 @@ pub actor Role {
             }
         }
         let selfkey = wire.public_key(seed);
+        let unscoped = p.route == 1 || (p.route == 0 && p.code1 == 0);
         var request_scope = scopes.region;
         var scope_known = false;
         if scopes.configured_scopes {
-            if p.route == 1 && scopes.wildcard {
+            if unscoped && scopes.wildcard {
                 request_scope = bytes.new();
             }
             if p.route == 0 {
@@ -1573,11 +1574,11 @@ pub actor Role {
                 }
                 if scopes.configured_scopes {
                     if role == 2 {
-                        allowed = allowed && ((p.route == 1 && scopes.wildcard) || scope_known);
+                        allowed = allowed && ((unscoped && scopes.wildcard) || scope_known);
                     }
                 } else if scopes.region.len() == 16 {
                     allowed = allowed && p.route == 0 && p.code1 == wire.region_code(scopes.region, p);
-                } else if p.route == 0 {
+                } else if p.route == 0 && !unscoped {
                     allowed = false;
                 }
                 var matches: i64 = 0;

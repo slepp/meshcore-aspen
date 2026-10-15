@@ -3,7 +3,7 @@
 Release each product from its signed product tag in
 [`slepp/meshcore-aspen`](https://github.com/slepp/meshcore-aspen).
 Firmware versions identify the MeshCore base and profile, such as
-`1.17.1-slp-pine` for Pine. For Aspen and Birch, use the independent product
+`1.18.0-slp-pine` for Pine. For Aspen and Birch, use the independent product
 versions, supported modem contract and candidate workflow in
 [Product versions and candidate builds](release/README.md);
 [`release/products.json`](release/products.json) is their version authority.

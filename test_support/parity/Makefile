@@ -1,6 +1,7 @@
 ROOT := $(abspath ../..)
 export TMPDIR := $(ROOT)/.tmp
-REFERENCE := d92964352441e53b93e8667b802e04f6e072b39e
+include $(ROOT)/release/versions.mk
+REFERENCE := $(MESHCORE_RELEASE_SHA)
 UPSTREAM ?= $(ROOT)/.tmp/parity-upstream
 CRYPTO ?= $(ROOT)/.tmp/MeshCore/.pio/libdeps/Xiao_S3_WIO_kiss_wifi/Crypto
 LPP ?= $(abspath $(CRYPTO)/../CayenneLPP/src)
@@ -44,7 +45,7 @@ $(BUILD)/lpp/%.o: $(LPP)/%.cpp
 $(BUILD)/ed/%.o: $(UPSTREAM)/lib/ed25519/%.c
 	@mkdir -p $(@D)
 	@$(CC) -O1 -g $(ABI_FLAGS) -DED25519_NO_SEED -ffunction-sections -fdata-sections -MMD -MP -c $< -o $@
-$(BUILD)/kernels.inc: kernels.py $(UPSTREAM)/examples/simple_repeater/MyMesh.cpp $(UPSTREAM)/examples/simple_room_server/MyMesh.cpp $(UPSTREAM)/examples/companion_radio/MyMesh.cpp $(UPSTREAM)/src/helpers/radiolib/RadioLibWrappers.cpp $(UPSTREAM)/src/helpers/CommonCLI.cpp
+$(BUILD)/kernels.inc: kernels.py $(UPSTREAM)/examples/simple_repeater/MyMesh.cpp $(UPSTREAM)/examples/simple_room_server/MyMesh.cpp $(UPSTREAM)/examples/companion_radio/MyMesh.cpp $(UPSTREAM)/src/helpers/radiolib/RadioLibWrappers.cpp $(UPSTREAM)/src/helpers/CommonRadioPrefs.cpp
 	python3 kernels.py --upstream "$(UPSTREAM)" --build "$(BUILD)"
 $(BUILD)/oracle.o: oracle.cpp seams/Stream.h $(BUILD)/kernels.inc
 	@mkdir -p $(@D)

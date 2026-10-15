@@ -1,6 +1,6 @@
 # MeshCore USB companion radio
 
-Builds the upstream MeshCore `companion-v1.17.1` USB companion application for
+Builds the upstream MeshCore `companion-v1.18.0` USB companion application for
 the Xiao S3/WIO-SX1262. The radio exchanges messages with the host over RF;
 the checker connects to its standard companion interface over USB.
 

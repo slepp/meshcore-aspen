@@ -645,8 +645,8 @@ socket; see [the host process contract](../../internal/nativebot/PROTOCOL.md).
 
 #### Native wire and routing
 
-The reference is local upstream `companion-v1.17.1`,
-`d92964352441e53b93e8667b802e04f6e072b39e`:
+The reference is local upstream `companion-v1.18.0`,
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`:
 `examples/companion_radio/MyMesh.cpp` (`CMD_SEND_PATH_DISCOVERY_REQ`,
 `onContactRequest`, `onContactPathRecv`) and
 `src/helpers/BaseChatMesh.cpp` (`sendRequest`, `onPeerDataRecv`,

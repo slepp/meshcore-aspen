@@ -12,13 +12,13 @@ and flash its private combined image with the MeshCore flasher. This first
 install erases the board. For setup without the website, use
 [offline USB first-boot setup](PUBLIC_SETUP.md). Both routes supply a private
 per-node SPIFFS record; application-only updates retain that configuration.
-The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.11)
+The [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v1.18.0)
 requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.12** product version, based on MeshCore
-1.17.1. `ver` and companion device information report `aspen-0.1.12`,
+New source builds use the **Aspen 1.18.0** product version, based on MeshCore
+1.18.0. `ver` and companion device information report `aspen-1.18.0`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
@@ -302,7 +302,7 @@ and consumed claims are not retried automatically.
 
 Integration code is Apache-2.0; generated native sources retain their original
 notices. Build/checker inputs pin MeshCore
-`d92964352441e53b93e8667b802e04f6e072b39e` (`companion-v1.17.1`).
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc` (`companion-v1.18.0`).
 
 ## Build and integration
 

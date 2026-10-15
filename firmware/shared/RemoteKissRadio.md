@@ -7,7 +7,7 @@ legacy fallback. `RemoteKissRadio(stream, RemoteKissRadio::Mode::Legacy)` is
 the explicit compatibility mode and does not provide queued scheduling parity.
 
 Apply `firmware/shared/queued-dispatch.patch` to upstream revision
-`d92964352441e53b93e8667b802e04f6e072b39e`. The shared sources are
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`. The shared sources are
 `firmware/shared/RemoteKissRadio.h`, `firmware/shared/RemoteKissRadio.cpp`,
 `firmware/shared/QueuedTxProtocol.h` and `firmware/shared/RadioNetwork.h`;
 the ESP32 link is `firmware/remote-radio/esp32/Esp32TcpKissLink.h`.

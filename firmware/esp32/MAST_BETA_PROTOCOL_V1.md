@@ -43,7 +43,7 @@ and remaining role/route coverage are recorded in [MAST_ADMIN.md](MAST_ADMIN.md)
 
 ## Transport and authentication
 
-Use MeshCore `d92964352441e53b93e8667b802e04f6e072b39e` framing/crypto.
+Use MeshCore `81dbae592ffad40b4212bc0b37e82b38da08f4bc` framing/crypto.
 Reference implementation: [admin.py](../../tools/hardware/admin.py). Reuse native helpers,
 not a parallel encryption/framing implementation.
 
@@ -79,7 +79,7 @@ cannot be recovered from its short transport code.
 Existing `meshcli` supports `add_contact KEY 2 NAME`, `reset_path NAME`,
 `login NAME PASSWORD`, `cmd NAME COMMAND`, `wmt8` and bounded script files.
 It sends the same command strings through the stock companion; no different
-upload envelope is needed. Stock 1.17.1 generates CLI timestamps from its
+upload envelope is needed. Stock 1.18.0 generates CLI timestamps from its
 own unique RTC sequence, so keep that RTC synchronized and let it construct
 RF packets. Persisting host-side timestamp counters is necessary for clients
 that construct native RF packets themselves, such as the KISS reference.

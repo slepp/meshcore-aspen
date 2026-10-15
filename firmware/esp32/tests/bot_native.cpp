@@ -709,6 +709,7 @@ struct NativeChat : PeerState, BaseChatMesh {
   void onMessageRecv(const ContactInfo &, mesh::Packet *, uint32_t, const char *text) override {
     messages.emplace_back(text);
   }
+  void onCLICommandRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*, char*) override {}
   void onCommandDataRecv(const ContactInfo &, mesh::Packet *, uint32_t, const char *text) override {
     commands.emplace_back(text);
   }

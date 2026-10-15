@@ -92,7 +92,7 @@ The regular V3 uses an **ESP32-S3FN8**, with **8 MiB flash and no PSRAM**, and a
 SX1262. It is not the S3R8 PSRAM configuration used by Aspen.
 
 The profile extends MeshCore's `Heltec_lora32_v3` variant at
-`companion-v1.17.1` (`d92964352441e53b93e8667b802e04f6e072b39e`):
+`companion-v1.18.0` (`81dbae592ffad40b4212bc0b37e82b38da08f4bc`):
 
 | Signal | GPIO / upstream setting |
 | --- | --- |
@@ -109,7 +109,7 @@ GPS and other peripherals have not been exercised by this modem build.
 
 References: [Heltec V3 datasheet](https://resource.heltec.cn/download/WiFi_LoRa_32_V3/HTIT-WB32LA_V3(Rev1.1).pdf),
 [Espressif ESP32-S3 ordering information](https://documentation.espressif.com/esp32-s3_datasheet_en.pdf),
-and [pinned MeshCore variant](https://github.com/meshcore-dev/MeshCore/blob/d92964352441e53b93e8667b802e04f6e072b39e/variants/heltec_v3/platformio.ini).
+and [pinned MeshCore variant](https://github.com/meshcore-dev/MeshCore/blob/81dbae592ffad40b4212bc0b37e82b38da08f4bc/variants/heltec_v3/platformio.ini).
 
 ## Build limits
 

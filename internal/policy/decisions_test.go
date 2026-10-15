@@ -213,7 +213,7 @@ func TestNativeRegionAndReplyScope(t *testing.T) {
 		denied bool
 		want   Scope
 	}{
-		{Flood, false, Scope{}}, {Flood, true, p.DefaultScope}, {Direct, false, p.DefaultScope}, {TransportFlood, false, p.DefaultScope},
+		{Flood, false, Scope{}}, {Flood, true, p.DefaultScope}, {Direct, false, p.DefaultScope}, {TransportFlood, false, Scope{}}, {TransportFlood, true, p.DefaultScope},
 	} {
 		p.WildcardFlags = 0
 		if tt.denied {
@@ -320,5 +320,23 @@ func TestTraceEncodingIsIndependent(t *testing.T) {
 	withNativeFlags, err := ParseTracePath(0x81, make([]byte, 4))
 	if err != nil || withNativeFlags.Flags != 0x81 || withNativeFlags.Width() != 2 {
 		t.Fatalf("native TRACE flags were rewritten: %+v, %v", withNativeFlags, err)
+	}
+}
+
+func TestZeroTransportCodeUsesWildcardAdmission(t *testing.T) {
+	p := Defaults(Repeater)
+	path, _ := NewPath(1, nil)
+	for _, denied := range []bool{false, true} {
+		p.WildcardFlags = 0
+		if denied {
+			p.WildcardFlags = RegionDenyFlood
+		}
+		ctx := ResolveReceiveContext(p, TransportFlood, path, 2, []byte{1}, 0)
+		if ctx.Route != TransportFlood || ctx.ScopeKnown || ctx.Unscoped == denied {
+			t.Fatalf("zero code scope: %+v", ctx)
+		}
+		if AllowForward(Repeater, p, ctx, 2, [32]byte{}) == denied {
+			t.Fatal("zero code ignored wildcard admission")
+		}
 	}
 }

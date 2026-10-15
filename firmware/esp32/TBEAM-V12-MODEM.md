@@ -130,7 +130,7 @@ PSRAM on the board; there is no internal-memory fallback. Radio ISR/DMA
 buffers retain their existing internal-memory allocation.
 
 The profiles inherit MeshCore's `LilyGo_TBeam_SX1276` or `LilyGo_TBeam_SX1262`
-variant at `d92964352441e53b93e8667b802e04f6e072b39e`, including its radio,
+variant at `81dbae592ffad40b4212bc0b37e82b38da08f4bc`, including its radio,
 PMU and battery wiring. They do not add a display interface or GNSS setup.
 See the [LilyGO original T-Beam hardware guide](https://github.com/Xinyuan-LilyGO/LilyGo-LoRa-Series/blob/master/docs/en/t_beam/t_beam_hw.md)
 for memory, radio variants and the v1.2 power-management connections.

@@ -3,7 +3,7 @@
 Ordinary records use KISS port 0, SETHARDWARE (6); negotiated MKISS sessions
 also use ports 1–3 as described below. Integers are unsigned
 little-endian unless stated otherwise. IDs 0x20–0x26 and 0xFA are unused by
-MeshCore companion-v1.17.1. Ordinary control responses retain their existing
+MeshCore companion-v1.18.0. Ordinary control responses retain their existing
 wire formats. A client must negotiate before using extensions.
 
 | Request | Payload | Response |

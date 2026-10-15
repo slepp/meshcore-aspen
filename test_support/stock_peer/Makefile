@@ -1,6 +1,7 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 SELF := $(abspath $(lastword $(MAKEFILE_LIST)))
-REFERENCE := d92964352441e53b93e8667b802e04f6e072b39e
+include $(ROOT)/release/versions.mk
+REFERENCE := $(MESHCORE_RELEASE_SHA)
 UPSTREAM := https://github.com/meshcore-dev/MeshCore.git
 STOCK := $(ROOT)/.tmp/stock-MeshCore
 OVERRIDES := $(dir $(SELF))platformio.local.ini
@@ -18,7 +19,7 @@ PIO_ENV = PLATFORMIO_BUILD_DIR="$(STOCK)/.pio/build" PLATFORMIO_LIBDEPS_DIR="$(S
 
 prepare:
 	@if test ! -d "$(STOCK)/.git"; then \
-		git clone --quiet --no-checkout --depth 1 --branch companion-v1.17.1 "$(UPSTREAM)" "$(STOCK)" && \
+		git clone --quiet --no-checkout --depth 1 --branch $(MESHCORE_RELEASE_REF) "$(UPSTREAM)" "$(STOCK)" && \
 		git -C "$(STOCK)" checkout --quiet --detach "$(REFERENCE)"; \
 	fi
 	@test "$$(git -C "$(STOCK)" rev-parse HEAD)" = "$(REFERENCE)" || { echo "Stock reference mismatch" >&2; exit 1; }

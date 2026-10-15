@@ -90,8 +90,8 @@ nor do they rescope ordinary direct packets.
 ## Reference and checks
 
 The commands and semantics above follow MeshCore's pinned
-[`docs/cli_commands.md`](https://github.com/meshcore-dev/MeshCore/blob/d92964352441e53b93e8667b802e04f6e072b39e/docs/cli_commands.md),
-[`RegionMap.cpp`](https://github.com/meshcore-dev/MeshCore/blob/d92964352441e53b93e8667b802e04f6e072b39e/src/helpers/RegionMap.cpp)
+[`docs/cli_commands.md`](https://github.com/meshcore-dev/MeshCore/blob/81dbae592ffad40b4212bc0b37e82b38da08f4bc/docs/cli_commands.md),
+[`RegionMap.cpp`](https://github.com/meshcore-dev/MeshCore/blob/81dbae592ffad40b4212bc0b37e82b38da08f4bc/src/helpers/RegionMap.cpp)
 and repeater `sendFloodScoped` implementation.
 
 Host tests in `internal/roles/regions_home_test.go` check the owner command path,

@@ -12,3 +12,5 @@ void delay(unsigned long);
 void pinMode(int, int);
 void digitalWrite(int, int);
 int digitalRead(int);
+
+inline void yield() {}

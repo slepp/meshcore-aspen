@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Create or verify a signed Pine application manifest; upload only to an inventoried XIAO."""
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from product_versions import load
 import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import stat
 import subprocess
@@ -45,7 +48,7 @@ def create_manifest(package, board, source, version):
                        "softdevice_id": 0x123},
             "application": {"bytes": checked["bytes"], "sha256": checked["application_sha256"]},
             "package": {"file": package.name, "sha256": sha(package)},
-            "dependencies": {"meshcore": "d92964352441e53b93e8667b802e04f6e072b39e",
+            "dependencies": {"meshcore": load()["upstream"]["commit"],
                              "lua": "5.5.1", "platform": "nordicnrf52@11.0.0",
                              "framework": "1.10701.0+sha.d5413016"}}
 

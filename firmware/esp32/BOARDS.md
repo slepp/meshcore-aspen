@@ -138,7 +138,7 @@ separate final 64 KiB coredump partition.
 ## Wiring references
 
 Profiles inherit MeshCore's board support at
-`d92964352441e53b93e8667b802e04f6e072b39e`; Aspen does not duplicate its pin
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`; Aspen does not duplicate its pin
 definitions. Heltec uses `variants/heltec_v4_r8` and `qio_opi` memory;
 T-Beam Supreme uses `variants/lilygo_tbeam_supreme_SX1262`, its `TBeamBoard`
 power-management helper and `qio_qspi` memory. The Supreme profile explicitly

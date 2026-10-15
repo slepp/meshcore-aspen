@@ -8,8 +8,11 @@ import re
 import subprocess
 import os
 
-REFERENCE = "d92964352441e53b93e8667b802e04f6e072b39e"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+import sys
+sys.path.insert(0, str(ROOT / "tools"))
+from product_versions import load
+REFERENCE = load()["upstream"]["commit"]
 DATA = ROOT / "testdata/parity"
 
 

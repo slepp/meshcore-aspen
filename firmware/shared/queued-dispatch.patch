@@ -186,7 +186,7 @@
    }
    return pkt;
  }
-@@ -372,11 +395,62 @@
+@@ -372,8 +395,59 @@
    if (!Packet::isValidPathLen(packet->path_len) || packet->payload_len > MAX_PACKET_PAYLOAD) {
      MESH_DEBUG_PRINTLN("%s Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", getLogDateTime(), (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
      _mgr->free(packet);
@@ -197,9 +197,9 @@
 +    }
    } else {
      _mgr->queueOutbound(packet, priority, futureMillis(delay_millis));
-   }
- }
- 
++  }
++}
++
 +bool Dispatcher::submitQueued(Packet* packet, uint8_t priority, uint32_t delay) {
 +  if (packet->_localReflection || !_radio->queuedReady()) return false;
 +  for (auto& entry : queued_packets) {
@@ -243,12 +243,9 @@
 +      entry.packet = nullptr;
 +      break;
 +    }
-+  }
-+}
-+
- // Utility function -- handles the case where millis() wraps around back to zero
- //   2's complement arithmetic will handle any unsigned subtraction up to HALF the word size (32-bits in this case)
- bool Dispatcher::millisHasNowPassed(unsigned long timestamp) const {
+   }
+ }
+ 
 --- a/src/Mesh.cpp
 +++ b/src/Mesh.cpp
 @@ -86,7 +86,7 @@
@@ -257,9 +254,9 @@
  
 -    if (self_id.isHashMatch(pkt->path, pkt->getPathHashSize()) && allowPacketForward(pkt)) {
 +    if (!pkt->_localReflection && self_id.isHashMatch(pkt->path, pkt->getPathHashSize()) && allowPacketForward(pkt)) {
+       uint32_t d = getDirectRetransmitDelay(pkt);
        if (pkt->getPayloadType() == PAYLOAD_TYPE_MULTIPART) {
-         return forwardMultipartDirect(pkt);
-       } else if (pkt->getPayloadType() == PAYLOAD_TYPE_ACK) {
+         return forwardMultipartDirect(pkt, d);
 @@ -304,6 +304,8 @@
  
          if (type == PAYLOAD_TYPE_ACK && pkt->payload_len >= 5) {    // a multipart ACK
@@ -286,7 +283,7 @@
 +  if (!packet->_localReflection && !packet->isMarkedDoNotRetransmit()) {
      uint8_t extra = getExtraAckTransmitCount();
      while (extra > 0) {
-       delay_millis += getDirectRetransmitDelay(packet) + 300;
+       auto a1 = createMultiAck(packet->payload, packet->payload_len, extra);
 --- a/src/Packet.h
 +++ b/src/Packet.h
 @@ -49,6 +49,7 @@
@@ -350,7 +347,7 @@
      stats.total_up_time_secs = uptime_millis / 1000;
      stats.n_sent_flood = getNumSentFlood();
      stats.n_sent_direct = getNumSentDirect();
-@@ -1166,7 +1166,9 @@
+@@ -1168,7 +1168,9 @@
  }
  
  void MyMesh::formatRadioStatsReply(char *reply) {
@@ -385,7 +382,8 @@
  void MyMesh::formatPacketStatsReply(char *reply) {
 --- a/examples/companion_radio/MyMesh.cpp
 +++ b/examples/companion_radio/MyMesh.cpp
-@@ -1865,6 +1865,19 @@
+@@ -1913,6 +1913,19 @@
+     }
    } else if (cmd_frame[0] == CMD_GET_STATS && len >= 2) {
      uint8_t stats_type = cmd_frame[1];
 +#ifdef MESH_REMOTE_KISS_DIAGNOSTICS
@@ -404,8 +402,7 @@
      if (stats_type == STATS_TYPE_CORE) {
        int i = 0;
        out_frame[i++] = RESP_CODE_STATS;
-       out_frame[i++] = STATS_TYPE_CORE;
-@@ -1883,7 +1896,7 @@
+@@ -1932,7 +1945,7 @@
        int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
        int8_t last_rssi = (int8_t)radio_driver.getLastRSSI();
        int8_t last_snr = (int8_t)(radio_driver.getLastSNR() * 4); // scaled by 4 for 0.25 dB precision

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"meshcore.local/meshcore/internal/buildinfo"
 	"net/http"
 	"sort"
 	"strings"
@@ -523,9 +524,9 @@ func runRemote(ctx context.Context, cfg app.Config, o options, out io.Writer) (r
 
 func verifyRemoteIdentity(device protocol.DeviceInfoResponse, self protocol.SelfInfoResponse, roles map[string]meshcore.Identity) error {
 	model := strings.ToLower(device.Model)
-	if device.FirmwareVersion != 13 || strings.TrimPrefix(device.FirmwareVersionStr, "v") != "1.17.1" ||
+	if device.FirmwareVersion != buildinfo.MeshCoreCompanionProtocol || strings.TrimPrefix(device.FirmwareVersionStr, "v") != buildinfo.MeshCoreReference ||
 		!strings.Contains(model, "xiao") || self.Identity().IsZero() || len(roles) != 5 {
-		return fmt.Errorf("expected native Xiao companion-v1.17.1/protocol13 and five distinct on-chip identities; model=%q firmware=%q protocol=%d",
+		return fmt.Errorf("expected native Xiao companion-v1.18.0/protocol14 and five distinct on-chip identities; model=%q firmware=%q protocol=%d",
 			device.Model, device.FirmwareVersionStr, device.FirmwareVersion)
 	}
 	for role, id := range roles {

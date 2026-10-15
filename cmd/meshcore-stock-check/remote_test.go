@@ -55,7 +55,7 @@ func TestRemoteProfileAndFiveIdentityGate(t *testing.T) {
 		}
 		roles[role.Role] = id
 	}
-	device := protocol.DeviceInfoResponse{FirmwareVersion: 13, FirmwareVersionStr: "v1.17.1", Model: "Xiao S3"}
+	device := protocol.DeviceInfoResponse{FirmwareVersion: 14, FirmwareVersionStr: "v1.18.0", Model: "Xiao S3"}
 	self := protocol.SelfInfoResponse{PublicKey: peer.PublicKey()}
 	if err := verifyRemoteIdentity(device, self, roles); err != nil {
 		t.Fatal(err)

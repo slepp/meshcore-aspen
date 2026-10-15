@@ -8,7 +8,7 @@ on:
       release_tag:
         description: Published Willow binary release tag
         required: true
-        default: willow-v0.0.10
+        default: willow-v0.0.11
 
 permissions:
   contents: read

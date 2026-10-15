@@ -98,7 +98,8 @@ room-test: $(NATIVE_OBJECTS)
 	TMPDIR="$(NATIVE)" $(CXX) $(ROOM_FLAGS) tests/room.cpp tests/packet_hooks.cpp PineRoom.cpp SharedRadio.cpp \
 		$(UPSTREAM)/examples/nrfmast/room/*.cpp \
 		$(addprefix $(UPSTREAM)/src/,$(addsuffix .cpp,$(CORE_UNITS))) \
-		$(UPSTREAM)/src/helpers/ConfigSerializer.cpp $(UPSTREAM)/src/helpers/TransportKeyStore.cpp \
+		$(UPSTREAM)/src/helpers/ConfigSerializer.cpp $(UPSTREAM)/src/helpers/CommonRadioPrefs.cpp \
+		$(UPSTREAM)/src/helpers/DynamicConfigSerializer.cpp $(UPSTREAM)/src/helpers/TransportKeyStore.cpp \
 		$(UPSTREAM)/src/helpers/IdentityStore.cpp $(ROOM_LPP)/CayenneLPP.cpp \
 		$(if $(wildcard $(ROOM_LPP)/CayenneLPPPolyline.cpp),$(ROOM_LPP)/CayenneLPPPolyline.cpp) \
 		$(UPSTREAM)/src/helpers/AdvertDataHelpers.cpp $(UPSTREAM)/src/helpers/TxtDataHelpers.cpp \

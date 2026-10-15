@@ -318,7 +318,7 @@ or use RF loopback to administer its co-located repeater.
 The image reuses the pinned upstream nRF `SerialBLEInterface`, Nordic UART
 service, encrypted/MITM pairing, secured-connection gate and frame transport.
 The protocol is MeshCore companion **v13**, from
-`companion-v1.17.1` / `d92964352441e53b93e8667b802e04f6e072b39e`.
+`companion-v1.18.0` / `81dbae592ffad40b4212bc0b37e82b38da08f4bc`.
 Frame numbers are extracted from that pinned native source. This is a bounded
 implementation of its existing commands, not a separate phone protocol.
 The upstream BLE DFU service is omitted so pairing does not grant firmware

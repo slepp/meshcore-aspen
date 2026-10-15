@@ -43,7 +43,8 @@ func regionScopes(r Region) []Scope {
 // reply using the default scope, just like native sendFloodReply.
 func ResolveReceiveContext(p Preferences, route Route, path Path, payloadType uint8, payload []byte, transportCode uint16) ReceiveContext {
 	ctx := ReceiveContext{Route: route, Path: path}
-	if route == Flood {
+	if route == Flood || (route == TransportFlood && transportCode == 0) {
+		// A zero transport code is an unscoped flood in MeshCore 1.18.
 		ctx.Unscoped = p.WildcardFlags&RegionDenyFlood == 0
 		return ctx
 	}

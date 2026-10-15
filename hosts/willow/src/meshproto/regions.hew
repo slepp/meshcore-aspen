@@ -179,6 +179,9 @@ pub fn activate(saved: Table) -> Result<Table, string> {
 }
 
 pub fn receive_scope(table: Table, packet: wire.Packet) -> Option<bytes> {
+    if packet.code1 == 0 {
+        return .None;
+    }
     for entry in table.entries {
         if (entry.flags & 1) == 0 {
             let available = keys(entry);

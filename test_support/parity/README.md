@@ -19,7 +19,7 @@ test dependencies automatically. Run `make native-test-deps` first when invoking
 the nested targets directly.
 
 The clean detached reference is `.tmp/parity-upstream`, commit
-`d92964352441e53b93e8667b802e04f6e072b39e`. `prepare` creates it from the existing
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`. `prepare` creates it from the existing
 `.tmp/MeshCore` repository and rejects a dirty/different reference.
 `UPSTREAM`, `CRYPTO` and `BUILD` can be overridden. The default `CRYPTO` path uses
 **rweather/Crypto 0.4.0**. The root preparation fetches the pinned MeshCore

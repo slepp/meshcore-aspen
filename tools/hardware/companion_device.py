@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.hardware.esp32_device import ROOT, ESPTOOL, status, write_private
 
 from tools.hardware.inventory import value as inventory_value
+from tools.product_versions import load
+
+UPSTREAM = load()["upstream"]
 
 DIRECTORY = ROOT / ".tmp/onchip-beta-stock"
 def device_port():
@@ -70,7 +73,7 @@ def flash(require_backup=True):
         ["git", "-C", str(STOCK), "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(
         ["git", "-C", str(STOCK), "status", "--porcelain"], text=True).strip()
-    if revision != "d92964352441e53b93e8667b802e04f6e072b39e" or dirty:
+    if revision != UPSTREAM["commit"] or dirty:
         raise ValueError("Stock MeshCore source provenance mismatch")
     partitions = (IMAGE / "partitions.bin").read_bytes()
     if backup is not None:
@@ -87,7 +90,7 @@ def flash(require_backup=True):
             [sys.executable, str(ESPTOOL), "--chip", "esp32s3", "--port", str(device_port()),
              "--baud", "921600", "--after", "hard_reset", "write_flash", "0x10000", str(firmware)],
             stdout=output, stderr=subprocess.STDOUT, check=True)
-    print("Isolated peer now has unchanged stock 1.17.1 companion application", flush=True)
+    print(f"Isolated peer now has MeshCore {UPSTREAM['version']} companion application", flush=True)
 
 
 def restore():

@@ -259,7 +259,7 @@ bool BotWorker::begin(const uint8_t botKey[32], BotHttpsTransport *transport,
     if (xTaskCreate(entry, "mesh-command", 16384, this, 1, &task_) != pdPASS) {
 #endif
 #elif defined(NRF52_PLATFORM)
-    if (xTaskCreate(entry, "mesh-command", 4096, this, 1, &task_) != pdPASS) {
+    if (xTaskCreate(entry, "mesh-command", 4224, this, 1, &task_) != pdPASS) {
 #endif
 #if defined(ARDUINO_ARCH_ESP32) || defined(NRF52_PLATFORM)
       control_->stopped = true;

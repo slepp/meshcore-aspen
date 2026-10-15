@@ -74,7 +74,7 @@ def exercise(extended=False, private_only=False, https_only=False):
     roles, bot, public_key = configure(label)
     if private_only or https_only:
         stock_cli.run_cli(label + "-advert", ["advert", "sleep 2"])
-        return {"profile": list(field.active_profile()), "stock_version": "1.17.1",
+        return {"profile": list(field.active_profile()), "stock_version": "1.18.0",
                 "stock_public_key": public_key, "bot_key": bot, "log_prefix": label,
                 "peer_restored": False, "extended": network_concurrent(label, bot) if https_only else
                 extended_exercise(label, bot, roles, private_only=True)}
@@ -83,7 +83,7 @@ def exercise(extended=False, private_only=False, https_only=False):
         "sync_msgs", "msgs_subscribe", "chan 1 '!ping'", "sleep 1", "ver", "sleep 3",
         "sleep 35", "chan 1 '!test'", "sleep 1", "ver", "sleep 3", "sync_msgs"], timeout=90)
     messages = verify_channel_messages(replies)
-    print("PASS independent stock 1.17.1 RF hashtag Pong and RSSI/SNR on 912.525", flush=True)
+    print("PASS independent stock 1.18.0 RF hashtag Pong and RSSI/SNR on 912.525", flush=True)
 
     nonce = "field-tcp-" + secrets.token_hex(4)
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -112,7 +112,7 @@ def exercise(extended=False, private_only=False, https_only=False):
         raise ValueError("Real-PHY native repeater-to-bot route not confirmed")
     print("PASS RF request through mast repeater into distinct local bot and RF reply; not three radios", flush=True)
     extra = extended_exercise(label, bot, roles) if extended else {}
-    return {"profile": list(field.active_profile()), "stock_version": "1.17.1",
+    return {"profile": list(field.active_profile()), "stock_version": "1.18.0",
             "stock_public_key": public_key, "bot_key": bot, "channel_messages": messages,
             "tcp_rf_messages": received, "routed_messages": direct, "log_prefix": label,
             "native_tcp_send_receive": True, "mobile_app_send_receive": False,
@@ -231,7 +231,7 @@ def source_smoke():
             "sleep 1", "ver", "sleep 8", "sync_msgs"], timeout=25)
         records[name] = expected_reply(rows, bot, expected, channel=True)
         print("PASS unchanged stock RF source smoke: " + name, flush=True)
-    return {"profile": list(field.active_profile()), "stock_version": "1.17.1",
+    return {"profile": list(field.active_profile()), "stock_version": "1.18.0",
             "stock_public_key": public_key, "bot_key": bot, "source_smoke": records,
             "log_prefix": label, "peer_restored": False}
 
@@ -270,7 +270,7 @@ def admission_exercise(preserve_peer=False):
         raise ValueError("Independent stock admission/VM counters mismatch")
     print("PASS independent stock RF consecutive Pong and calculation without command cooldown; "
           "actual peer receipt confirmed", flush=True)
-    return {"profile": list(field.active_profile()), "stock_version": "1.17.1",
+    return {"profile": list(field.active_profile()), "stock_version": "1.18.0",
             "stock_public_key": public_key, "bot_key": bot, "log_prefix": label,
             "initial_stats": initial, "final_stats": final, "admission": admission,
             "channel_messages": messages, "physical_peer_receipt": True, "peer_restored": False}
@@ -362,8 +362,8 @@ def management_exercise():
     command(lines, "source hash", original["source hash"])
     preflight = stock_cli.run_cli(label + "-login", lines, private_script=True, allow_login_failure=True)
     versions = stock_cli.values_with(preflight, "ver")
-    if not versions or "1.17.1" not in versions[-1]["ver"]:
-        raise ValueError("Management acceptance requires the unchanged stock 1.17.1 companion")
+    if not versions or "1.18.0" not in versions[-1]["ver"]:
+        raise ValueError("Management acceptance requires the unchanged stock 1.18.0 companion")
     logins = [index for index, row in enumerate(preflight) if row.get("login_success") is True]
     if not logins:
         raise ValueError("Stock companion did not authenticate to the management identity")
@@ -372,7 +372,7 @@ def management_exercise():
         management_reply(preflight, management, prefix, value)
     expected.clear()
     temporary_seconds = 60
-    evidence = {"stock_version": "1.17.1", "stock_public_key": peer["public_key"],
+    evidence = {"stock_version": "1.18.0", "stock_public_key": peer["public_key"],
                 "management_key": management, "path_bytes": 3, "role_authority_changed": False,
                 "offline_verified": False, "temporary_seconds": temporary_seconds}
     lines = ["sync_msgs", "msgs_subscribe"]

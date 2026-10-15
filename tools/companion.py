@@ -15,8 +15,8 @@ class Companion:
         self.socket = socket.create_connection((self.host, self.port), timeout=5)
         try:
             device = self.command(b"\x16\x0d")
-            if len(device) < 82 or device[:2] != b"\x0d\x0d":
-                raise ValueError("Companion device reply does not report protocol 13")
+            if len(device) < 82 or device[0] != 13 or device[1] not in (13, 14):
+                raise ValueError("Companion device reply does not report supported protocol 13 or 14")
             self.width = device[81] + 1
             self.channels = device[3]
             info = self.command(b"\x01" + bytes(7) + b"meshcore-tools")

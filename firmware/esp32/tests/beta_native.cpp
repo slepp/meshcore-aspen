@@ -2295,8 +2295,8 @@ static void supplied_identity_keys() {
         uint32_t timeout = 0;
         const auto text = tag + command;
         assert(text.size() == MAX_TEXT_LEN);
-        assert(sender.sendCommandData(contact, owner.timestamp + 1, 0, (text + "x").c_str(), timeout) == MSG_SEND_FAILED);
-        assert(sender.sendCommandData(contact, owner.timestamp + 1, 0, text.c_str(), timeout) == MSG_SEND_SENT_FLOOD);
+        assert(sender.sendCommandData(contact, owner.timestamp + 1, 0, TXT_TYPE_CLI_DATA, (text + "x").c_str(), timeout) == MSG_SEND_FAILED);
+        assert(sender.sendCommandData(contact, owner.timestamp + 1, 0, TXT_TYPE_CLI_DATA, text.c_str(), timeout) == MSG_SEND_SENT_FLOOD);
         for (unsigned i = 0; i < 20; ++i) { timeMs += 10; sender.loop(); }
         assert(sender.radio.sent.size() == 1);
         mesh::Packet packet;

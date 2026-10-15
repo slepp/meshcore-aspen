@@ -64,6 +64,7 @@ def stage_room(output):
             text = text.replace("  void loop();", "  void loop();\n"
                                 "  unsigned queuedCount() const { return _mgr->getOutboundTotal(); }\n")
         elif path.name == "MyMesh.cpp":
+            text = re.sub(r"^  board\.attachDynamicPrefs\([^\n]*\);\n", "", text, flags=re.M)
             text = '#include "../FirmwareIdentity.h"\n#include "../PineRoom.h"\n' + text
             text = text.replace("FIRMWARE_VERSION", "MESHCORE_SLP_PINE_VERSION")
             text = replace_once(text, "mesh::RTCClock &rtc, mesh::MeshTables &tables)",

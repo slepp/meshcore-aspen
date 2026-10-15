@@ -38,8 +38,9 @@ def stage_gps_time(target):
              "    long time_valid = 0;\n"
              "    unsigned long last_utc_sentence = 0;\n"
              "    bool utc_sentence_seen = false;"),
-            ("            nmea.process(c);",
-             "            if (nmea.process(c) && MicroNMEA::testChecksum(nmea.getSentence()) &&\n"
+            ("            bool parsed = nmea.process(c);",
+             "            bool parsed = nmea.process(c);\n"
+             "            if (parsed && MicroNMEA::testChecksum(nmea.getSentence()) &&\n"
              '                !strcmp(nmea.getMessageID(), "RMC") && nmea.isValid()) {\n'
              "                last_utc_sentence = millis();\n"
              "                utc_sentence_seen = true;\n"

@@ -76,6 +76,7 @@ struct Chat : ChatState, BaseChatMesh {
     }
   }
   void onCommandDataRecv(const ContactInfo &, mesh::Packet *, uint32_t, const char *) override {}
+  void onCLICommandRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*, char*) override {}
   void onSignedMessageRecv(const ContactInfo &, mesh::Packet *, uint32_t,
                            const uint8_t *, const char *text) override { received.emplace_back(text); }
   uint32_t calcFloodTimeoutMillisFor(uint32_t) const override { return 1000; }

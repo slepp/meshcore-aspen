@@ -7,7 +7,10 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-REVISION = "d92964352441e53b93e8667b802e04f6e072b39e"
+import sys
+sys.path.insert(0, str(ROOT / "tools"))
+from product_versions import load
+REVISION = load()["upstream"]["commit"]
 SPEC = importlib.util.spec_from_file_location("gps_time", ROOT / "firmware/shared/gps_time.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -68,7 +71,7 @@ class GpsTimeTest(unittest.TestCase):
         ], text=True)
         anchors = (
             "    long time_valid = 0;",
-            "            nmea.process(c);",
+            "            bool parsed = nmea.process(c);",
             "        if (!isValid()) time_valid = 0;",
             "            if (isValid()) {\n                time_valid ++;",
         )

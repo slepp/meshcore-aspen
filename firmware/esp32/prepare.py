@@ -102,6 +102,17 @@ def bound_owner_info_replies(text):
         return body(text, signature, bounds, closing_indent="      ")
     return replace_once(text, anchor, anchor + "\n" + signature + " {\n" + bounds + "\n      }\n")
 
+def stage_radio_preferences(target):
+    path = Path(target) / "src/helpers/CommonRadioPrefs.cpp"
+    text = path.read_text()
+    for setting in ("radio.rxgain", "tx"):
+        signature = f'  if (memcmp(command, "set {setting} ",'
+        text = body(text, signature,
+                    '    strcpy(reply, "Error: use shared radio administration");\n    return true;',
+                    closing_indent="  ")
+    path.write_text(text)
+
+
 def stage_packet_pool(upstream, dest):
     support = dest / "support"
     support.mkdir(exist_ok=True)
@@ -210,6 +221,7 @@ def generate(upstream, target):
         subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "HEAD"],
                                 text=True).strip()[:12] + '"\n')
     stage_field_network(target)
+    stage_radio_preferences(target)
     stage_packet_pool(target, dest)
     for role, example in (("repeater", "simple_repeater"),
                           ("room", "simple_room_server"),
@@ -229,8 +241,8 @@ def generate(upstream, target):
                 anchor = "  void handleCommand(uint32_t sender_timestamp, char* command, char* reply);"
                 text = replace_once(text, anchor, anchor + "\n  bool onchipFlush();\n  bool onchipSavePrefs();\n  bool onchipAdvertise(bool zeroHop);")
             if role == "companion" and path.name == "MyMesh.h":
-                text = replace_once(text, "  void begin(bool has_display);",
-                                    """  void begin(bool has_display);
+                text = replace_once(text, "  void begin();",
+                                    """  void begin();
   bool onchipFlush();
   bool onchipSavePrefs();
   bool onchipAdvertise(bool zeroHop);
@@ -268,7 +280,24 @@ def generate(upstream, target):
                                   "", text, flags=re.M)
                 text = re.sub(r"^  board\.(?:setLoRaFemLnaEnabled|setLoRaFemPaGainEnabled|setAdcMultiplier)\([^\n]*\);\n",
                               "", text, flags=re.M)
+                text = re.sub(r"^  board\.attachDynamicPrefs\([^\n]*\);\n", "", text, flags=re.M)
                 if role == "companion":
+                    cli_anchor = "  if (_prefs.getRadioPrefs()->handleCommand(command, sender_timestamp, reply))"
+                    text = replace_once(text, cli_anchor, """  if (onchip::networkClockCommand(command, reply, 160, false)) return true;
+  if (onchip::lifecycleCommand(onchip::Role::Companion, sender_timestamp, command, reply)) return true;
+#if !defined(NRF52_PLATFORM)
+  if (onchip::sharedRadioReadCommand(onchip::companionRadio(), command, reply, 160)) return true;
+#endif
+  if (onchip::unsafeCLI(command) || onchip::prefix(command, "set wifi.") ||
+      onchip::prefix(command, "get wifi.") || onchip::prefix(command, "set pin ")) {
+    strcpy(reply, "Error: use shared device administration for this setting");
+    return true;
+  }
+""" + cli_anchor)
+                    text = replace_once(text, """  if (board.handleCommand(command, sender_timestamp, reply)) {
+    if (_prefs.isDirty()) { savePrefs(); }
+    return true;
+  }""", "  // Board-specific changes belong to shared device administration.")
                     text = replace_once(text,
                         '  MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",\n'
                         '                     radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");',
@@ -597,7 +626,7 @@ static void construct() {{
         if role == "companion":
             wrapper += """  store.begin();
   mesh.startInterface(companionSessions());
-  mesh.begin(false);
+  mesh.begin();
 """
         else:
             if role == "room":

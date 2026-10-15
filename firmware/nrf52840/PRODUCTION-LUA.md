@@ -60,8 +60,8 @@ make -C firmware/nrf52840 build ENV=nrfmast_fleet_lua
 
 Preparation stages the Lua 5.5.1 sources from
 [`hew.lua`](../../packages/hew-lua/README.md), with Pine's C-stack limit of 32.
-The build uses MeshCore companion-v1.17.1,
-`d92964352441e53b93e8667b802e04f6e072b39e`.
+The build uses MeshCore companion-v1.18.0,
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`.
 The measured build uses Nordic PlatformIO 11.0.0 and
 `framework-arduinoadafruitnrf52@1.10701.0+sha.d5413016`. Production Lua links
 full newlib, not newlib-nano: Lua integer formatting and VM diagnostics require
@@ -359,7 +359,7 @@ keys remain denied. Neither optimization reduces the two-job capacity,
 rejects the candidate explicitly and releases partially allocated buffers.
 The ARM initialization frame is 88 bytes. The production build runs
 `parser-stack-check` against the actual compiler `.su` files. Its conservative
-bound is 16,080 bytes of the 16 KiB VM stack, including a 2 KiB allowance for
+bound is 16,448 bytes of the 16.5 KiB VM stack, including a 2 KiB allowance for
 lexer/code-generator/error/allocator leaf calls and RTOS/FPU context. It covers
 named/global functions, blocks, expressions, assignments and unguarded parent
 upvalue lookup. The check reads the nRF52 task's reservation in 32-bit stack

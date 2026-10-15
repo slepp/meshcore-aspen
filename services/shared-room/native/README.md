@@ -6,7 +6,7 @@ ECDH secrets, encrypts AES-128 ECB packets with the two-byte HMAC-SHA256 prefix,
 and signs room advertisements. It uses no WebCrypto key-format substitution.
 
 - `ed25519/`: unchanged files from MeshCore native revision
-  `d92964352441e53b93e8667b802e04f6e072b39e`, including its zlib-style license.
+  `81dbae592ffad40b4212bc0b37e82b38da08f4bc`, including its zlib-style license.
 - `crypto/`: unchanged AES128/SHA256 and supporting files from rweather's
   Arduino Crypto **0.4.0**, as resolved by the pinned native build. Each file
   retains its MIT license header.
@@ -36,7 +36,7 @@ be used for deployed identities.
 
 Public named regions use `SHA256("#" + name)[:16]` and the existing native
 SHA256 HMAC over payload type plus payload. `mc_transport` follows pinned
-[`TransportKey::calcTransportCode`](https://github.com/meshcore-dev/MeshCore/blob/d92964352441e53b93e8667b802e04f6e072b39e/src/helpers/TransportKeyStore.cpp),
+[`TransportKey::calcTransportCode`](https://github.com/meshcore-dev/MeshCore/blob/81dbae592ffad40b4212bc0b37e82b38da08f4bc/src/helpers/TransportKeyStore.cpp),
 including its little-endian 16-bit code and reserved-value remapping. The module
 still has fixed 128KiB memory and no imports. No private region key is generated
 or loaded by the public-name derivation.

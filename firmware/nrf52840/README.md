@@ -24,9 +24,9 @@ The Lua profile also provides `backup help` through authenticated
 repeater administration. Use the [encrypted RF node backup workflow](../../NODE_BACKUP.md)
 to download InternalFS identities/settings and QSPI source/data without USB
 access; retain the recipient's operator seed.
-The [Pine 0.1.1 application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.1)
-uses the `pine-0.1.1` firmware version and `nrfmast_fleet_lua` profile.
-Its signed product tag is `pine-v0.1.1`;
+The [Pine 0.1.2 application download](https://github.com/slepp/meshcore-aspen/releases/tag/pine-v0.1.2)
+uses the `pine-0.1.2` firmware version and `nrfmast_fleet_lua` profile.
+Its signed product tag is `pine-v0.1.2`;
 the attached manifest records the full public source commit and image hashes.
 Pine has its own release series, independent of Aspen and Birch.
 The download is **update-only**. It requires
@@ -53,7 +53,7 @@ change is needed.
 
 These on-device nRF builds use the **Pine** profile. Repeater `ver`,
 native owner information and companion device information identify
-`pine-0.1.1`; the companion protocol remains v13. `help` lists the
+`pine-0.1.2`; the companion protocol remains v13. `help` lists the
 administration entry points. WiFi commands report that this platform has no
 WiFi rather than exposing nonfunctional configuration.
 
@@ -134,14 +134,14 @@ authorization must not become a requirement for ordinary user interaction.
 The supported board is the XIAO nRF52840/Wio SX1262.
 This image reuses upstream packet/authentication
 behavior and native repeater administration; bot commands are ordinary message
-text. The build and native checks pin 1.17.1. Later-release and extension
+text. The build and native checks pin 1.18.0. Later-release and extension
 interoperability need checks against the selected radios and relays before
 deployment.
 
 ## Hardware and management
 
-The build exports MeshCore `companion-v1.17.1`,
-`d92964352441e53b93e8667b802e04f6e072b39e`. Core routing is unmodified;
+The build exports MeshCore `companion-v1.18.0`,
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`. Core routing is unmodified;
 the build makes the repeater's existing `handleCommand` virtual so its native
 authenticated/encrypted admin CLI can also dispatch the small bot settings.
 Native ACL, message authentication, replay checks and replies are retained.

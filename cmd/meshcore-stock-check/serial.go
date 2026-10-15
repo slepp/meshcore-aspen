@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"meshcore.local/meshcore/internal/buildinfo"
+
 	protocol "github.com/meshcore-go/meshcore-go/companion"
 	"go.bug.st/serial"
 )
@@ -19,7 +21,7 @@ const (
 	serialSyncTimeout  = 5 * time.Second
 	serialFrameTimeout = 2 * time.Second
 	serialSyncLimit    = 64 * 1024
-	serialDeviceSize   = 82 // MeshCore companion protocol 13 DeviceInfo, including response code.
+	serialDeviceSize   = 82 // MeshCore companion protocol 13/14 DeviceInfo, including response code.
 )
 
 var (
@@ -315,8 +317,8 @@ func (t *stockSerialTransport) synchronize(reader *bufio.Reader, writer io.Write
 		if _, err := protocol.ParseResponse(body); err != nil {
 			continue
 		}
-		if body[1] != 13 {
-			return count, fmt.Errorf("unsupported companion protocol %d; this check requires 13", body[1])
+		if body[1] != buildinfo.MeshCoreCompanionProtocol {
+			return count, fmt.Errorf("unsupported companion protocol %d; this check requires %d", body[1], buildinfo.MeshCoreCompanionProtocol)
 		}
 		return count - len(window), nil
 	}

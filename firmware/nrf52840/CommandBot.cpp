@@ -299,7 +299,7 @@ int CommandBot::companionSend(const ContactInfo& to, uint8_t type, uint8_t attem
   if (!transmitEnabled || awaitingAck) return MSG_SEND_FAILED;
   ack = 0;
   if (type == TXT_TYPE_CLI_DATA)
-    return sendCommandData(to, getRTCClock()->getCurrentTimeUnique(), attempt, text, timeout);
+    return sendCommandData(to, getRTCClock()->getCurrentTimeUnique(), attempt, TXT_TYPE_CLI_DATA, text, timeout);
   const int result = sendMessage(to, timestamp, attempt, text, ack, timeout);
   if (result != MSG_SEND_FAILED) {
     expectedAck = ack;

@@ -814,7 +814,7 @@ make all
 ```
 
 The first build fetches public pinned dependencies into `build/native/`:
-MeshCore `d92964352441e53b93e8667b802e04f6e072b39e`, Lua 5.5.1,
+MeshCore `81dbae592ffad40b4212bc0b37e82b38da08f4bc`, Lua 5.5.1,
 WAMR `b124f70345d712bead5c0c2393acb2dc583511de`, Crypto 0.4.0 and
 CayenneLPP 1.6.1. It uses the existing Lua parser hooks, WAMR metering patches,
 and `firmware/esp32/bot.mk` worker target. Host-only staging does not create

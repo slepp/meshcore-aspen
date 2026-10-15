@@ -86,7 +86,7 @@ backup, or select Lua and restart.
 ## Limits and retained state
 
 The Room uses MeshCore's Room role from revision
-`d92964352441e53b93e8667b802e04f6e072b39e`, with separate persistence paths and
+`81dbae592ffad40b4212bc0b37e82b38da08f4bc`, with separate persistence paths and
 bounded storage. It does not use Aspen's PSRAM layout.
 
 | Resource | Pine limit or behavior |

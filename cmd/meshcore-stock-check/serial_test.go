@@ -64,10 +64,10 @@ func serialFixture(t *testing.T) (*stockSerialTransport, net.Conn, *serialPipe, 
 
 func serialDeviceFrame() []byte {
 	body := make([]byte, 82)
-	copy(body, []byte{13, 13, 32, 8})
+	copy(body, []byte{13, 14, 32, 8})
 	copy(body[8:20], "Sep 23 2026")
 	copy(body[20:60], "Seeed Xiao S3 WIO")
-	copy(body[60:80], "v1.17.1")
+	copy(body[60:80], "v1.18.0")
 	return append([]byte{'>', 82, 0}, body...)
 }
 
@@ -159,7 +159,7 @@ func TestStockSerialInitialResyncAndSDKExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := sdk.DeviceQuery(ctx)
-	if err != nil || info.FirmwareVersion != 13 || info.FirmwareVersionStr != "v1.17.1" {
+	if err != nil || info.FirmwareVersion != 14 || info.FirmwareVersionStr != "v1.18.0" {
 		t.Fatalf("SDK DeviceQuery: %+v, %v", info, err)
 	}
 	rx := serialAwait(t, received)

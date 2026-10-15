@@ -666,6 +666,7 @@ protected:
     messageRoutes.push_back(packet->getRouteType());
   }
   void onCommandDataRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*) override {}
+  void onCLICommandRecv(const ContactInfo&, mesh::Packet*, uint32_t, const char*, char*) override {}
   void onSignedMessageRecv(const ContactInfo&, mesh::Packet*, uint32_t, const uint8_t*, const char*) override {}
   uint32_t calcFloodTimeoutMillisFor(uint32_t) const override { return 15000; }
   uint32_t calcDirectTimeoutMillisFor(uint32_t, uint8_t) const override { return 15000; }
@@ -878,7 +879,7 @@ static void testNativePeerRouting(uint8_t hashBytes, bool scoped = false) {
                               "!recall antenna", reply, sizeof(reply)));
     assert(!strcmp(reply, "antenna=spare in box"));
     uint32_t timeout;
-    assert(peer.sendCommandData(*botContact, rtc.now + 20, 0, "!forget antenna", timeout) != MSG_SEND_FAILED);
+    assert(peer.sendCommandData(*botContact, rtc.now + 20, 0, TXT_TYPE_CLI_DATA, "!forget antenna", timeout) != MSG_SEND_FAILED);
     run(5000);
     assert(restarted.command(bot.self_id.pub_key, peer.self_id.pub_key, rtc.now,
                               "!recall antenna", reply, sizeof(reply)));

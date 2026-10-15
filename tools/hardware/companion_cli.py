@@ -154,7 +154,7 @@ def configure(public=False, field=False, preserve_identity=False, name=None):
     probe = run_cli(label + "probe", ["ver", "infos", "clock"])
     version = values_with(probe, "ver")
     clock = values_with(probe, "time")
-    if not version or "1.17.1" not in version[-1]["ver"] or not clock:
+    if not version or "1.18.0" not in version[-1]["ver"] or not clock:
         raise ValueError("Stock companion version/clock readback missing")
     if clock[-1]["time"] > int(time.time()) + 120:
         raise ValueError("Stock peer RTC is in the future; power-cycle required, no rollback bypass")
@@ -248,7 +248,7 @@ def public_replies(replies, bot):
 def public_bot_test():
     _, bot, public_key = configure(public=True)
     messages = public_replies(run_cli("public-ota", public_commands(), timeout=90), bot)
-    evidence = {"stock_companion": "1.17.1", "bot_key": bot, "messages": messages,
+    evidence = {"stock_companion": "1.18.0", "bot_key": bot, "messages": messages,
                 "public_user_key": public_key, "admin_login": False,
                 "usb_receive": "stock msgs_subscribe with local ver query",
                 "scope": "Unrelated disposable stock public user; normal contact/advert/msg only"}
@@ -377,12 +377,12 @@ def main():
         raise ValueError("No installed command reply received by stock peer")
     if any("SNR" not in entry for entry in messages):
         raise ValueError("Stock native RF receive metadata missing")
-    evidence = {"stock_companion": "1.17.1", "management_key": management, "owner_key": owner_key,
+    evidence = {"stock_companion": "1.18.0", "management_key": management, "owner_key": owner_key,
                 "bot_key": bot, "source_sha256": digest, "chunks": total,
                 "messages": messages, "status_tag": initial_tag,
                 "scope": "Unmodified meshcli -> stock USB companion -> 912.525 MHz LoRa -> beta mast"}
     (DIRECTORY / "results.json").write_text(json.dumps(evidence, indent=2) + "\n")
-    print(f"PASS stock MeshCore 1.17.1 owner OTA: both logins, controls, {total} durable source chunks, Lua reply and rollback")
+    print(f"PASS stock MeshCore 1.18.0 owner OTA: both logins, controls, {total} durable source chunks, Lua reply and rollback")
     if args.local_relay:
         state = status(inventory_value("mast_host"))
         relay = next(role["public_key"] for role in state["roles"] if role["role"] == "repeater" and role["ready"])

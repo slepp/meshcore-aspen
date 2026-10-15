@@ -275,7 +275,7 @@ mast-phy-test: prepare
 	$(TEST_BUILD)/mast-phy
 
 NATIVE := $(BUILD)/examples/kiss_modem/onchip
-NATIVE_HELPERS := AdvertDataHelpers BaseChatMesh ClientACL CommonCLI ConfigSerializer \
+NATIVE_HELPERS := AdvertDataHelpers BaseChatMesh ClientACL CommonCLI CommonRadioPrefs DynamicConfigSerializer ConfigSerializer \
 	IdentityStore RegionMap TransportKeyStore TxtDataHelpers
 clock-network-test: prepare
 	@mkdir -p $(TEST_BUILD)

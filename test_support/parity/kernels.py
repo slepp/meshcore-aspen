@@ -61,21 +61,27 @@ def generate(upstream, build):
 };""", body.replace("MyMesh::", "RepeaterLoopKernel::", 1)])
     sources.append({"file": str(path), "symbol": "max_loop_* + MyMesh::isLooped",
                     "sha256": hashlib.sha256(("\n".join(tables) + body).encode()).hexdigest()})
-    path = pathlib.Path("src/helpers/CommonCLI.cpp")
+    path = pathlib.Path("src/helpers/CommonRadioPrefs.cpp")
     text = (upstream / path).read_text()
-    duty = re.search(r"_prefs->airtime_factor = \(100\.0f / dc\) - 1\.0f;", text).group()
-    direct = re.search(r"_prefs->airtime_factor = atof\(&config\[3\]\);", text).group()
-    for name, argument, statement in (("nativeDutycycleAF", "float dc", duty),
-                                      ("nativeRuntimeAF", "const char* config", direct)):
-        fragments.append(f"""float {name}({argument}) {{
-  struct {{ float airtime_factor; }} prefs;
-  auto _prefs = &prefs;
-  {statement}
-  return _prefs->airtime_factor;
+    duty = re.search(r"setAirtimeFactor\(\(100\.0f / dc\) - 1\.0f\);", text).group()
+    direct = re.search(r"float af = strtof\(&command\[7\], &end\);", text).group()
+    fragments.append(f"""float nativeDutycycleAF(float dc) {{
+  float result;
+  auto setAirtimeFactor = [&result](float value) {{ result = value; }};
+  {duty}
+  return result;
 }}""")
-        sources.append({"file": str(path), "symbol": "CommonCLI::handleSetCmd/" + name,
+    fragments.append(f"""float nativeRuntimeAF(const char* config) {{
+  std::string input = std::string("set ") + config;
+  const char* command = input.c_str();
+  char* end;
+  {direct}
+  return af;
+}}""")
+    for name, statement in (("nativeDutycycleAF", duty), ("nativeRuntimeAF", direct)):
+        sources.append({"file": str(path), "symbol": "CommonRadioPrefs::handleCommand/" + name,
                         "sha256": hashlib.sha256(statement.encode()).hexdigest(),
-                        "scope": "Arithmetic assignment only; not CLI validation, savePrefs or application execution."})
+                        "scope": "Arithmetic/parser only; not CLI validation, setters or application execution."})
     build.mkdir(parents=True, exist_ok=True)
     (build / "kernels.inc").write_text("\n\n".join(fragments) + "\n")
     (build / "kernels.json").write_text(json.dumps({

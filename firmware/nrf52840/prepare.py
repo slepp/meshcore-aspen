@@ -12,8 +12,11 @@ import hashlib
 import sys
 import time
 
-REVISION = "d92964352441e53b93e8667b802e04f6e072b39e"
 HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "tools"))
+from product_versions import load
+UPSTREAM = load()["upstream"]
+REVISION = UPSTREAM["commit"]
 
 
 def stage_field_dfu(output, framework=None):
@@ -52,7 +55,7 @@ def prepare(source, output):
         if not source.exists():
             subprocess.run(
                 ["git", "clone", "--quiet", "--depth", "1", "--branch",
-                 "companion-v1.17.1", "https://github.com/meshcore-dev/MeshCore.git", str(source)],
+                 UPSTREAM["tag"], UPSTREAM["repository"], str(source)],
                 check=True,
             )
     revision = subprocess.check_output(
@@ -119,7 +122,7 @@ def prepare(source, output):
         chat.write_text(text)
     chat_source = output / "src/helpers/BaseChatMesh.cpp"
     text = chat_source.read_text()
-    callback = "onMessageRecv(from, packet, timestamp, (const char *) &data[5]);  // let UI know"
+    callback = "onMessageRecv(from, packet, sender_timestamp, (const char *) &data[5]);  // let UI know"
     if "if (!shouldAckMessage" not in text:
         if text.count(callback) != 1:
             raise ValueError("Pinned BLE carrier ACK hook changed")
@@ -134,7 +137,7 @@ def prepare(source, output):
         protocol, re.MULTILINE,
     )
     (dest / "CompanionProtocol.h").write_text(
-        "#pragma once\n// Frame numbers from pinned companion-v1.17.1.\n" +
+        f"#pragma once\n// Frame numbers from {UPSTREAM['tag']}.\n" +
         "\n".join(definitions) + "\n"
     )
     header = output / "examples/simple_repeater/MyMesh.h"
@@ -222,6 +225,7 @@ def prepare(source, output):
         content = content.replace(ota, ota + guard)
         content = content.replace("  return true;\n}\n#endif", "  return true;\n#endif\n}\n#endif")
         board_source.write_text(content)
+    shutil.copyfile(HERE / "pine_size.py", output / "pine_size.py")
     shutil.copyfile(HERE / "platformio.ini", output / "platformio.local.ini")
     print(f"MeshCore {REVISION} -> {output}")
 

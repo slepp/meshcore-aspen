@@ -347,5 +347,5 @@ broker's password as MeshCore identity authentication.
   revision `375c180d5a819e5e9262f7b989586d7847abf9c8`:
   README output format, `packet_capture.py`, and `auth_token.py`.
 - Native parser/hash/signing: meshcore-dev/MeshCore
-  `d92964352441e53b93e8667b802e04f6e072b39e`, the on-device build pin.
+  `81dbae592ffad40b4212bc0b37e82b38da08f4bc`, the on-device build pin.
   Host parser/hash/signing: meshcore-go `v1.5.0`.

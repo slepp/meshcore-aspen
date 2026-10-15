@@ -16,11 +16,11 @@ connections, installation, radio maintenance and external KISS clients.
 For standalone deployment, use the [ESP32 guide](firmware/esp32/README.md)
 or [nRF52840 guide](firmware/nrf52840/README.md).
 
-Host roles use the **Birch 0.1.2** product version. Their `ver` command reports the
+Host roles use the **Birch 0.1.3** product version. Their `ver` command reports the
 MeshCore protocol/reference separately from the host implementation; companion
 and native owner-information replies identify `birch-0.1.2`.
 Use `help`, `help get`, `get radio` or `get freq` in a Relay/Room console.
-The Birch 0.1.2 download contains the Linux x86_64 host tools and native
+The Birch 0.1.3 download contains the Linux x86_64 host tools and native
 worker. Connect an already configured WiFi/TCP shared modem implementing queued
 PHY v1, or build and privately provision the modem separately. The download
 does not contain a modem image or station credentials. See the
@@ -54,13 +54,13 @@ The host needs `libcjson1` and `libssl3`; installing the download does not need
 Go, a compiler or PlatformIO. Python 3.11 or newer runs the installer.
 
 Download the ZIP, manifest and checksums from
-[Birch 0.1.2](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.2)
+[Birch 0.1.3](https://github.com/slepp/meshcore-aspen/releases/tag/birch-v0.1.3)
 into a new directory. Extract the ZIP there, then run `sha256sum --check` on the
 downloaded SHA256SUMS file: both the ZIP and extracted manifest must match.
 Replace `SOURCE12` below with the suffix of the extracted directory.
 
 ```sh
-python3 birch-v0.1.2-linux-x86_64-SOURCE12/install-birch.py \
+python3 birch-v0.1.3-linux-x86_64-SOURCE12/install-birch.py \
   --prefix "$HOME/.local/opt/birch-0.1.2"
 ```
 
@@ -1131,7 +1131,7 @@ make firmware-reset UPLOAD_PORT='/dev/serial/by-id/<radio-device>'
 `firmware-reset` reads the chip identity and resets without rewriting flash.
 DHCP addresses can change; serial numbers identify hardware, not IP leases.
 
-The default source ref is MeshCore `companion-v1.17.1`. To prepare a newer clean checkout:
+The default source ref is MeshCore `companion-v1.18.0`. To prepare a newer clean checkout:
 
 ```bash
 rm -rf .tmp/MeshCore

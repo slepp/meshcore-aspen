@@ -148,7 +148,7 @@ path correlation, airtime/deadline limits and irreversibly expired trust. They
 do not open radio connections or change a node.
 
 The firmware source is pinned to MeshCore
-[`d92964352441e53b93e8667b802e04f6e072b39e`](https://github.com/meshcore-dev/MeshCore/tree/d92964352441e53b93e8667b802e04f6e072b39e).
+[`81dbae592ffad40b4212bc0b37e82b38da08f4bc`](https://github.com/meshcore-dev/MeshCore/tree/81dbae592ffad40b4212bc0b37e82b38da08f4bc).
 ### Solar P1 Pro hardware and bootloader
 
 [Seeed's hardware specification](https://wiki.seeedstudio.com/meshtastic_solar_node/)
@@ -271,7 +271,7 @@ Run the native GPS tests from the application repository root with **git**, a
 C++17-capable **c++** compiler and these explicitly configured dependencies:
 
 - `GPS_TEST_UPSTREAM`: an unmodified MeshCore Git checkout at
-  `d92964352441e53b93e8667b802e04f6e072b39e`. The tests read provider/role sources
+  `81dbae592ffad40b4212bc0b37e82b38da08f4bc`. The tests read provider/role sources
   from that commit and require the working `src` headers to match it. A staged
   application build directory is not a substitute for this checkout.
 - `GPS_TEST_NMEA`: the directory containing `MicroNMEA.h` and `MicroNMEA.cpp`,

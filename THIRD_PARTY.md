@@ -7,7 +7,7 @@ upstream code retain their own licenses; see [NOTICE](NOTICE).
 
 | Component | Source used by the build | Licensing materials |
 | --- | --- | --- |
-| MeshCore | [`d92964352441e53b93e8667b802e04f6e072b39e`](https://github.com/meshcore-dev/MeshCore/tree/d92964352441e53b93e8667b802e04f6e072b39e), `companion-v1.17.1` | [MIT copyright and permission notice](LICENSES/MeshCore-MIT.txt); retain upstream component notices |
+| MeshCore | [`81dbae592ffad40b4212bc0b37e82b38da08f4bc`](https://github.com/meshcore-dev/MeshCore/tree/81dbae592ffad40b4212bc0b37e82b38da08f4bc), `companion-v1.18.0` | [MIT copyright and permission notice](LICENSES/MeshCore-MIT.txt); retain upstream component notices |
 | Lua | [5.5.1](https://www.lua.org/ftp/lua-5.5.1.tar.gz) | MIT; copyright and license in the Lua distribution |
 | WAMR | [`b124f70345d712bead5c0c2393acb2dc583511de`](https://github.com/bytecodealliance/wasm-micro-runtime/tree/b124f70345d712bead5c0c2393acb2dc583511de), 2.4.1 | Apache-2.0 with LLVM exception; retain `LICENSE` and component notices |
 | ESP32 Arduino | [2.0.17](https://github.com/espressif/arduino-esp32/tree/2.0.17), source revision `dcc1105b0cf1322a437b354c336f2abf72b7e512` | LGPL-2.1 and component-specific licenses |

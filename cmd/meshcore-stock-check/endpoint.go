@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"meshcore.local/meshcore/internal/buildinfo"
 	"net"
 	"net/http"
 	"strings"
@@ -190,9 +191,9 @@ func verifyRadio(info protocol.SelfInfoResponse, cfg app.Config) error {
 }
 
 func verifyStock(device protocol.DeviceInfoResponse, self protocol.SelfInfoResponse, roles map[string]meshcore.Identity) error {
-	if strings.TrimPrefix(device.FirmwareVersionStr, "v") != "1.17.1" || device.FirmwareVersion != 13 ||
+	if strings.TrimPrefix(device.FirmwareVersionStr, "v") != buildinfo.MeshCoreReference || device.FirmwareVersion != buildinfo.MeshCoreCompanionProtocol ||
 		device.Model == "" || strings.Contains(strings.ToLower(device.Model), "go tcp host") {
-		return fmt.Errorf("this check requires MeshCore companion-v1.17.1/protocol 13; received version=%q protocol=%d model=%q",
+		return fmt.Errorf("this check requires MeshCore companion-v1.18.0/protocol 14; received version=%q protocol=%d model=%q",
 			device.FirmwareVersionStr, device.FirmwareVersion, device.Model)
 	}
 	if self.Identity().IsZero() {
