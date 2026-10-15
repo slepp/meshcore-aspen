@@ -5,9 +5,9 @@ version and release tag; an update to one does not require updating the others.
 
 | Product | Source version | Download and setup |
 | --- | --- | --- |
-| Aspen | `1.18.0` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
+| Aspen | `1.18.1` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
 | Birch | `0.1.3` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
-| Pine | `0.1.2` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
+| Pine | `0.1.3` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
 | Willow | `0.0.11` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
 
 Get packages from the [GitHub releases](https://github.com/slepp/meshcore-aspen/releases).
@@ -35,7 +35,7 @@ compare them with the host before installation. The normal release build uses
 Debian 12, GCC 12, OpenSSL 3 and cJSON.
 
 **Pine** updates an initialized Seeed XIAO nRF52840 + Wio SX1262 with its retained
-bootloader, identities, credentials and QSPI storage. Pine 0.1.2 includes Lua,
+bootloader, identities, credentials and QSPI storage. Pine 0.1.3 includes Lua,
 Room, packet programs, retained companion contacts/channels and BLE peer mode;
 [select one optional role](../firmware/nrf52840/FIELD-SETUP.md#choose-one-optional-role).
 The download contains app-only UF2/BIN and an inner Nordic Legacy DFU ZIP,

@@ -2615,7 +2615,7 @@ struct CommandBot::Core : mesh::Mesh {
     }
     const size_t nicknameSize = size_t(colon - data - 5);
     for (size_t i = 0; i < nicknameSize; ++i)
-      if (data[5 + i] < 32 || data[5 + i] > 126) {
+      if (data[5 + i] < 32 || data[5 + i] == 127) {
         ++stats.malformed; owner.fault("Invalid channel nickname"); return;
       }
     BotEvent event{};

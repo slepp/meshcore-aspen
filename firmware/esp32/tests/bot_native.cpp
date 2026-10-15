@@ -437,6 +437,20 @@ static void native_channel_policy() {
   }
   const auto bracketedHelp = group("operator: !@[Aspen-Bot] help", "#test", nullptr, false);
   assert(!bracketedHelp.empty() && bracketedHelp[0].find("!ping") != std::string::npos);
+  for (const char *nickname : {"visitor", "André", "LC02 🐇 VA6LEP"}) {
+    const std::string prefix = std::string(nickname) + ": ";
+    assert(group((prefix + "!@a ping").c_str(), "#test", nullptr, false) ==
+           std::vector<std::string>{"Pong"});
+    assert(group((prefix + "!@[Aspen-Bot] mt").c_str(), "#test", nullptr, false).empty());
+    timeMs += 5000; f.step();
+    const auto paths = peer.groupReplies(f.radio, 3, "#test");
+    assert(paths.size() == 1 && paths[0].find("Paths: 1 in 5s;") == 0);
+    assert(group((prefix + "!ping").c_str(), "#test", nullptr, false).empty());
+  }
+  for (const char *command : {"bad\x01name: !@a ping", "bad\x7fname: !@a ping"}) {
+    assert(group(command, "#test", nullptr, false).empty());
+    assert(f.radio.sent.empty());
+  }
   audit.clear();
   group("operator: !@aspen help fixture-private-argument", "#test", nullptr, false);
   assert(audit.find("command=help") != std::string::npos &&
