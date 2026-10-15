@@ -13,7 +13,6 @@
 #include "CommandBot.h"
 #include "CompanionSessions.h"
 #include "Runtime.h"
-#include "SpiffsWriteTrace.h"
 #include "Syslog.h"
 #include "Management.h"
 #include "ServiceName.h"
@@ -2015,27 +2014,6 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     const size_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
     snprintf(reply.text, sizeof(reply.text), "Filesystem used=%u total=%u free=%u bytes",
              unsigned(used), unsigned(total), unsigned(used <= total ? total - used : 0));
-    const auto failure = spiffsWriteFailure();
-    if (failure.error) {
-      const size_t size = strlen(reply.text);
-      snprintf(reply.text + size, sizeof(reply.text) - size, "; SPIFFS error=%ld write=%ld fd=%d",
-               long(failure.error), long(failure.length), int(failure.file));
-    }
-#if defined(ARDUINO_ARCH_ESP32) && ONCHIP_SPIFFS_WRITE_TRACE
-  } else if (!strcmp(command, "storage error")) {
-    const auto failure = spiffsWriteFailure();
-    if (!failure.error) strcpy(reply.text, "No filesystem write failure recorded");
-    else snprintf(reply.text, sizeof(reply.text),
-        "SPIFFS %ld %s len=%ld fd=%d open=%u opened=%s closed=%s rc=%ld; delete=%u/%u/%u by=%s",
-        long(failure.error), failure.path, long(failure.length), int(failure.file), unsigned(failure.open),
-        failure.openedBy, failure.closedBy, long(failure.closeResult), unsigned(failure.deletedObject),
-        unsigned(failure.deletedSpan), unsigned(failure.deletedPage), failure.deletedBy);
-  } else if (!strcmp(command, "storage lifetime")) {
-    const auto failure = spiffsWriteFailure();
-    snprintf(reply.text, sizeof(reply.text), "fd=%d returned=%08lx by=%s rc=%ld; remove=%s by=%s",
-        int(failure.file), static_cast<unsigned long>(failure.returnedBy), failure.closedBy,
-        long(failure.closeResult), failure.removedPath, failure.removedBy);
-#endif
   } else if (!strcmp(command, "storage check")) {
     if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
         !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {

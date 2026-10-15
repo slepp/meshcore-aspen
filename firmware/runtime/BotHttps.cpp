@@ -820,6 +820,12 @@ struct CertificateWindow {
 };
 class FixedPeerClient final : public WiFiClientSecure {
 public:
+  void stop() override {
+    WiFiClientSecure::stop();
+    // Arduino 2.x clears this field to zero during TLS cleanup. A later stop
+    // would close descriptor zero, which may belong to an open filesystem file.
+    sslclient->socket = -1;
+  }
   uint16_t cipher() const {
     const char *name = mbedtls_ssl_get_ciphersuite(&sslclient->ssl_ctx);
     return name ? uint16_t(mbedtls_ssl_get_ciphersuite_id(name)) : 0;
@@ -1040,8 +1046,6 @@ public:
     if (measuring_) sampleBotHttpsMetrics();
     if (client_) {
       phase("before-close");
-      client_->stop();
-      phase("stopped");
       delete client_; client_ = nullptr;
       phase("client-freed");
     }

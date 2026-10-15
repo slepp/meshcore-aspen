@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Runtime.h"
-#include "SpiffsWriteTrace.h"
 #if MESHCORE_NODE_BACKUP
 #include "NodeBackup.h"
 #include "EspNodeBackup.h"
@@ -674,7 +673,6 @@ bool runtimeFlushFailed(const char *affected) {
 }
 bool flushRuntimeState() {
   flushError[0] = 0;
-  resetSpiffsWriteFailure();
   bool ok = true;
   for (unsigned i = 0; i < 3; ++i) {
     const auto role = static_cast<Role>(i);

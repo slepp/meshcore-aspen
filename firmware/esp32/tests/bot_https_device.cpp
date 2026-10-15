@@ -73,9 +73,34 @@ static BotIoResult query() {
   std::atomic<bool> enabled{true}, stopping{false};
   BotIoResult result;
   provider.perform(request, result, generation, grant, enabled, stopping);
+  transport.reset();
+  assert(!sdk::strayCloses);
   assert(sdk::parses == sdk::frees);
   assert(device_heap_test::allocations.empty() && !device_heap_test::used);
   return result;
+}
+static void repeatedCleanup() {
+  reset();
+  // The SDK seam reproduces the descriptor-zero bug without the client fix.
+  {
+    WiFiClientSecure client;
+    client.stop();
+  }
+  assert(sdk::strayCloses == 1);
+
+  for (bool success : {true, false}) {
+    reset();
+    sdk::connectResult = success;
+    BotHttpsConfig config{"192.0.2.1", "home.example",
+        "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----", "", 443, 0};
+    std::unique_ptr<BotHttpsTransport> transport(createBotHttpsTransport());
+    char error[160]{};
+    assert(transport->open(config, error, sizeof(error)) == success);
+    transport->close();
+    transport->close();
+    transport.reset();
+    assert(sdk::stops == 1 && !sdk::strayCloses);
+  }
 }
 static void rejectedBeforeCredentials(bool beforeConnect = false) {
   const auto result = query();
@@ -264,6 +289,7 @@ static void caWorkspaceLifetime() {
        "changed CA invalidates cache, PSRAM cache pressure falls back to an uncached date parse");
 }
 int main() {
+  repeatedCleanup();
   telemetryReuseAndHeapPressure();
   caWorkspaceLifetime();
   reset(false);
@@ -329,7 +355,7 @@ int main() {
   sdk::onRead = [] { sdk::onRead = nullptr; now += 3001; };
   result = query();
   assert(!result.ok && !strcmp(result.rpcCode, "unknown") && sdk::writes > 0);
-  assert(strstr(result.error, "SNTP"));
+  assert(strstr(result.error, "publication stale"));
 
   reset();
   sdk::leaf.valid_from = {2024, 2, 29, 0, 0, 0};

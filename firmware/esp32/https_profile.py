@@ -200,7 +200,7 @@ def readiness():
     return report
 
 
-def compile_image(native, target, profile=ENV, cloud_config_fd=None, spiffs_write_trace=False):
+def compile_image(native, target, profile=ENV, cloud_config_fd=None):
     private_directory(DIRECTORY)
     private_directory(target)
     env = os.environ.copy()
@@ -224,16 +224,6 @@ def compile_image(native, target, profile=ENV, cloud_config_fd=None, spiffs_writ
     try:
         env["ONCHIP_OPERATOR_HEADER"] = f"/proc/{os.getpid()}/fd/{fd}"
         config = ROOT / "firmware/esp32/platformio.ini.example"
-        if spiffs_write_trace:
-            # Keep the temporary linker hook out of ordinary firmware profiles.
-            traced = config.read_text().replace("build_flags =\n", "build_flags =\n"
-                "  -D ONCHIP_SPIFFS_WRITE_TRACE=1\n"
-                "  -Wl,--wrap=SPIFFS_write\n  -Wl,--wrap=SPIFFS_open\n"
-                "  -Wl,--wrap=SPIFFS_close\n  -Wl,--wrap=spiffs_cb_object_event\n"
-                "  -Wl,--wrap=spiffs_fd_return\n  -Wl,--wrap=SPIFFS_remove\n", 1)
-            config = target / "platformio.spiffs-trace.ini"
-            config.write_text(traced)
-            config.chmod(0o600)
         log = DIRECTORY / (target.name + ".log")
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
         with os.fdopen(os.open(log, flags, 0o600), "w") as output:

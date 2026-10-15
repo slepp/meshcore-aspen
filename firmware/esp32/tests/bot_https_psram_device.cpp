@@ -72,6 +72,8 @@ static BotIoResult query() {
   BotIoResult result;
   provider.perform(request, result, generation, grant, enabled, stopping);
   diagnostics = transport->diagnostics();
+  transport.reset();
+  assert(!sdk::strayCloses);
   return result;
 }
 static void clean() {

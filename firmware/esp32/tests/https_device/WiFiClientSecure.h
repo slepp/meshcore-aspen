@@ -13,7 +13,7 @@
 constexpr int MBEDTLS_SSL_RENEGOTIATION_DISABLED = 0;
 struct mbedtls_ssl_config { bool renegotiation = true; };
 struct mbedtls_ssl_context {};
-struct sslclient_context { mbedtls_ssl_config ssl_conf; mbedtls_ssl_context ssl_ctx; };
+struct sslclient_context { mbedtls_ssl_config ssl_conf; mbedtls_ssl_context ssl_ctx; int socket = -1; };
 inline const char *mbedtls_ssl_get_ciphersuite(const mbedtls_ssl_context *) {
   return "TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256";
 }
@@ -32,6 +32,7 @@ inline unsigned char encoded = 1;
 inline mbedtls_x509_crt leaf, intermediate, root;
 inline mbedtls_x509_crt *peer = &leaf;
 inline unsigned connections = 0, writes = 0, stops = 0, parses = 0, frees = 0;
+inline unsigned strayCloses = 0;
 inline unsigned clients = 0;
 inline size_t parseBytes = 0, clientBytes = 0, connectionBytes[3]{};
 inline void *parseAllocation = nullptr;
@@ -48,6 +49,7 @@ inline void reset() {
   leaf.next = &intermediate;
   peer = &leaf;
   connections = writes = stops = parses = frees = 0;
+  strayCloses = 0;
   parseResult = 0; connectResult = true; connectError = -1;
   afterConnect = onRead = nullptr;
   parseBytes = clientBytes = 0;
@@ -100,7 +102,8 @@ public:
       assert(clientAllocation_);
     }
   }
-  ~WiFiClientSecure() {
+  virtual ~WiFiClientSecure() {
+    stop();
     if (clientAllocation_) heap_caps_free(clientAllocation_);
     --device_tls_test::clients;
   }
@@ -110,14 +113,17 @@ public:
   int connect(IPAddress, uint16_t, const char *host, const char *ca, const char *cert, const char *key) {
     assert(!strcmp(host, "home.example") && ca && !cert && !key);
     ++device_tls_test::connections;
+    sslclient->socket = 48;
     for (unsigned i = 0; i < 3; ++i) if (device_tls_test::connectionBytes[i]) {
       allocations_[i] = mbedtls_calloc(1, device_tls_test::connectionBytes[i]);
       if (!allocations_[i]) {
         device_tls_test::connectError = -0x7F00;
+        stop();
         return false;
       }
     }
     if (device_tls_test::afterConnect) device_tls_test::afterConnect();
+    if (!device_tls_test::connectResult) stop();
     return device_tls_test::connectResult;
   }
   const mbedtls_x509_crt *getPeerCertificate() { return device_tls_test::peer; }
@@ -138,11 +144,14 @@ public:
     memcpy(data, response + offset_, size); offset_ += size;
     return int(size);
   }
-  void stop() {
-    ++device_tls_test::stops;
+  virtual void stop() {
+    if (sslclient->socket == 0) ++device_tls_test::strayCloses;
+    else if (sslclient->socket >= 0) ++device_tls_test::stops;
     for (auto &allocation : allocations_) if (allocation) {
       mbedtls_free(allocation);
       allocation = nullptr;
     }
+    // Match Arduino 2.x stop_ssl_socket, including the reset to descriptor zero.
+    sslclient->socket = 0;
   }
 };
