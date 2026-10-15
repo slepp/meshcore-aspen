@@ -44,11 +44,11 @@ Keep HTTP administration on localhost or behind a trusted TLS tunnel. It
 requires existing host-admin authentication and preserves the selected role's
 native validation/persistence. Region settings do not modify radio frequency,
 bandwidth, SF, CR, power, path width, identities or administrator credentials.
-A lost write reply requires readback, not automatic repetition.
+A lost write reply requires readback, not automatic repetition. <!-- copy-check: allow contrast -- Avoids replaying an operation whose outcome is unknown. -->
 
 ## Home, hierarchy and outgoing scope are different settings
 
-Home is region-table metadata, not the outgoing flood scope and not an
+Home is region-table metadata, not the outgoing flood scope and not an <!-- copy-check: allow contrast -- Home and outgoing scope require separate configuration. -->
 inherited permission. At the pinned upstream revision, the repeater's outgoing
 second transport code remains zero; selecting `ab` as home does not encode it
 in that field. `region save` retains the home and tree across firmware-role
@@ -81,7 +81,7 @@ region allowf edm
 region list allowed
 ```
 
-The wildcard `*` controls **unscoped floods**, not all descendant regions.
+The wildcard `*` controls **unscoped floods**, not all descendant regions. <!-- copy-check: allow contrast -- Wildcard semantics change which packets the role forwards. -->
 Use `region denyf *` only when intentionally rejecting forwarding of unscoped
 floods. `region denyf edm` blocks edm-scoped forwarding even with `ab` allowed.
 These forwarding decisions do not turn a region table into a local-receipt ACL,

@@ -33,30 +33,31 @@ Advertise from the sending companion, then DM the bot:
 !recall shopping
 ```
 
-Expect `Pong`, a short introduction with help pointers, permission-filtered
-command pages, then a saved note and its text. `!about` describes what to do;
-identity discovery belongs to adverts and owner `bot key`.
-`!help NAME [PAGE]` is the runtime authority for an installed command's exact
-arguments and example.
+Expect `Pong`, an introduction with help pointers, command help,
+`Saved note shopping`, then `get tea`. Help lists commands allowed in the
+current context. Use `!help NAME [PAGE]` for an installed command's arguments
+and example, or `!plugins` to see the loaded commands.
 
 | Command | Parameters | Permission and consequence |
 | --- | --- | --- |
 | `!ping`, `!about`, `!version`, `!uptime`, `!status` | None | Public diagnostics where the context's command/reply masks allow them |
 | `!test`, `!path`, `!signal` | None | This request's path/RF information; local reflection is identified |
-| `!mt [SECONDS]` | Integer 1..30; default 5 | Collects duplicate request paths, then returns one result |
-| `!trace [WIDTH:HEX]` | Native TRACE widths 1/2/4/8; bounded hex route; width 3 is invalid | DM or explicitly addressed channel; sends a TRACE and awaits its return |
+| `!mt [SECONDS]` | Integer 1..30; default 5 | Collects copies of the request and reports up to eight distinct received paths |
+| `!find-path PREFIX` | Case-insensitive public-key hex prefix, up to 64 digits | Waits up to 30 seconds for admission, then probes for 10 seconds; reports the confirmed route, or a cached fallback when the probe times out |
+| `!find-best-path PREFIX` | Same prefix; Aspen and native hosts | Compares up to three routes with two probes each, for up to five minutes after admission; reports successful replies and mean latency |
+| `!trace [WIDTH:HEX]` | Route text up to 154 characters; widths 1/2/4/8 | DM or addressed channel; uses the supplied route or received path, then waits up to five seconds for a TRACE return with hop SNR |
 | `!air [PAGE]` | Page 1..4 | Scheduler credit, queue, RF airtime and local TX counters |
 | `!help [NAME] [PAGE]` | Optional command name; page 1..40; `!help PAGE` also works | Returns one requested help page, filtered by this request's permissions |
-| `!plugins [PAGE]` | Page 1..4 | Active source, command/module counts and declared events |
+| `!plugins [PAGE]` | Page 1..4 | Loaded command counts, Lua modules and scheduled events |
 | `!neighbors [PAGE]` | Page 1..16 | Cached signed adverts, observation ages, paths and available signal |
 | `!remember KEY TEXT` | Key 1..32 bytes; text 1..120 | Authenticated private DM; writes/replaces that caller's note and confirms commit |
 | `!recall KEY`, `!forget KEY` | Key 1..32 bytes | Authenticated private DM; reads or deliberately deletes that caller's note |
 | `!notes [PREFIX]`, `!list-memories [PREFIX]` | Prefix up to 32 bytes | Authenticated private DM; lists keys; narrow the prefix if the reply is truncated |
 | `!remind DURATION TEXT` | Integer seconds or decimal with one lowercase `s/m/h/d` suffix, 1 second..24 hours; text 1..120 | Private DM, reminder grant, trusted time and fresh direct route; saves a personal reminder |
 | `!reminders`, `!cancel ID` | No argument, or decimal reminder ID | Private DM; reads state or cancels pending work; inspect uncertain TX before rescheduling |
-| `!board put KEY TEXT`, `get KEY`, `list [PREFIX]`, `delete KEY` | Key/prefix up to 26 bytes; text 1..120 | Shared-state grant and storage masks; channel invocation must target the bot; writes/deletes are durable |
+| `!board put KEY TEXT`, `get KEY`, `list [PREFIX]`, `delete KEY` | Key/prefix up to 26 bytes; text 1..120 | Selected verified channel addressed to the bot, shared-state grant and storage masks; saves/deletes channel entries |
 | `!weather PLACE`, `!service health`, `!service echo TEXT`, `!service weather PLACE` | Place up to 80 bytes; service arguments up to 120 | Authenticated private DM with network grant and configured service; may wait for HTTPS |
-| `!admin COMMAND` | Bounded native owner command | Trusted full-key private DM only; permitted Management/owner operations, not secret uploads |
+| `!admin [COMMAND]` | Owner command up to 155 bytes; default `bot help` | Trusted full-key private DM; use `bot status`, `bot help` or `bot cancel` to inspect or stop running work |
 | `!calc EXPRESSION` | Up to 120 bytes; decimal `+ - * /` and parentheses; nesting up to 8 | Public utility; returns a numeric result or an input/arithmetic error |
 | `!convert VALUE FROM TO` | Scalar value up to 32 bytes; case-sensitive units up to 4 bytes | Public utility; converts FROM to TO within one dimension |
 | `!roll [DICE]` | `[N]dS[+/-K]`; default `1d6`; at most 12 dice, 1000 sides, modifier +/-10000 | Public utility using native randomness |
@@ -70,10 +71,23 @@ context/action/storage mask even when
 its builtin permission is public. Channel nicknames are not user identities;
 personal notes and owner administration cannot be granted by joining a channel.
 
+For route discovery, receive or share the target's signed advert first, or
+configure its full key as a monitor target. An ambiguous prefix asks for more
+digits before sending. Route commands use the context's command and
+`action_trace` permissions and the shared airtime budget. Discovery uses a
+fresh monitored session when available; other contacts need guest access or
+an ACL grant for the bot. See [route discovery and comparison](firmware/runtime/BOT_RUNTIME.md#discovery-targeting-and-owner-commands)
+for cooldowns and path selection.
+
+Route replies separate repeater hashes with commas. TRACE input uses
+`WIDTH:HEX`; its widths are 1/2/4/8 bytes, so a displayed three-byte hop cannot
+be copied directly into a TRACE route. A timeout names the stage that failed
+to answer; inspect any reported cached route before deciding what to try next.
+
 Arguments are typed rather than split ad hoc by each command. A string argument
 is one token and can be quoted; a text argument consumes the rest of the line.
 Numbers/booleans are checked against the declared schema. Square brackets in
-this manual mean an optional argument, not literal brackets to send. Missing,
+this manual mean an optional argument, not literal brackets to send. Missing, <!-- copy-check: allow contrast -- Explains how to enter the documented command syntax. -->
 extra or invalid arguments name the command and point to `!help NAME`.
 The complete DM request fits 162 printable ASCII bytes; targets and command
 names consume part of that capacity. Channel messages have a smaller text
@@ -128,7 +142,7 @@ python3 tools/hardware/admin.py \
 ```
 
 Global connection options precede the command. RF's gateway is another
-companion radio on the same PHY, not the Management node. Web administration
+companion radio on the same PHY, not the Management node. Web administration <!-- copy-check: allow contrast -- The gateway and administration target are different endpoints. -->
 needs a trusted LAN because plain HTTP exposes its password/session.
 
 | Task | Start here | Focused manual |
@@ -143,6 +157,7 @@ needs a trusted LAN because plain HTTP exposes its password/session.
 | Install a packet program | `packet api`; Python `packet install SLOT FILE`, `packet budget SLOT STAGES FUEL US CAPS`, `packet enable SLOT on` | [Two slots, budgets, fault/rollback behavior](firmware/runtime/PACKET_ENGINES.md#install-and-configure-a-program) |
 | Configure HTTPS or metrics | `bot https status`, `telemetry endpoint status` | [HTTPS destination/grants](firmware/runtime/NETWORK_API.md), [telemetry](firmware/esp32/TELEMETRY.md) |
 | Configure MQTT or shared rooms | `mqtt status`, `cloudroom config status`, `cloudroom status` | [MQTT](firmware/esp32/OBSERVER.md), [frontend settings and commands](services/shared-room/NATIVE.md#configure-the-generic-image) |
+| Save state or inspect storage | `state save`, then `job`; `storage status` | [State save and filesystem recovery](firmware/esp32/MAST_ADMIN.md#common-control-commands) |
 | Back up or update a node | Preserve a private encrypted backup; use application-only update | [Node backup](NODE_BACKUP.md), [signed application updates](firmware/esp32/ESP_FIELD_UPDATES.md) |
 
 Role masks are repeater=1, room=2, companion=4, observer=8. Bot selection is
@@ -154,7 +169,7 @@ recovery connection before retuning.
 `setperm KEY64 3` grants Management administration; `0` removes that saved
 entry. Repeater/Room ACLs are separate. Secret WiFi, password, identity, CA/token
 and CloudRoom uploads require the documented encrypted/protected transport.
-Use protected-file CLI operations, not secret command-line arguments.
+Use protected-file CLI operations, not secret command-line arguments. <!-- copy-check: allow contrast -- Keeps credentials out of shell history and process arguments. -->
 Identity rotation is deliberate and does not move identity-bound bot data.
 
 Read `job`, the affected saved/live status and the selected hash after a lost
@@ -174,5 +189,5 @@ On the host bot's private owner socket, omit `bot ` for bot policy commands:
 `aliases`, `membership`, `access`, `thread`, `https`, `home` and `events`.
 Source/data commands keep their existing names. The same Python source and
 packet-free bot tooling accepts `--unix-socket /absolute/state/bot/native/admin.sock`.
-That socket controls its bot, not sibling host roles or the modem PHY.
+That socket controls its bot, not sibling host roles or the modem PHY. <!-- copy-check: allow contrast -- Directs operators to the correct controls for other roles. -->
 See [host status and owner access](HOST_GUIDE.md#host-status).

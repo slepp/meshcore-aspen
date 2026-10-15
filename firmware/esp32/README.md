@@ -256,7 +256,7 @@ mosquitto_sub -h INTERNAL_BROKER -p INTERNAL_PORT \
   -t 'meshcore/OBSERVER_PUBLIC_KEY/#' -v
 ```
 
-Expect retained `status=online`, retained `roles/*` records, and unretained
+Expect retained `status=online`, retained `roles/*` records, and unretained <!-- copy-check: allow vague-state -- MQTT retained-message semantics determine what a new subscriber receives. -->
 `packets` JSON. Send an advert from another radio: its reception must arrive
 with `direction=rx`, real RSSI/SNR and `local_loopback=false`.
 Request `role advert repeater zerohop` through mast administration: its
@@ -266,7 +266,7 @@ bot transmissions carry their own submitting identity, not the observer key.
 Local reflection is not another RF reception.
 
 Disconnect only the observer's MQTT connection to check recovery. The broker
-should publish its retained `offline` last will; reconnect should publish
+should publish its retained `offline` last will; reconnect should publish <!-- copy-check: allow vague-state -- MQTT retained availability describes disconnect and reconnect behaviour. -->
 `online` and refresh role records without restarting the radio roles.
 Packets use QoS 0 and an eight-event queue: observations lost while disconnected
 are counted and are not replayed. This is a live packet feed, not a durable

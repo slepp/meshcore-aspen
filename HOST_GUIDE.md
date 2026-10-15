@@ -290,7 +290,7 @@ The host rejects shared local TCP ports before starting. `/status` includes
 
 An optional complete `phy_profile` uses `airtime_factor`, `cad_enabled` and
 `interference_threshold`. Omitting the profile uses factor 1, CAD disabled and
-threshold 0. Factor 0 is a real 100% refill setting, not a default sentinel;
+threshold 0. Factor 0 is a real 100% refill setting, not a default sentinel; <!-- copy-check: allow contrast -- Zero has an operational meaning in this setting. -->
 factor 99 limits aggregate refill to 1%. This is separate from each role's
 additional source limit.
 
@@ -442,7 +442,7 @@ The native bot also runs configured HTTPS weather/service, approved
 HTTP GET/POST and named RPC commands through the same Lua API as the ESP32.
 See [configured network setup](firmware/runtime/NETWORK_API.md) for local owner
 socket configuration, TLS requirements and expected-hash package fetch.
-Linux HTTPS requires a kernel-synchronized clock, not merely a plausible date.
+Linux HTTPS requires a kernel-synchronized clock, not merely a plausible date. <!-- copy-check: allow contrast -- Certificate-time checks require this specific clock state. -->
 Use the private owner socket's `home` command to inspect `clock=0|1`; repair
 host time synchronization before enabling the network grant when it is `0`.
 The endpoint configuration has four slots: reuse `home` for named RPC when
@@ -838,11 +838,11 @@ meshcore/<observer-public-key>/packets
 meshcore/<observer-public-key>/status
 ```
 
-Packet events are non-retained QoS 1 JSON with `event_id`, `timestamp`,
+Packet events are non-retained QoS 1 JSON with `event_id`, `timestamp`, <!-- copy-check: allow vague-state -- MQTT retained-message terminology determines delivery after subscription. -->
 `observer_identity`, `raw_packet_hex`, decoded packet metadata and nullable
 `rssi`/`snr`. Local reflections have `local_loopback: true` and null signal
 measurements. Malformed packets retain their raw bytes and a `decode_error`.
-Availability is retained `online`/`offline`, including a last will.
+Availability is retained `online`/`offline`, including a last will. <!-- copy-check: allow vague-state -- MQTT retained-message terminology identifies the current availability topic. -->
 
 The queue is bounded and memory-only. MQTT outages do not block the radio;
 overflow and delivery failures are logged. QoS 1 can duplicate events, so

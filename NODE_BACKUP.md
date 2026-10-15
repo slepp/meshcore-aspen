@@ -94,7 +94,7 @@ Filesystem-backed exports finish confirmed partial writes by writing only the
 remaining bytes. A zero-progress write or exhausted space budget fails explicitly
 with `req`, `got`, `out`, `budget`, `used`, `free` and `errno` fields. `out` counts
 confirmed output bytes; `budget` is the initial free space minus the 8192-byte
-reserve. `errno=0` means the filesystem did not provide an error number, not that
+reserve. `errno=0` means the filesystem did not provide an error number, not that <!-- copy-check: allow contrast -- A missing errno must not hide the reported save failure. -->
 the write succeeded.
 
 ## Download through a companion radio
@@ -102,7 +102,7 @@ the write succeeded.
 Connect the workstation to a companion radio on the node's LoRa profile. Use
 Aspen's Management public key, Pine's repeater public key or a running Birch
 repeater/room public key as `TARGET_PUBLIC_KEY`. This is the addressed role's
-full key, not the shared modem's key or the backup recipient's key.
+full key, not the shared modem's key or the backup recipient's key. <!-- copy-check: allow contrast -- Selecting the wrong identity sends administration to the wrong endpoint. -->
 
 ```sh
 python3 tools/node_backup.py download "$HOME/node-rf.mcb" \
@@ -156,7 +156,7 @@ python3 tools/node_backup.py extract "$HOME/node.mcb" \
   --directory "$HOME/private-node-records"
 ```
 
-Inspection prints the manifest and inventory counts, not secret values.
+Inspection prints the manifest and inventory counts, not secret values. <!-- copy-check: allow contrast -- Tells operators what private material inspection exposes. -->
 Extraction requires a new directory, creates it with mode 0700 and writes
 records with mode 0600. It never overwrites existing files. Use the extracted
 records with the platform's identity/configuration recovery procedures; this
@@ -167,7 +167,7 @@ workflow does not provide a whole-node network restore command.
 Authenticated administration accepts `backup help`, `backup start KEY64`,
 `backup status`, `backup load`, `backup read64 ID16 OFFSET`,
 `backup read ID16 OFFSET`, `backup cancel` and
-`backup clear`. `clear` removes saved backup files, not the node's settings.
+`backup clear`. `clear` removes saved backup files, not the node's settings. <!-- copy-check: allow contrast -- Explains the scope of a destructive command. -->
 Lua jobs cannot request whole-node exports. WiFi downloads use
 `GET /admin/backup?id=ID16` with the existing authenticated session.
 

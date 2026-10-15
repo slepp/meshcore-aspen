@@ -67,7 +67,7 @@ commands and replies use native encrypted CLI `TXT_MSG`; this is the existing
 Management protocol, not a public bot command.
 
 `cmd` does not request a delivery ACK. `wmt8` waits for the CLI reply; if already
-queued, use `sync_msgs`. A lost reply is an uncertain outcome, not a confirmed
+queued, use `sync_msgs`. A lost reply is an uncertain outcome, not a confirmed <!-- copy-check: allow contrast -- A missing reply must not trigger an automatic mutation retry. -->
 failure. Inspect affected settings and `job` before repeating a mutation.
 After login, `req_status mast` reads native device counters and
 `req_telemetry mast` reads permitted native Cayenne LPP sensor data.
@@ -212,7 +212,7 @@ readback and saved progress, not merely reception of a native packet.
 Commit acceptance starts asynchronous verification; it is not activation.
 
 For understanding the wire commands, this fixture is the **whole 144-byte
-`hello.lua` above**, not a named source bundle. **Do not send this raw commit
+`hello.lua` above**, not a named source bundle. **Do not send this raw commit <!-- copy-check: allow contrast -- The raw example replaces the full program set. -->
 on a node whose installed files you want to keep:** it replaces the whole Lua
 set. The tutorial's `source-install` composes a different bundle with its own
 size/hash. The fixture's SHA-256 is

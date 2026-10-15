@@ -63,7 +63,7 @@ active microseconds and host calls. Defaults are a 1 MiB Lua heap, 64 KiB source
 16 KiB per scalar string, 262,144 parser steps, 100,000 instructions, 100 ms
 active execution and 32 host calls. Parser, instruction and active-time counts
 restart for each load/call and accumulate across its host resumes. Time waiting
-for the host is excluded. Host argument copies are separately bounded by eight
+for the host is excluded. Host argument copies are separately bounded by eight <!-- copy-check: allow vague-state -- States the allocation limit and accounting boundary. -->
 strings of at most `value_bytes`; Hew-owned returned copies are caller-owned.
 `peak_bytes()`, `instructions()` and `parser_steps()` report the current session
 heap peak and most recent execution counts.
@@ -73,7 +73,7 @@ It excludes protected calls, metatable access/finalizers, dynamic loaders, corou
 OS and package libraries. Lua/parser hooks enforce execution limits; native
 library operations are cooperative and may finish after the active-time limit,
 which is checked before accepting their result. Host operations run outside Lua
-and need their own deadlines. This is an embedding API, not process isolation.
+and need their own deadlines. This is an embedding API, not process isolation. <!-- copy-check: allow contrast -- The execution limits do not isolate native host operations. -->
 
 The portable heap, parser/instruction dispatch, state construction and interpreter
 sources also serve Willow and Aspen's Lua engines. Their adapters retain MeshCore

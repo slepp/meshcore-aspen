@@ -49,7 +49,7 @@ python3 firmware/esp32/esp_update_manifest.py \
 
 Connect from the trusted management network. HTTP is not encrypted: do not send
 the management password/session over an untrusted network. The signed image
-protects firmware authenticity and integrity, not the HTTP login or traffic.
+protects firmware authenticity and integrity, not the HTTP login or traffic. <!-- copy-check: allow contrast -- Image signing does not protect credentials sent over HTTP. -->
 Use a private shell and avoid tracing commands or saving session tokens in logs.
 
 ```sh
@@ -300,7 +300,7 @@ source/data and the current application hash, then check:
 4. With app1 active and confirmed, check that the USB application helper chooses
    app1 rather than writing app0.
 
-An app-level rollback rewrites boot selection; that result alone does not prove
+An app-level rollback rewrites boot selection; that result alone does not prove <!-- copy-check: allow qualification -- Recovery from a crash depends on the installed bootloader. -->
 the bootloader handles a panic or power loss. Verify the installed bootloader
 separately, or observe a bootloader-driven rollback after a reset while pending.
 If an unexpected restart runs the baseline hash instead of the uploaded hash,

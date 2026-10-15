@@ -71,7 +71,7 @@ Posts are not automatically resent after an uncertain result.
 A web message stores `Name: text` so radio participants receive the author's
 name as well as the same content. The composer counts the complete **151-byte
 UTF-8 limit**, including the name. It rejects overlong text rather than creating
-a longer web-only version. A saved post confirms storage, not RF reception.
+a longer web-only version. A saved post confirms storage, not RF reception. <!-- copy-check: allow contrast -- Storage success and radio receipt are separate delivery states. -->
 Radio participants receive it through the normal native history and ACK path.
 
 To update an existing deployment:

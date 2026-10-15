@@ -64,7 +64,7 @@ colour across the voltage, trend and projection graphs.
 
 1. In Grafana, add a **Prometheus** datasource pointing at your authorized
    VictoriaMetrics **query** endpoint. For single-node VictoriaMetrics this is
-   the server base URL, not `/write` or `/api/v1/query`. For a cluster or proxy,
+   the server base URL, not `/write` or `/api/v1/query`. For a cluster or proxy, <!-- copy-check: allow contrast -- Grafana requires the query base rather than a write or request endpoint. -->
    use its operator-provided tenant query base. Set authentication and CA trust
    in the datasource's protected settings, never in this JSON.
 2. Set the datasource scrape interval to the actual sample cadence
