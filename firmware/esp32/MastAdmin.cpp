@@ -32,6 +32,7 @@
 #include <inttypes.h>
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
+#include <esp_spiffs.h>
 #include "RadioNetwork.h"
 #endif
 
@@ -210,6 +211,8 @@ bool wifiPassword(const char *text) {
 struct Help { const char *topic, *syntax; unsigned page = 1; };
 constexpr Help topics[] = {
     {"reboot", "reboot: save then restart device; reboot force: skip saving, unsaved data may be lost; direct authenticated Management only"},
+    {"state", "state save: save contacts and native role state; job: read result"},
+    {"storage", "storage status: filesystem space; storage check: check and repair filesystem; back up first; job: read result"},
     {"wifi", "wifi status|ssid TEXT|password TEXT|-|apply|forget; explicit bytes: ssid|password hex HEX; set wifi.enabled 0|1; encrypted RF only"},
     {"wifi", "wifi 2/5: literal ASCII, including spaces and hex-looking text; SSID 1..32 bytes; password 8..63 bytes or 64 hex digits; '-' opens network", 2},
     {"wifi", "wifi 3/5: wifi ssid hex HEX; wifi password hex HEX; UTF-8/control SSID: hex; combined legacy wifi HEX HEX: use separate forms", 3},
@@ -2005,6 +2008,23 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
 #else
     strcpy(reply.text, "Error: forced device restart unavailable on this platform");
 #endif
+  } else if (!strcmp(command, "state save")) {
+    if (reserve(Effect::Save, reply)) strcpy(reply.text, "Saving state; use job for the result");
+  } else if (!strcmp(command, "storage status")) {
+    const size_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
+    snprintf(reply.text, sizeof(reply.text), "Filesystem used=%u total=%u free=%u bytes",
+             unsigned(used), unsigned(total), unsigned(used <= total ? total - used : 0));
+  } else if (!strcmp(command, "storage check")) {
+    if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&
+        !(transport == Transport::NativeEncrypted && management_->authenticatedNativeSender(nativeSender)))) {
+      strcpy(reply.text, "Error: filesystem repair requires direct authenticated administration"); return;
+    }
+#ifdef ARDUINO_ARCH_ESP32
+    if (reserve(Effect::StorageCheck, reply))
+      strcpy(reply.text, "Checking filesystem; use job for the result");
+#else
+    strcpy(reply.text, "Error: filesystem repair unavailable on this platform");
+#endif
   } else if (!strcmp(command, "apply") || !strcmp(command, "reboot")) {
     if (reserve(Effect::Reboot, reply))
       strcpy(reply.text, "Accepted reboot after this reply; saved roles apply on boot");
@@ -2315,14 +2335,22 @@ void MastAdmin::loop() {
     }
 #endif
     strcpy(outcome_, enabled ? "WiFi reconnect requested; association not yet confirmed" : "WiFi disabled; RF roles remain active");
-  } else if (effect_ == Effect::Reboot) {
+  } else if (effect_ == Effect::StorageCheck) {
+#ifdef ARDUINO_ARCH_ESP32
+    const esp_err_t result = esp_spiffs_check(nullptr);
+    if (result == ESP_OK) strcpy(outcome_, "Filesystem check complete");
+    else snprintf(outcome_, sizeof(outcome_), "Error: filesystem check failed (%s)", esp_err_to_name(result));
+#endif
+  } else if (effect_ == Effect::Reboot || effect_ == Effect::Save) {
     if (!flushRuntimeState()) {
-      snprintf(outcome_, sizeof(outcome_), "Error: %s flush failed; reboot cancelled", runtimeFlushError());
+      snprintf(outcome_, sizeof(outcome_), "Error: %s %s failed%s", runtimeFlushError(),
+               effect_ == Effect::Reboot ? "flush" : "save",
+               effect_ == Effect::Reboot ? "; reboot cancelled" : "");
       effect_ = Effect::None; return;
     }
-    strcpy(outcome_, "Reboot requested");
+    strcpy(outcome_, effect_ == Effect::Save ? "State saved" : "Reboot requested");
 #ifdef ARDUINO_ARCH_ESP32
-    ESP.restart();
+    if (effect_ == Effect::Reboot) ESP.restart();
 #endif
   }
   effect_ = Effect::None;

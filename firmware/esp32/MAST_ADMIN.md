@@ -68,6 +68,14 @@ this same RF/web management backend; role administrator ACLs are unchanged.
 
 ### Remote logs and memory checks
 
+Use `state save` to save contacts and native role state before maintenance.
+Read `job` for the result. `reboot` performs the same save before restarting.
+
+`storage status` reports filesystem space. If saves report an I/O error, make
+an [encrypted backup](../../NODE_BACKUP.md) before running `storage check`
+through direct authenticated administration. This checks and repairs SPIFFS;
+read `job` for the result, then run `state save` again.
+
 On an ESP32 mast, enter these commands through authenticated Management RF
 or the browser's command console:
 

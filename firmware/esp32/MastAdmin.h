@@ -81,7 +81,7 @@ private:
   Management *management_ = nullptr;
   ProfileJournal *journal_ = nullptr;
   uint8_t appliedMask_ = 0;
-  enum class Effect { None, Reboot, ForceReboot, Wifi, Radio, Temporary, CAD, Interference, Airtime, Controls } effect_ = Effect::None;
+  enum class Effect { None, Reboot, ForceReboot, Save, StorageCheck, Wifi, Radio, Temporary, CAD, Interference, Airtime, Controls } effect_ = Effect::None;
   uint32_t ticket_ = 0, nextTicket_ = 0, admittedAt_ = 0, readyAt_ = 0;
   uint32_t forceRestartTicket_ = 0;
   uint32_t cancelledTicket_ = 0;
