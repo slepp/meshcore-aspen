@@ -3061,16 +3061,81 @@ static void find_path_full_contact_scan() {
         (!candidates.empty() && peer->self_id.pub_key[0] == candidates[0]->self_id.pub_key[0])) continue;
     saved.push_back(snapshot(*peer)); candidates.push_back(std::move(peer));
   }
-  char command[32]; snprintf(command, sizeof(command), "!find-path %x", nibble >> 4);
+  char command[96]; snprintf(command, sizeof(command), "!find-path %x", nibble >> 4);
   const auto text = f.command(caller, command);
-  assert(text.find("Contact scan incomplete") != std::string::npos);
+  assert(text.find("2 matches:") != std::string::npos);
   assert(status(f).find("Contacts=16/16 observed=1") == 0);
   for (const auto &raw : f.radio.sent) {
     mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
     assert(packet.getPayloadType() != PAYLOAD_TYPE_ANON_REQ && packet.getPayloadType() != PAYLOAD_TYPE_REQ);
   }
+  // A unique signed companion contact can be probed even when all cache slots
+  // contain observed contacts. Keep the active caller and monitored peer.
+  for (const auto &peer : cached) f.learn(*peer);
+  assert(status(f).find("Contacts=16/16 observed=16") == 0);
+  char key[65]{}, config[128]{}, reply[192]{};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02x", cached[0]->self_id.pub_key[i]);
+  snprintf(config, sizeof(config), "add pinned %s 912525000 3:112233", key);
+  f.bot.repeaterCommand(config, reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  auto &peer = *candidates[0];
+  std::unique_ptr<Peer> collision;
+  do { collision = std::make_unique<Peer>(); }
+  while (!collision->self_id.isHashMatch(peer.self_id.pub_key));
+  saved = {snapshot(peer), snapshot(*collision)};
+  for (unsigned i = 0; i < 32; ++i) snprintf(key + 2 * i, 3, "%02X", peer.self_id.pub_key[i]);
+  snprintf(command, sizeof(command), "!find-path %s", key);
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
+  const auto probeTag = [&](uint8_t type) {
+    uint32_t tag = 0;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+      if (packet.getPayloadType() != type) continue;
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      const unsigned offset = type == PAYLOAD_TYPE_ANON_REQ ? 33 : 2;
+      assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + offset,
+                                       packet.payload_len - offset) == 16);
+      assert(type != PAYLOAD_TYPE_ANON_REQ || packet.isRouteFlood());
+      tag = queued_tx::get32(plain);
+    }
+    return tag;
+  };
+  const auto respond = [&](uint32_t tag, bool login) {
+    uint8_t secret[32]{}, plain[16]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, tag);
+    if (login) plain[7] = 1;
+    else { plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; plain[6] = 1; plain[7] = 120; }
+    auto *packet = login ? peer.createPathReturn(mesh::Identity(f.bot.publicKey()), secret,
+        secret, 0x80, PAYLOAD_TYPE_RESPONSE, plain, 13) :
+        peer.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, 8);
+    assert(packet);
+    packet->header |= login ? ROUTE_TYPE_FLOOD : ROUTE_TYPE_DIRECT;
+    packet->path_len = 0x80;
+    f.deliver(peer.wire(packet)); f.step(300);
+  };
+  auto tag = probeTag(PAYLOAD_TYPE_ANON_REQ);
+  assert(tag && f.bot.jobsInUse());
+  // Incoming adverts and same-hash recovery must not recycle the destination
+  // while its delayed reply is outstanding.
+  f.learn(*candidates[1]);
+  assert(status(f).find("Contacts=16/16 observed=15") == 0);
+  timeMs += 1500;
+  respond(tag, true);
+  tag = probeTag(PAYLOAD_TYPE_REQ); assert(tag);
+  respond(tag, false);
+  const auto replies = caller.replies(f.bot.publicKey(), f.radio);
+  assert(replies.size() == 1 && replies[0].find("fresh 3:") != std::string::npos && !f.bot.jobsInUse());
+  assert(status(f).find("Contacts=16/16 observed=15") == 0);
+  // The caller must still decrypt without being re-imported from the companion.
+  assert(f.command(caller, "!ping") == "Pong");
+  f.bot.repeaterCommand("route pinned", reply, sizeof(reply));
+  assert(!strcmp(reply, "pinned route=3:112233 repair=0"));
   saved.clear();
-  puts("PASS find-path full contact scan: single-nibble candidates across different peer hashes cannot recycle slots or become falsely unique");
+  assert(saveBotRepeaterPolicy({}));
+  puts("PASS find-path full contact scan: ambiguity without cache writes or probes, unique signed companion lookup at full observed capacity, encrypted route confirmation, active caller and monitor retention");
 }
 static void native_repeater_monitor() {
   assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy({}) &&

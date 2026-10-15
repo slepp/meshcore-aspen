@@ -703,9 +703,9 @@ struct CommandBot::Core : mesh::Mesh {
         if (timestamp < contact.advert || (timestamp == contact.advert && contact.observed)) return;
         slot = &contact; break;
       }
-      if (!slot && (!contact.used || (!contact.observed && repeaterIndex(contact.id.pub_key) < 0) ||
-                    (repeaterIndex(contact.id.pub_key) < 0 &&
-                     uint32_t(millis() - contact.heard) >= (BotLearnedState::FreshRouteSeconds * 1000))))
+      if (!slot && (!contact.used || (!contactActive(contact) && repeaterIndex(contact.id.pub_key) < 0 &&
+                    (!contact.observed ||
+                     uint32_t(millis() - contact.heard) >= (BotLearnedState::FreshRouteSeconds * 1000)))))
         slot = &contact;
     }
     if (!slot) { reject("Bot contact table full (16)"); return; }
@@ -764,14 +764,13 @@ struct CommandBot::Core : mesh::Mesh {
       snprintf(text, capacity, "Observed %u/%u %s age=%us rx=%s cached=%s%s",
                page, count, key, unsigned(millis() - c.observedAt) / 1000, rx, route, next);
   }
-  bool recoverContacts(const uint8_t *hash, bool force = false,
-                       const uint8_t *prefix = nullptr, size_t digits = 0) {
+  bool recoverContacts(const uint8_t *hash) {
     if (!owner.contactLookup_ ||
-        (!force && contactRecoveryStarted && uint32_t(millis() - contactRecoveryAt) < 1000)) return false;
+        (contactRecoveryStarted && uint32_t(millis() - contactRecoveryAt) < 1000)) return false;
     contactRecoveryStarted = true;
     contactRecoveryAt = millis();
     unsigned cursor = 0;
-    for (unsigned attempt = 0; attempt < (force ? 65u : 16u); ++attempt) {
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
       uint8_t key[32]{}, raw[255]{}, size = 0;
       const unsigned previous = cursor;
       if (!owner.contactLookup_(hash, cursor, key, raw, size)) return true;
@@ -787,18 +786,16 @@ struct CommandBot::Core : mesh::Mesh {
         continue;
       }
       if (self_id.matches(key)) continue;
-      if (prefix && (memcmp(prefix, key, digits / 2) ||
-          (digits % 2 && (key[digits / 2] & 0xf0) != prefix[digits / 2]))) continue;
       bool known = false;
       Contact *slot = nullptr, *recyclable = nullptr;
       for (auto &contact : contacts) {
         if (contact.used && contact.id.matches(key)) { known = true; break; }
         if (!slot && !contact.used) slot = &contact;
-        if (!recyclable && !contact.observed && repeaterIndex(contact.id.pub_key) < 0)
+        if (!recyclable && !contact.observed && !contactActive(contact) && repeaterIndex(contact.id.pub_key) < 0)
           recyclable = &contact;
       }
       if (known) continue;
-      if (!slot && !force) slot = recyclable;
+      if (!slot) slot = recyclable;
       if (!slot) {
         ++contactRecoveryRejected;
         owner.fault("Bot contact recovery failed: contact table full (16)");
@@ -997,20 +994,34 @@ struct CommandBot::Core : mesh::Mesh {
     return repeaterPolicy.targetEnabled(index) && (!target.frequencyHz || target.frequencyHz == owner.radio_.configuration().freq_hz) &&
         int32_t(millis() - state.due) >= 0;
   }
-  Contact *repeaterContact(unsigned index) {
-    const auto &target = repeaterPolicy.targets[index];
+  bool contactActive(const Contact &contact) const {
+    for (const auto &job : invocations)
+      if (job.used && ((job.event.authenticated && contact.id.matches(job.event.sender)) ||
+                      contact.id.matches(job.dmTarget) ||
+                      (job.ioPending && contact.id.matches(job.io.principal)))) return true;
+    return false;
+  }
+  Contact *routeContactSlot(const uint8_t *key) {
     Contact *slot = nullptr;
     for (auto &contact : contacts) {
-      if (contact.used && contact.id.matches(target.key)) return &contact;
+      if (contact.used && contact.id.matches(key)) return &contact;
       if (!contact.used && !slot) slot = &contact;
     }
-    if (!slot) {
-      for (auto &contact : contacts)
-        if (repeaterIndex(contact.id.pub_key) < 0 &&
-            (!slot || uint32_t(millis() - contact.heard) > uint32_t(millis() - slot->heard)))
-          slot = &contact;
+    if (slot) return slot;
+    for (auto &contact : contacts) {
+      if (repeaterIndex(contact.id.pub_key) >= 0 || contactActive(contact)) continue;
+      if (!slot || (slot->observed && !contact.observed) ||
+          (slot->observed == contact.observed &&
+           uint32_t(millis() - contact.heard) > uint32_t(millis() - slot->heard)))
+        slot = &contact;
     }
+    return slot;
+  }
+  Contact *repeaterContact(unsigned index) {
+    const auto &target = repeaterPolicy.targets[index];
+    Contact *slot = routeContactSlot(target.key);
     if (!slot) return nullptr;
+    if (slot->used && slot->id.matches(target.key)) return slot;
     *slot = {};
     slot->used = true; slot->id = mesh::Identity(target.key);
     snprintf(slot->name, sizeof(slot->name), "%s", target.alias);
@@ -1429,24 +1440,16 @@ struct CommandBot::Core : mesh::Mesh {
       if (value < 0) { finishRadio(job, "Use a hexadecimal public-key prefix"); return; }
       prefix[i / 2] |= uint8_t(value << (i % 2 ? 0 : 4));
     }
-    // Verify every recovered full identity. An incomplete scan cannot safely
-    // decide that a short prefix is unique. A single nibble spans 16 peer hashes.
-    if (owner.contactLookup_) {
-      const unsigned variants = length == 1 ? 16 : 1;
-      for (unsigned i = 0; i < variants; ++i) {
-        uint8_t hash = uint8_t(prefix[0] | i);
-        if (!recoverContacts(&hash, true, prefix, length)) {
-          finishRadio(job, "Contact scan incomplete; bot contact capacity exhausted"); return;
-        }
-      }
-    }
     unsigned count = 0;
     uint8_t selected[32]{};
     char choices[73]{};
+    const auto prefixMatches = [&](const uint8_t *key) {
+      return !memcmp(prefix, key, length / 2) &&
+          (!(length % 2) || (key[length / 2] & 0xf0) == prefix[length / 2]) &&
+          !self_id.matches(key);
+    };
     const auto match = [&](const uint8_t *key) {
-      if (memcmp(prefix, key, length / 2) ||
-          (length % 2 && (key[length / 2] & 0xf0) != prefix[length / 2]) ||
-          self_id.matches(key)) return;
+      if (!prefixMatches(key)) return;
       memcpy(selected, key, 32); ++count;
       if (count <= 6) {
         const size_t offset = strlen(choices);
@@ -1457,6 +1460,36 @@ struct CommandBot::Core : mesh::Mesh {
     for (const auto &target : repeaterPolicy.targets) if (target.used) match(target.key);
     for (const auto &contact : contacts)
       if (contact.used && repeaterIndex(contact.id.pub_key) < 0) match(contact.id.pub_key);
+    // Resolve signed companion contacts without importing every match into the
+    // small bot cache. A single nibble spans 16 peer hashes.
+    Contact recovered{};
+    bool recoverSelected = false;
+    if (owner.contactLookup_) {
+      const unsigned variants = length == 1 ? 16 : 1;
+      for (unsigned i = 0; i < variants; ++i) {
+        const uint8_t hash = uint8_t(prefix[0] | i);
+        unsigned cursor = 0;
+        bool complete = false;
+        for (unsigned attempt = 0; attempt < 65; ++attempt) {
+          uint8_t key[32]{}, raw[255]{}, size = 0;
+          const unsigned previous = cursor;
+          if (!owner.contactLookup_(&hash, cursor, key, raw, size)) { complete = true; break; }
+          if (cursor <= previous) break;
+          if (!mesh::Identity(key).isHashMatch(&hash) || !prefixMatches(key) || repeaterIndex(key) >= 0)
+            continue;
+          bool known = false;
+          for (const auto &contact : contacts)
+            if (contact.used && contact.id.matches(key)) { known = true; break; }
+          if (known) continue;
+          Contact candidate{}; candidate.id = mesh::Identity(key);
+          if (!signedContact(candidate, raw, size)) continue;
+          match(key); recovered = candidate; recoverSelected = true;
+        }
+        if (!complete) {
+          finishRadio(job, "Companion contact lookup incomplete; no route probe sent"); return;
+        }
+      }
+    }
     if (!count) { finishRadio(job, "Unknown key prefix; receive or share the repeater's signed advert first"); return; }
     if (count > 1) {
       snprintf(job.result.value, job.event.replyLimit + 1, "%u matches: %s; use a longer prefix", count, choices);
@@ -1505,6 +1538,12 @@ struct CommandBot::Core : mesh::Mesh {
     uint32_t tag = 0, earliest = 0, latest = 0;
     if (!trustedNetworkTime(earliest, latest) || !messageTimestamp(tag)) {
       finishRadio(job, "Route discovery requires a trusted clock"); return;
+    }
+    if (recoverSelected) {
+      auto *slot = routeContactSlot(selected);
+      if (!slot) { finishRadio(job, "Bot contacts busy; retry after active commands complete"); return; }
+      recovered.used = true; recovered.acceptedUtc = learnedUtc();
+      *slot = recovered; learned.changed(millis()); ++contactsRecovered;
     }
     memcpy(job.io.principal, selected, 32);
     const auto *contact = findPathContact(job);
