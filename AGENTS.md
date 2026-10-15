@@ -37,6 +37,39 @@ These guidelines apply to README text, firmware and host guides, command help,
 errors, status messages and dashboard copy. Protocol reference material still
 needs exact wire formats, limits and failure behavior.
 
+## Write for the reader
+
+Apply this to websites, documentation, READMEs, UI labels, help, tooltips,
+status messages, dashboards and strings embedded in code.
+
+- Start with the reader's task: what the feature does, what the state means
+  and what the reader can do. Offer a next step only when they can meaningfully
+  carry it out; omit guesses and generic troubleshooting suggestions.
+- Remove routine "X, not Y", "not proof of", "does not imply" and "does not
+  establish" qualifications. Keep a distinction when misunderstanding it
+  would change a real decision or action; explain it once where it matters.
+- Replace vague "retained", "preserved", "authoritative" and "bounded" claims
+  with what is kept, where, for how long and what happens next. Keep established
+  technical meanings such as MQTT retained messages.
+- Put implementation reviews, test qualifications, build status, ownership
+  boundaries and unfinished-work commentary in maintainer material. Include
+  mechanics in user guides when they help the reader perform the task.
+- Keep factual limits, security and destructive-action warnings, compatibility
+  requirements and delivery guarantees. State their practical consequences
+  plainly. Editing copy must not strengthen a product claim.
+- Give a short explanation beside a control or status; put detailed mechanics
+  in expandable help or linked references. Review whole passages in reading
+  order and remove repeated disclaimers and formulaic closing sentences.
+
+Inventory reader-facing surfaces before a copy cleanup, including code strings
+and dashboard configuration. Search for these patterns, read matches and nearby
+prose in context, then rewrite whole passages and interactions. Check rendered
+interfaces, links, accessibility and relevant tests. Report reviewed surfaces
+and remaining gaps. Apply this guidance while drafting and in a separate
+editorial pass before publishing; include reader-facing copy in PR review.
+The copy check flags review prompts, with a brief reason for genuine exceptions;
+exclude identifiers, protocol terminology and historical records.
+
 # Practical engineering and releases
 
 Aspen is a practical mesh-node suite, not a certification program. Spend time
