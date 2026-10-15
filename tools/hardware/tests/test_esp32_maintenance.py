@@ -78,6 +78,12 @@ class RadioHandler(BaseHTTPRequestHandler):
         if self.path == "/admin/update":
             self.reply(radio.status())
         elif self.path == "/api/status":
+            now = time.monotonic()
+            if now - radio.last_dashboard < radio.dashboard_min_interval:
+                self.reply({"error": "poll no faster than twice per second"}, 429)
+                return
+            radio.last_dashboard = now
+            radio.dashboard_successes += 1
             if radio.dashboard_unavailable_before_restart and not radio.booted:
                 self.reply({"error": "Dashboard unavailable before restart"}, 503)
                 return
@@ -190,6 +196,7 @@ class Radio:
         self.reboot_release = None
         self.flush_failure = self.lost_upload = self.lost_reboot = self.stuck_reboot = False
         self.dashboard_unavailable_before_restart = False
+        self.last_dashboard = self.dashboard_min_interval = self.dashboard_successes = 0
         self.initial_uptime_ms, self.boot_uptime_ms = 100000, 1000
         self.force_wrong_image = self.force_missing_boot_id = False
         self.force_supported = True
@@ -393,6 +400,14 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(paths.count("/admin/logout"), 1)
         self.assertNotIn("/admin/update/reboot", paths)
         self.assertNotIn("/admin/update", paths)
+
+    def test_retention_reuses_ready_snapshot_under_dashboard_rate_limit(self):
+        self.radio.dashboard_min_interval = .5
+        self.args.wait = 2
+        maintenance.maintain(self.args)
+        self.assertTrue(self.receipt()["complete"])
+        self.assertEqual(self.radio.dashboard_successes, 2)
+        self.assertEqual((self.radio.uploads, self.radio.reboots), (1, 1))
 
     def test_finish_initial_failure_closes_session_once(self):
         maintenance.maintain(self.args)

@@ -109,8 +109,9 @@ def running(status, sha256, size=None):
             not status.get("running_hash_error"))
 
 
-def radio_state(client):
-    state = json_request(client, "/api/status")
+def radio_state(client, state=None):
+    if state is None:
+        state = json_request(client, "/api/status")
     roles = state.get("roles", [])
     if not roles or not all(role.get("ready") for role in roles):
         raise ValueError("Radio roles are not all ready; inspect /api/status")
@@ -251,7 +252,7 @@ def finish(client, record, receipt, connect, deadline, interval):
                         status.get("state") == "idle" and status.get("boot_health") == "healthy"):
                     dashboard = json_request(candidate, "/api/status")
                     if dashboard.get("roles") and all(role.get("ready") for role in dashboard["roles"]):
-                        after = radio_state(candidate)
+                        after = radio_state(candidate, dashboard)
                         restore_sampler(candidate, record, receipt)
                         actual = retained(candidate, record["commands"])
                         record.update(after=after, retained_after=actual, after_update=status)
