@@ -413,7 +413,7 @@ def maintain_locked(args):
             client = connect()
             status = json_request(client, "/admin/update")
             if (not running(status, args.expected_current_sha256) or
-                    status.get("state") != "idle" or status.get("boot_health") != "healthy"):
+                    status.get("state") not in ("idle", "failed") or status.get("boot_health") != "healthy"):
                 raise ValueError("Running application differs, is unhealthy or update active; no upload")
             if args.allow_unsaved_state and status.get("unsaved_state_supported") is not True:
                 raise ValueError("Radio does not support unsaved-state application recovery; no upload")
@@ -468,7 +468,7 @@ def maintain_locked(args):
             client = connect()
             if not record.get("upload_attempted"):
                 status = json_request(client, "/admin/update")
-                if not running(status, record["expected_current_sha256"]) or status.get("state") != "idle":
+                if not running(status, record["expected_current_sha256"]) or status.get("state") not in ("idle", "failed"):
                     raise ValueError("Running application changed or update is active; sampler restoration needs inspection")
                 restore_sampler(client, record, args.receipt)
                 raise ValueError("This receipt has no upload attempt; start an update with a new receipt")

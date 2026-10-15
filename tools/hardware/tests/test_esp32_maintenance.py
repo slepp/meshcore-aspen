@@ -191,6 +191,7 @@ class Radio:
         self.uploaded = self.booted = False
         self.digest, self.size = "", 0
         self.current = "0" * 64
+        self.initial_state = "idle"
         self.sampler_enabled = True
         self.reboot_started = threading.Event()
         self.reboot_release = None
@@ -215,7 +216,7 @@ class Radio:
                 self.force_pending = False
         return {"running_sha256": self.digest if self.booted and self.uploaded and not self.force_wrong_image else self.current,
                 "running_size": self.size if self.booted and self.uploaded else 100, "running_hash_error": "",
-                "state": "idle" if self.booted or not self.uploaded else "verified",
+                "state": "idle" if self.booted else ("verified" if self.uploaded else self.initial_state),
                 "boot_id": None if self.force_missing_boot_id else ("1" * 16 if self.booted else "0" * 16),
                 "force_restart_supported": self.force_supported, "force_restart_pending": self.force_pending,
                 "unsaved_state_supported": self.unsaved_supported, "boot_health": "healthy", "reboot_ready": self.uploaded and not self.booted,
@@ -516,6 +517,24 @@ class MaintenanceTests(unittest.TestCase):
         self.assertTrue(self.receipt()["allow_unsaved_state"])
         self.assertFalse(self.receipt()["contacts_flushed"])
         self.assertEqual(self.radio.uploads, 1)
+
+    def test_new_recovery_after_failed_update_uses_a_new_receipt(self):
+        self.radio.initial_state = "failed"
+        self.args.allow_unsaved_state = True
+        maintenance.maintain(self.args)
+        self.assertTrue(self.receipt()["complete"])
+        self.assertEqual(self.receipt()["before_update"]["state"], "failed")
+        self.assertEqual(self.radio.uploads, 1)
+        self.assertEqual(self.radio.reboots, 1)
+
+    def test_active_update_refuses_a_new_upload(self):
+        for state in ("receiving", "verified"):
+            with self.subTest(state=state):
+                self.radio.initial_state = state
+                self.args.receipt = self.args.receipt.with_name(state + ".json")
+                with self.assertRaisesRegex(ValueError, "update active"):
+                    maintenance.maintain(self.args)
+                self.assertEqual(self.radio.uploads, 0)
 
     def test_unsaved_recovery_refuses_old_backup(self):
         self.args.allow_unsaved_state = True
