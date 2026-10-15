@@ -229,7 +229,8 @@ def compile_image(native, target, profile=ENV, cloud_config_fd=None, spiffs_writ
             traced = config.read_text().replace("build_flags =\n", "build_flags =\n"
                 "  -D ONCHIP_SPIFFS_WRITE_TRACE=1\n"
                 "  -Wl,--wrap=SPIFFS_write\n  -Wl,--wrap=SPIFFS_open\n"
-                "  -Wl,--wrap=SPIFFS_close\n  -Wl,--wrap=spiffs_cb_object_event\n", 1)
+                "  -Wl,--wrap=SPIFFS_close\n  -Wl,--wrap=spiffs_cb_object_event\n"
+                "  -Wl,--wrap=spiffs_fd_return\n  -Wl,--wrap=SPIFFS_remove\n", 1)
             config = target / "platformio.spiffs-trace.ini"
             config.write_text(traced)
             config.chmod(0o600)

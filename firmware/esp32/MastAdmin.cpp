@@ -2030,6 +2030,11 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
         long(failure.error), failure.path, long(failure.length), int(failure.file), unsigned(failure.open),
         failure.openedBy, failure.closedBy, long(failure.closeResult), unsigned(failure.deletedObject),
         unsigned(failure.deletedSpan), unsigned(failure.deletedPage), failure.deletedBy);
+  } else if (!strcmp(command, "storage lifetime")) {
+    const auto failure = spiffsWriteFailure();
+    snprintf(reply.text, sizeof(reply.text), "fd=%d returned=%08lx by=%s rc=%ld; remove=%s by=%s",
+        int(failure.file), static_cast<unsigned long>(failure.returnedBy), failure.closedBy,
+        long(failure.closeResult), failure.removedPath, failure.removedBy);
 #endif
   } else if (!strcmp(command, "storage check")) {
     if (invokingBotJob || (transport != Transport::AuthenticatedWeb &&

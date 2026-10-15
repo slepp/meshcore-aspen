@@ -9,6 +9,8 @@ struct SpiffsWriteFailure {
   char path[32]{}, openedBy[16]{}, closedBy[16]{};
   bool open = false;
   int32_t closeResult = 0;
+  uintptr_t returnedBy = 0;
+  char removedPath[32]{}, removedBy[16]{};
   uint16_t deletedObject = 0, deletedSpan = 0, deletedPage = 0;
   char deletedBy[16]{};
 };

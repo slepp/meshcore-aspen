@@ -13,6 +13,8 @@ struct spiffs_t;
 int32_t __real_SPIFFS_write(spiffs_t *, int16_t, void *, int32_t);
 int16_t __real_SPIFFS_open(spiffs_t *, const char *, uint16_t, uint16_t);
 int32_t __real_SPIFFS_close(spiffs_t *, int16_t);
+int32_t __real_spiffs_fd_return(spiffs_t *, int16_t);
+int32_t __real_SPIFFS_remove(spiffs_t *, const char *);
 void __real_spiffs_cb_object_event(spiffs_t *, void *, int, uint16_t, uint16_t, uint16_t, uint32_t);
 }
 namespace {
@@ -23,7 +25,9 @@ struct Descriptor {
   char path[32]{}, openedBy[16]{}, closedBy[16]{};
   bool open = false;
   int32_t closeResult = 0;
+  uintptr_t returnedBy = 0;
 } descriptors[10];
+char removedPath[32]{}, removedBy[16]{};
 struct Deletion {
   uint16_t object = 0, span = 0, page = 0;
   char task[16]{};
@@ -58,6 +62,25 @@ extern "C" int32_t __wrap_SPIFFS_close(spiffs_t *fs, int16_t file) {
   }
   return result;
 }
+extern "C" int32_t __wrap_spiffs_fd_return(spiffs_t *fs, int16_t file) {
+  const int32_t result = __real_spiffs_fd_return(fs, file);
+  std::lock_guard<std::mutex> lock(traceMutex);
+  if (auto *entry = descriptor(fs, file)) {
+    taskName(entry->closedBy);
+    entry->returnedBy = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+    entry->closeResult = result;
+    if (!result) entry->open = false;
+  }
+  return result;
+}
+extern "C" int32_t __wrap_SPIFFS_remove(spiffs_t *fs, const char *path) {
+  {
+    std::lock_guard<std::mutex> lock(traceMutex);
+    snprintf(removedPath, sizeof(removedPath), "%s", path);
+    taskName(removedBy);
+  }
+  return __real_SPIFFS_remove(fs, path);
+}
 // Cross-object calls include garbage collection; nucleus-local calls are not wrapped.
 extern "C" void __wrap_spiffs_cb_object_event(spiffs_t *fs, void *index, int event,
     uint16_t object, uint16_t span, uint16_t page, uint32_t size) {
@@ -80,7 +103,10 @@ extern "C" int32_t __wrap_SPIFFS_write(spiffs_t *fs, int16_t file, void *bytes, 
         snprintf(firstFailure.openedBy, sizeof(firstFailure.openedBy), "%s", entry->openedBy);
         snprintf(firstFailure.closedBy, sizeof(firstFailure.closedBy), "%s", entry->closedBy);
         firstFailure.open = entry->open; firstFailure.closeResult = entry->closeResult;
+        firstFailure.returnedBy = entry->returnedBy;
       }
+      snprintf(firstFailure.removedPath, sizeof(firstFailure.removedPath), "%s", removedPath);
+      snprintf(firstFailure.removedBy, sizeof(firstFailure.removedBy), "%s", removedBy);
       firstFailure.deletedObject = lastDeletion.object;
       firstFailure.deletedSpan = lastDeletion.span;
       firstFailure.deletedPage = lastDeletion.page;
@@ -98,6 +124,7 @@ void resetSpiffsWriteFailure() {
   std::lock_guard<std::mutex> lock(traceMutex);
   firstFailure = {};
   lastDeletion = {};
+  removedPath[0] = removedBy[0] = 0;
 }
 }
 #endif
