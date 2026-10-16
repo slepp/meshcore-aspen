@@ -40,7 +40,7 @@ keeps hostname/SNI and certificate verification.
 
 ```sh
 chmod 600 "$HOME/.config/aspen-private/cloudroom.json"
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --gateway COMPANION_HOST --target MANAGEMENT_PUBLIC_KEY64 \
   --seed-file "$HOME/.config/aspen-private/admin-companion.seed" \
   --password-file "$HOME/.config/aspen-private/mast-password" \

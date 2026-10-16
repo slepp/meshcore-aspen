@@ -3,10 +3,6 @@
 """Maintain an ESP32S3 application or request one explicit node restart."""
 import argparse
 from contextlib import contextmanager
-try:
-    import fcntl
-except ImportError:
-    raise SystemExit("Application maintenance requires a POSIX host; on Windows, run it in WSL.") from None
 import hashlib
 import json
 import os
@@ -40,6 +36,10 @@ def digest(raw):
 
 @contextmanager
 def receipt_lock(path):
+    try:
+        import fcntl
+    except ImportError:
+        raise ValueError("Firmware updates require a POSIX host; on Windows, run in WSL") from None
     # Keep a separate inode: atomic receipt replacement must not release this lock.
     fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
@@ -405,7 +405,6 @@ def maintain_locked(args):
                       "application": signed, "backup": backup, "build_manifest_sha256": build_hash,
                       "expected_current_sha256": args.expected_current_sha256,
                       "commands": list(DEFAULT_COMMANDS) + args.retain_command,
-                      "legacy_no_cache_flush": args.legacy_no_cache_flush,
                       "allow_unsaved_state": args.allow_unsaved_state}
             write_new_file(args.receipt, b"{}\n", 0o600)
             receipt_owned = True
@@ -432,17 +431,16 @@ def maintain_locked(args):
                 paused = sampler_state(client, record["sampler"])
                 if paused["enabled"] or paused["budget"] != record["sampler"]["budget"]:
                     raise ValueError("Packet sampler did not pause; no upload")
-            if not args.legacy_no_cache_flush:
-                try:
-                    flushed = paced_command(client, "bot contacts flush")
-                except ValueError:
-                    if not args.allow_unsaved_state:
-                        raise
-                    flushed = ""
-                contacts_saved = bool(re.fullmatch(r"Saved learned contacts; dirty=0(?: .*)?", flushed))
-                if not contacts_saved and not args.allow_unsaved_state:
-                    raise ValueError("Learned contacts were not flushed; no upload")
-                record["contacts_flushed"] = contacts_saved
+            try:
+                flushed = paced_command(client, "bot contacts flush")
+            except ValueError:
+                if not args.allow_unsaved_state:
+                    raise
+                flushed = ""
+            contacts_saved = bool(re.fullmatch(r"Saved learned contacts; dirty=0(?: .*)?", flushed))
+            if not contacts_saved and not args.allow_unsaved_state:
+                raise ValueError("Learned contacts were not flushed; no upload")
+            record["contacts_flushed"] = contacts_saved
             if args.allow_unsaved_state:
                 print("Warning: unsaved-state application recovery selected; recent unsaved state may be lost.", file=sys.stderr)
             record["upload_attempted"] = True
@@ -495,16 +493,12 @@ def maintain_locked(args):
                 save_receipt(args.receipt, record)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="action", required=True)
+def arguments(parser):
+    sub = parser.add_subparsers(dest="maintenance_action", required=True)
     update = sub.add_parser("update", help="Verify backup and image, upload once, restart once, compare saved settings")
     restart = sub.add_parser("force-restart", help="Restart the node once without saving; recent unsaved state may be lost")
     resume = sub.add_parser("resume", help="Finish an earlier attempt; never repeat an upload or attempted restart")
     status = sub.add_parser("status", help="Read current application SHA256 and update/boot state")
-    for command in (update, resume, restart, status):
-        command.add_argument("--url", required=True)
-        command.add_argument("--password-file", type=Path, required=True)
     for command in (update, resume, restart):
         command.add_argument("--receipt", type=Path, required=True, help="Private JSON receipt (new path for update or force-restart)")
         command.add_argument("--wait", type=float, default=240, help="Seconds to wait for a healthy application")
@@ -515,15 +509,21 @@ def main():
     update.add_argument("--backup", type=Path, required=True, help="Encrypted node backup (0600), authenticated before upload")
     update.add_argument("--expected-current-sha256", required=True)
     restart.add_argument("--expected-current-sha256", required=True)
-    update.add_argument("--target", default="xiao-esp32s3")
+    update.add_argument("--board", default="xiao-esp32s3")
     update.add_argument("--retain-command", action="append", default=[], help="Additional read-only stable setting to compare")
     update.add_argument("--sampler-slot", type=int, help="Known read-only Wasm sampler to pause for flash writes")
     update.add_argument("--sampler-sha256", help="Exact hash of that read-only sampler")
     update.add_argument("--allow-unsaved-state", action="store_true",
                         help="Recover with one signed application update despite failed state saves; recent unsaved state may be lost (backup must be less than one hour old)")
-    update.add_argument("--legacy-no-cache-flush", action="store_true",
-                        help="First upgrade from firmware without bot contacts flush; RAM-only contacts may be lost")
-    args = parser.parse_args()
+
+
+def run(args, parser):
+    if not args.web or not args.password_file or args.gateway or args.unix_socket or args.willow_socket:
+        parser.error("firmware operations require --web and --password-file")
+    args.url = args.web
+    args.action = args.maintenance_action
+    if args.action == "update":
+        args.target = args.board
     try:
         if args.action == "status":
             client = node_backup.HttpClient(args.url, private_file(args.password_file, 256))
@@ -543,4 +543,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use python3 tools/admin.py firmware --help")

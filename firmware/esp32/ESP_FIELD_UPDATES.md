@@ -211,7 +211,7 @@ Flash streaming runs on the
 HTTP worker, outside radio dispatch, with a 4 KiB transfer buffer, a ten-second
 no-data deadline and a three-minute overall deadline.
 
-USB application helpers `esp32_device.py` and `esp32_update.py` now read the live
+The USB application helper `esp32_device.py` reads the live
 partition table and both OTA-selection records before choosing an application
 address. They refuse unconfirmed/corrupt selection rather than silently writing
 `0x10000`. Private deployment scripts must use the same `tools.hardware.esp32_slot.live_app_slot`

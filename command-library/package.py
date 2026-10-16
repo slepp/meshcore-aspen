@@ -33,9 +33,9 @@ def readme(entry, version, source):
               "Extract this ZIP and check its files with sha256sum --check SHA256SUMS",
               "from the extracted directory. Run installation commands from a MeshCore Aspen source checkout.",
               "Replace DEVICE, the private password path and the extracted file path.",
-              "Read source-list first. If updating an installed file with the same name,",
-              "export it to a new private file with source-export NAME FILE before replacing it.",
-              "source-install retains other named files and the bundled main commands;",
+              "Read source list first. If updating an installed file with the same name,",
+              "export it to a new private file with source export NAME FILE before replacing it.",
+              "source install retains other named files and the bundled main commands;",
               "duplicate exports or a source set exceeding eight entries/4096 bytes reject activation.",
               "An existing custom main source is retained too; inspect its namespace before installing.", ""]
     lua = next(item["name"] for item in entry["files"] if item["runtime"] == "lua")
@@ -43,10 +43,10 @@ def readme(entry, version, source):
     if "willow" in entry["compatibility"]:
         connections.append(("Willow", "--willow-socket /path/to/admin.sock"))
     for host, connection in connections:
-        admin = f"python3 tools/hardware/admin.py {connection}"
-        lines += [f"### {host}", "", "```sh", f"{admin} source-list",
-                  f"{admin} source-install {entry['source_name']} /path/to/extracted/{lua}",
-                  f"{admin} status", "```", ""]
+        admin = f"python3 tools/admin.py {connection}"
+        lines += [f"### {host}", "", "```sh", f"{admin} source list",
+                  f"{admin} source install {entry['source_name']} /path/to/extracted/{lua}",
+                  f"{admin} source status", "```", ""]
         if "packet" in entry:
             packet = entry["packet"]
             slot = packet["slot"]
@@ -63,9 +63,9 @@ def readme(entry, version, source):
                       f"{admin} packet budget {slot} " + " ".join(map(str, packet["budget"])),
                       f"{admin} packet enable {slot} on", f"{admin} packet status {slot}", "```", ""]
     lines += ["## Update or remove", "",
-              f"Use the same connection options with source-export {entry['source_name']} /private/saved.lua before updating.",
-              f"Update with source-install {entry['source_name']} /path/to/extracted/{lua}.",
-              f"Remove only this Lua file with source-remove {entry['source_name']}.",
+              f"Use the same connection options with source export {entry['source_name']} /private/saved.lua before updating.",
+              f"Update with source install {entry['source_name']} /path/to/extracted/{lua}.",
+              f"Remove only this Lua file with source remove {entry['source_name']}.",
               "Removing code retains stored notes and native monitor configuration.", ""]
     if "packet" in entry:
         slot = entry["packet"]["slot"]

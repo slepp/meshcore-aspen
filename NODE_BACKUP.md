@@ -53,10 +53,9 @@ For a private file-based workflow, put the existing admin password in a
 0600 file, then run:
 
 ```sh
-python3 tools/node_backup.py download "$HOME/node.mcb" \
-  --url http://NODE_IP \
-  --key-file "$HOME/.config/meshcore-private/backup.seed" \
-  --password-file "$HOME/.config/meshcore-private/admin.password"
+python3 tools/admin.py --web http://NODE_IP --password-file "$HOME/.config/meshcore-private/admin.password" \
+  backup download "$HOME/node.mcb" \
+  --key-file "$HOME/.config/meshcore-private/backup.seed"
 ```
 
 For Birch, use the host status URL, normally `http://127.0.0.1:9080`, and its
@@ -105,11 +104,9 @@ repeater/room public key as `TARGET_PUBLIC_KEY`. This is the addressed role's
 full key, not the shared modem's key or the backup recipient's key. <!-- copy-check: allow contrast -- Selecting the wrong identity sends administration to the wrong endpoint. -->
 
 ```sh
-python3 tools/node_backup.py download "$HOME/node-rf.mcb" \
-  --gateway COMPANION_IP --port 8001 \
-  --target TARGET_PUBLIC_KEY \
-  --key-file "$HOME/.config/meshcore-private/backup.seed" \
-  --password-file "$HOME/.config/meshcore-private/admin.password"
+python3 tools/admin.py --gateway COMPANION_IP --port 8001 --target TARGET_PUBLIC_KEY --password-file "$HOME/.config/meshcore-private/admin.password" \
+  backup download "$HOME/node-rf.mcb" \
+  --key-file "$HOME/.config/meshcore-private/backup.seed"
 ```
 
 If that seed is already an authorized owner, omit `--password-file` for
@@ -149,9 +146,11 @@ records. It rejects a different recipient seed, truncation, changed bytes and
 unsafe archive paths.
 
 ```sh
-python3 tools/node_backup.py inspect "$HOME/node.mcb" \
+python3 tools/admin.py \
+  backup inspect "$HOME/node.mcb" \
   --key-file "$HOME/.config/meshcore-private/backup.seed"
-python3 tools/node_backup.py extract "$HOME/node.mcb" \
+python3 tools/admin.py \
+  backup extract "$HOME/node.mcb" \
   --key-file "$HOME/.config/meshcore-private/backup.seed" \
   --directory "$HOME/private-node-records"
 ```

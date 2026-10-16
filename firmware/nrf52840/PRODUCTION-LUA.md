@@ -23,7 +23,7 @@ For a host companion using a shared modem, the existing RF administration
 tool can use Pine's native console without command tags or automatic replay:
 
 ```sh
-python3 tools/hardware/admin.py --gateway MODEM_HOST \
+python3 tools/admin.py --gateway MODEM_HOST \
   --target PINE_RELAY_KEY --seed-file /private/companion.seed \
   --untagged --no-command-retry command 'bot status'
 ```

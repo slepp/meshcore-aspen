@@ -41,12 +41,12 @@ installing. Export your existing files to private storage. Prefer a named source
 operation for a single command file:
 
 ```sh
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --web http://NODE --password-file /private/node-password \
-  source-install greeting hello.lua
-python3 tools/hardware/admin.py \
+  source install greeting hello.lua
+python3 tools/admin.py \
   --web http://NODE --password-file /private/node-password \
-  status
+  source status
 ```
 
 For the same named installation over LoRa, follow the
@@ -57,7 +57,7 @@ durable chunk/activation replies. A bot DM is not a bulk upload endpoint.
 `NODE` and the password-file path are placeholders. This updates only
 `greeting`, preserving other named source files. The complete Lua set must still
 fit its aggregate source and command limits; duplicate exports reject it.
-Whole-set `package-install` or `source replace` replaces the selected runtime's
+Whole-set `package install` or `source replace` replaces the selected runtime's
 entire set instead. Native hosts can use their owner socket; Pine can use its
 authenticated RF source transport. See
 [named source operations](BOT_DEVELOPMENT.md#update-one-installed-lua-file).
@@ -193,10 +193,10 @@ Use the retained SDK rather than WASI or a shell. Follow the
 
 ```sh
 make -C firmware/esp32 bot-wasm-examples
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   .tmp/wasm-examples/c-notes.wasm .tmp/wasm-notes.package \
   --name wasm-notes --version 1.0.0 --capability cmdmeta --capability kv
-python3 tools/hardware/admin.py package inspect .tmp/wasm-notes.package
+python3 tools/admin.py package inspect .tmp/wasm-notes.package
 ```
 
 The [C notes example](wasm/examples/notes.c) declares `!wnote [TEXT]`. `mc_start`
@@ -208,15 +208,15 @@ receives private identity keys or service credentials.
 Check the node's runtimes, then install:
 
 ```sh
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --web http://NODE --password-file /private/node-password \
   command 'source api runtimes'
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --web http://NODE --password-file /private/node-password \
-  package-install .tmp/wasm-notes.package
-python3 tools/hardware/admin.py \
+  package install .tmp/wasm-notes.package
+python3 tools/admin.py \
   --web http://NODE --password-file /private/node-password \
-  --runtime wasm status
+  --runtime wasm source status
 ```
 
 Package installation detects Wasm from the package. Lifecycle operations default

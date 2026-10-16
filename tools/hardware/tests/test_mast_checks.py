@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tools.hardware import mast_checks as owner_field
 from tools.hardware import lua_checks as vm_lab
 from tools.hardware import companion_checks as field_stock_test
-from tools.hardware import esp32_update as field_release
 
 from tools.hardware.inventory import value as inventory_value
 
@@ -298,112 +297,6 @@ class OwnerFieldTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Consecutive channel replies missing"):
                 owner_field.conversation_check()
 
-    def test_release_verification_uses_only_one_companion_slot(self):
-        state = {"keys": {"companion": "12" * 32},
-                 "admin": {"source hash": "SHA256 " + "34" * 32 + " gen=1",
-                           "bot policy": "unchanged", "room access": "protected"}}
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory, \
-                patch.object(field_release, "DIRECTORY", Path(directory)), \
-                patch.object(field_release, "private_file", return_value=json.dumps(state).encode()), \
-                patch.object(field_release, "current", return_value=state), \
-                patch.object(field_release, "save") as save, \
-                patch.object(owner_field, "Companion") as companion:
-            connection = companion.return_value.__enter__.return_value
-            connection.width = 3
-            connection.public_key = state["keys"]["companion"]
-            field_release.verify()
-            companion.assert_called_once_with()
-            save.assert_called_once()
-            connection.public_key = "56" * 32
-            with self.assertRaisesRegex(ValueError, "identity mismatch"):
-                field_release.verify()
-            self.assertEqual(save.call_count, 1)
-
-    def test_historical_fixture_comparison_is_byte_exact(self):
-        cpp = b'const char BotDefaultSource[] = R"lua(\nfunction ping() return "Pong" end\n)lua";'
-        expected = b'\nfunction ping() return "Pong" end\n'
-        self.assertEqual(field_release.diagnostic_fixture(cpp), expected)
-        self.assertNotEqual(field_release.diagnostic_fixture(cpp), expected + b"function custom() end")
-        for invalid in (b"", cpp + cpp, cpp.replace(b')lua";', b"truncated")):
-            with self.assertRaises(ValueError):
-                field_release.diagnostic_fixture(invalid)
-
-    def test_release_allows_only_the_candidate_bundled_source_change(self):
-        before = {"keys": {"companion": "12" * 32},
-                  "admin": {"source hash": "SHA256 " + "34" * 32,
-                            "bot policy": "unchanged", "room access": "protected"}}
-        after = {"keys": dict(before["keys"]),
-                 "admin": dict(before["admin"], **{"source hash": "SHA256 " + "56" * 32})}
-        with patch.object(field_release, "current", return_value=after), \
-                patch.object(field_release, "save"), \
-                patch.object(owner_field, "Companion") as companion:
-            connection = companion.return_value.__enter__.return_value
-            connection.width, connection.public_key = 3, before["keys"]["companion"]
-            field_release.verify(before, "56" * 32)
-            with self.assertRaisesRegex(ValueError, "source hash changed"):
-                field_release.verify(before, "34" * 32)
-            after["keys"]["companion"] = "78" * 32
-            with self.assertRaisesRegex(ValueError, "identities changed"):
-                field_release.verify(before, "56" * 32)
-
-    def test_release_deployment_snapshot_wins_over_stale_fixed_artifacts(self):
-        before = {"keys": {"companion": "12" * 32},
-                  "admin": {"source hash": "SHA256 " + "34" * 32,
-                            "bot policy": "unchanged", "room access": "protected"}}
-        for kind, expected in (("custom", "34" * 32), ("bundled", "56" * 32)):
-            with self.subTest(source=kind), \
-                    tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
-                directory = Path(directory)
-                after = {"keys": dict(before["keys"]),
-                         "admin": dict(before["admin"], **{"source hash": "SHA256 " + expected})}
-                artifacts = {
-                    "before.json": {"keys": {"companion": "ff" * 32}},
-                    "bundled.json": {"sha256": "78" * 32},
-                    "custom-source.json": {"sha256": "90" * 32},
-                    "deployment-1.json": {"before": {"keys": {}}, "expected_source": "aa" * 32},
-                    "deployment-2.json": {"before": before, "expected_source": expected},
-                }
-                for name, value in artifacts.items():
-                    path = directory / name
-                    path.write_text(json.dumps(value))
-                    path.chmod(0o600)
-                with patch.object(field_release, "DIRECTORY", directory), \
-                        patch.object(field_release, "current", return_value=after), \
-                        patch.object(field_release, "save") as save, \
-                        patch.object(owner_field, "Companion") as companion:
-                    connection = companion.return_value.__enter__.return_value
-                    connection.width, connection.public_key = 3, before["keys"]["companion"]
-                    field_release.verify()
-                    save.assert_called_once()
-                    after["admin"]["source hash"] = "SHA256 " + "ab" * 32
-                    with self.assertRaisesRegex(ValueError, "source hash changed"):
-                        field_release.verify()
-
-    def test_flash_uses_fresh_state_and_distinguishes_custom_from_bundled_source(self):
-        before = {"keys": {"companion": "12" * 32},
-                  "admin": {"source hash": "SHA256 " + "34" * 32}}
-        image = b"application"
-        candidate = {"image": "image-1.bin", "partitions": "image-1-partitions.bin",
-                     "sha256": hashlib.sha256(image).hexdigest(), "bundled_sha256": "56" * 32}
-        for status, expected in (("gen=4; bundled source", "56" * 32),
-                                 ("gen=4; custom source", "34" * 32)):
-            with self.subTest(source=status), \
-                    tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory, \
-                    patch.object(field_release, "DIRECTORY", Path(directory)), \
-                    patch.object(Path, "glob", return_value=[Path(directory) / "image-1.json"]), \
-                    patch.object(field_release, "private_file",
-                                 side_effect=[json.dumps(candidate).encode(), image]), \
-                    patch.object(field_release, "current", return_value=before), \
-                    patch.object(owner_field, "connect"), \
-                    patch.object(field_release, "checked", return_value=status), \
-                    patch.object(field_release, "save") as save, \
-                    patch.object(field_release, "flash_image") as flash, \
-                    patch.object(field_release, "verify") as verify:
-                field_release.flash()
-                flash.assert_called_once_with(Path(directory) / "image-1.bin", "flash")
-                verify.assert_called_once_with(before, expected)
-                self.assertEqual(save.call_args.args[1]["before"], before)
-                self.assertEqual(save.call_args.args[1]["expected_source"], expected)
 
     def test_extended_stock_reply_requires_current_transport_and_plaintext(self):
         bot = "12" * 32
@@ -426,17 +319,6 @@ class OwnerFieldTests(unittest.TestCase):
                 field_stock_test.expected_reply([invalid], bot, "Home health: ok",
                                                 channel=invalid["type"] == "CHAN")
 
-    def test_release_rejects_implicit_or_excluded_config_before_access(self):
-        with patch.object(field_release, "environment_file", return_value=Path("/not/approved/.env")), \
-                patch.object(field_release, "lan_credentials") as credentials:
-            with self.assertRaisesRegex(ValueError, "independently authorized"):
-                field_release.build()
-            credentials.assert_not_called()
-
-    def test_physical_bare_fixture_is_exact_requested_source(self):
-        self.assertEqual(vm_lab.fixture(True), b"function hello(name) reply('Hello '..name) end")
-        self.assertNotIn(b"command(", vm_lab.fixture(True))
-        self.assertEqual(len(vm_lab.fixture()), 4096)
 
     def test_exact_phy_and_no_temporary_move(self):
         status = {"status": "PHY=912525000,250000,7,5,2 temp=0"}

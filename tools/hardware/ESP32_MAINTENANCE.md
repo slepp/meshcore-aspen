@@ -1,6 +1,6 @@
 # Update an ESP32S3 radio application
 
-Use `esp32_maintenance.py` to update an initialized Aspen-compatible ESP32S3
+Use `tools/admin.py firmware` to update an initialized Aspen-compatible ESP32S3
 radio over its management connection. It uploads only the application, restarts
 once and checks the running application, ready roles, public identities, radio
 profile, selected Lua/Wasm programs and bot channel policies. NVS, filesystem,
@@ -25,9 +25,10 @@ source. A companion identity key cannot sign an application update.
 
    ```sh
    umask 077
-   python3 tools/node_backup.py download /private/radio-before-update.mcb \
-     --volatile --url "$RADIO_URL" \
-     --password-file "$PASSWORD_FILE" --key-file "$OPERATOR_SEED_FILE"
+   python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+     backup download /private/radio-before-update.mcb \
+     --volatile \
+     --key-file "$OPERATOR_SEED_FILE"
    ```
 
    Download validates the encrypted archive. The maintenance command checks its
@@ -36,8 +37,8 @@ source. A companion identity key cannot sign an application update.
 2. Read the running application:
 
    ```sh
-   python3 tools/hardware/esp32_maintenance.py status \
-     --url "$RADIO_URL" --password-file "$PASSWORD_FILE"
+   python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+     firmware status
    ```
 
    Keep `running_sha256`. Require an empty `running_hash_error`, `state: idle`
@@ -45,8 +46,8 @@ source. A companion identity key cannot sign an application update.
 3. Install the chosen application, using a new private receipt path:
 
    ```sh
-   python3 tools/hardware/esp32_maintenance.py update \
-     --url "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+   python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+     firmware update \
      --image /private/build/firmware.bin \
      --build-manifest /private/build/manifest.json \
      --key-file "$OPERATOR_SEED_FILE" \
@@ -63,16 +64,10 @@ source. A companion identity key cannot sign an application update.
 The command records identities and settings, pauses a pinned sampler if requested,
 requests `bot contacts flush`, signs and uploads the application, checks its verified hash/size, then requests one
 restart. It waits up to 240 seconds for the intended application to become
-healthy and compares the retained state. Administrator commands are spaced
+healthy and compares identities, settings and selected programs. Administrator commands are spaced
 600 ms apart. Success ends with `Application healthy` and a private receipt.
 Selected custom programs retain their generation, slot, size and hash. Bundled
 handlers remain selected and may change with the application.
-
-For the first upgrade from firmware that has no `bot contacts flush`, add
-`--legacy-no-cache-flush` explicitly. This is recorded in the receipt. Its
-RAM-only learned contacts may be lost at restart; a companion may need to send
-its signed advert over RF before the bot can answer its messages again. Do not
-use this option to bypass a checkpoint error on firmware that supports flushing.
 
 If storage errors prevent saving native state, an authenticated signed
 application update can recover firmware with `--allow-unsaved-state`. Download
@@ -114,16 +109,16 @@ uncertain rather than authorizing a repeat.
 Use the original receipt to finish checking that attempt:
 
 ```sh
-python3 tools/hardware/esp32_maintenance.py resume \
-  --url "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+  firmware resume \
   --receipt /private/radio-update.json
 ```
 
 `resume` never uploads an application. If the original upload was verified and
 no restart attempt was recorded, it can request that restart once. Otherwise it
 only polls for the intended running image, restores a paused pinned sampler and
-checks retained state. If the upload is incomplete, the baseline changed, the
-application has not returned healthy or a retained setting differs, it stops
+checks identities, settings and selected programs. If the upload is incomplete, the baseline changed, the
+application has not returned healthy or a setting differs, it stops
 with the receipt path. Inspect the connection and current update status before
 deciding on a new attempt. Do not manufacture a fresh receipt to replay an
 uncertain operation. A receipt that records no upload can restore a paused
@@ -145,8 +140,8 @@ selected boot partition; an already verified, selected application boots on
 restart.
 
 ```sh
-python3 tools/hardware/esp32_maintenance.py force-restart \
-  --url "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \
+  firmware force-restart \
   --expected-current-sha256 CURRENT_RUNNING_SHA256 \
   --receipt /private/radio-force-restart.json
 ```

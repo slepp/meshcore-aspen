@@ -175,39 +175,6 @@ class MastClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mast_cli.wifi_field_command("unknown", b"12345678")
 
-    def test_grouped_source_and_data_commands_reuse_flat_implementations(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
-            source = Path(directory) / "part.lua"
-            source.write_bytes(b"function example() return 'ok' end")
-            source.chmod(0o600)
-            arguments = ["admin.py", "--unix-socket", str(Path(directory) / "owner.sock")]
-            for command in (["source", "replace", str(source)], ["install", str(source)]):
-                client = MagicMock()
-                with patch.object(sys, "argv", arguments + command), \
-                        patch.object(mast_cli, "UnixClient", return_value=client), \
-                        patch.object(mast_cli, "install") as install, \
-                        patch("sys.stdout", new_callable=io.StringIO):
-                    mast_cli.main()
-                    install.assert_called_once_with(client, source.read_bytes())
-                    client.close.assert_called_once()
-            for command in (["source", "rollback"], ["rollback"]):
-                client = MagicMock(command=MagicMock(return_value="Accepted"))
-                with patch.object(sys, "argv", arguments + command), \
-                        patch.object(mast_cli, "UnixClient", return_value=client), \
-                        patch.object(mast_cli, "lifecycle") as lifecycle, \
-                        patch("sys.stdout", new_callable=io.StringIO):
-                    mast_cli.main()
-                    lifecycle.assert_called_once_with(client, "rollback")
-            for command in (["data", "restore", str(source), "--no-rearm"],
-                            ["data-restore", str(source), "--no-rearm"]):
-                client = MagicMock()
-                with patch.object(sys, "argv", arguments + command), \
-                        patch.object(mast_cli, "UnixClient", return_value=client), \
-                        patch.object(mast_cli, "data_restore", return_value="COMMITTED") as restore, \
-                        patch("sys.stdout", new_callable=io.StringIO):
-                    mast_cli.main()
-                    restore.assert_called_once_with(client, source.read_bytes(), True)
-
     def test_complete_source_download_is_private_with_permissive_umask(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[3] / ".tmp") as directory:
             for index, (runtime, source) in enumerate((("lua", b"private_config='fixture'\n"),
@@ -222,7 +189,7 @@ class MastClientTests(unittest.TestCase):
                     return "DATA " + source[offset:offset + 48].hex() if offset < len(source) else "EOF"
                 client = MagicMock(command=MagicMock(side_effect=command))
                 arguments = ["admin.py", "--willow-socket", str(Path(directory) / "admin.sock"),
-                             "--runtime", runtime, "download", str(destination)]
+                             "--runtime", runtime, "source", "download", str(destination)]
                 previous_umask = os.umask(0)
                 try:
                     with patch.object(sys, "argv", arguments), patch.object(mast_cli, "WillowClient", return_value=client), \
@@ -244,7 +211,7 @@ class MastClientTests(unittest.TestCase):
             client = MagicMock()
             client.command.return_value = "Sources format=meshcore-sources/1 commit-base=sha256 atomic=1"
             arguments = ["mast_cli.py", "--unix-socket", str(Path(directory) / "owner.sock"),
-                         "source-export", "monitor", str(destination)]
+                         "source", "export", "monitor", str(destination)]
             with patch.object(sys, "argv", arguments), patch.object(mast_cli, "UnixClient", return_value=client), \
                     patch.object(mast_cli, "download", return_value=source), \
                     patch.object(mast_cli, "install") as install, patch("sys.stdout", new_callable=io.StringIO):

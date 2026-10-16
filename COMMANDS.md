@@ -127,15 +127,15 @@ can be nonzero. Each request returns at most four overrides.
 Use the existing Management password file; no connection is made by `--help`:
 
 ```sh
-python3 tools/hardware/admin.py --help
-python3 tools/hardware/admin.py --web http://RADIO \
+python3 tools/admin.py --help
+python3 tools/admin.py --web http://RADIO \
   --password-file /absolute/private/node-password command 'help'
 ```
 
 Use encrypted RF for secrets:
 
 ```sh
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --gateway COMPANION_KISS_HOST --target MANAGEMENT_PUBLIC_KEY64 \
   --seed-file /absolute/private/companion.seed \
   --password-file /absolute/private/node-password command 'status'

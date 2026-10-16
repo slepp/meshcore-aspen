@@ -438,4 +438,4 @@ telemetry-storage-test: telemetry-https-test
 	$(TEST_BUILD)/telemetry-storage
 telemetry-deployment-test:
 	@mkdir -p $(ROOT)/.tmp
-	TMPDIR=$(ROOT)/.tmp PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(ROOT)/tools/hardware/tests -p 'test_esp32_update.py' -v
+	TMPDIR=$(ROOT)/.tmp PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(ROOT)/tools/hardware/tests -p 'test_admin_cli.py' -v

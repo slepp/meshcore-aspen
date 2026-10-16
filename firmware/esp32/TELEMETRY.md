@@ -187,11 +187,11 @@ configuration.
 Read the last completed worker attempt without opening a serial connection:
 
 ```sh
-python3 tools/hardware/admin.py --web http://MAST \
+python3 tools/admin.py --web http://MAST \
   --password-file OWNER_FILE command 'telemetry tls'
-python3 tools/hardware/admin.py --web http://MAST \
+python3 tools/admin.py --web http://MAST \
   --password-file OWNER_FILE command 'telemetry tls-heap'
-python3 tools/hardware/admin.py --web http://MAST \
+python3 tools/admin.py --web http://MAST \
   --password-file OWNER_FILE command 'telemetry tls-blocks'
 ```
 

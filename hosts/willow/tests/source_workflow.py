@@ -13,7 +13,7 @@ from service_demo import RunningService
 sys.path.insert(0, str(ROOT.parents[1]))
 from tools.hardware import admin, lua_sources
 
-CLI = ROOT.parents[1] / "tools/hardware/admin.py"
+CLI = ROOT.parents[1] / "tools/admin.py"
 
 
 class SourceWorkflow(unittest.TestCase):
@@ -74,19 +74,19 @@ class SourceWorkflow(unittest.TestCase):
             module = (ROOT / "build/arithmetic.wasm").read_bytes()
             wasm_file = service.root / "arithmetic.wasm"
             wasm_file.write_bytes(module)
-            cli("install", wasm_file)
+            cli("source", "replace", wasm_file)
             wasm = admin.runtime_client(client, "wamr-2.4.1")
             self.assertEqual(admin.download(wasm), module)
             self.assertEqual(admin.download(client), first_generation)
             second_module = module + b"\x00\x02\x01x"  # Valid inert custom section gives rollback a distinct generation.
             wasm_file.write_bytes(second_module)
-            cli("install", wasm_file)
+            cli("source", "replace", wasm_file)
             self.assertEqual(admin.download(wasm), second_module)
             wasm_export = service.root / "wasm-export.wasm"
-            cli("download", wasm_export, runtime="wasm")
+            cli("source", "download", wasm_export, runtime="wasm")
             self.assertEqual(wasm_export.read_bytes(), second_module)
             self.assertEqual(wasm_export.stat().st_mode & 0o777, 0o600)
-            cli("rollback", runtime="wasm")
+            cli("source", "rollback", runtime="wasm")
             self.assertEqual(admin.download(wasm), module)
             self.assertEqual(admin.download(client), first_generation)
             self.assertEqual(client.command("bot key"), bot_key)

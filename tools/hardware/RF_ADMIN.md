@@ -88,7 +88,7 @@ use that modem's KISS port.
 
 From the source repository root, follow the
 [Python prerequisites](../../firmware/esp32/MAST_ADMIN.md#cli-prerequisites)
-if your environment is not ready, then run `python3 tools/hardware/admin.py --help`.
+if your environment is not ready, then run `python3 tools/admin.py --help`.
 Provide an existing private 32-byte Ed25519 sender seed file and a password
 file, both regular files with mode `0600`. The password file contains only
 the password, without a trailing newline. The seed is the client's identity;
@@ -131,24 +131,24 @@ compete for the same replay state. Keep both files private and out of commits.
    own gateway, full target public key and protected file paths throughout:
 
    ```sh
-   python3 tools/hardware/admin.py \
+   python3 tools/admin.py \
      --gateway KISS_GATEWAY_HOST --port 8001 --target MANAGEMENT_PUBLIC_KEY64 \
      --seed-file /absolute/private/rf-client.seed \
      --password-file /absolute/private/node-password \
      command 'source api sources'
-   python3 tools/hardware/admin.py \
+   python3 tools/admin.py \
      --gateway KISS_GATEWAY_HOST --port 8001 --target MANAGEMENT_PUBLIC_KEY64 \
      --seed-file /absolute/private/rf-client.seed \
      --password-file /absolute/private/node-password \
-     download saved-source.lua
+     source download saved-source.lua
    chmod 600 saved-source.lua
    ```
 
    Expect `format=meshcore-sources/1` and `commit-base=sha256` for named
    sources. `download` writes a new file and verifies complete readback;
    the following `chmod` makes the saved source private.
-   Keep it out of public commits. `source-list` lists existing file names;
-   `source-export NAME NEW_FILE` exports one installed file. Bundled-command
+   Keep it out of public commits. `source list` lists existing file names;
+   `source export NAME NEW_FILE` exports one installed file. Bundled-command
    references are not separate installed files to export.
 
 2. **Save `hello.lua` as UTF-8 with LF newlines and a final newline:**
@@ -169,15 +169,15 @@ compete for the same replay state. Keep both files private and out of commits.
 3. **Install and check the selected source:**
 
    ```sh
-   python3 tools/hardware/admin.py \
+   python3 tools/admin.py \
      --gateway KISS_GATEWAY_HOST --port 8001 --target MANAGEMENT_PUBLIC_KEY64 \
      --seed-file /absolute/private/rf-client.seed \
      --password-file /absolute/private/node-password \
-     source-install greeting hello.lua
-   python3 tools/hardware/admin.py \
+     source install greeting hello.lua
+   python3 tools/admin.py \
      --gateway KISS_GATEWAY_HOST --port 8001 --target MANAGEMENT_PUBLIC_KEY64 \
      --seed-file /absolute/private/rf-client.seed \
-     --password-file /absolute/private/node-password status
+     --password-file /absolute/private/node-password source status
    ```
 
    The client reads the existing set, composes the named file, transfers the
@@ -199,7 +199,7 @@ compete for the same replay state. Keep both files private and out of commits.
    uses the bot's identity, not Management and not an admin session.
 
 Named installation retains other files. Whole-set `install` and
-`package-install` replace that runtime's entire installed command set; export
+`package install` replace that runtime's entire installed command set; export
 first. Source activation does not erase identities, settings, scoped KV or
 notes. It cancels that runtime's pending work. Durable source returns after a
 restart; reverting code does not undo data changes or packets already sent.
@@ -214,7 +214,7 @@ Commit acceptance starts asynchronous verification; it is not activation.
 For understanding the wire commands, this fixture is the **whole 144-byte
 `hello.lua` above**, not a named source bundle. **Do not send this raw commit <!-- copy-check: allow contrast -- The raw example replaces the full program set. -->
 on a node whose installed files you want to keep:** it replaces the whole Lua
-set. The tutorial's `source-install` composes a different bundle with its own
+set. The tutorial's `source install` composes a different bundle with its own
 size/hash. The fixture's SHA-256 is
 `aff977000622bb048a971afd190e1c4bfd4ec5f00447d62311e2185e8cecbcf5`.
 

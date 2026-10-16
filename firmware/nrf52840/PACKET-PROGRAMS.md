@@ -28,7 +28,7 @@ Install through the [RF administration client](../../tools/hardware/RF_ADMIN.md)
 with an existing authorized companion identity and private administrator password:
 
 ```sh
-python3 tools/hardware/admin.py --gateway MODEM_HOST \
+python3 tools/admin.py --gateway MODEM_HOST \
   --target PINE_RELAY_KEY --seed-file /private/companion.seed \
   --password-file /private/node-password --untagged --no-command-retry \
   packet install 0 inspect.lua

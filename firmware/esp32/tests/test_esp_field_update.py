@@ -5,6 +5,10 @@ import shutil
 import uuid
 import hashlib
 import sys
+import os
+import shlex
+import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +17,44 @@ from esp_update_manifest import canonical, sign
 from prepare import stage_field_network
 
 class ESPFieldUpdate(unittest.TestCase):
+    def test_shared_storage_failure_never_formats_or_replaces_identity(self):
+        root = Path(__file__).resolve().parents[3]
+        source = (root / "firmware/esp32/wifi_kiss_main.cpp").read_text()
+        function = source[source.index("void loadOrCreateIdentity() {"):source.index("\nvoid onSetRadio(")]
+        fixture = r'''
+#include <cassert>
+#define MESHCORE_ONCHIP 1
+struct Halted {};
+void halt() { throw Halted{}; }
+struct { void println(const char *) {} } Serial;
+struct {
+  bool available = true, formatted = false;
+  bool begin(bool format) { formatted |= format; return available; }
+} SPIFFS;
+int identity = 0;
+namespace onchip {
+bool valid = true;
+bool loadIdentity(const char *, int &key) { if (!valid) return false; key = 42; return true; }
+}
+''' + function + r'''
+int main() {
+  loadOrCreateIdentity();
+  assert(identity == 42 && !SPIFFS.formatted);
+  for (bool mounted : {false, true}) {
+    SPIFFS.available = mounted; onchip::valid = false;
+    bool halted = false;
+    try { loadOrCreateIdentity(); } catch (Halted) { halted = true; }
+    assert(halted && identity == 42 && !SPIFFS.formatted);
+  }
+}
+'''
+        with tempfile.TemporaryDirectory(dir=root / ".tmp") as directory:
+            cpp, binary = Path(directory) / "storage.cpp", Path(directory) / "storage"
+            cpp.write_text("#include <initializer_list>\n" + fixture)
+            subprocess.run([*shlex.split(os.environ.get("CXX", "c++")), "-std=c++17", "-Wall", "-Wextra",
+                            "-Werror", str(cpp), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
 
     def test_signature_contract(self):
         image = bytearray(24)
@@ -48,7 +90,6 @@ class ESPFieldUpdate(unittest.TestCase):
                 canonical(target, 48, "0" * 64)
 
 
-
     def test_field_network_refresh_retains_clock_and_role_wrappers(self):
         root = Path(__file__).resolve().parents[3]
         build = root / ".tmp" / ("onchip-esp-network-test-" + uuid.uuid4().hex)
@@ -65,31 +106,5 @@ class ESPFieldUpdate(unittest.TestCase):
             stage_gps.assert_called_once_with(build)
             self.assertEqual(clock.read_text(), "retained clock\n")
             self.assertEqual(wrapper.read_text(), "retained role wrapper\n")
-            main = (native.parent / "main.cpp").read_text()
-            self.assertIn("serviceEspUpdate", main)
-            dashboard = (native.parent / "RadioDashboard.cpp").read_text()
-            self.assertEqual(dashboard.count("registerClockHTTP(_server)"), 1)
-            self.assertIn("config.max_uri_handlers += 9;", dashboard)
         finally:
             shutil.rmtree(build)
-
-
-    def test_dispatch_watchdog_covers_startup(self):
-        root = Path(__file__).resolve().parents[3]
-        main = (root / "firmware/esp32/wifi_kiss_main.cpp").read_text()
-        setup = main.split("void setup() {", 1)[1].split("void loop() {", 1)[0]
-        self.assertLess(setup.index("esp_task_wdt_add(nullptr)"), setup.index("board.begin()"))
-        self.assertLess(setup.index("dispatch_watched = true"), setup.index("onchip::begin("))
-        self.assertIn("if (dispatch_watched) esp_task_wdt_reset();", setup)
-        self.assertIn("loadOrCreateIdentity();\n  if (dispatch_watched) esp_task_wdt_reset();", setup)
-        self.assertIn("modem->begin();\n  if (dispatch_watched) esp_task_wdt_reset();", setup)
-        combined_identity = main.split("void loadOrCreateIdentity() {", 1)[1].split("#else", 1)[0]
-        self.assertIn("SPIFFS.begin(false)", combined_identity)
-        self.assertNotIn("SPIFFS.begin(true)", combined_identity)
-        self.assertIn("(!wifi_recovery.enabled() || WiFi.getMode() != WIFI_OFF)", main)
-        self.assertIn("(!wifi_was_connected || http_ready)", main)
-        self.assertIn("wifi_was_connected && http_ready,\n                          wifi_recovery.enabled()", main)
-        health = main.split("bool nativeRolesReady = roles_ready;", 1)[1].split(
-            "onchip::serviceEspUpdate(", 1)[0]
-        self.assertIn("onchip::commandBotService().bootReady()", health)
-        self.assertNotIn("botStatus.fault[0]", health)

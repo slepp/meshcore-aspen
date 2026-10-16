@@ -9,7 +9,7 @@ Open the [command library](https://ve6slp.ca/projects/meshcore/extend/library/),
 choose a command and download its ZIP. Extract it and follow the included
 `README.md` to install the named source, then try the example command.
 
-Use `source-install NAME FILE` from the included instructions. It preserves
+Use `source install NAME FILE` from the included instructions. It preserves
 other named sources; do not use whole-set `install` or `source replace` for
 these additive files. Existing custom globals or commands can conflict, and
 the entire Lua set must still fit eight entries and 4096 bytes. A bundled main

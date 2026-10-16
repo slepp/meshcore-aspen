@@ -62,7 +62,7 @@ Download an encrypted whole-host backup below. Configure role identities, passwo
 Use the local owner CLI for additional host-role settings reported by its help.</p></section>
 <section id="backups"><h2>Node backup</h2>
 <p>Download this host's role identities, configuration, configured credentials, programs and saved data, compressed and encrypted to your operator public key.
-Keep the matching private seed to inspect or extract the file with <code>tools/node_backup.py</code>. This export does not include the companion radio's state.</p>
+Keep the matching private seed to inspect or extract the file with <code>tools/admin.py backup</code>. This export does not include the companion radio's state.</p>
 <label>Recipient public key<input id="backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
 <button id="backup-create">Create and download node backup</button><button id="backup-download">Download saved node backup</button>
 <pre id="backup-status">A new snapshot replaces the saved encrypted backup; host settings remain unchanged.</pre></section>
@@ -293,7 +293,7 @@ async function backupDownload(create){
   if(create&&hex(bytes.slice(40,72))!==key)throw Error('Node backup recipient differs from the requested operator key.');
   const url=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');
   a.href=url;a.download='meshcore-node-'+match[1]+'.mcb';a.click();URL.revokeObjectURL(url);
-  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect with tools/node_backup.py and your private operator seed.';
+  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect with tools/admin.py backup and your private operator seed.';
 }
 $('backup-create').onclick=()=>action(()=>backupDownload(true));
 $('backup-download').onclick=()=>action(()=>backupDownload(false));

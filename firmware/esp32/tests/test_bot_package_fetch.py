@@ -179,9 +179,9 @@ class PackageFetchTests(unittest.TestCase):
                     environment.get("NO_PROXY"), "127.0.0.1", "localhost")))
                 environment["no_proxy"] = environment["NO_PROXY"]
                 result = subprocess.run(
-                    [sys.executable, str(REPOSITORY_ROOT / "tools/hardware/admin.py"),
+                    [sys.executable, str(REPOSITORY_ROOT / "tools/admin.py"),
                      "--web", f"http://127.0.0.1:{server.server_port}",
-                     "--password-file", str(password_path), "package-fetch", "package", expected],
+                     "--password-file", str(password_path), "package", "fetch", "package", expected],
                     cwd=REPOSITORY_ROOT, env=environment, capture_output=True, text=True, timeout=10,
                 )
             finally:

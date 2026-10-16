@@ -105,7 +105,7 @@ Message the bot with <code>!plugins</code> or <code>!help</code> to list its com
 <button data-write="bot cancel" data-warning="Stop running bot commands and message collectors? Actions already sent cannot be undone. Scheduled reminders will stay unchanged.">Stop bot work</button></div>
 <p class="muted">Discovery shares Base telemetry with signed contacts. HTTPS access is limited to the configured service.</p></div></div></section>
 <section id="storage"><h2>Node backup</h2>
-<p>Download this node's identities, settings, programs and saved data, compressed and encrypted to your operator key. Retain the matching private seed to inspect or extract the archive with <code>tools/node_backup.py</code>.</p>
+<p>Download this node's identities, settings, programs and saved data, compressed and encrypted to your operator key. Retain the matching private seed to inspect or extract the archive with <code>tools/admin.py backup</code>.</p>
 <label>Recipient public key<input id="node-backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
 <div class="actions"><button id="node-backup-create">Create and download node backup</button><button id="node-backup-download">Download saved node backup</button>
 <button data-read="backup status" data-target="node-backup-status">Check node backup</button></div>
@@ -582,7 +582,7 @@ async function nodeBackupDownload(create) {
   if(bytes.length!==+match[2] || sha256(bytes)!==match[3]) throw Error('Node backup download size or checksum failed; download the saved backup again.');
   if(create && hex(bytes.slice(40,72))!==$('node-backup-key').value.trim()) throw Error('Node backup recipient changed; download rejected.');
   download(bytes,'meshcore-node-'+match[1]+'.mcb');
-  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect it with tools/node_backup.py and your private operator seed.';
+  return 'Downloaded encrypted node backup: '+bytes.length+' bytes. Inspect it with tools/admin.py backup and your private operator seed.';
 }
 bind('node-backup-create','Preparing encrypted node backup',()=>nodeBackupDownload(true));
 bind('node-backup-download','Downloading saved node backup',()=>nodeBackupDownload(false));

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Inspect or unpack an operator-encrypted MeshCore node backup."""
-import argparse
 import base64
 import binascii
 import hashlib
@@ -22,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.hardware.admin import NativeClient, checked, private_file, write_new_file
+from tools.hardware.admin import NativeClient, checked, private_file, read_file, write_new_file
 from tools.hardware.rf import _shared_secret, public_hex
 
 RAW_LIMIT = 2 * 1024 * 1024
@@ -281,31 +280,31 @@ def download(client, output, seed, resume=False, radio=False, saved=False, trans
     return manifest, len(records), len(raw)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("download", "inspect", "extract"))
-    parser.add_argument("backup", type=Path)
-    parser.add_argument("--key-file", type=Path, required=True, help="Private operator Ed25519 seed file (0600)")
-    parser.add_argument("--directory", type=Path, help="New private directory for extracted records")
-    parser.add_argument("--url", help="Aspen or Birch http(s)://host[:port]")
-    parser.add_argument("--gateway", help="Companion radio KISS host for encrypted admin DM")
-    parser.add_argument("--port", type=int, default=8001)
-    parser.add_argument("--target", help="Management or repeater full public key for RF administration")
-    parser.add_argument("--password-file", type=Path, help="Private admin password file; omit for trusted-key RF login")
-    parser.add_argument("--volatile", action="store_true",
+def arguments(parser):
+    sub = parser.add_subparsers(dest="backup_action", required=True)
+    for name in ("download", "inspect", "extract"):
+        action = sub.add_parser(name)
+        action.add_argument("backup", type=Path)
+        action.add_argument("--key-file", type=Path, required=True, help="Private operator Ed25519 seed file (0600)")
+        if name == "extract":
+            action.add_argument("--directory", type=Path, required=True, help="New private directory for extracted records")
+    download_parser = sub.choices["download"]
+    download_parser.add_argument("--volatile", action="store_true",
                         help="Aspen PSRAM snapshot, lost on restart; leaves the saved filesystem backup unchanged")
-    selection = parser.add_mutually_exclusive_group()
+    selection = download_parser.add_mutually_exclusive_group()
     selection.add_argument("--resume", action="store_true", help="Resume this destination's partial download without creating a new snapshot")
     selection.add_argument("--saved", action="store_true", help="Download the saved snapshot to a new destination without creating another backup")
-    args = parser.parse_args()
+
+
+def run(args, parser):
     try:
         os.umask(0o077)
         seed = private_file(args.key_file, 32)
-        if args.action == "download":
-            if bool(args.url) == bool(args.gateway) or (args.gateway and not args.target):
-                raise ValueError("Choose --url or --gateway with --target")
+        if args.backup_action == "download":
+            if bool(args.web) == bool(args.gateway) or (args.gateway and not args.target) or args.unix_socket or args.willow_socket:
+                raise ValueError("Choose --web or --gateway with --target")
             password = private_file(args.password_file, 256) if args.password_file else b""
-            client = (HttpClient(args.url, password) if args.url else
+            client = (HttpClient(args.web, password) if args.web else
                       NativeClient(args.gateway, args.port, args.key_file, args.target,
                                    password.decode("ascii"), timeout=40, retry_commands=False))
             try:
@@ -315,12 +314,8 @@ def main():
                 client.close()
             print(f"Saved encrypted node backup: {args.backup} ({size} bytes, {count} records)")
             return
-        if args.backup.stat().st_size > FILE_LIMIT:
-            raise ValueError("Backup file exceeds the size limit")
-        manifest, files = entries(decrypt(args.backup.read_bytes(), seed))
-        if args.action == "extract":
-            if args.directory is None:
-                raise ValueError("Extraction requires --directory pointing to a new private directory")
+        manifest, files = entries(decrypt(read_file(args.backup, FILE_LIMIT), seed))
+        if args.backup_action == "extract":
             extract(files, args.directory)
             print(f"Extracted {len(files)} private records to {args.directory}")
         else:
@@ -331,4 +326,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use python3 tools/admin.py backup --help")

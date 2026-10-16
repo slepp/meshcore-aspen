@@ -26,7 +26,7 @@ class LocalLuaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
             package = Path(directory) / "hello.bot.lua"
             subprocess.run([
-                "python3", str(Path(__file__).resolve().parents[3] / "tools/hardware/admin.py"), "package", "create",
+                "python3", str(Path(__file__).resolve().parents[3] / "tools/admin.py"), "package", "create",
                 str(RUNTIME / "plugins/template.lua"), str(package),
                 "--name", "hello", "--version", "1.0.0", "--capability", "cmdmeta",
             ], check=True, capture_output=True, text=True)
@@ -71,7 +71,7 @@ class LocalLuaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
             package = Path(directory) / "owner.bot.lua"
             subprocess.run([
-                "python3", str(Path(__file__).resolve().parents[3] / "tools/hardware/admin.py"), "package", "create",
+                "python3", str(Path(__file__).resolve().parents[3] / "tools/admin.py"), "package", "create",
                 str(EXAMPLES / "owner.lua"), str(package),
                 "--name", "owner-lab", "--version", "1.0.0",
                 "--capability", "cmdmeta", "--capability", "kv",

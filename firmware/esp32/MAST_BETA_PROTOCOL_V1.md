@@ -44,7 +44,7 @@ and remaining role/route coverage are recorded in [MAST_ADMIN.md](MAST_ADMIN.md)
 ## Transport and authentication
 
 Use MeshCore `81dbae592ffad40b4212bc0b37e82b38da08f4bc` framing/crypto.
-Reference implementation: [admin.py](../../tools/hardware/admin.py). Reuse native helpers,
+Reference implementation: [admin.py](../../tools/admin.py). Reuse native helpers,
 not a parallel encryption/framing implementation.
 
 | Surface | Contract |

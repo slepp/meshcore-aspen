@@ -70,7 +70,7 @@ Expect `Pong from the regional bot`. Package and install that source through
 the same operator source workflow as any other command set:
 
 ```sh
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   firmware/runtime/plugins/examples/overrides.lua .tmp/regional.bot.lua \
   --name regional --version 1.0.0 --capability cmdmeta
 make -C firmware/esp32 bot-plugin-install PACKAGE=.tmp/regional.bot.lua \
@@ -288,7 +288,7 @@ source/data are not admitted through Lua `!admin`.
 For a packaged owner example:
 
 ```sh
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   firmware/runtime/plugins/examples/owner.lua .tmp/owner.bot.lua \
   --name owner-lab --version 1.0.0 --capability cmdmeta --capability kv
 make -s -C firmware/esp32 bot-local SOURCE=.tmp/owner.bot.lua \
@@ -358,15 +358,15 @@ Use the existing authenticated owner connection to manage files in one shared
 Lua environment. For example, on a host role's private owner socket:
 
 ```sh
-python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-list
-python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-install config config.lua
-python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-install monitor monitor.lua
-python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-export monitor saved-monitor.lua
-python3 -B tools/hardware/admin.py --unix-socket /path/to/owner.sock source-remove monitor
+python3 -B tools/admin.py --unix-socket /path/to/owner.sock source list
+python3 -B tools/admin.py --unix-socket /path/to/owner.sock source install config config.lua
+python3 -B tools/admin.py --unix-socket /path/to/owner.sock source install monitor monitor.lua
+python3 -B tools/admin.py --unix-socket /path/to/owner.sock source export monitor saved-monitor.lua
+python3 -B tools/admin.py --unix-socket /path/to/owner.sock source remove monitor
 ```
 
 For an on-device role, use its authenticated web or encrypted Management
-connection instead of `--unix-socket`. `source-install` replaces only the
+connection instead of `--unix-socket`. `source install` replaces only the
 named file, preserving the other file bytes. The installer commits the entire
 set against the hash it downloaded; another operator's intervening change
 rejects the commit. Validation rejects conflicting definitions before
@@ -379,13 +379,13 @@ leaving seven custom files; it does not copy the bundled program into the
 envelope. Lua configuration tables can live in a named file, but JSON and
 arbitrary filesystem imports are not Lua sources. The entry order controls
 initialization, so install shared configuration before its consumers.
-`source-export` reads one installed file unchanged and creates a new private
+`source export` reads one installed file unchanged and creates a new private
 output file; it does not activate or replace anything. A symbolic bundled
 reference has no installed file to export. `download` reads the entire set.
 
 `source rollback` selects the previous complete source set, not an independent
 version of one file. To restore one file while retaining the others, use
-`source-install` with the operator's known-good copy. The same source limits
+`source install` with the operator's known-good copy. The same source limits
 apply on the host, ESP32 and compact Pine profile; Lua allocator limits and job
 slots are profile-specific.
 
@@ -490,10 +490,10 @@ Package the tested hello command from the repository root:
 
 ```sh
 mkdir -p .tmp
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   firmware/runtime/plugins/template.lua .tmp/hello.bot.lua \
   --name hello --version 1.0.0 --capability cmdmeta
-python3 tools/hardware/admin.py package inspect .tmp/hello.bot.lua
+python3 tools/admin.py package inspect .tmp/hello.bot.lua
 make -C firmware/esp32 bot-package-validate PACKAGE="$(pwd)/.tmp/hello.bot.lua"
 make -s -C firmware/esp32 bot-local SOURCE=.tmp/hello.bot.lua \
   SCENARIO=firmware/runtime/plugins/examples/hello.scenario.json
@@ -595,10 +595,10 @@ use the existing deployment journal and source slots.
 Create a detached signature with a caller-selected Ed25519 key:
 
 ```sh
-python3 tools/hardware/admin.py package keygen .tmp/plugin-signing.key .tmp/plugin-signing.pub
-python3 tools/hardware/admin.py package sign .tmp/hello.bot.lua \
+python3 tools/admin.py package keygen .tmp/plugin-signing.key .tmp/plugin-signing.pub
+python3 tools/admin.py package sign .tmp/hello.bot.lua \
   --private-key-file .tmp/plugin-signing.key
-python3 tools/hardware/admin.py package verify .tmp/hello.bot.lua \
+python3 tools/admin.py package verify .tmp/hello.bot.lua \
   --signature .tmp/hello.bot.lua.sig --public-key-file .tmp/plugin-signing.pub
 ```
 
@@ -624,7 +624,7 @@ make -C firmware/esp32 bot-plugin-rollback MAST_CLI_ARGS='...'
 make -C firmware/esp32 bot-plugin-remove MAST_CLI_ARGS='...'
 ```
 
-`package-install` and `update` inspect local metadata and optional signatures,
+`package install` and `update` inspect local metadata and optional signatures,
 query the device runtime/API/capabilities and current schema, then use the
 existing resumable numbered source transfer. The device compiles and validates
 the candidate before atomically changing its durable active generation. The

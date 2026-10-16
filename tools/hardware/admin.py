@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Shared bot/source CLI over encrypted RF, authenticated web or local owner Unix socket."""
+"""Manage Aspen radios and Birch/Willow hosts: commands, sources, backups and firmware."""
 import argparse
 from collections import deque
 import hashlib
@@ -49,7 +49,7 @@ def wifi_field_command(field, value):
 
 
 def private_file(path, limit):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
@@ -77,7 +77,7 @@ def check_role_password(password):
 
 
 def read_file(path, limit):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode):
@@ -910,16 +910,15 @@ def data_arguments(parser, action):
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
-        epilog="Use source --help, data --help or package --help for focused commands. "
-               "Existing flat command names remain supported. Global connection options precede the command.")
-    parser.add_argument("--gateway", help="independent KISS gateway host for native encrypted RF")
+        epilog="Global connection options precede the command. Use COMMAND --help for its options.")
+    parser.add_argument("--gateway", help="KISS modem host for encrypted RF administration")
     parser.add_argument("--port", type=int, default=8001)
-    parser.add_argument("--target", help="full mast management public key")
-    parser.add_argument("--seed-file", type=Path, help="disposable/trusted companion Ed25519 seed")
+    parser.add_argument("--target", help="full destination role public key")
+    parser.add_argument("--seed-file", type=Path, help="0600 Ed25519 seed file for RF administration")
     parser.add_argument("--password-file", type=Path, help="0600 password file; omit for trusted-key RF login")
     parser.add_argument("--web", help="authenticated HTTP base URL instead of RF")
-    parser.add_argument("--unix-socket", type=Path, help="private Go native host bot STREAM owner socket")
-    parser.add_argument("--willow-socket", type=Path, help="private Willow SEQPACKET admin.sock; no RF/web credentials")
+    parser.add_argument("--unix-socket", type=Path, help="Birch bot owner socket")
+    parser.add_argument("--willow-socket", type=Path, help="Willow admin.sock owner socket")
     parser.add_argument("--timeout", type=float, default=20)
     parser.add_argument("--untagged", action="store_true",
                         help="native repeater console without host-style command tags, including Pine")
@@ -937,36 +936,12 @@ def main():
     role_password.add_argument("role", choices=("repeater", "room"))
     role_password.add_argument("--new-password-file", type=Path, required=True,
                                help="0600 file containing 1..15 printable ASCII bytes, without newline; separate from Management --password-file")
-    sub.add_parser("install", help="replace the complete installed source; source install replaces one named file").add_argument("source", type=Path)
-    sub.add_parser("download", help="read the complete installed source without changing it").add_argument("destination", type=Path)
-    named_install = sub.add_parser("source-install", help="add/update one named Lua source; retain other sources and reject namespace collisions atomically")
-    named_source_arguments(named_install, "source-install")
-    named_remove = sub.add_parser("source-remove", help="remove one named Lua source; retain the rest")
-    named_source_arguments(named_remove, "source-remove")
-    named_export = sub.add_parser("source-export", help="read one installed Lua file without changing the selected source set")
-    named_source_arguments(named_export, "source-export")
-    sub.add_parser("source-list", help="list separately installed Lua sources and their byte lengths")
-    for action in ("package-install", "update"):
-        package_install_parser = sub.add_parser(action, help="validate and atomically install a source package")
-        package_install_parser.add_argument("source", type=Path)
-        package_install_parser.add_argument("--signature", type=Path)
-        package_install_parser.add_argument("--public-key-file", type=Path)
-    fetch_parser = sub.add_parser("package-fetch", help="stream source from the fixed owner-configured HTTPS GET alias")
-    fetch_parser.add_argument("endpoint_alias", choices=("package",), help="fixed named HTTPS GET alias")
-    fetch_parser.add_argument("sha256")
     source_actions = {
         "status": "read source transfer and activation state",
         "diagnose": "read source/runtime fault and API details",
         "rollback": "manually restore the previous source generation; data is unchanged",
         "remove": "restore bundled source; removes the whole installed source set",
-        "reboot": "restart this endpoint; inspect readiness after reconnecting",
     }
-    for action, help_text in source_actions.items():
-        sub.add_parser(action, help=help_text)
-    export = sub.add_parser("data-export", help="export one scoped KV, timer or reminder record set; no credentials")
-    data_arguments(export, "data-export")
-    restore = sub.add_parser("data-restore", help="stage a scoped backup; KV replaces atomically, scheduler merges without rearming")
-    data_arguments(restore, "data-restore")
     source_group = sub.add_parser("source", help="list, update, export or manually recover installed Lua/Wasm source")
     source_sub = source_group.add_subparsers(dest="source_action", required=True)
     for name, action, help_text in (
@@ -1013,8 +988,31 @@ def main():
         leaf = data_sub.add_parser(name, help=help_text)
         data_arguments(leaf, action)
         leaf.set_defaults(action=action)
+    sub.add_parser("reboot", help="restart the selected endpoint")
+    from tools import node_backup
+    from tools.hardware import esp32_maintenance
+    node_backup.arguments(sub.add_parser("backup", help="download, inspect or extract an encrypted node backup"))
+    esp32_maintenance.arguments(sub.add_parser("firmware", help="update, inspect or recover an Aspen application"))
+    telemetry_group = sub.add_parser("telemetry", help="configure telemetry through encrypted Management RF")
+    telemetry_sub = telemetry_group.add_subparsers(dest="telemetry_action", required=True)
+    telemetry_config = telemetry_sub.add_parser("configure")
+    telemetry_config.add_argument("--endpoint", required=True, help="HTTPS receiver URL")
+    telemetry_config.add_argument("--address", help="receiver IPv4 address; defaults to DNS lookup")
+    telemetry_config.add_argument("--ca-file", type=Path, required=True)
+    telemetry_config.add_argument("--token-file", type=Path, help="0600 bearer-token file")
+    telemetry_config.add_argument("--interval", type=int, default=60, help="seconds, 30..86400")
+    telemetry_config.add_argument("--disabled", action="store_true", help="save the endpoint with publishing disabled")
     package = sub.add_parser("package", help="create, inspect, validate or optionally sign Lua/Wasm packages")
     package_actions = package.add_subparsers(dest="package_action", required=True)
+    install_parser = package_actions.add_parser("install", help="install a Lua/Wasm command package")
+    install_parser.add_argument("source", type=Path)
+    install_parser.add_argument("--signature", type=Path)
+    install_parser.add_argument("--public-key-file", type=Path)
+    install_parser.set_defaults(action="package-install")
+    fetch_parser = package_actions.add_parser("fetch", help="install from the configured HTTPS package endpoint")
+    fetch_parser.add_argument("endpoint_alias", choices=("package",))
+    fetch_parser.add_argument("sha256")
+    fetch_parser.set_defaults(action="package-fetch")
     create_parser = package_actions.add_parser("create")
     create_parser.add_argument("source", type=Path)
     create_parser.add_argument("destination", type=Path)
@@ -1037,6 +1035,12 @@ def main():
     keygen_parser.add_argument("private_key", type=Path)
     keygen_parser.add_argument("public_key", type=Path)
     args = parser.parse_args()
+    if args.action == "backup":
+        node_backup.run(args, parser)
+        return
+    if args.action == "firmware":
+        esp32_maintenance.run(args, parser)
+        return
     if args.action == "package":
         try:
             if args.package_action == "create":
@@ -1080,6 +1084,11 @@ def main():
         return
     client = None
     try:
+        if args.action == "telemetry":
+            if args.web or args.unix_socket or args.willow_socket or not args.gateway:
+                raise ValueError("Telemetry credential uploads require encrypted Management RF")
+            from tools.hardware.telemetry import commands
+            telemetry_commands = commands(args)
         if args.action == "cloudroom" and args.cloudroom_action == "configure" and (args.web or args.unix_socket or args.willow_socket):
             raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
         if args.action == "role-password":
@@ -1124,6 +1133,10 @@ def main():
             client = runtime_client(client, bot_packages.WASM_RUNTIME)
         if args.action == "command":
             print(checked(client, args.text))
+        elif args.action == "telemetry":
+            for text in telemetry_commands:
+                checked(client, text)
+            print(checked(client, "telemetry status"))
         elif args.action == "key-import":
             print(client.import_identity(args.role, native, args.expected_public_key))
         elif args.action == "role-password":
@@ -1199,7 +1212,7 @@ def main():
                         raise ValueError("Cannot remove the last source; use remove to restore bundled commands")
                     source = parts["main"] if tuple(parts) == ("main",) and parts["main"] is not None else lua_sources.encode(parts)
                 install(client, source, expected_base_hash=base_hash)
-        elif args.action in ("package-install", "update"):
+        elif args.action == "package-install":
             source = read_file(args.source, SOURCE_LIMIT)
             signature = read_file(args.signature, 1024) if args.signature else None
             public_key = read_file(args.public_key_file, 4096) if args.public_key_file else None
@@ -1226,4 +1239,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use python3 tools/admin.py --help")

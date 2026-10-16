@@ -22,7 +22,7 @@ Room guest login is separate from Room administrator login.
 The Python client can use that native console over encrypted RF:
 
 ```sh
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --gateway COMPANION_KISS_HOST --target REPEATER_PUBLIC_KEY64 \
   --seed-file /absolute/private/companion.seed \
   --password-file /absolute/private/repeater-password \

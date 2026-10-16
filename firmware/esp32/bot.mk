@@ -153,10 +153,7 @@ owner-field-rekey-peers:
 	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/identity_install.py --manifest "$(KEY_MANIFEST)"
 owner-field-keys-test:
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v tools.hardware.tests.test_identity_install tools.hardware.tests.test_role_names
-.PHONY: owner-field-release-service owner-field-release-service-check owner-field-release-export owner-field-release-bundled owner-field-release-build owner-field-release-flash owner-field-release-verify owner-field-release-grants owner-field-tool-test
-.PHONY: owner-field-release-telemetry
-owner-field-release-service owner-field-release-service-check owner-field-release-export owner-field-release-bundled owner-field-release-build owner-field-release-flash owner-field-release-verify owner-field-release-grants owner-field-release-telemetry:
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/esp32_update.py $(patsubst owner-field-release-%,%,$@)
+.PHONY: owner-field-tool-test
 owner-field-tool-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(ROOT)/tools/hardware/tests -p 'test_mast_checks.py' -v
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_https_profile.py' -v
@@ -436,39 +433,39 @@ bot-https-owner-fetch-test:
 	$(MAKE) bot-https-worker-test TEST_FLAGS='$(TEST_FLAGS) -DONCHIP_BOT_OWNER_FETCH_TEST=1'
 bot-package-validate: bot-host-runner
 	@test -n "$(PACKAGE)" || { echo "Set PACKAGE to a Lua source package." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py package validate "$(PACKAGE)"
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py package validate "$(PACKAGE)"
 	$(BOT_HOST_RUNNER) --validate "$(PACKAGE)"
 bot-package-create:
 	@test -n "$(PLUGIN_SOURCE)" -a -n "$(PACKAGE)" -a -n "$(PLUGIN_NAME)" -a -n "$(PLUGIN_VERSION)" || \
 		{ echo "Set PLUGIN_SOURCE, PACKAGE, PLUGIN_NAME and PLUGIN_VERSION." >&2; exit 2; }
 	mkdir -p "$(dir $(PACKAGE))"
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py package create "$(PLUGIN_SOURCE)" "$(PACKAGE)" \
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py package create "$(PLUGIN_SOURCE)" "$(PACKAGE)" \
 		--name "$(PLUGIN_NAME)" --version "$(PLUGIN_VERSION)" \
 		--schema "$(PLUGIN_SCHEMA)" --rollback "$(PLUGIN_ROLLBACK)" \
 		$(foreach capability,$(PLUGIN_CAPABILITIES),--capability "$(capability)")
 bot-package-inspect:
 	@test -n "$(PACKAGE)" || { echo "Set PACKAGE to a Lua source package." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py package inspect "$(PACKAGE)"
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py package inspect "$(PACKAGE)"
 bot-package-sign:
 	@test -n "$(PACKAGE)" -a -n "$(SIGNING_KEY)" || { echo "Set PACKAGE and SIGNING_KEY." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py package sign "$(PACKAGE)" --private-key-file "$(SIGNING_KEY)" $(if $(SIGNATURE),--signature "$(SIGNATURE)")
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py package sign "$(PACKAGE)" --private-key-file "$(SIGNING_KEY)" $(if $(SIGNATURE),--signature "$(SIGNATURE)")
 bot-package-verify:
 	@test -n "$(PACKAGE)" -a -n "$(SIGNATURE)" -a -n "$(VERIFY_KEY)" || \
 		{ echo "Set PACKAGE, SIGNATURE and VERIFY_KEY." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py package verify "$(PACKAGE)" \
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py package verify "$(PACKAGE)" \
 		--signature "$(SIGNATURE)" --public-key-file "$(VERIFY_KEY)"
 bot-plugin-install bot-plugin-update:
 	@test -n "$(PACKAGE)" || { echo "Set PACKAGE to a Lua source package." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py $(MAST_CLI_ARGS) $(if $(filter bot-plugin-update,$@),update,package-install) \
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py $(MAST_CLI_ARGS) package install \
 		"$(PACKAGE)" $(if $(SIGNATURE),--signature "$(SIGNATURE)") $(if $(VERIFY_KEY),--public-key-file "$(VERIFY_KEY)")
 bot-plugin-fetch:
 	@test -n "$(PACKAGE_SHA256)" || \
 		{ echo "Set PACKAGE_SHA256 for the configured package GET endpoint." >&2; exit 2; }
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py $(MAST_CLI_ARGS) package-fetch \
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py $(MAST_CLI_ARGS) package fetch \
 		package "$(PACKAGE_SHA256)"
 bot-plugin-status bot-plugin-diagnose bot-plugin-rollback bot-plugin-remove bot-plugin-reboot:
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py $(MAST_CLI_ARGS) \
-		$(patsubst bot-plugin-%,%,$@)
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py $(MAST_CLI_ARGS) \
+		$(if $(filter bot-plugin-reboot,$@),reboot,source $(if $(filter bot-plugin-remove,$@),reset,$(patsubst bot-plugin-%,%,$@)))
 bot-release-check: bot-package-test bot-host-runner-test bot-test bot-storage-test \
 	bot-kv-files-test bot-kv-native-test bot-schedule-files-test bot-schedule-native-test bot-runtime-test beta-test bot-network-check
 .PHONY: bot-network-check
@@ -537,7 +534,7 @@ mast-admin-ui-test:
 mast-admin-browser-test: mast-admin-ui-test
 	node tests/mast_admin_browser.mjs
 mast-cli:
-	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/hardware/admin.py $(ARGS)
+	PYTHONDONTWRITEBYTECODE=1 python3 $(ROOT)/tools/admin.py $(ARGS)
 beta-build:
 	MESHCORE_HOSTNAME=meshcore-beta WIFI_SSID=build-only WIFI_PWD=not-a-secret \
 		ONCHIP_ADMIN_PASSWORD=build-only ONCHIP_ROOM_PASSWORD= ONCHIP_MQTT_URI= \

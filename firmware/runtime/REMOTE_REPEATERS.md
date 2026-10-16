@@ -66,9 +66,9 @@ undo a request already transmitted. Use `bot repeaters off` to stop all targets.
 Install the example **additively**, retaining the current command program:
 
 ```sh
-python3 -B tools/hardware/admin.py \
+python3 -B tools/admin.py \
   --web http://RADIO_IP --password-file /path/to/private/management-password \
-  source-install monitor firmware/runtime/plugins/examples/remote-repeater-monitor.lua
+  source install monitor firmware/runtime/plugins/examples/remote-repeater-monitor.lua
 ```
 
 Then enable the scheduled event with `bot events 16`. Event masks are a
@@ -150,9 +150,9 @@ option. `source api repeater-cli` reports `read-retry=1` when it is available.
 Install the source additively:
 
 ```sh
-python3 -B tools/hardware/admin.py \
+python3 -B tools/admin.py \
   --web http://RADIO_IP --password-file /path/to/private/management-password \
-  source-install rcli firmware/runtime/plugins/examples/repeater-cli.lua
+  source install rcli firmware/runtime/plugins/examples/repeater-cli.lua
 ```
 
 In an authenticated private DM from a trusted owner:
@@ -205,8 +205,8 @@ route repair. Writes are sent once.
 
 ## Replace or compose Lua sources
 
-`source-install NAME FILE` adds or updates one named Lua source.
-`source-list` lists the names; `source-remove NAME` removes one.
+`source install NAME FILE` adds or updates one named Lua source.
+`source list` lists the names; `source remove NAME` removes one.
 All sources share a single environment, so they can call each other's exported
 procedures and registered modules. They are separately initialized chunks,
 not separate VMs. Local variables remain local to their chunk.
@@ -231,13 +231,13 @@ does not survive a restart.
 Keep a known-good file before replacing a command or monitor:
 
 ```sh
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  source-export monitor known-good-monitor.lua
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  source-install monitor changed-monitor.lua
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  source export monitor known-good-monitor.lua
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  source install monitor changed-monitor.lua
 # Restore only that file when needed:
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  source-install monitor known-good-monitor.lua
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  source install monitor known-good-monitor.lua
 ```
 
 Export creates a private `0600` file without changing the running source.

@@ -1640,7 +1640,7 @@ admission budget, downgrade warning and validation commands.
 
 The owner's existing authenticated RF/web administration can export and
 explicitly stage/restore one KV scope with `data` commands or `admin.py
-data-export` / `data-restore`. See [MAST_ADMIN.md](../esp32/MAST_ADMIN.md#scoped-bot-data).
+data export` / `data restore`. See [MAST_ADMIN.md](../esp32/MAST_ADMIN.md#scoped-bot-data).
 The checked 2,422-byte version-1 snapshot preserves the full bot identity,
 scope and full user/channel principal. Restore atomically replaces that scope's
 eight-or-fewer keys, leaving all other scopes and principals alone. Source
@@ -2824,7 +2824,7 @@ network/TLS/RF acceptance or a protection against physical flash extraction.
 
 Approved `http.get`, `http.post`, `rpc.call` and bounded `json` are available in
 the ESP32 and production native-host Lua runtime. See [configured network API](NETWORK_API.md)
-for a runnable setup, numeric limits and streamed package-fetch commands.
+for a runnable setup, numeric limits and streamed package fetch commands.
 
 Native administration can enqueue one approved JSON GET on the same HTTPS
 worker with `commandBotService().requestOwnerFetch(name)` **after authenticating

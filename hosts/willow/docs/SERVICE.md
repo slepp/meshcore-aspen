@@ -174,11 +174,11 @@ The socket must belong to your user and be private. Willow uses SEQPACKET;
 `--unix-socket` selects the separate Go host's STREAM protocol.
 
 ```sh
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source list
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source install station-status station-status.lua
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" source export station-status station-status.saved.lua
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" command 'source api grants'
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" command 'help grants'
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" source list
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" source install station-status station-status.lua
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" source export station-status station-status.saved.lua
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" command 'source api grants'
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" command 'help grants'
 ```
 
 Named Lua installation retains bundled commands and other named files. It
@@ -192,9 +192,9 @@ Install a portable Wasm module alongside Lua, then export or roll it back
 independently:
 
 ```sh
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" install program.wasm
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm download program.saved.wasm
-python3 ../../tools/hardware/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm rollback
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" source replace program.wasm
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm source download program.saved.wasm
+python3 ../../tools/admin.py --willow-socket "$STATE/admin.sock" --runtime wasm source rollback
 ```
 
 The tool detects Wasm installation from its binary or package runtime. Use

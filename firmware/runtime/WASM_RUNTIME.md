@@ -137,10 +137,10 @@ wasm-ld --version
 
 ```sh
 make -C firmware/esp32 bot-wasm-examples
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   .tmp/wasm-examples/c-notes.wasm .tmp/wasm-notes.package \
   --name wasm-notes --version 1.0.0 --capability cmdmeta --capability kv
-python3 tools/hardware/admin.py package inspect .tmp/wasm-notes.package
+python3 tools/admin.py package inspect .tmp/wasm-notes.package
 ```
 
 `wasm/build_examples.py` contains the complete compiler commands and writes
@@ -152,12 +152,12 @@ on host and device; do not rebuild it for Xtensa.
 Install with the existing authenticated CLI connection:
 
 ```sh
-python3 tools/hardware/admin.py --unix-socket /absolute/bot/native/admin.sock \
-  package-install .tmp/wasm-notes.package
-python3 tools/hardware/admin.py --unix-socket /absolute/bot/native/admin.sock \
-  --runtime wasm status
-python3 tools/hardware/admin.py --unix-socket /absolute/bot/native/admin.sock \
-  --runtime wasm rollback
+python3 tools/admin.py --unix-socket /absolute/bot/native/admin.sock \
+  package install .tmp/wasm-notes.package
+python3 tools/admin.py --unix-socket /absolute/bot/native/admin.sock \
+  --runtime wasm source status
+python3 tools/admin.py --unix-socket /absolute/bot/native/admin.sock \
+  --runtime wasm source rollback
 ```
 
 The RF `--gateway`, `--target`, `--seed-file` and optional password options
@@ -173,10 +173,10 @@ For an owner-configured HTTPS package endpoint, inspect the selected
 runtime's fetch contract and then request the exact package digest:
 
 ```sh
-python3 tools/hardware/admin.py --unix-socket /absolute/bot/native/admin.sock \
+python3 tools/admin.py --unix-socket /absolute/bot/native/admin.sock \
   --runtime wasm command "source api fetch"
-python3 tools/hardware/admin.py --unix-socket /absolute/bot/native/admin.sock \
-  --runtime wasm package-fetch package PACKAGE_SHA256
+python3 tools/admin.py --unix-socket /absolute/bot/native/admin.sock \
+  --runtime wasm package fetch package PACKAGE_SHA256
 ```
 
 The fixed `package` GET alias, trust bundle and credentials stay in native
@@ -562,10 +562,10 @@ Prepare and inspect packages without a connection:
 
 ```sh
 make -C firmware/esp32 bot-wasm-examples
-python3 tools/hardware/admin.py package create \
+python3 tools/admin.py package create \
   .tmp/wasm-examples/c-notes.wasm .tmp/wasm-notes.package \
   --name wasm-notes --version 1.0.0 --capability cmdmeta --capability kv
-python3 tools/hardware/admin.py package inspect .tmp/wasm-notes.package
+python3 tools/admin.py package inspect .tmp/wasm-notes.package
 ```
 
 Within the assigned radio window, use the existing configured
@@ -575,7 +575,7 @@ files, never inline secrets. For example, with those flags supplied through
 Make's existing `MAST_CLI_ARGS` variable:
 
 ```sh
-make -C firmware/esp32 mast-cli ARGS="$MAST_CLI_ARGS --runtime wasm package-install .tmp/wasm-notes.package"
+make -C firmware/esp32 mast-cli ARGS="$MAST_CLI_ARGS --runtime wasm package install .tmp/wasm-notes.package"
 make -C firmware/esp32 mast-cli ARGS="$MAST_CLI_ARGS --runtime wasm status"
 make -C firmware/esp32 mast-cli ARGS="$MAST_CLI_ARGS --runtime wasm download .tmp/wasm-radio.package"
 cmp .tmp/wasm-notes.package .tmp/wasm-radio.package
@@ -595,7 +595,7 @@ their queued/confirmed/unknown outcomes before requesting it.
 
 1. Package `c-arithmetic.wasm`, `c-notes.wasm` and `c-rpc.wasm` using the
    `package create` command above with distinct names. Install one at a
-   time through authenticated RF `package-install`; use fresh arithmetic
+   time through authenticated RF `package install`; use fresh arithmetic
    arguments, a unique `!wnote` marker, `!wnote` and configured `!wecho text`. Confirm each
    reply arrives over RF on the companion, alongside an unchanged Lua
    command and native `!ping`.

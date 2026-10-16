@@ -17,7 +17,7 @@ from migrate_go import native_records
 sys.path.insert(0, str(ROOT.parents[1]))
 from tools.hardware import admin, lua_sources
 
-CLI = ROOT.parents[1] / "tools/hardware/admin.py"
+CLI = ROOT.parents[1] / "tools/admin.py"
 
 
 class PacketWorkflow(unittest.TestCase):

@@ -38,13 +38,13 @@ unchanged. From the repository root, use the
 your existing private Management password file:
 
 ```sh
-python3 tools/hardware/admin.py --web http://RADIO \
+python3 tools/admin.py --web http://RADIO \
   --password-file /private/node-password command 'packet api'
-python3 tools/hardware/admin.py --web http://RADIO \
+python3 tools/admin.py --web http://RADIO \
   --password-file /private/node-password packet install 0 inspect.lua
-python3 tools/hardware/admin.py --web http://RADIO \
+python3 tools/admin.py --web http://RADIO \
   --password-file /private/node-password packet budget 0 1 3000 800 0
-python3 tools/hardware/admin.py --web http://RADIO \
+python3 tools/admin.py --web http://RADIO \
   --password-file /private/node-password packet enable 0 on
 ```
 

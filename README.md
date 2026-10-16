@@ -113,7 +113,7 @@ permissions, [architecture guide](ARCHITECTURE.md) for service ownership and
 | [Shared runtime](firmware/runtime/BOT_DEVELOPMENT.md) · [Hew Lua/Wasm packages](packages/README.md) | Command engines, examples and application APIs |
 | [Command library](command-library/README.md) | Downloadable modules built from canonical examples |
 | [Shared modem protocol](firmware/shared/QUEUED_TX_PROTOCOL.md) | Queueing, PHY control and radio integration |
-| [Administration tool](tools/hardware/admin.py) | Authenticated management and named source operations |
+| [Administration](ADMIN.md) | Commands, Lua/Wasm programs, encrypted backups and firmware updates |
 
 ## Licence
 

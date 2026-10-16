@@ -28,13 +28,13 @@ slot 1. These commands assume slot 0 is unused:
 
 ```sh
 make -C firmware/esp32 bot-wasm-examples
-python3 tools/hardware/admin.py --web http://DEVICE --password-file /private/node-password packet install 0 .tmp/wasm-examples/repeater-snr.wasm
-python3 tools/hardware/admin.py --web http://DEVICE --password-file /private/node-password packet budget 0 1 100000 20000 9
-python3 tools/hardware/admin.py --web http://DEVICE --password-file /private/node-password packet enable 0 on
-python3 tools/hardware/admin.py --web http://DEVICE --password-file /private/node-password source-install snr firmware/runtime/plugins/examples/snr.lua
+python3 tools/admin.py --web http://DEVICE --password-file /private/node-password packet install 0 .tmp/wasm-examples/repeater-snr.wasm
+python3 tools/admin.py --web http://DEVICE --password-file /private/node-password packet budget 0 1 100000 20000 9
+python3 tools/admin.py --web http://DEVICE --password-file /private/node-password packet enable 0 on
+python3 tools/admin.py --web http://DEVICE --password-file /private/node-password source install snr firmware/runtime/plugins/examples/snr.lua
 ```
 
-`source-install` preserves the other named command sources. Read `packet 0
+`source install` preserves the other named command sources. Read `packet 0
 status`, `stats` and `timing` after traffic arrives. The program must remain
 `live=1` without faults, and `/api/status` should include `repeater_snr` under
 `packet_reports`. Disable it with `packet enable 0 off` to stop sampling.

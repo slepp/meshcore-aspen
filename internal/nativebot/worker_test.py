@@ -504,7 +504,7 @@ class WorkerProcessTest(unittest.TestCase):
 
         def install_file(name, path):
             with patch.object(sys, "argv", ["admin.py", "--unix-socket", str(STATE / "fixture.sock"),
-                                           "source-install", name, str(path)]), \
+                                           "source", "install", name, str(path)]), \
                     patch.object(mast_cli, "UnixClient", return_value=client), \
                     patch("sys.stdout", new_callable=io.StringIO):
                 mast_cli.main()

@@ -150,24 +150,24 @@ to a node:
 python3 -m venv .tmp/admin-venv
 . .tmp/admin-venv/bin/activate
 python3 -m pip install -r firmware/esp32/requirements-sign.txt
-python3 tools/hardware/admin.py --help
+python3 tools/admin.py --help
 ```
 
 Use `source --help` for named-file installation, export and manual recovery;
 use `data --help` for scoped records. Put connection options before the command:
 
 ```sh
-python3 tools/hardware/admin.py --unix-socket /path/to/bot/native/admin.sock \
+python3 tools/admin.py --unix-socket /path/to/bot/native/admin.sock \
   source list
-python3 tools/hardware/admin.py --unix-socket /path/to/bot/native/admin.sock \
+python3 tools/admin.py --unix-socket /path/to/bot/native/admin.sock \
   source install monitor monitor.lua
 ```
 
 `source install NAME FILE` changes one named Lua file. `source replace FILE`
 replaces the complete source set. `source rollback` restores the previous
 generation without restoring data; `source reset` selects bundled commands.
-Existing `source-install`, `install`, `rollback`, `remove`, `data-export` and
-`data-restore` forms remain aliases. Use `command 'help'` for the connected
+Existing `source install`, `install`, `rollback`, `remove`, `data export` and
+`data restore` forms remain aliases. Use `command 'help'` for the connected
 endpoint's native administration topics.
 
 The manifest supplies `cryptography` and PyNaCl. If you already have an
@@ -301,9 +301,9 @@ For a trusted-LAN ESP32 connection, put the password in an existing protected
 0600 regular file, then run from the repository root:
 
 ```sh
-python3 tools/hardware/admin.py --web http://MAST \
+python3 tools/admin.py --web http://MAST \
   --password-file /absolute/private/mast-password command 'status'
-python3 tools/hardware/admin.py --web http://MAST \
+python3 tools/admin.py --web http://MAST \
   --password-file /absolute/private/mast-password command 'source status'
 ```
 
@@ -620,13 +620,13 @@ same formats, scope checks and non-rearming scheduler restore rules.
 Choose `caller`, `conversation`, `channel` or `bot`, or append `-thread` to
 export that origin's named threads. Supply the full user key or verified channel
 identifier, or 64 zeros for `bot` and `bot-thread`. Channel identifiers are
-digests, not channel secrets. There is no public Lua data-export capability.
+digests, not channel secrets. There is no public Lua data export capability.
 
 ```sh
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  data-export notes.bkd --scope caller --principal FULL_USER_PUBLIC_KEY
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  data-restore notes.bkd
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  data export notes.bkd --scope caller --principal FULL_USER_PUBLIC_KEY
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  data restore notes.bkd
 ```
 
 The destination is created exclusively with mode 0600. Restore accepts a private
@@ -645,12 +645,12 @@ and timers. Each family is a separate snapshot, not a cross-family transaction.
 Source, native credentials, grants and identities are never included.
 
 ```sh
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  data-export timers.btd --kind timers --scope caller --principal FULL_USER_PUBLIC_KEY
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  data-export reminders.brd --kind reminders --scope caller --principal FULL_USER_PUBLIC_KEY
-python3 tools/hardware/admin.py --web http://MAST --password-file OWNER_FILE \
-  data-restore reminders.brd --no-rearm
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  data export timers.btd --kind timers --scope caller --principal FULL_USER_PUBLIC_KEY
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  data export reminders.brd --kind reminders --scope caller --principal FULL_USER_PUBLIC_KEY
+python3 tools/admin.py --web http://MAST --password-file OWNER_FILE \
+  data restore reminders.brd --no-rearm
 ```
 
 **Scheduler restore policy is explicitly non-rearming.** `--no-rearm` (raw
@@ -1357,14 +1357,14 @@ arguments or history. The expected public key is 64 hex digits:
 
 ```sh
 SOCKET="$HOME/.local/state/meshcore-host/bot/native/admin.sock"
-python3 tools/hardware/admin.py --unix-socket "$SOCKET" command 'key bot'
-python3 tools/hardware/admin.py --unix-socket "$SOCKET" \
+python3 tools/admin.py --unix-socket "$SOCKET" command 'key bot'
+python3 tools/admin.py --unix-socket "$SOCKET" \
   key-import bot --native-key-file /absolute/selected-native.key \
   --expected-public-key FULL_PUBLIC_KEY_HEX
-python3 tools/hardware/admin.py --unix-socket "$SOCKET" command 'key bot pending'
+python3 tools/admin.py --unix-socket "$SOCKET" command 'key bot pending'
 # To discard the stage instead: command 'key bot cancel'
-python3 tools/hardware/admin.py --unix-socket "$SOCKET" --timeout 80 command 'key bot apply'
-python3 tools/hardware/admin.py --unix-socket "$SOCKET" command 'key bot'
+python3 tools/admin.py --unix-socket "$SOCKET" --timeout 80 command 'key bot apply'
+python3 tools/admin.py --unix-socket "$SOCKET" command 'key bot'
 ```
 
 Staging reports `KEY <new-key> pending; apply required`; the running identity
@@ -1530,7 +1530,7 @@ with os.fdopen(fd, "wb") as output:
     output.write("".join(secrets.choice(string.ascii_letters + string.digits)
                          for _ in range(15)).encode("ascii"))
 PY
-python3 tools/hardware/admin.py \
+python3 tools/admin.py \
   --gateway COMPANION_KISS_HOST --port COMPANION_KISS_PORT \
   --target MANAGEMENT_FULL_PUBLIC_KEY --seed-file /absolute/private/companion.seed \
   --password-file /absolute/private/management-password \
@@ -1679,7 +1679,7 @@ rollback and removal. Both transports use the same bounded numbered source
 chunks and durable activation journal. Direct source uploads remain available
 for recovery and editing; package metadata is a comment in the uploaded Lua
 source and consumes part of the 4,096-byte source envelope. The CLI's
-`package-install` checks the device API/capability report and current schema
+`package install` checks the device API/capability report and current schema
 before beginning transfer. Firmware repeats the metadata/schema check before
 activation and enforces the declared previous-schema compatibility on
 rollback. See [BOT_RUNTIME.md](../runtime/BOT_RUNTIME.md#compact-package-metadata-and-compatible-schema-changes)

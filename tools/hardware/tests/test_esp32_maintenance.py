@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import io
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import io
 import json
 import os
 import time
 from pathlib import Path
 import socket
 import struct
+import sys
 import tarfile
 import tempfile
 import threading
@@ -22,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from tools.hardware import esp32_maintenance as maintenance
 from tools.hardware.rf import _shared_secret, public_hex
 from tools import node_backup
+from tools import admin as cli
 
 
 def backup(seed):
@@ -241,7 +243,7 @@ class MaintenanceTests(unittest.TestCase):
                                     key_file=root / "operator.seed", backup=root / "backup.mcb",
                                     expected_current_sha256="0" * 64, target="xiao-esp32s3",
                                     retain_command=[], sampler_slot=0, sampler_sha256="b" * 64,
-                                    legacy_no_cache_flush=False, allow_unsaved_state=False)
+                                    allow_unsaved_state=False)
         seed = bytes(range(32))
         for path, raw in ((self.args.password_file, b"password"), (self.args.key_file, seed),
                           (self.args.backup, backup(seed)), (self.args.image, image())):
@@ -350,7 +352,24 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(self.radio.force_requests, 1)
 
     def test_application_update_authenticates_backup_and_retains_state(self):
-        maintenance.maintain(self.args)
+        # Use the public CLI for one representative backup -> status -> update workflow.
+        with patch.object(sys, "argv", ["admin.py", "backup", "inspect", str(self.args.backup),
+                                       "--key-file", str(self.args.key_file)]), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            cli.main()
+            self.assertEqual(json.loads(output.getvalue())["records"], 2)
+        connection = ["admin.py", "--web", self.args.url, "--password-file", str(self.args.password_file)]
+        with patch.object(sys, "argv", connection + ["firmware", "status"]), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            cli.main()
+            self.assertEqual(json.loads(output.getvalue())["running_sha256"], self.radio.current)
+        arguments = connection + ["firmware", "update", "--image", str(self.args.image),
+            "--build-manifest", str(self.args.build_manifest), "--key-file", str(self.args.key_file),
+            "--backup", str(self.args.backup), "--receipt", str(self.args.receipt),
+            "--expected-current-sha256", self.args.expected_current_sha256,
+            "--sampler-slot", "0", "--sampler-sha256", "b" * 64, "--wait", "1", "--poll-interval", ".1"]
+        with patch.object(sys, "argv", arguments), patch("sys.stdout", new_callable=io.StringIO):
+            cli.main()
         record = self.receipt()
         self.assertTrue(record["complete"])
         self.assertTrue(record["contacts_flushed"])
@@ -560,11 +579,6 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(self.radio.uploads, 1)
         self.assertNotIn("reboot_attempted", self.receipt())
 
-    def test_explicit_legacy_mode_is_recorded_and_does_not_issue_flush(self):
-        self.args.legacy_no_cache_flush = True
-        maintenance.maintain(self.args)
-        self.assertTrue(self.receipt()["legacy_no_cache_flush"])
-        self.assertNotIn(("/admin/command", b"bot contacts flush"), self.radio.posts)
 
     def test_retained_identity_mismatch_fails_with_sampler_restored(self):
         self.radio.changed_identity = True

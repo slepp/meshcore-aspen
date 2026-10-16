@@ -517,8 +517,8 @@ atomic source journal and the native bot settings; `source commit` is
 only accepted for verification, so poll `source status` for durable/live
 activation. Name changes apply live; channel/key changes require restarting
 the worker. `data help` exposes the same private KV, timer and reminder
-backup/restore commands as the on-device bot. Use `admin.py data-export`
-or `data-restore` with `--unix-socket`; scheduler restores require `--no-rearm`.
+backup/restore commands as the on-device bot. Use `admin.py data export`
+or `data restore` with `--unix-socket`; scheduler restores require `--no-rearm`.
 See [scoped bot data](firmware/esp32/MAST_ADMIN.md#scoped-bot-data) for scope,
 replacement and restart behavior. Do not enter channel keys in shell history or signed-only RF
 commands. To change the host native bot identity, stage a protected native
@@ -550,8 +550,8 @@ or event subscriptions. They default to off and survive worker restart.
 Read the supported command families and saved/applied grants first:
 
 ```sh
-python3 tools/hardware/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'help'
-python3 tools/hardware/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'policy'
+python3 tools/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'help'
+python3 tools/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'policy'
 ```
 
 `shared on` allows bot/channel KV and named timer scopes; `shared off` withdraws
@@ -566,7 +566,7 @@ enable host NTP synchronization, then check the usable UTC bound:
 
 ```sh
 timedatectl show -p NTPSynchronized
-python3 tools/hardware/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'clock'
+python3 tools/admin.py --unix-socket "$HOME/.local/state/meshcore-host/bot/native/admin.sock" command 'clock'
 ```
 
 Expect `NTPSynchronized=yes` and `scheduler=1 reason=usable`. `clock` reports

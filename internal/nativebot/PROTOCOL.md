@@ -142,8 +142,8 @@ existing private owner socket (replace the path with the selected bot's state
 directory):
 
 ```sh
-python3 tools/hardware/admin.py --unix-socket /absolute/bot-state/admin.sock command 'discovery status'
-python3 tools/hardware/admin.py --unix-socket /absolute/bot-state/admin.sock command 'discovery on'
+python3 tools/admin.py --unix-socket /absolute/bot-state/admin.sock command 'discovery status'
+python3 tools/admin.py --unix-socket /absolute/bot-state/admin.sock command 'discovery on'
 ```
 
 Expect `saved=1 live=1`; use `discovery off` to revoke. This does not make a

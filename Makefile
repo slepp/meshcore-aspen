@@ -73,7 +73,7 @@ check:
 test-native-smoke:
 	@mkdir -p .tmp
 	$(MAKE) -f test_support/phy_parity/Makefile network-config wifi-recovery-test
-	TMPDIR=$(CURDIR)/.tmp python3 -m unittest -v test_support.phy_parity.test_firmware_identity test_support.phy_parity.test_source_layout
+	TMPDIR=$(CURDIR)/.tmp python3 -m unittest -v test_support.phy_parity.test_firmware_identity tools.hardware.tests.test_admin_cli
 	python3 -m unittest discover -s firmware/esp32/tests -p test_native_services.py -v
 	python3 -m unittest discover -s firmware/esp32/tests -p test_packet_pipeline.py -v
 	python3 -m unittest discover -s test_support/resource_budget -v

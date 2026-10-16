@@ -6,13 +6,13 @@ set. Run these commands from the source tree, using your host state's admin sock
 
 ```sh
 make -C hosts/willow build/repeater-snr.wasm
-python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
+python3 tools/admin.py --willow-socket /absolute/state/admin.sock \
   packet install 0 hosts/willow/build/repeater-snr.wasm
-python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
+python3 tools/admin.py --willow-socket /absolute/state/admin.sock \
   packet budget 0 1 100000 20000 9
-python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
+python3 tools/admin.py --willow-socket /absolute/state/admin.sock \
   packet enable 0 on
-python3 tools/hardware/admin.py --willow-socket /absolute/state/admin.sock \
+python3 tools/admin.py --willow-socket /absolute/state/admin.sock \
   source install snr firmware/runtime/plugins/examples/snr.lua
 ```
 
