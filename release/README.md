@@ -5,7 +5,7 @@ version and release tag; an update to one does not require updating the others.
 
 | Product | Source version | Download and setup |
 | --- | --- | --- |
-| Aspen | `0.1.15` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
+| Aspen | `0.1.16` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
 | Birch | `0.1.3` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
 | Pine | `0.1.3` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
 | Willow | `0.0.11` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
@@ -61,7 +61,7 @@ runtime and standard library; see the guide's build command.
 being released, run `python3 tools/product_versions.py`, then `make release-check`.
 Each product advances its own version series independently of the MeshCore dependency.
 Generated firmware, Go and Willow identities use those versions. Companion
-firmware identities fit 19 ASCII bytes plus NUL; for example `aspen-0.1.15` or
+firmware identities fit 19 ASCII bytes plus NUL; for example `aspen-0.1.16` or
 `pine-0.1.3`. The dashboard and manifests retain the full upstream and product
 source revisions.
 
