@@ -205,11 +205,12 @@ esp_err_t execute(httpd_req_t *request) {
   reply = {};
   state = Pending;
   const uint32_t started = millis();
-  while (state.load() != Done && uint32_t(millis() - started) < 2000) pauseHTTP();
-  expected = Done;
-  if (state.load() != Done) {
-    state = Abandoned;
-    return error(request, "504 Gateway Timeout", "Command outcome unknown; inspect status before retry");
+  // Storage operations may outlast the short request-body receive deadline.
+  while (state.load() != Done && uint32_t(millis() - started) < 15000) pauseHTTP();
+  expected = state.load();
+  while (expected != Done) {
+    if (state.compare_exchange_weak(expected, Abandoned))
+      return error(request, "504 Gateway Timeout", "Command outcome unknown; inspect status before retry");
   }
   const auto result = reply;
   headers(request);
@@ -346,6 +347,9 @@ esp_err_t backupDownload(httpd_req_t *request) {
 }
 #endif
 } // namespace
+#ifdef MESHCORE_MAST_WEB_TEST
+bool mastWebPendingForTest() { return state.load() == Pending; }
+#endif
 void serviceMastWebRecovery() {
   recoveryOnly = true;
   adminReady = publicProvisioningReady();

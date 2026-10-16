@@ -155,7 +155,9 @@ boot. Booleans are 0/1. PHY bounds and bandwidth enumeration are in
 `Error:` denotes command failure; do not bind to the following prose.
 `Saved ...` confirms the named durable save, not its later application.
 `Accepted ...` confirms admission only. Retune/reboot/reconnect waits for
-old-PHY reply TX completion or web-response send, then a 500 ms guard.
+old-PHY reply TX completion or web-response send. Reboot and Wi-Fi changes
+allow another 500 ms for the response to leave TCP. Radio changes apply when
+the shared radio is idle.
 `reboot force` instead uses an independent timer and a 1.5-second guard; its
 unacknowledged reservation expires after 30 seconds. An active application
 transfer/activation refuses it; a verified update waiting to boot permits it.

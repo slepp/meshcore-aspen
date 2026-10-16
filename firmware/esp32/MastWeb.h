@@ -8,6 +8,9 @@
 namespace onchip {
 void serviceMastWeb(MastAdmin &admin);
 void serviceMastWebRecovery();
+#ifdef MESHCORE_MAST_WEB_TEST
+bool mastWebPendingForTest();
+#endif
 #if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
 esp_err_t registerMastWeb(httpd_handle_t server);
 #endif

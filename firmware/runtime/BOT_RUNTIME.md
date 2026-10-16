@@ -755,8 +755,8 @@ automatic retries.
 
 Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
 diagnostic can still probe it under the command permissions and radio budget.
-Interactive route commands start when no other repeater request is pending;
-background monitoring keeps its 30-second spacing. Monitored
+Interactive route commands start when no other repeater request is pending
+and take priority over background monitoring. Monitored
 targets keep their saved flood-discovery cooldown across restarts. While
 that cooldown runs, a known route can be tested directly and is labelled
 `cached route confirmed`. An existing login, successful CLI query or fresh

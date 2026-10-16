@@ -3331,6 +3331,7 @@ static void native_repeater_monitor() {
     tag = queued_tx::get32(plain); ++requests;
   }
   assert(requests == 1 && tag);
+  const uint32_t firstRequestAt = millis();
   const auto response = [&](Peer &sender, uint32_t echoed, bool path, bool malformed = false) {
     uint8_t secret[32]{}, plain[64]{};
     sender.self_id.calcSharedSecret(secret, f.bot.publicKey());
@@ -3359,13 +3360,34 @@ static void native_repeater_monitor() {
   assert(strlen(reply) <= 162 && strstr(reply, "wait=interval") && strstr(reply, "sampled-utc="));
   assert(f.bot.counters().eventsCompleted && !f.bot.jobsInUse());
   const auto retainedSample = snapshots[0];
-  const auto retainedPoll = snapshots[0].nextPollSeconds;
+  auto retainedPoll = snapshots[0].nextPollSeconds;
   char otherKey[65]{};
   for (unsigned i = 0; i < 32; ++i) snprintf(otherKey + 2 * i, 3, "%02x", stranger.self_id.pub_key[i]);
   snprintf(command, sizeof(command), "add other %s 912525000 3:", otherKey);
   f.bot.repeaterCommand(command, reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 2 &&
          snapshots[0].nextPollSeconds == retainedPoll && snapshots[0].sampledUtc == retainedSample.sampledUtc);
+  // Another due target can use the radio as soon as the first request finishes.
+  // The first target must still keep its own polling interval.
+  f.radio.sent.clear(); timeMs += 16000; f.step();
+  uint32_t otherTag = 0;
+  unsigned otherRequests = 0;
+  for (const auto &raw : f.radio.sent) {
+    mesh::Packet packet;
+    assert(packet.readFrom(raw.data(), raw.size()));
+    if (packet.getPayloadType() != PAYLOAD_TYPE_REQ) continue;
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    stranger.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    assert(mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2) == 16);
+    otherTag = queued_tx::get32(plain); ++otherRequests;
+  }
+  assert(otherRequests == 1 && otherTag && uint32_t(millis() - firstRequestAt) < 30000);
+  f.deliver(response(stranger, otherTag, false)); f.step();
+  assert(!f.bot.jobsInUse());
+  assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 2 &&
+         snapshots[0].attempts == retainedSample.attempts && snapshots[1].fresh);
+  retainedPoll = snapshots[0].nextPollSeconds;
+  f.radio.sent.clear();
   f.bot.repeaterCommand("enable other off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
   f.bot.repeaterCommand("enable pilot off", reply, sizeof(reply));assert(!strncmp(reply, "Saved/applied", 13));
   assert(f.bot.repeaterSnapshots(snapshots, BotRepeaterLimit) == 2 &&

@@ -228,9 +228,8 @@ struct CommandBot::Core : mesh::Mesh {
     uint8_t failures = 0;
     bool flooded = false;
   } repeaters[BotRepeaterLimit];
-  uint32_t repeaterGrant = 1, repeaterAt = 0;
+  uint32_t repeaterGrant = 1;
   uint32_t repeaterCliSequence = 0;
-  bool repeaterSent = false;
   mesh::Packet *adminReplyPacket = nullptr;
   uint32_t adminReplyTicket = 0;
   BotReminderDispatch reminder{};
@@ -1062,11 +1061,14 @@ struct CommandBot::Core : mesh::Mesh {
         if (&other != &job && other.used && other.ioPending && repeaterRadioIo(other)) {
           finishRadio(job); return;
         }
-      if (!repeaterSent || uint32_t(millis() - repeaterAt) >= 30000)
-        for (unsigned i = 0; i < BotRepeaterLimit; ++i) if (repeaterReady(i)) {
-          snprintf(job.result.value, sizeof(job.result.value), "%s", repeaterPolicy.targets[i].alias);
-          job.result.found = true; break;
-        }
+      unsigned next = BotRepeaterLimit;
+      for (unsigned i = 0; i < BotRepeaterLimit; ++i) if (repeaterReady(i)) {
+        if (next == BotRepeaterLimit || int32_t(repeaters[i].due - repeaters[next].due) < 0) next = i;
+      }
+      if (next != BotRepeaterLimit) {
+        snprintf(job.result.value, sizeof(job.result.value), "%s", repeaterPolicy.targets[next].alias);
+        job.result.found = true;
+      }
       finishRadio(job); return;
     }
     int index = -1;
@@ -1082,9 +1084,6 @@ struct CommandBot::Core : mesh::Mesh {
       failRepeater(job, job.result.repeater.error == BotRepeaterError::Frequency ?
                    BotRepeaterError::Frequency : BotRepeaterError::NotDue,
                    "Repeater frequency differs from the modem or its next poll is not due"); return;
-    }
-    if (repeaterSent && uint32_t(millis() - repeaterAt) < 30000) {
-      failRepeater(job, BotRepeaterError::NotDue, "Repeater polls are limited to one request per 30 seconds"); return;
     }
     for (const auto &other : invocations)
       if (&other != &job && other.used && other.ioPending &&
@@ -1139,7 +1138,6 @@ struct CommandBot::Core : mesh::Mesh {
     state.requestedMs = owner.node_.uptimeMs;
     state.requestedUtc = earliest;
     state.due = millis() + repeaterPolicy.intervalSeconds * 1000;
-    repeaterSent = true; repeaterAt = millis();
     if (flood) {
       routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
     } else sendDirect(packet, contact->route.bytes, contact->route.length);
@@ -1220,7 +1218,6 @@ struct CommandBot::Core : mesh::Mesh {
     job.deadline = millis() + job.io.delayMs;
     job.outbound = packet; job.repeaterResponse = false;
     job.io.revision = timestamp;
-    repeaterSent = true; repeaterAt = millis();
     rememberOutbound(packet);
     sendDirect(packet, contact->route.bytes, contact->route.length);
   }
@@ -1454,7 +1451,6 @@ struct CommandBot::Core : mesh::Mesh {
     job.returnRoute = {}; job.pathReady = job.repeaterResponse = false;
     job.result.transmitted = job.result.queued = false;
     job.deadline = millis() + 10000; job.outbound = packet;
-    repeaterSent = true; repeaterAt = millis();
     routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
   }
   void confirmFindPath(Invocation &job) {
@@ -1499,7 +1495,6 @@ struct CommandBot::Core : mesh::Mesh {
       job.deadline = millis() + companionReplyWait(packet, job.io.routeSize / job.io.routeWidth);
       if (int32_t(job.deadline - job.best.until) > 0) job.deadline = job.best.until;
       job.best.probeAt = millis();
-      repeaterSent = true; repeaterAt = millis();
     }
     sendDirect(packet, job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
                                          (job.io.routeSize / job.io.routeWidth)));
@@ -1675,7 +1670,6 @@ struct CommandBot::Core : mesh::Mesh {
       releasePacket(packet);
       finishRadio(job, "Route probe cancelled or deadline expired before queue admission"); return;
     }
-    repeaterSent = true; repeaterAt = millis();
     // Revision 4 waits for a tagged telemetry PATH from flood discovery;
     // revision 2 confirms the cached direct route without a second request.
     job.io.revision = knownSession ? (directProbe ? 2 : 4) : 0;
@@ -3410,7 +3404,7 @@ bool CommandBot::begin(WifiKissMultiplexer &mux) {
         core_->self_id.matches(core_->repeaterPolicy.targets[i].key)) {
       stop(); fault("Repeater monitor target is this bot's identity"); return false;
     }
-    core_->repeaters[i].due = millis() + i * 30000;
+    core_->repeaters[i].due = millis();
   }
   core_->meshPolicy = meshPolicy;
   if (!loadBotTargetAliases(core_->targetAliases)) {
@@ -3993,14 +3987,12 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
   if (!strcmp(action, "timing")) {
     const char *alias = strtok_r(nullptr, " ", &cursor);
     if (!alias) {
-      const uint32_t elapsed = uint32_t(millis() - core_->repeaterAt);
-      const uint32_t wait = core_->repeaterSent && elapsed < 30000 ? (30000 - elapsed + 999) / 1000 : 0;
       unsigned pending = 0, waiting = 0;
       for (const auto &job : core_->invocations) {
         pending += job.used && job.ioPending && core_->repeaterRadioIo(job);
         waiting += job.used && job.ioPending && (job.findPathWaiting || job.repeaterCommandWaiting);
       }
-      snprintf(reply, capacity, "Monitor wait=%us pending=%u waiting=%u; monitor spacing 30s; commands start when ready; admission 30s; path reply 10s; CLI reply timeout 15..60s", wait, pending, waiting);
+      snprintf(reply, capacity, "Requests pending=%u waiting=%u; start when ready; admission timeout 30s; path reply timeout 10s; CLI reply timeout 15..60s", pending, waiting);
       return;
     }
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters timing [ALIAS]"); return; }
@@ -4198,7 +4190,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       core_->repeaters[i].failures = 0;
     }
     if (changedTarget < 0 || identityChanged || pathChanged)
-      core_->repeaters[i].due = millis() + i * 30000;
+      core_->repeaters[i].due = millis();
   }
   core_->repeaterPolicy = candidate;
   snprintf(reply, capacity, "Saved/applied repeater policy; interval=%us discovery=%us; modem frequency unchanged",

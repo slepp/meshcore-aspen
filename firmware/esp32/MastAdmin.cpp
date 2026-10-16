@@ -2263,7 +2263,8 @@ void MastAdmin::acknowledged(uint32_t ticket, bool transmitted) {
     return;
   }
   armed_ = true;
-  readyAt_ = millis() + 500;
+  // Let the reply leave TCP before an operation can drop its connection.
+  readyAt_ = millis() + ((effect_ == Effect::Wifi || effect_ == Effect::Reboot) ? 500 : 0);
 }
 void MastAdmin::loop() {
   source_.loop();

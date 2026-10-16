@@ -289,8 +289,8 @@ records retain all targets and last-discovery times when read by this firmware,
 and use the new 900-second default until explicitly changed. A subsequent save
 uses version 3, which also stores per-target enable settings; older firmware cannot read it without restoring or
 reprovisioning the monitor policy.
-Targets are initially staggered by 30 seconds, and there is at most one
-monitor request per 30 seconds globally and one pending monitor RF request.
+There is at most one pending monitor RF request. The next due target can
+start after the previous request completes.
 Requests use the shared queue and the bot's existing static/adaptive airtime
 admission; the Lua period cannot bypass those limits. Busy or exhausted
 admission sends no request.

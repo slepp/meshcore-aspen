@@ -319,6 +319,16 @@ static void measured_budget_unknown_and_legacy() {
   assert(pong && f.radio.transmitted.size() == 1);
 }
 
+static void kiss_data_frames_keep_arrival_order() {
+  Fixture f;
+  f.send(0, 0, {0xa1}, false);
+  f.send(0, 0, {0xa2}, false);
+  f.step();
+  assert(f.radio.transmitted == std::vector<std::vector<uint8_t>>{{0xa1}});
+  f.finish();
+  assert((f.radio.transmitted == std::vector<std::vector<uint8_t>>{{0xa1}, {0xa2}}));
+}
+
 static void full_queue_reserves_controls_and_fifo() {
   Fixture f;
   f.radio.busy = true;
@@ -910,6 +920,7 @@ int main() {
   priority_and_controls();
   future_fifo_and_expiry();
   measured_budget_unknown_and_legacy();
+  kiss_data_frames_keep_arrival_order();
   full_queue_reserves_controls_and_fifo();
   configuration_is_owned_and_pending_jobs_are_stable();
   read_only_capacity_does_not_claim_ownership();

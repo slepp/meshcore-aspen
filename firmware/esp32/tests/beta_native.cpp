@@ -1505,7 +1505,7 @@ static void interrupted_upload() {
     slow.readDelay = 2000;
     assert(server.routes.at("/admin/command").handler(&slow) == ESP_OK);
     assert(slow.status == "400 Bad Request");
-    const auto execute = [&](const char *text, bool failSend = false) {
+    const auto execute = [&](const char *text, bool failSend = false, unsigned dispatchDelay = 0) {
       httpd_req_t r;
       r.body = text; r.content_len = r.body.size();
       r.headers["X-Mast-Session"] = token; r.failSend = failSend;
@@ -1516,12 +1516,22 @@ static void interrupted_upload() {
         assert(result == (failSend ? ESP_FAIL : ESP_OK));
         done = true;
       });
+      if (dispatchDelay) {
+        for (unsigned i = 0; i < 300 && !mastWebPendingForTest() && !done; ++i)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        assert(mastWebPendingForTest());
+        timeMs += dispatchDelay;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        assert(!done);
+      }
       for (unsigned i = 0; i < 300 && !done; ++i) f.step(1);
       assert(done);
       http.join();
       return r;
     };
     assert(execute("status").response.find("roles applied=") == 0);
+    const auto delayed = execute("status", false, 6000);
+    assert(delayed.status == "200 OK" && delayed.response.find("roles applied=") == 0);
     {
       Peer diagnosticPeer;
       const auto advert = diagnosticPeer.advert();
@@ -1629,7 +1639,7 @@ static void interrupted_upload() {
     assert(queued.pollQueuedResult(result) && result.state == queued_tx::ACCEPTED);
     assert(execute("tempradio 1 912525000 250000 8 5 2").response.find("Accepted") == 0);
     assert(execute("status").response.find("roles applied=") == 0);
-    f.step(80);
+    f.step(3);
     assert(f.mux.currentConfiguration().sf == 8);
     config = configGet();
     assert(queued_tx::get32(config.data() + 4) == generation + 1 && config[16] == 8);
@@ -2744,7 +2754,8 @@ static void bot_facing_owner_admin() {
   assert(command(owner, "!admin bot discovery off").find("Saved and applied") == 0);
   const auto limitsReport = command(owner, "!admin bot limits");
   assert(limitsReport.find("Cooldown 0s; no command/min cap") == 0);
-  assert(limitsReport.find("VM load/init/active 330/50/20ms") != std::string::npos);
+  assert(limitsReport.find(ONCHIP_BOT_COMPACT_PROFILE ? "VM load/init/active 330/50/20ms" :
+                         "VM load/init/active 1000/100/100ms") != std::string::npos);
   assert(command(owner, "!admin bot contention").find("best-effort") != std::string::npos);
   assert(command(owner, "!admin bot log").find("Current state=") == 0);
   assert(command(owner, "!admin role config bot").find("RF=shared") != std::string::npos);
@@ -3605,6 +3616,11 @@ int main(int argc, char **argv) {
     corrupt_replay_keeps_services();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--web-admin-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    interrupted_upload();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--role-password-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     runtime_role_passwords();
@@ -3727,7 +3743,7 @@ int main(int argc, char **argv) {
     f.step();
     assert(f.mux.configurationGeneration() == before);
     f.management.admin().acknowledged(reply.ticket, true);
-    f.step();
+    f.step(1);
     assert(f.mux.currentConfiguration().sf == 8 && f.mux.configurationGeneration() == before + 1);
     identity_test::failCommit = true;
     f.step(250);

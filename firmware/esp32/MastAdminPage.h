@@ -217,7 +217,7 @@ function unknown(message) {
 }
 async function post(path, body='', login=false) {
   if(!login && (!token || Date.now()>=expires)) { forgetSession(); throw Error('Admin session expired; log in again. Your editor draft stays in this tab.'); }
-  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),5000);
+  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),path==='/admin/command'?20000:5000);
   const session=token;
   let response, value;
   try {

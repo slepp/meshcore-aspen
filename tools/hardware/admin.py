@@ -168,7 +168,6 @@ class NativeClient:
             if path is not None:
                 self.path = path
                 self.send_fixed_path()
-                time.sleep(2.5)
         except (OSError, ValueError):
             self.connection.close()
             raise
@@ -184,6 +183,7 @@ class NativeClient:
         body = self.fixed_path + b"\xff" + secrets.token_bytes(4)
         packet = (b"\x22" + self.fixed_path + bytes((self.target[0], self.public[0])) +
                   encrypt(self.secret, body))
+        # The modem queues KISS data frames in arrival order, before the next command.
         self.connection.sendall(kiss(packet))
 
     def exchange(self, text, login=False, room=False):
@@ -449,7 +449,7 @@ class WebClient:
         request = urllib.request.Request(self.url + path, data=text.encode("ascii"), method="POST")
         if hasattr(self, "token"):
             request.add_header("X-Mast-Session", self.token)
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=20 if path == "/admin/command" else 5) as response:
             data = response.read(164)
         if len(data) > 162:
             raise ValueError("Oversized web response")

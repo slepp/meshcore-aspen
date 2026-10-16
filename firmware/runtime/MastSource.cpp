@@ -838,11 +838,11 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strcmp(input, "api repeaters")) {
     if (wasmRuntime_) { respond("Error: Repeater monitoring requires Lua"); return; }
-    snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s global-min=30s discovery=60..86400s default=900s", BotRepeaterLimit);
+    snprintf(reply, capacity, "Repeaters next,status,login peers=%u owner=required ACL=read passwords=none period-min=60s pending=1 discovery=60..86400s default=900s", BotRepeaterLimit);
     return;
   }
   if (!strcmp(input, "api find-path")) {
-    respond("digits=1..64 case=insensitive admission-wait=30s response-wait=10s guest=empty confirm=tagged-telemetry permission=action_trace cache=labelled");
+    respond("digits=1..64 case=insensitive admission-wait=30s response-wait=10s guest=empty confirm=session-or-guest permission=action_trace cache=labelled");
     return;
   }
   if (!strcmp(input, "api repeater-cli")) {
@@ -855,7 +855,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     respond("Error: Route comparison requires Aspen or a native host");
 #else
     if (wasmRuntime_) { respond("Error: Route comparison requires Lua"); return; }
-    respond("Best-path prefix=1..64 routes=current,seed,flood trials=2 spacing=30s max=300s reply=15..60s select=delivery,latency-25% permission=action_trace");
+    respond("Best-path prefix=1..64 routes=current,seed,flood trials=2 spacing=none max=300s reply=15..60s select=delivery,latency-25% permission=action_trace");
 #endif
     return;
   }

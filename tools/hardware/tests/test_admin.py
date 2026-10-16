@@ -138,6 +138,31 @@ class MastClientTests(unittest.TestCase):
     def setUp(self):
         configure_inventory(self)
 
+    def test_fixed_route_is_queued_before_the_next_command_without_settling_wait(self):
+        with tempfile.TemporaryDirectory() as directory:
+            seed = Path(directory) / "seed"
+            seed.write_bytes(bytes(range(32)))
+            seed.chmod(0o600)
+            connection = MagicMock()
+            with patch.object(mast_cli.socket, "create_connection", return_value=connection), \
+                    patch.object(mast_cli.NativeClient, "exchange", return_value="OK"), \
+                    patch.object(mast_cli.time, "sleep") as sleep:
+                client = mast_cli.NativeClient("modem", 8001, seed, bytes([42]).hex() * 32,
+                                              "", path=b"\x01\x12")
+                connection.sendall.assert_called_once()
+                sleep.assert_called_once_with(.5)
+                client.close()
+
+    def test_web_command_deadline_allows_server_storage_work(self):
+        with patch.object(mast_cli.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b"ab" * 16
+            client = mast_cli.WebClient("http://mast.test", "password")
+            self.assertEqual(urlopen.call_args.kwargs["timeout"], 5)
+            client.command("status")
+            self.assertEqual(urlopen.call_args.kwargs["timeout"], 20)
+            client.close()
+            self.assertEqual(urlopen.call_args.kwargs["timeout"], 5)
+
     def test_wifi_byte_setters_are_unambiguous_and_fit_tagged_commands(self):
         self.assertEqual(mast_cli.wifi_field_command("ssid", b"4142"), "wifi ssid hex 34313432")
         self.assertEqual(mast_cli.wifi_field_command("password", b""), "wifi password -")
@@ -972,7 +997,7 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
             self.assertEqual(client.route_repairs, 1)
         with patch("tools.hardware.admin.private_file") as private:
             for path in (b"", b"\x80", b"\x81\x12", b"\xc1\x12\x34\x56\x78"):
-                with self.assertRaisesRegex(ValueError, "encoded path"):
+                with self.assertRaisesRegex(ValueError, "Explicit route requires"):
                     mast_cli.NativeClient("unused", 8001, None, "unused", "", path=path)
             private.assert_not_called()
 
