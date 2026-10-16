@@ -106,7 +106,7 @@ cooldown still applies. `timing ridge` reports the waiting reason, seconds until
 the next eligible poll/discovery and the last sample's UTC timestamp. Eligibility
 does not reserve airtime or bypass another pending request. Learned routes are
 rebuilt after a restart; adverts do not supply status or an outbound route.
-`timing` without an alias reports the shared route/monitor start cooldown and
+`timing` without an alias reports the monitor start cooldown and
 number of pending probes, without sending RF.
 Use `!find-best-path PREFIX` to compare the learned route, saved seed and a
 fresh flood route. It tests each distinct path twice, reports delivery and
@@ -181,6 +181,8 @@ result means a matching response arrived; the remote response itself reports
 whether the command succeeded.
 
 Read-only commands can repair the route and retry once after a missing reply.
+Commands reuse the shared route and admin session. A successful CLI reply
+records admin access for subsequent commands and route discovery.
 Repair exchanges login and return paths, then sends the command. Its reply
 confirms delivery.
 Queries such as `gps` use `!rcmd`; changes such as `gps on` use `!rcmd-write`.
@@ -303,8 +305,10 @@ PATH response can repair the outbound route. Status decoding uses the
 Timeout, malformed response or TX failure backs off from twice the owner
 interval, up to the larger of that interval and the discovery cooldown. Three failed direct
 requests permit flood route repair. An unknown route also needs a flood.
-Each target may flood at most once per configured discovery period: its trusted-UTC timestamp is saved
-**before** queue admission and survives reboot. Restart does not recover
+Each target may flood at most once per configured discovery period. Its
+timestamp is kept in memory and saved before queue admission so the cooldown
+survives reboot. If saving fails, the request proceeds and the cooldown remains
+active until restart; the storage error is logged. Restart does not recover
 volatile samples, attempt counters or pending requests, and cannot replay an
 uncertain transmission. Future periodic polls remain eligible under the saved
 cadence/cooldown; they are new samples, not retries of that request.
@@ -313,7 +317,7 @@ Policies and flood cooldowns use two SHA-256-verified SPIFFS files and a
 37-byte NVS reference. A save verifies the inactive file before publishing
 and reading back its reference. Insufficient NVS headroom rejects the save
 without reducing the existing Lua data reserve. An unreadable policy or
-uncertain save disables live polling and reports the storage failure; repair
+uncertain configuration change disables live polling and reports the storage failure; repair
 storage and inspect the saved policy before re-enabling. Do not erase NVS or
 format SPIFFS to make room.
 

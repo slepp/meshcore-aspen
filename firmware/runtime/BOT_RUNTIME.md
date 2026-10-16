@@ -409,7 +409,7 @@ and [reminder route/time rules](#reboot-autonomous-personal-dm-reminders).
 | `mesh.forward(packet)` | Terminal TX result | One separately granted sender/destination pair; latest eligible follow-up DM, re-encrypted as the bot |
 | `request_trace([width_hex])`, `mesh.trace([width_hex])`, `trace([width_hex])` | Bounded native TRACE-result text | Direct route; explicit widths 1/2/4/8, not ordinary width 3 |
 | `mesh.find_path(hex_prefix)` | Fresh repeater route or labelled cached fallback | 1..64 case-insensitive hex digits; up to 30 seconds waiting for admission, then a 10-second asynchronous probe; `action_trace` permission and radio budgets |
-| `mesh.find_best_path(hex_prefix)` | Compare learned, saved and flood-discovered routes | Aspen/native host; two tagged probes per distinct route, 30-second spacing, up to five minutes; command and `action_trace` permissions |
+| `mesh.find_best_path(hex_prefix)` | Compare learned, saved and flood-discovered routes | Aspen/native host; two tagged probes per distinct route, next probe after reply or timeout, up to five minutes; command and `action_trace` permissions |
 | `mesh.multitrace([width_hex[, count]])` | Bounded numbered text summary | Count 1..3, default 2; sequential yielding operations share invocation budget |
 | `mesh.advert()`, `advert()` | Bounded completion text | Actual advert TX completion; 15-minute public advert gate and shared airtime |
 
@@ -741,8 +741,8 @@ changing a nickname does not create a new allowance. Ordinary channel packets
 cannot provide trustworthy per-person accounting. Use DMs when that distinction
 matters. TRACE requires a supplied or received route, but no destination login.
 
-For a monitored repeater with a fresh successful status sample, the bot sends
-a tagged base-telemetry request by flood using its existing session. Other
+For a repeater with a successful login, CLI reply or fresh status sample, the
+bot sends a tagged base-telemetry request by flood using its existing session. Other
 contacts first receive an anonymous empty-password guest login by flood.
 Default open-guest repeaters can admit the bot through this login; a closed
 guest password requires the repeater owner to grant the bot access. Either
@@ -755,13 +755,15 @@ automatic retries.
 
 Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
 diagnostic can still probe it under the command permissions and radio budget.
-Route discovery and monitor requests share one start per 30 seconds. Monitored
-targets also retain their saved flood-discovery cooldown across restarts. While
+Interactive route commands start when no other repeater request is pending;
+background monitoring keeps its 30-second spacing. Monitored
+targets keep their saved flood-discovery cooldown across restarts. While
 that cooldown runs, a known route can be tested directly and is labelled
-`cached route confirmed`; a fresh successful monitor sample allows one tagged
-telemetry confirmation without logging in again. Other contacts use guest
-login followed by confirmation. An unknown route reports the cooldown without sending.
-A successful new flood route is labelled `fresh`, followed by `WIDTH:HEX`.
+`cached route confirmed`. An existing login, successful CLI query or fresh
+monitor sample allows tagged telemetry without logging in again. Other
+contacts establish a guest session first. An unknown route reports the
+cooldown without sending. A successful new flood route is labelled `fresh`,
+with commas between repeater hashes.
 If an actual transmitted attempt times out, the reply says `no discovery reply`
 or `route confirmation timed out`, and labels any retained route `cached`.
 Silence does not identify the cause. A long route that cannot fit the
@@ -774,8 +776,8 @@ Use `!find-best-path d2` on Aspen or a native host to compare routes to a fixed
 repeater. It starts with the learned route and the owner's saved seed, then
 adds a fresh flood-discovered route when discovery is due. Duplicate paths are
 tested once. The command sends two tagged base-telemetry requests per candidate
-in round-robin order, sharing the existing 30-second start spacing and airtime
-budget. Each probe waits 15..60 seconds according to the companion's airtime
+in round-robin order, starting the next after a reply or timeout and using the
+configured airtime budget. Each probe waits 15..60 seconds according to the companion's airtime
 and hop estimate. The comparison takes up to five minutes after admission;
 scheduled monitoring waits while it runs.
 
@@ -3077,10 +3079,11 @@ A reset before that synchronization can lose that new contact.
 
 Saved repeater paths are operator seeds. Reapplying the same seed keeps a newer
 learned route; changing the seed deliberately replaces the current route.
-Discovery cooldowns remain durable before a flood is admitted.
+Discovery cooldowns are saved before a flood is admitted. If that save fails,
+the active cooldown still applies until restart and a storage error is logged.
 
-One interactive `!find-path` command can wait up to 30 seconds for the shared
-probe spacing. Its ten-second response timer starts when the probe is admitted.
+One interactive `!find-path` command can wait up to 30 seconds for another
+pending repeater request. Its ten-second response timer starts when the probe is admitted.
 A second waiting command receives a busy reply. Cancelling the command or
 revoking its radio permission while it waits prevents its probe.
 

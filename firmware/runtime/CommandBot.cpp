@@ -912,13 +912,11 @@ struct CommandBot::Core : mesh::Mesh {
         return int(i);
     return -1;
   }
-  bool saveRepeaterFlood(unsigned index, uint32_t tag) {
-    auto candidate = repeaterPolicy;
-    candidate.targets[index].lastFloodUtc = tag;
-    if (!saveBotRepeaterPolicy(candidate)) return false;
-    repeaterPolicy = candidate;
+  void recordRepeaterFlood(unsigned index, uint32_t tag) {
+    repeaterPolicy.targets[index].lastFloodUtc = tag;
     repeaters[index].flooded = true; repeaters[index].floodAt = millis();
-    return true;
+    if (!saveBotRepeaterPolicy(repeaterPolicy))
+      owner.fault("Repeater discovery cooldown could not be saved; active cooldown still applies");
   }
   BotRepeaterSnapshot repeaterSnapshot(unsigned index) const {
     auto snapshot = repeaters[index].snapshot;
@@ -1133,14 +1131,7 @@ struct CommandBot::Core : mesh::Mesh {
                   packet, contact->id.pub_key)) {
       releasePacket(packet); failRepeater(job, BotRepeaterError::Capacity, capacityError); return;
     }
-    if (flood) {
-      if (!saveRepeaterFlood(unsigned(index), tag)) {
-        releasePacket(packet); repeaterPolicy.enabled = false;
-        owner.fault("Repeater flood cooldown save failed; live monitor disabled");
-        failRepeater(job, BotRepeaterError::Disabled, "Repeater flood cooldown could not be saved; request was not sent");
-        return;
-      }
-    }
+    if (flood) recordRepeaterFlood(unsigned(index), tag);
     job.repeaterIndex = int8_t(index); job.repeaterTag = tag;
     job.repeaterResponse = false; job.io.grant = repeaterGrant; job.outbound = packet;
     job.result.repeater.error = BotRepeaterError::None;
@@ -1249,6 +1240,7 @@ struct CommandBot::Core : mesh::Mesh {
       for (size_t i = 0; i < length; ++i)
         if ((data[8 + i] < 32 && data[8 + i] != '\n' && data[8 + i] != '\r') || data[8 + i] > 126) return;
       if (job.repeaterResponse) return;
+      sender.loginKnown = true; sender.loginPermissions = 3;
       const size_t copied = std::min(length, size_t(BotIoTextLimit));
       memcpy(job.result.value, data + 8, copied); job.result.value[copied] = 0;
       job.result.truncated = copied != length;
@@ -1370,7 +1362,6 @@ struct CommandBot::Core : mesh::Mesh {
   void startBestPathProbe(Invocation &job) {
     if (sendFindPathReturn(job)) return;
     if (int32_t(millis() - job.best.until) >= 0) { finishBestPath(job); return; }
-    if (repeaterSent && uint32_t(millis() - repeaterAt) < 30000) return;
     if (!job.best.count) { finishBestPath(job); return; }
     auto &candidate = job.best.candidates[job.best.next % job.best.count];
     job.io.routeWidth = (candidate.route.length >> 6) + 1;
@@ -1454,9 +1445,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!capacity(replyAirtime(packet, PeerRoute{}), true, false, packet, contact->id.pub_key)) {
       releasePacket(packet); finishRadio(job, capacityError); return;
     }
-    if (!saveRepeaterFlood(unsigned(job.repeaterIndex), tag)) {
-      releasePacket(packet); finishRadio(job, "Repeater flood cooldown could not be saved; command was not retried"); return;
-    }
+    recordRepeaterFlood(unsigned(job.repeaterIndex), tag);
     if (!repeaterCommandCurrent(job) || !owner.worker_.ioCurrent(job.io.token)) {
       releasePacket(packet); finishRadio(job, "Repeater repair cancelled; command was not retried"); return;
     }
@@ -1597,7 +1586,7 @@ struct CommandBot::Core : mesh::Mesh {
       auto *targetContact = repeaterContact(unsigned(index));
       if (!targetContact) { finishRadio(job, "Bot contact table full"); return; }
       const auto snapshot = repeaterSnapshot(unsigned(index));
-      knownSession = snapshot.fresh;
+      knownSession = snapshot.fresh || (targetContact->loginKnown && (targetContact->loginPermissions & 3));
       if (snapshot.nextDiscoverySeconds) {
         if (targetContact->route.length == 0xff) {
           char message[96];
@@ -1607,7 +1596,7 @@ struct CommandBot::Core : mesh::Mesh {
         directProbe = true;
       }
     }
-    bool busy = repeaterSent && uint32_t(millis() - repeaterAt) < 30000;
+    bool busy = false;
     for (const auto &other : invocations)
       if (&other != &job && other.used && other.ioPending &&
           repeaterRadioIo(other)) {
@@ -1644,6 +1633,7 @@ struct CommandBot::Core : mesh::Mesh {
     memcpy(job.io.principal, selected, 32);
     const auto *contact = findPathContact(job);
     if (!contact) { finishRadio(job, "Route discovery contact unavailable"); return; }
+    knownSession = knownSession || (contact->loginKnown && (contact->loginPermissions & 3));
     if (best) {
       job.best = {}; job.best.original = contact->route; job.best.until = millis() + 300000;
       job.io.grant = repeaterGrant; job.repeaterIndex = int8_t(index);
@@ -1666,8 +1656,7 @@ struct CommandBot::Core : mesh::Mesh {
       packet = findPathTelemetry(*contact, tag);
       job.repeaterTag = tag;
     } else {
-      // Contacts without a recent successful monitor response first need the
-      // standard anonymous empty-password guest login.
+      // Establish a session only when neither login nor a prior request succeeded.
       packet = loginRequest(*contact, tag);
     }
     if (!packet) { finishRadio(job, "Route probe packet capacity exhausted"); return; }
@@ -1681,11 +1670,7 @@ struct CommandBot::Core : mesh::Mesh {
                   false, packet, principal(job.event))) {
       releasePacket(packet); finishRadio(job, capacityError); return;
     }
-    if (index >= 0 && !directProbe) {
-      if (!saveRepeaterFlood(unsigned(index), tag)) {
-        releasePacket(packet); finishRadio(job, "Route flood cooldown could not be saved; probe was not sent"); return;
-      }
-    }
+    if (index >= 0 && !directProbe) recordRepeaterFlood(unsigned(index), tag);
     if (!owner.worker_.ioCurrent(job.io.token) || int32_t(millis() - job.deadline) >= 0) {
       releasePacket(packet);
       finishRadio(job, "Route probe cancelled or deadline expired before queue admission"); return;
@@ -3562,12 +3547,9 @@ uint32_t CommandBot::hostWaitMs() const {
     if (job.collecting) botEarlier(wait, now, job.collectionStart + job.event.windowMs);
     else if (job.deferred) botEarlier(wait, now, job.notBefore);
     if (job.ioPending) botEarlier(wait, now, job.deadline);
-    if (job.findPathWaiting &&
-        (!core_->repeaterSent || int32_t(core_->repeaterAt + 30000 - now) > 0))
-      botEarlier(wait, now, core_->repeaterSent ? core_->repeaterAt + 30000 : now);
     if (job.ioPending && job.io.kind == BotIoRequest::FindBestPath && job.io.revision == 3 && !job.outbound)
-      botEarlier(wait, now, core_->repeaterSent && uint32_t(now - core_->repeaterAt) < 30000 ? core_->repeaterAt + 30000 : now);
-    if (job.repeaterCommandWaiting) {
+      botEarlier(wait, now, now);
+    if (job.findPathWaiting || job.repeaterCommandWaiting) {
       bool busy = false;
       for (const auto &other : core_->invocations)
         if (&other != &job && other.used && other.ioPending && core_->repeaterRadioIo(other)) busy = true;
@@ -4018,7 +4000,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
         pending += job.used && job.ioPending && core_->repeaterRadioIo(job);
         waiting += job.used && job.ioPending && (job.findPathWaiting || job.repeaterCommandWaiting);
       }
-      snprintf(reply, capacity, "Probe wait=%us pending=%u waiting=%u; monitor spacing 30s; CLI starts when ready; admission 30s; path reply 10s; CLI reply timeout 15..60s", wait, pending, waiting);
+      snprintf(reply, capacity, "Monitor wait=%us pending=%u waiting=%u; monitor spacing 30s; commands start when ready; admission 30s; path reply 10s; CLI reply timeout 15..60s", wait, pending, waiting);
       return;
     }
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters timing [ALIAS]"); return; }
