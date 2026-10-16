@@ -161,15 +161,16 @@ In an authenticated private DM from a trusted owner:
 !rcmd-write d1,d2 set flood.max 4
 ```
 
-Select 1..5 distinct configured aliases, separated by commas; alias case does
+Select 1..6 distinct configured aliases, separated by commas; alias case does
 not matter. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
 Identity, access, radio and restart commands run on one target at a time.
 Existing command and radio-action permissions still apply.
 
-Requests share the monitor and route-discovery spacing of one start per
-30 seconds. Each request can wait up to 30 seconds for admission, then collects
-matching replies for 15..60 seconds, using the companion's airtime-and-hop
-estimate for longer paths and finishing after 2.5 seconds of silence.
+Requests run sequentially. The next target starts as soon as the previous
+request completes and the radio can accept it. Background monitoring yields
+to waiting interactive requests. Each request can wait up to 30 seconds for
+admission. After transmission, the reply timeout is 15..60 seconds according
+to airtime and hop count; a matching reply completes the request immediately.
 Replies identify their target and split to fit the RF payload. Native capture
 holds 256 bytes per target and marks longer responses as truncated. An `ok`
 result means a matching response arrived; the remote response itself reports

@@ -4352,17 +4352,18 @@ static void native_repeater_cli(const char *sourcePath) {
   Fixture f(options); std::string error;
   assert(f.startReplay(error));
   beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
-  Peer owner, first, second, third, fourth, fifth, stranger;
+  Peer owner, first, second, third, fourth, fifth, sixth, stranger;
   const auto key = [](const Peer &p) {
     char hex[65]{};
     for (unsigned i = 0; i < 32; ++i) snprintf(hex + i * 2, 3, "%02x", p.self_id.pub_key[i]);
     return std::string(hex);
   };
   assert(f.administer(("trust " + key(owner)).c_str()).find("Saved ") == 0);
-  for (auto *p : {&owner, &first, &second, &third, &fourth, &fifth, &stranger}) f.learn(*p);
+  for (auto *p : {&owner, &first, &second, &third, &fourth, &fifth, &sixth, &stranger}) f.learn(*p);
   char reply[192]{};
   for (const auto &p : {std::make_pair("p1", &first), std::make_pair("p2", &second),
-                       std::make_pair("p3", &third), std::make_pair("p4", &fourth), std::make_pair("p5", &fifth)}) {
+                       std::make_pair("p3", &third), std::make_pair("p4", &fourth), std::make_pair("p5", &fifth),
+                       std::make_pair("p6", &sixth)}) {
     const auto command = "add " + std::string(p.first) + " " + key(*p.second) + " 912525000 3:";
     f.bot.repeaterCommand(command.c_str(), reply, sizeof(reply));
     assert(!strncmp(reply, "Saved/applied", 13));
@@ -4411,35 +4412,36 @@ static void native_repeater_cli(const char *sourcePath) {
   response(second, tag + "wrong peer"); response(first, "xx|stale");
   response(first, tag + "reflection", true);
   assert(owner.replies(f.bot.publicKey(), f.radio).empty());
-  const auto duplicate = response(first, tag + "Version one");
+  const auto duplicate = response(first, tag + "Version one\nBuild one");
   f.deliver(duplicate); f.step(); response(first, tag + "Build one");
-  timeMs += 2600; f.step(300);
+  f.step(300);
   assert(owner.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"p1: Version one Build one"});
-  for (unsigned i = 0; i < 31 && requests(second).empty(); ++i) { timeMs += 1000; f.step(30); }
+
   sent = requests(second); assert(sent.size() == 1 && sent[0].substr(3) == "ver");
   response(second, sent[0].substr(0, 3) + "Version two");
-  timeMs += 2600; f.step(300);
+  f.step(300);
   const auto replies = owner.replies(f.bot.publicKey(), f.radio);
   assert(replies.size() == 2 && replies.back() == "p2: Version two" && !f.bot.jobsInUse());
   assert(f.command(owner, "!rcmd p1 set flood.max 4").find("Use !rcmd-write") == 0);
   assert(requests(first).empty());
   assert(f.command(owner, "!rcmd-write p1,p2 setperm 00 3").find("one repeater") != std::string::npos);
   timeMs += 61000; f.radio.sent.clear();
-  f.deliver(owner.command(f.bot.publicKey(), "!rcmd P1,p2,p3,p4,p5 ver")); f.step(300);
-  for (auto *peer : {&first, &second, &third, &fourth, &fifth}) {
-    for (unsigned i = 0; i < 31 && requests(*peer).empty(); ++i) { timeMs += 1000; f.step(30); }
+  f.deliver(owner.command(f.bot.publicKey(), "!rcmd P1,p2,p3,p4,p5,p6 ver")); f.step(300);
+  const auto fleetStarted = timeMs.load();
+  for (auto *peer : {&first, &second, &third, &fourth, &fifth, &sixth}) {
     const auto sent = requests(*peer); assert(sent.size() == 1);
-    response(*peer, sent[0].substr(0, 3) + "Version"); timeMs += 2600; f.step(300);
+    response(*peer, sent[0].substr(0, 3) + "Version"); f.step(300);
   }
-  assert(owner.replies(f.bot.publicKey(), f.radio).size() == 5 && !f.bot.jobsInUse());
+  assert(owner.replies(f.bot.publicKey(), f.radio).size() == 6 && !f.bot.jobsInUse());
+  assert(timeMs.load() - fleetStarted < 6000); // Six replies need only ordinary radio/worker steps.
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(owner.command(f.bot.publicKey(), "!rcmd p1 ver")); f.step(300);
   sent = requests(first); assert(sent.size() == 1);
   response(first, sent[0].substr(0, 3) + std::string(150, 'a'));
   response(first, sent[0].substr(0, 3) + std::string(150, 'b'));
-  timeMs += 2600; f.step(300);
+  f.step(300);
   const auto chunks = owner.replies(f.bot.publicKey(), f.radio);
-  assert(chunks.size() == 2 && chunks.back().find("(truncated)") != std::string::npos);
+  assert(chunks == std::vector<std::string>{"p1: " + std::string(150, 'a')});
   for (const auto &chunk : chunks) assert(chunk.size() <= BotReplyLimit);
   const auto longRoute = "add p1 " + key(first) + " 912525000 3:112233445566778899aabbcc";
   f.bot.repeaterCommand(longRoute.c_str(), reply, sizeof(reply));
@@ -4457,8 +4459,55 @@ static void native_repeater_cli(const char *sourcePath) {
   f.deliver(owner.command(f.bot.publicKey(), "!peek")); f.step(300);
   assert(owner.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"none"});
   assert(requests(first).size() == 1 && requests(second).empty());
-  response(first, sent[0].substr(0, 3) + "Slow version"); timeMs += 2600; f.step(300);
+  response(first, sent[0].substr(0, 3) + "Slow version"); f.step(300);
   assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back() == "p1: Slow version");
+  f.radio.airtime = 10;
+  timeMs += 61000; f.radio.sent.clear();
+  f.radio.airtime = 1000;
+  const auto holdCommand = [&](bot_native_test::TxFrame &frame) {
+    while (f.takeTxFrame(frame)) {}
+    f.setManualTxCompletionForTest(true);
+    f.deliver(owner.command(f.bot.publicKey(), "!rcmd p2 ver"));
+    for (unsigned i = 0; i < 1000; ++i) {
+      f.step(1);
+      if (!f.takeTxFrame(frame)) continue;
+      if (!requests(second).empty()) return;
+      assert(f.completeSimulatedTxForTest(frame.token, 10)); // Complete the caller's ACK first.
+      f.setManualTxCompletionForTest(true);
+    }
+    assert(false);
+  };
+  bot_native_test::TxFrame early;
+  holdCommand(early);
+  sent = requests(second); assert(sent.size() == 1);
+  response(second, sent[0].substr(0, 3) + "Early reply");
+  assert(f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).empty());
+  assert(f.completeSimulatedTxForTest(early.token, 10));
+  f.setManualTxCompletionForTest(false); f.step(300);
+  assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back() == "p2: Early reply");
+
+  timeMs += 61000; f.radio.sent.clear();
+  bot_native_test::TxFrame delayed;
+  holdCommand(delayed);
+  sent = requests(second); assert(sent.size() == 1);
+  timeMs += 16000;
+  assert(f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).empty());
+  assert(f.completeSimulatedTxForTest(delayed.token, 10));
+  f.setManualTxCompletionForTest(false); f.step(300);
+  timeMs += 14000; f.step(30); assert(f.bot.jobsInUse());
+  response(second, sent[0].substr(0, 3) + "Queued reply"); f.step(300);
+  assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back() == "p2: Queued reply");
+
+  timeMs += 61000; f.radio.sent.clear();
+  bot_native_test::TxFrame late;
+  holdCommand(late);
+  sent = requests(second); assert(sent.size() == 1);
+  response(second, sent[0].substr(0, 3) + "Late TX reply");
+  timeMs += 30001;
+  assert(f.completeSimulatedTxForTest(late.token, 10));
+  f.setManualTxCompletionForTest(false); f.step(300);
+  assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back().find("not retried") != std::string::npos);
+
   f.radio.airtime = 10;
   const auto direct = "add p1 " + key(first) + " 912525000 3:";
   f.bot.repeaterCommand(direct.c_str(), reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
@@ -4508,7 +4557,7 @@ static void native_repeater_cli(const char *sourcePath) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
   assert(f.command(owner, "!snr").find("No repeater signal samples") == 0);
-  puts("PASS repeater CLI: owner-only fleet, sequential sends, tagged multipart replies, stale/foreign/reflected rejection, explicit writes, uncertain write not retried and live revocation");
+  puts("PASS repeater CLI: owner-only fleet, six unpaced sequential targets, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, explicit writes, uncertain write not retried and live revocation");
 }
 #if ONCHIP_BOT_WASM
 static void native_runtime_admission_isolation(const char *modules) {

@@ -8,8 +8,8 @@ local function fleet(targets, text, write)
     peers[#peers + 1], seen[peer] = peer, true
     start = comma and comma + 1 or #targets + 1
   end
-  if #peers < 1 or #peers > 5 or string.sub(targets, -1) == "," then
-    return "Select 1..5 repeater aliases, separated by commas"
+  if #peers < 1 or #peers > 6 or string.sub(targets, -1) == "," then
+    return "Select 1..6 repeater aliases, separated by commas"
   end
   while string.sub(text, 1, 1) == " " do text = string.sub(text, 2) end
   local space = string.find(text, " ", 1, true)
@@ -38,5 +38,5 @@ end
 
 function repeater_read(targets, text) return fleet(targets, text, false) end
 function repeater_write(targets, text) return fleet(targets, text, true) end
-command("rcmd", "targets:string:84,text:text:120", "Read selected repeaters: !rcmd d1,d2 ver", "repeater_read", "owner")
-command("rcmd-write", "targets:string:84,text:text:120", "Change selected repeaters; no automatic retries", "repeater_write", "owner")
+command("rcmd", "targets:string:101,text:text:120", "Read selected repeaters: !rcmd d1,d2 ver", "repeater_read", "owner")
+command("rcmd-write", "targets:string:101,text:text:120", "Change selected repeaters; no automatic retries", "repeater_write", "owner")
