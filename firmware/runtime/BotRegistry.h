@@ -70,6 +70,7 @@ struct BotArguments {
   uint8_t count = 0;
 };
 bool botReservedCommand(const char *name);
+BotCommand::Permission botCommandPermission(const BotCommand &);
 bool botCommandAllowed(const BotCommand &, const BotEvent &);
 bool botStorageScope(const BotEvent &, BotIoRequest &, char *error, size_t capacity);
 bool botReadOnlyQuery(const char *name);

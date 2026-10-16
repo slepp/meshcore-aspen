@@ -951,17 +951,23 @@ without resetting role identities, channels, destinations or airtime settings.
 | --- | --- |
 | `!ping` | `Pong` |
 | `!test` | Native message connection, complete received flood path when available, actual RSSI/SNR; local reflection explicitly has no measured RF signal |
-| `!path` | Ordinary path as `width:hex`, preserving 1-, 2- and 3-byte hash widths, e.g. `2:a1a2b1b2`; a consumed direct route is reported as unknown |
+| `!path` | Received repeater hops separated by commas, e.g. `a1a2,b1b2`; `no repeaters` for a zero-hop flood; direct routes with no received flood path are unknown. Long paths end with `...` at a whole-hop boundary |
 | `!mt [seconds]` | Collects copies of this sender/timestamp/text request for 1..30 seconds (default 5), then reports up to eight observed paths with commas between repeater hashes and ` \| ` between paths. Three-byte hashes shorten to two bytes when needed and unambiguous; further shortening retains whole hashes and marks truncation. Ninth paths, missing paths and RX queue overflow also mark the result truncated |
 | `!find-path PREFIX` | Waits up to 30 seconds for admission, then probes for 10 seconds; case-insensitive key prefix; explicit cached fallback on timeout |
 | `!find-best-path PREFIX` | Aspen/native host: compare up to three distinct routes with two probes each; report delivery and mean latency, retaining the learned route unless a candidate improves it |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
-| `!about` | Bot introduction and pointers to command help and installed programs |
+| `!about` | Bot introduction and pointers to command help and loaded commands |
 | `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
 | `!uptime` | Boot uptime snapshot, extended across the 32-bit millisecond clock rollover |
-| `!status` | Bot readiness/fault flag, selected/ready role masks, WiFi connection state and explicit unavailable battery measurement |
+| `!status` | Bot readiness and faults, ready/selected role counts, waiting role names and WiFi connection state |
 | `!signal` | This request's measured RSSI/SNR and comma-separated repeater hashes; local reflection and missing measurements are identified |
 | `!air [1..4]` | Bounded pages of actual scheduler credit, queues, RF airtime and TX outcomes; not delivery confirmation or duty-cycle history |
+
+Route replies from `!path`, `!test`, `!find-path` and `!find-best-path` use
+commas between repeater hashes. Lua and stored routes keep their existing
+`width:hex` representation. TRACE input also uses `width:hex`, with its own
+supported widths: a displayed three-byte hop cannot be used as a TRACE
+element. See the route encodings below.
 
 ### Read-only diagnostics
 
@@ -972,10 +978,9 @@ deduplication, rate and airtime limits as other commands. No owner grant is
 needed and no private configuration, credentials, fault text or remote keys
 are included. `!about` directs users to `!help`, `!help NAME` and `!plugins`.
 
-`!status` role masks use repeater=1, room=2, companion=4 and observer=8;
-the command-bot readiness is shown separately. WiFi is reported only where
-native WiFi state is available. Battery is always `unavailable`: no voltage,
-charge percentage or other sensor reading is inferred.
+`!status` shows how many selected radio roles are ready and names the roles
+still waiting when space permits. Bot readiness appears separately. WiFi is
+reported where the device provides its connection state.
 
 `!air` page 1 reports bot/aggregate scheduler credit and the bot's rolling
 60-second airtime reservation and remaining allowance. Page 2 reports
@@ -1010,8 +1015,8 @@ reflections, unknown/consumed direct routes and empty paths cannot supply
 that candidate. No-route TRACE returns an error; it never falls back to a
 flood. TRACE emission alone is not a claim that the route worked. The retained
 runtime checks the returned tag/auth token, exact route/width and hop count,
-then reports up to 12 SNR samples with explicit output truncation. TRACE
-correlation identifies the matching response; hop hashes remain routing data.
+then reports as many complete SNR measurements in dB as fit the reply. A
+shortened list ends with `; truncated`. TRACE correlation identifies the matching response; hop hashes remain routing data.
 Explicit routes are also bounded by the native 162-byte command text limit.
 
 Ordinary MeshCore path hashes and native TRACE widths are different encodings:
@@ -1049,7 +1054,10 @@ A path too long for one `!test` response is omitted while retaining the signal
 measurements and directing the sender to `!path`.
 Unknown command names and invalid schema arguments return an explicit error.
 `!help [PAGE]` lists native and installed commands; `!help NAME [PAGE]` shows
-the complete native argument schema, manifest help and available example.
+usage, help and an example. Required arguments appear as `KEY` and optional
+arguments as `[PREFIX]`; command names are case-insensitive. Long help pages
+end at word boundaries and show the command to read the next page. A single
+word too long for a page is split across pages.
 
 RSSI/SNR are captured against the bot's native packet at the pre-deferral
 receive hook and retained until that packet returns to its four-slot pool.
@@ -1791,21 +1799,21 @@ partition or reset notes; the full persistent bot and caller identities do.
 RF command schemas bound keys/prefixes to 32 bytes and note text to 120 bytes;
 the complete request/reply still has a 162-byte limit. Storage retains its
 existing eight-key scope quota and 256-byte value bound. Successful writes
-say **created/replaced; committed**, deletion says **deleted; committed**,
-and missing reads/deletions say **No note**. Storage failures propagate as
+say **Saved note KEY**, deletion says **Deleted note KEY**, and missing
+reads/deletions say **No note: KEY**. Storage failures propagate as
 errors, including explicit unknown outcomes when a mutation cannot be
-verified; no automatic mutation retry occurs. A commit response reports
-storage, not proof that the RF reply reached its recipient.
+verified; no automatic mutation retry occurs. Saved notes remain available
+after a lost reply or a restart.
 
 Enumeration lists sorted matching keys, not values. When all keys do not fit
 one RF response it preserves whole displayed keys, gives the total matching
 count and says **truncated; narrow prefix**. Refine a prefix or recall a known
 key; there is no implicit second RF message or cursor. A value created by
 other functions may exceed RF capacity, be empty or contain non-ASCII bytes;
-`recall` explicitly refuses that representation and directs the author to
-`kv.get`. Non-ASCII keys similarly produce an explicit `kv.list` hint rather
-than a silent partial list. Raw API reads remain available without rewriting
-legacy data.
+`recall` reports that the note cannot fit or contains unsupported text.
+Unsupported note names also produce an error. Installed Lua can read the
+original bytes through `kv.get` and `kv.list`; these errors leave stored data
+unchanged.
 
 **Migration:** these five command names and the four corresponding Lua
 functions are newly reserved. Rename/reinstall old custom definitions or
@@ -1855,10 +1863,9 @@ they cannot allocate the eight bot-global reserve slots or bypass NVS
 headroom/write/deadline guards. No separate board bank, extra worker, PHY,
 queue or scheduling mechanism is added.
 
-Writes explicitly report **created/replaced; committed** after commit and
-independent-handle readback. Deletes report **deleted; committed**, or
-**No board entry** when already absent. Failed/uncertain operations remain
-visible errors; cancellation after a possible commit is not represented as
+Writes report **Saved board entry KEY** after the saved value is read back.
+Deletes report **Deleted board entry KEY**, or **No board entry: KEY** when
+already absent. Failed/uncertain operations return errors; cancellation after a possible commit is not represented as
 rollback or blindly retried. Grant revocation/regrant fences old invocations,
 including failures to durably save the revoke. Serial writes are last-commit
 wins; a list sees a coherent snapshot, not a multi-operation transaction.
@@ -1871,7 +1878,7 @@ exists. The channel label reduces the native 162-byte limit; formatting uses
 the actual invocation reply budget. Raw values that are empty, non-ASCII or
 too large for RF fail explicitly without rewriting storage. Non-ASCII keys
 or a raw nameless `board:` entry authored by installed Lua also produce an
-explicit maintenance hint rather than a misleading list.
+error; the stored entry remains available through the Lua KV API.
 
 **Migration:** `board` is newly reserved; rename/reinstall conflicting custom
 functions or aliases before upgrading. The older raw-storage comparison

@@ -171,8 +171,7 @@ bool botReadOnlyQuery(const char *name) {
     if (!strcmp(name, query)) return true;
   return false;
 }
-bool botCommandAllowed(const BotCommand &command, const BotEvent &event) {
-  const bool privateDm = event.authenticated && !event.channel[0] && !event.local;
+BotCommand::Permission botCommandPermission(const BotCommand &command) {
   auto permission = command.permission;
   if (!strcmp(command.name, "admin")) permission = BotCommand::Owner;
   else if (!strcmp(command.name, "board")) permission = BotCommand::Shared;
@@ -180,7 +179,11 @@ bool botCommandAllowed(const BotCommand &command, const BotEvent &event) {
   else if (!strcmp(command.name, "remind")) permission = BotCommand::Reminder;
   else for (const char *name : {"reminders", "cancel", "remember", "recall", "forget", "notes", "list-memories"})
     if (!strcmp(command.name, name)) permission = BotCommand::Private;
-  switch (permission) {
+  return permission;
+}
+bool botCommandAllowed(const BotCommand &command, const BotEvent &event) {
+  const bool privateDm = event.authenticated && !event.channel[0] && !event.local;
+  switch (botCommandPermission(command)) {
   case BotCommand::Public: return true;
   case BotCommand::Private: return privateDm;
   case BotCommand::Owner: return privateDm && event.owner;

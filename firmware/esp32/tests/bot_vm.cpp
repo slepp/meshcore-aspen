@@ -92,9 +92,9 @@ static void commandOverrides() {
   load(wrapper);
   assert(!strcmp(invoke(event("!ping")).action.text, "Regional Pong"));
   invoke(event("!ping extra"), false);
-  assert(!strcmp(invoke(event("!path")).action.text, "1:a1b2"));
+  assert(!strcmp(invoke(event("!path")).action.text, "a1,b2"));
   assert(strstr(invoke(event("!help ping")).action.text, "Reply Pong"));
-  assert(strstr(invoke(event("!plugins")).action.text, "custom"));
+  assert(strstr(invoke(event("!plugins")).action.text, "; 1 installed"));
   load("function patched(seconds) return tostring(seconds or 5)..' '..call_original('ping','') end "
        "override_command('mt','patched')");
   assert(!strcmp(invoke(event("!mt")).action.text, "5 Pong"));
@@ -194,7 +194,7 @@ static void commandOverrides() {
   assert(!vm.complete(completion));
   load("function patched() while true do end end override_command('ping','patched')");
   invoke(event("!ping"), false);
-  assert(!strcmp(invoke(event("!path")).action.text, "1:a1b2"));
+  assert(!strcmp(invoke(event("!path")).action.text, "a1,b2"));
   load(wrapper);
   BotSession candidate;
   const char *replacement = "function patched() return 'Replacement' end override_command('ping','patched')";
@@ -251,7 +251,15 @@ static void registry() {
   run(declaration, event("!hello"), false);
   run(declaration, event("!hello one two"), false);
   assert(!strcmp(run(declaration, event("!ping")).text, "Pong"));
-  assert(strstr(run(declaration, event("!help hello"), true, {}, &inferred).text, "name:string:159"));
+  assert(strstr(run(declaration, event("!help hello"), true, {}, &inferred).text, "!hello NAME"));
+  assert(!strcmp(run(declaration, event("!help !HELLO"), true, {}, &inferred).text,
+                 run(declaration, event("!help hello"), true, {}, &inferred).text));
+  const std::string longWord = "function abcdefghijklmnopqrstuvwx() end "
+      "command('abcdefghijklmnopqrstuvwx','','" + std::string(64, 'a') + "')";
+  auto narrowHelp = event("!help abcdefghijklmnopqrstuvwx 2"); narrowHelp.replyLimit = 80;
+  const auto longWordPage = run(longWord, narrowHelp);
+  assert(strlen(longWordPage.text) <= 80 && strstr(longWordPage.text, "Help 2/") &&
+         strstr(longWordPage.text, std::string(30, 'a').c_str()));
   const std::string helperSource =
       "local function greeting(name) return 'Hello '..name end "
       "function hello(name) reply(greeting(name)) end "
@@ -336,7 +344,7 @@ static void registry() {
   assert(!strcmp(run("while true do end", event("!ping")).text, "Pong"));
   assert(!strcmp(run(hello, event("!ping")).text, "Pong"));
   assert(strstr(run(hello, event("!help"), true, {}, &manifest).text, "!hello"));
-  assert(strstr(run(hello, event("!help hello"), true, {}, &manifest).text, "name:string:32"));
+  assert(strstr(run(hello, event("!help hello"), true, {}, &manifest).text, "!hello NAME"));
   assert(strstr(run(hello, event("!help unknown"), true, {}, &manifest).text, "unknown"));
   const std::string optional =
       "function words(s,n) if n then reply(s..tostring(n)) else reply(s) end end "
@@ -419,7 +427,7 @@ static void manifestLifetimes() {
          !strcmp(result.action.text, "Alice-ok"));
   assert(borrowed.commands == entries && !strcmp(command->help, "Wait with metadata"));
   assert(vm.start(4, event("!help later"), error, sizeof(error)));
-  assert(vm.poll(result) && result.ok && strstr(result.action.text, "name:string:8"));
+  assert(vm.poll(result) && result.ok && strstr(result.action.text, "!later NAME"));
 
   assert(vm.start(5, event("!later Before"), error, sizeof(error)) && vm.nextIo(custom));
   const char *fresh = "function fresh() return 'new' end command('fresh','','New command')";
@@ -892,7 +900,7 @@ static void personalReminderApi() {
     assert(!input.reminderAccess);
     const auto help = run(BotDefaultSource, input);
     const bool denied = !strcmp(command, "!help remind");
-    assert((strstr(help.text, "unavailable here") != nullptr) == denied);
+    assert((strstr(help.text, "enabled reminders") != nullptr) == denied);
     assert(vm.start(8, input, error, sizeof(error)) && vm.poll(result) && result.ok &&
            !strcmp(result.action.text, help.text));
     assert(!vm.nextIo(request));
@@ -970,11 +978,11 @@ static void personalNotesApi() {
          request.scope == BotIoRequest::Caller && request.principal[0] == 1);
   BotIoResult done; done.token = request.token; done.ok = true;
   assert(vm.complete(done) && vm.poll(result) && result.ok &&
-         !strcmp(result.action.text, "Note travel created; committed"));
+         !strcmp(result.action.text, "Saved note travel"));
   invoke("!remember travel overwritten");
   done.token = request.token; done.found = true;
   assert(vm.complete(done) && vm.poll(result) && result.ok &&
-         !strcmp(result.action.text, "Note travel replaced; committed"));
+         !strcmp(result.action.text, "Saved note travel"));
   invoke("!recall travel");
   done.token = request.token; strcpy(done.value, "overwritten");
   assert(request.kind == BotIoRequest::Get && vm.complete(done) && vm.poll(result) &&
@@ -982,7 +990,7 @@ static void personalNotesApi() {
   for (bool found : {true, false}) {
     invoke("!forget travel"); done = {}; done.token = request.token; done.ok = true; done.found = found;
     assert(request.kind == BotIoRequest::Delete && vm.complete(done) && vm.poll(result) && result.ok);
-    assert(!strcmp(result.action.text, found ? "Note travel deleted; committed" : "No note: travel"));
+    assert(!strcmp(result.action.text, found ? "Deleted note travel" : "No note: travel"));
   }
   invoke("!recall missing");
   done = {}; done.token = request.token; done.ok = true;
@@ -991,13 +999,13 @@ static void personalNotesApi() {
   done = {}; done.token = request.token; done.ok = done.found = true;
   memset(done.value, 'x', BotValueLimit);
   assert(vm.complete(done) && vm.poll(result) && result.ok);
-  if (BotValueLimit > BotReplyLimit) assert(strstr(result.action.text, "exceeds RF capacity"));
+  if (BotValueLimit > BotReplyLimit) assert(strstr(result.action.text, "exceeds the reply size"));
   else assert(strlen(result.action.text) == BotValueLimit);
   for (const char *value : {"", "line\nbreak", "\xc3\xa9"}) {
     invoke("!recall unsafe"); done = {}; done.token = request.token; done.ok = done.found = true;
     strcpy(done.value, value);
     assert(vm.complete(done) && vm.poll(result) && result.ok &&
-           strstr(result.action.text, "empty, non-ASCII or exceeds RF capacity"));
+           strstr(result.action.text, "contains unsupported text or exceeds the reply size"));
   }
   invoke("!recall exact"); done = {}; done.token = request.token; done.ok = done.found = true;
   memset(done.value, 'x', BotReplyLimit);
@@ -1034,7 +1042,7 @@ static void personalNotesApi() {
   invoke("!notes"); done = {}; done.token = request.token; done.ok = true; done.keys.count = 1;
   strcpy(done.keys.keys[0], "non\nascii");
   assert(vm.complete(done) && vm.poll(result) && result.ok &&
-         !strcmp(result.action.text, "Error: non-ASCII note keys; ask owner to inspect stored data"));
+         !strcmp(result.action.text, "Error: note names contain unsupported text"));
   for (const char *command : {"!remember", "!remember key", "!remember \"\" value",
                               "!recall", "!forget", "!notes x y", "!list-memories x y"}) {
     assert(vm.start(2, event(command), error, sizeof(error)) && vm.poll(result) && !result.ok);
@@ -1202,15 +1210,15 @@ static void channelBoard() {
   start("!board put tea bring mugs");
   assert(request.kind == BotIoRequest::Put && !strcmp(request.key, "board:tea") &&
          !strcmp(request.value, "bring mugs"));
-  assert(finish(done) == "Board tea created; committed");
+  assert(finish(done) == "Saved board entry tea");
   start("!board put tea refill"); done.found = true;
-  assert(finish(done) == "Board tea replaced; committed");
+  assert(finish(done) == "Saved board entry tea");
   start("!board get tea"); strcpy(done.value, "refill");
   assert(request.kind == BotIoRequest::Get && finish(done) == "refill");
   for (bool found : {true, false}) {
     start("!board delete tea"); done = {}; done.ok = true; done.found = found;
     assert(request.kind == BotIoRequest::Delete &&
-           finish(done) == (found ? "Board tea deleted; committed" : "No board entry: tea"));
+           finish(done) == (found ? "Deleted board entry tea" : "No board entry: tea"));
   }
   start("!board list te"); done = {}; done.ok = true; done.keys.count = 2;
   strcpy(done.keys.keys[0], "board:tea"); strcpy(done.keys.keys[1], "board:test");
@@ -1221,7 +1229,7 @@ static void channelBoard() {
   start("!board list"); done = {}; done.ok = true;
   assert(finish(done) == "No board entries");
   start("!board list"); done.keys.count = 1; strcpy(done.keys.keys[0], "board:");
-  assert(finish(done) == "Error: empty board key; ask owner to inspect stored data");
+  assert(finish(done) == "Error: board entry has an empty name");
   start("!board list");
   done.keys.count = 8;
   for (unsigned i = 0; i < 8; ++i)
@@ -1241,7 +1249,7 @@ static void channelBoard() {
   memset(done.value, 'v', BotValueLimit);
   const auto longest = finish(done);
   if (BotValueLimit > BotReplyLimit)
-    assert(longest.find("exceeds RF capacity") != std::string::npos);
+    assert(longest.find("exceeds the reply size") != std::string::npos);
   else assert(longest.size() <= BotReplyLimit && longest.find(std::string(BotValueLimit, 'v')) != std::string::npos);
   for (const char *command : {"!board put k", "!board get", "!board delete", "!board list k extra",
                               "!board get k extra", "!board delete k extra", "!board other"}) {
@@ -1280,6 +1288,18 @@ static void channelBoard() {
   assert(!vm.load(bad, strlen(bad), 3, stats, error, sizeof(error)));
   puts("PASS bundled board Lua: yielding shared prefix, relative immutable keys, exact RF bounds, explicit outcomes, private/grant/input denial and stale completion guards");
 }
+static void traceMeasurements() {
+  BotTraceInfo trace{}; trace.count = 16;
+  for (unsigned i = 0; i < trace.count; ++i) trace.snr[i] = 20;
+  trace.snr[0] = -5; trace.snr[1] = 21;
+  char text[BotReplyLimit + 1]; bool truncated = true;
+  assert(formatBotTrace(trace, text, sizeof(text), 116, truncated) && !truncated);
+  assert(!strcmp(text, "Trace 16 hops; SNR dB: -1.25,5.25,5,5,5,5,5,5,5,5,5,5,5,5,5,5"));
+  assert(formatBotTrace(trace, text, sizeof(text), 40, truncated) && truncated);
+  assert(!strcmp(text, "Trace 16 hops; SNR dB: -1.25; truncated"));
+  assert(strlen(text) <= 40 && trace.count == 16);
+  assert(!formatBotTrace(trace, text, sizeof(text), 20, truncated));
+}
 static void diagnosticCommands() {
   auto e = event("!status");
   e.node.available = e.node.hasIdentity = e.node.enabled = e.node.ready = true;
@@ -1309,26 +1329,26 @@ static void diagnosticCommands() {
     const auto limit = e.replyLimit;
     e.replyLimit = 108;
     assert(command("!about") ==
-           "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
+           "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins shows loaded commands");
     e.replyLimit = limit;
     assert(command("!version").find("Version: MeshCore d92964352441; Lua 5.5.1; built fixture compilation") == 0);
     assert(command("!uptime") == "Uptime: 49d 17h 2m 49s");
     auto status = command("!status");
-    assert(status.find("WiFi=disconnected") != std::string::npos &&
-             status.find("roles selected/ready=15/5") != std::string::npos);
+    assert(status.find("WiFi disconnected") != std::string::npos &&
+             status.find("roles 2/4 ready; waiting room,observer") != std::string::npos);
     for (const char *page : {"!air", "!air 1", "!air 2", "!air 3", "!air 4"}) {
       const auto result = command(page);
       assert(result.find("Error:") == std::string::npos && result.find("4294967295") != std::string::npos);
     }
-    assert(command("!help air").find("page?:int:1:4") != std::string::npos);
-    assert(command("!help service").find("unavailable here") != std::string::npos);
+    assert(command("!help air").find("!air [PAGE]") != std::string::npos);
+    assert(command("!help service").find("enabled home service") != std::string::npos);
     assert(command("!help").find("!service") == std::string::npos);
   }
   e.authenticated = true; e.channelVerified = false; e.channel[0] = 0;
   e.node.enabled = e.node.ready = false; e.node.selectedRoles = e.node.readyRoles = 0;
-  assert(command("!status").find("bot=off") != std::string::npos);
+  assert(command("!status").find("Bot off") != std::string::npos);
   e.node.enabled = true; e.node.fault = true; e.node.wifiConnected = true;
-  assert(command("!status").find("bot=not-ready fault=yes WiFi=connected") != std::string::npos);
+  assert(command("!status").find("Bot not ready; fault; WiFi connected") != std::string::npos);
   e.local = true;
   assert(command("!signal").find("local reflection; RF unmeasured") != std::string::npos);
   assert(command("!signal").find("RSSI") == std::string::npos);
@@ -1339,6 +1359,18 @@ static void diagnosticCommands() {
     assert(command("!signal").find(std::string("path ") +
            (width == 1 ? "ab" : width == 2 ? "abab" : "ababab")) != std::string::npos);
   }
+  e.path.width = 2; e.path.count = 2; e.path.known = true;
+  memcpy(e.path.bytes, "\xA1\xA2\xB1\xB2", 4);
+  assert(command("!path") == "a1a2,b1b2");
+  auto custom = e; strcpy(custom.name, "custom");
+  assert(!strcmp(run(program("return ctx.packet.path"), custom).text, "2:a1a2b1b2"));
+  e.path.count = 0;
+  assert(command("!path") == "no repeaters");
+  e.path.width = 3; e.path.count = 20; e.replyLimit = 80;
+  memset(e.path.bytes, 0xab, e.path.size());
+  const auto longPath = command("!path");
+  assert(longPath.size() <= 80 && longPath == "ababab,ababab,ababab,ababab,ababab,ababab,ababab,ababab,ababab,ababab,ababab...");
+  e.replyLimit = BotReplyLimit;
   e.path.width = 1; e.path.count = 63;
   assert(command("!signal").find("path omitted; use !path") != std::string::npos);
   e.path.known = false; e.signal = false;
@@ -1648,7 +1680,7 @@ static void commandDiscoveryAndMeshGrants() {
   BotSession vm; BotVmStats stats; char error[128]{};
   const char *source =
       "module('shared',function() return {} end) "
-      "function open() return 'open' end command('open','','Public command','open','public','!open') "
+      "function open() return 'open' end command('open','','Public command replies with current reading and measurement time','open','public','!open') "
       "function restricted() return 'owner' end command('restricted','','Owner only','restricted','owner') "
       "function listening() local p=mesh.wait{kind='channel',prefix='answer:'} "
       "if p.authenticated or p.from or p.nickname~='owner' then return 'BAD AUTH' end return p.text end";
@@ -1676,9 +1708,25 @@ static void commandDiscoveryAndMeshGrants() {
          discovery.find("!open") != std::string::npos && discovery.find("!restricted") == std::string::npos &&
          discovery.find("!admin") == std::string::npos);
   assert(!invoke("!help 40").ok && !invoke("!help 0").ok);
-  assert(strstr(invoke("!help restricted").action.text, "unavailable here"));
+  assert(strstr(invoke("!help restricted").action.text, "Owner-only private DM"));
   assert(strstr(invoke("!help open").action.text, "e.g. !open"));
-  assert(strstr(invoke("!plugins").action.text, "g42 custom 3 commands, 1 modules"));
+  assert(!strcmp(invoke("!help !OpEn").action.text, invoke("!help open").action.text));
+  auto helpEvent = event("!help open"); helpEvent.replyLimit = 80;
+  assert(vm.start(++job, helpEvent, error, sizeof(error)) && vm.poll(result) && result.ok);
+  assert(sscanf(result.action.text, "Help %u/%u:", &page, &pages) == 2 && pages > 1);
+  std::string detail;
+  for (unsigned i = 1; i <= pages; ++i) {
+    auto request = event(("!help OPEN " + std::to_string(i)).c_str()); request.replyLimit = 80;
+    assert(vm.start(++job, request, error, sizeof(error)) && vm.poll(result) && result.ok);
+    const std::string text = result.action.text;
+    assert(text.size() <= 80);
+    const auto start = text.find(": ") + 2, end = text.find("; !help open ", start);
+    if (!detail.empty()) detail += ' ';
+    detail += text.substr(start, end == std::string::npos ? end : end - start);
+    if (i < pages) assert(text.find("; !help open " + std::to_string(i + 1)) != std::string::npos);
+  }
+  assert(detail == "!open: Public command replies with current reading and measurement time; e.g. !open");
+  assert(strstr(invoke("!plugins").action.text, "; 3 installed; Lua modules 1; events off"));
   assert(strstr(invoke("!plugins 2").action.text, "shared"));
   BotIoRequest io;
   assert(vm.start(++job, event("!neighbors"), error, sizeof(error)) && vm.nextIo(io) &&
@@ -1901,6 +1949,7 @@ int main(int argc, char **argv) {
   subscriptionVm();
   packageModules();
   diagnosticCommands();
+  traceMeasurements();
   channelBoard();
   utilityCommands();
   personalNotesApi();
@@ -2022,7 +2071,7 @@ int main(int argc, char **argv) {
              !strcmp(request.key, "task") && !strcmp(request.value, "groceries"));
       BotIoResult saved; saved.token = request.token; saved.ok = true;
       assert(retained.complete(saved));
-      assert(retained.poll(result) && result.ok && !strcmp(result.action.text, "Note task created; committed"));
+      assert(retained.poll(result) && result.ok && !strcmp(result.action.text, "Saved note task"));
       if (source.size() == BotSourceLimit) {
         assert(retained.start(4, event("!hello slepp"), error, sizeof(error)));
         assert(retained.nextIo(request) && request.kind == BotIoRequest::Send &&
@@ -2073,9 +2122,9 @@ int main(int argc, char **argv) {
       event("!custom")).text, "-2.63 2.63 0.00 -115.3 2 1000000000.000000"));
   for (const char *value : {"1,7", "1,-1", "1,1.5", "1000000001,2", "0/0,2", "1/0,2", "'1',2"})
     run(program(std::string("reply(tostring(") + value + "))"), event("!custom"), false);
-  assert(!strcmp(run(BotDefaultSource, event("!path")).text, "1:a1b2"));
+  assert(!strcmp(run(BotDefaultSource, event("!path")).text, "a1,b2"));
   assert(!strcmp(run(BotDefaultSource, event("!test")).text,
-                 "Connected: SNR 5 dB; RSSI -90 dBm; path 1:a1b2"));
+                 "Connected: SNR 5 dB; RSSI -90 dBm; path a1,b2"));
   auto unmeasured = event("!test");
   unmeasured.signal = false;
   assert(!strstr(run(BotDefaultSource, unmeasured).text, "local;"));
@@ -2163,7 +2212,7 @@ int main(int argc, char **argv) {
   run(BotDefaultSource, event("!other hello"), false);
   auto wide = event("!path");
   wide.path.width = 3; wide.path.count = 21;
-  assert(strlen(run(BotDefaultSource, wide).text) == 128);
+  assert(strlen(run(BotDefaultSource, wide).text) == 146);
   strcpy(wide.name, "test");
   assert(strstr(run(BotDefaultSource, wide).text, "path omitted; use !path"));
   auto direct = event("!path"); direct.path.known = false;

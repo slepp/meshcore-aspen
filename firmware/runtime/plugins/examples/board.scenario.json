@@ -20,13 +20,13 @@
   ],
   "expect": [
     {"type": "reply", "text_contains": "not granted"},
-    {"type": "reply", "text": "Board plan created; committed"},
+    {"type": "reply", "text": "Saved board entry plan"},
     {"type": "reply", "text": "lunch"},
     {"type": "reply", "text": "Error: board get/delete take only a key"},
     {"type": "reply", "text": "No board entry: plan"},
     {"type": "reply", "text": "No note: plan"},
     {"type": "reply", "text": "lunch"},
-    {"type": "reply", "text": "Board plan deleted; committed"},
+    {"type": "reply", "text": "Deleted board entry plan"},
     {"type": "reply", "text": "No board entries"}
   ]
 }

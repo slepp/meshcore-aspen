@@ -77,7 +77,7 @@ static void native_contact_recovery() {
     assert(info.find("Contacts=2/16 observed=0 routed=0") == 0);
     assert(info.find("recovered=2 rejected=0") != std::string::npos);
     assert(f.command(*collision, "!ping") == "Pong");
-    assert(f.command(peer, "!neighbors") == "No observed signed adverts; not a live neighbor scan");
+    assert(f.command(peer, "!neighbors") == "No adverts heard");
     for (const auto &raw : f.radio.sent) {
       mesh::Packet packet{};
       assert(packet.readFrom(raw.data(), raw.size()));

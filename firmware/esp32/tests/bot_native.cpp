@@ -589,11 +589,11 @@ static void command_mesh_experience() {
   assert(loadBotRadioPolicy(originalRadio) && loadBotMeshPolicy(originalMesh));
   Fixture f; f.start(); Peer caller, destination, outsider;
   f.learn(caller); f.learn(destination); f.learn(outsider);
-  assert(f.command(caller, "!plugins").find("Bundled 30 commands") == 0);
+  assert(f.command(caller, "!plugins").find("Commands: " + std::to_string(BotBuiltinCommandLimit) + " bundled") == 0);
   const auto observed = f.command(caller, "!neighbors");
-  assert(observed.find("Seen 1/3") == 0 && observed.find("rx=1b/0h cached=none") != std::string::npos &&
-         observed.find("last-hop") != std::string::npos && observed.find("!neighbors 2") != std::string::npos);
-  assert(f.command(caller, "!neighbors 3").find("not live adjacency") != std::string::npos);
+  assert(observed.find("Seen 1/3") == 0 && observed.find("heard 0 hops; route unknown") != std::string::npos &&
+         observed.find("RSSI") != std::string::npos && observed.find("!neighbors 2") != std::string::npos);
+  assert(f.command(caller, "!neighbors 3").find("Seen 3/3") == 0);
   assert(f.command(caller, "!neighbors 17").find("Error:") == 0);
   assert(f.command(caller, "!admin bot status").find("not granted") != std::string::npos);
   char key[65];
@@ -672,14 +672,14 @@ static void command_mesh_experience() {
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(caller.group("user: !plugins")); f.step(700);
   const auto delayed = caller.groupReplies(f.radio);
-  assert(delayed.size() == 1 && delayed[0].find("[q:") == 0 && delayed[0][5] == ']' && delayed[0][6] == ' ' && delayed[0].find("custom 3 commands") != std::string::npos);
+  assert(delayed.size() == 1 && delayed[0].find("[q:") == 0 && delayed[0][5] == ']' && delayed[0][6] == ' ' && delayed[0].find("3 installed") != std::string::npos);
   assert(f.bot.setSharedState(true));
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(caller.group("user: !board put example unsafe")); f.step();
   assert(caller.groupReplies(f.radio).back().find("target required") != std::string::npos);
-  assert(group("user: !board put example selected") == "Board example created; committed");
+  assert(group("user: !board put example selected") == "Saved board entry example");
   assert(group("user: !board get example") == "selected");
-  assert(group("user: !board delete example") == "Board example deleted; committed");
+  assert(group("user: !board delete example") == "Deleted board entry example");
   f.bot.stop(); f.start();
   BotNodeSnapshot node; f.bot.nodeSnapshot(node);
   assert(!strcmp(node.name, "Cedar Bot") && !memcmp(identity, f.bot.publicKey(), 32));
@@ -909,9 +909,10 @@ static void selection_identity() {
   const auto before = identity_test::durable;
   {
     Fixture f;
+    const auto fixtureAllocations = psram_test::allocations;
     assert(f.bot.begin(f.mux));
     assert(!f.bot.publicKey());
-    assert(psram_test::allocations.empty());
+    assert(psram_test::allocations == fixtureAllocations);
   }
   for (const auto &entry : before)
     assert(identity_test::durable.at(entry.first) == entry.second);
@@ -992,7 +993,7 @@ static void commands_and_packets() {
   f.start();
   Peer peer; f.learn(peer);
   assert(f.command(peer, "!ping") == "Pong");
-  assert(f.command(peer, "!path", 2, {0xa1, 0xa2, 0xb1, 0xb2}) == "2:a1a2b1b2");
+  assert(f.command(peer, "!path", 2, {0xa1, 0xa2, 0xb1, 0xb2}) == "a1a2,b1b2");
   assert(f.command(peer, "!test", 1, {0xab}).find("SNR 5.25 dB; RSSI -91.5 dBm") != std::string::npos);
   assert(f.command(peer, "!trace").find("Error: TRACE") == 0);
   assert(f.command(peer, "!trace", 3, {0xa1, 0xb2, 0xc3}) ==
@@ -1028,7 +1029,13 @@ static void commands_and_packets() {
     assert(false && "Missing native TRACE to return");
   };
   completeTrace();
-  assert(peer.replies(f.bot.publicKey(), f.radio).back() == "Trace 2 hops; SNR 5.00 5.00");
+  assert(peer.replies(f.bot.publicKey(), f.radio).back() == "Trace 2 hops; SNR dB: 5,5");
+  timeMs += 61000; f.radio.sent.clear();
+  const std::string manyHops = "!trace 1:" + std::string(26, 'a');
+  f.deliver(peer.command(f.bot.publicKey(), manyHops.c_str())); f.step();
+  completeTrace();
+  assert(peer.replies(f.bot.publicKey(), f.radio).back() ==
+         "Trace 13 hops; SNR dB: 5,5,5,5,5,5,5,5,5,5,5,5,5");
   timeMs += 61000; f.radio.sent.clear();
   const std::string wideTrace = "!trace 8:" + std::string(144, 'a');
   f.deliver(peer.command(f.bot.publicKey(), wideTrace.c_str()));
@@ -1060,7 +1067,7 @@ static void commands_and_packets() {
   assert(traced);
   timeMs += 5001; f.step();
   assert(peer.replies(f.bot.publicKey(), f.radio).back() ==
-         "Error: !trace: TRACE timed out; no reply received. Check the route and try again.");
+         "Error: !trace: TRACE timed out; no reply received");
   assert(diagnostics.find("[string \"bot-commands\"]") != std::string::npos);
   assert(diagnostics.find("Native TRACE timed out") != std::string::npos);
   assert(f.command(peer, "!trace", 3, {1, 2, 3}).find("Error: TRACE") == 0);
@@ -1141,7 +1148,7 @@ static void commands_and_packets() {
   assert(receiveDirect("!trace 3:abcdef") ==
          std::vector<std::string>{"Error: Use !trace width:hex (width 1,2,4,8)"});
   assert(receiveDirect("!@bad ping") ==
-         std::vector<std::string>{"Error: Use !@BOTKEY8 COMMAND or !@FULLKEY COMMAND"});
+         std::vector<std::string>{"Error: Target does not match this bot; use !help"});
   assert(receiveDirect("hello").empty());
   assert(receiveDirect("").empty());
   assert(receiveDirect("!unknown-command") ==
@@ -1189,7 +1196,7 @@ static void deferred_receive_metadata() {
     timeMs += 100; f.step();
     auto replies = peer.replies(f.bot.publicKey(), f.radio);
     assert(replies.size() == 1 &&
-           replies[0] == "Connected: SNR -4.25 dB; RSSI -103.5 dBm; path 1:a1");
+           replies[0] == "Connected: SNR -4.25 dB; RSSI -103.5 dBm; path a1");
 
     timeMs += 61000; f.radio.sent.clear();
     const auto mt = peer.command(f.bot.publicKey(), "!mt 1", 1, {0xa1});
@@ -1217,7 +1224,7 @@ static void deferred_receive_metadata() {
     f.step();
     replies = peer.replies(f.bot.publicKey(), f.radio);
     assert(replies.size() == 1 &&
-           replies[0] == "Connected: local reflection; RF unmeasured; path 1:c3");
+           replies[0] == "Connected: local reflection; RF unmeasured; path c3");
   }
   puts("PASS deferred flood receive metadata survives unrelated RF/local packets; "
        "!test signal and !mt RF-only paths remain packet-specific");
@@ -1243,7 +1250,7 @@ static void worker_install_hooks_and_budgets() {
   assert(f.command(peer, "!broken invalid") == "Error: !broken: Invalid bounded JSON text");
   assert(f.command(peer, "!read-memories") == "fixture memory");
   assert(f.command(peer, "!ping") == "Pong");
-  assert(f.command(peer, "!help hello").find("name:string:159") != std::string::npos);
+  assert(f.command(peer, "!help hello").find("!hello NAME") != std::string::npos);
   assert(f.command(peer, "!hello").find("Error:") == 0);
   const auto failures = f.bot.counters().vmFailures;
   const char *maximum = "function x(text) reply(text..'END') end command('x','text:text:159','Capacity')";
@@ -1546,14 +1553,14 @@ static void personal_notes() {
   for (unsigned width : {1u, 2u, 3u}) {
     const auto key = "route" + std::to_string(width);
     const auto command = "!remember " + key + " first caller";
-    assert(f.command(first, command.c_str(), width) == "Note " + key + " created; committed");
+    assert(f.command(first, command.c_str(), width) == "Saved note " + key);
     assert(f.command(second, ("!recall " + key).c_str(), width) == "No note: " + key);
     assert(f.command(first, ("!recall " + key).c_str(), width) == "first caller");
   }
   assert(f.command(first, "!notes") == "Notes (3): [route1] [route2] [route3]");
   assert(f.command(first, "!list-memories route2") == "Notes (1): [route2]");
-  assert(f.command(first, "!remember route1 new text") == "Note route1 replaced; committed");
-  assert(f.command(second, "!remember route1 private second") == "Note route1 created; committed");
+  assert(f.command(first, "!remember route1 new text") == "Saved note route1");
+  assert(f.command(second, "!remember route1 private second") == "Saved note route1");
   const char *source =
       "function setnote(text) local ok,state=kv.put('shared',text) return state end "
       "function together() remember('nested','cooperating') return recall('nested') end "
@@ -1580,7 +1587,7 @@ static void personal_notes() {
   f.step(160);
   for (auto *peer : {&first, &second}) {
     const auto replies = peer->replies(f.bot.publicKey(), f.radio);
-    assert(replies.size() == 1 && replies[0] == "Note simultaneous created; committed");
+    assert(replies.size() == 1 && replies[0] == "Saved note simultaneous");
   }
   assert(f.command(first, "!recall simultaneous") == "alpha");
   assert(f.command(second, "!recall simultaneous") == "beta");
@@ -1595,7 +1602,7 @@ static void personal_notes() {
   identity_test::failRead = true;
   assert(f.command(first, "!notes").find("Error:") == 0);
   identity_test::failRead = false;
-  assert(f.command(first, "!forget route1") == "Note route1 deleted; committed");
+  assert(f.command(first, "!forget route1") == "Deleted note route1");
   assert(f.command(first, "!forget route1") == "No note: route1");
   assert(f.command(second, "!recall route1") == "private second");
   timeMs += 61000; f.radio.sent.clear();
@@ -1603,7 +1610,7 @@ static void personal_notes() {
   f.deliver(packet); f.step(); const auto commits = identity_test::commits;
   f.deliver(packet); f.step();
   const auto replies = first.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0] == "Note once created; committed" &&
+  assert(replies.size() == 1 && replies[0] == "Saved note once" &&
          identity_test::commits == commits);
   BotRadioPolicy policy; strcpy(policy.channel, "#example1"); policy.pathWidth = 3;
   f.bot.stop(); assert(saveBotRadioPolicy(policy) && saveBotSharedState(true));
@@ -1689,7 +1696,7 @@ static void retained_native_radio_io() {
   }
   assert(returned); f.step();
   messages = first.replies(f.bot.publicKey(), f.radio);
-  assert(messages.size() == 1 && messages[0] == "Pong; Trace 1 hops; SNR -1.00");
+  assert(messages.size() == 1 && messages[0] == "Pong; Trace 1 hops; SNR dB: -1");
   timeMs += 900001;
   assert(f.command(first, "!announce") == "Advert TX completed");
   assert(f.command(first, "!announce").find("advert unavailable") != std::string::npos);
@@ -1943,7 +1950,7 @@ static void filtered_packet_continuations() {
   auto sent = traces(); assert(sent.size() == 1);
   f.deliver(traceReply(sent[0], true)); f.step(5);
   f.deliver(traceReply(sent[0])); f.deliver(traceReply(sent[0])); f.step(90);
-  assert(first.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"Trace 1 hops; SNR -1.00"});
+  assert(first.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"Trace 1 hops; SNR dB: -1"});
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!testall")); f.step(15);
   sent = traces(); assert(sent.size() == 1);
@@ -1953,7 +1960,7 @@ static void filtered_packet_continuations() {
   assert(first.replies(f.bot.publicKey(), f.radio).empty());
   f.deliver(traceReply(sent[1])); f.step();
   assert(first.replies(f.bot.publicKey(), f.radio) ==
-         std::vector<std::string>{"Pong; 1: Trace 1 hops; SNR -1.00 | 2: Trace 1 hops; SNR -1.00"});
+         std::vector<std::string>{"Pong; 1: Trace 1 hops; SNR dB: -1| 2: Trace 1 hops; SNR dB: -1"});
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!split")); f.step(15);
   sent = traces(); assert(sent.size() == 1); f.step(100);
@@ -2546,13 +2553,13 @@ static void native_board() {
   };
   assert(group(first, "owner: !board put plan denied").find("not granted") != std::string::npos);
   assert(f.bot.setSharedState(true));
-  assert(group(first, "Alice: !board put plan picnic") == "Board plan created; committed");
+  assert(group(first, "Alice: !board put plan picnic") == "Saved board entry plan");
   assert(group(second, "not-an-owner: !board get plan") == "picnic");
-  assert(group(second, "forged-owner: !board put plan bring lunch") == "Board plan replaced; committed");
+  assert(group(second, "forged-owner: !board put plan bring lunch") == "Saved board entry plan");
   assert(group(first, "Alice: !board list pl") == "Board (1): [plan]");
   f.learn(first);
   assert(f.command(first, "!board get plan").find("permission not granted") != std::string::npos);
-  assert(f.command(first, "!remember board:plan private note") == "Note board:plan created; committed");
+  assert(f.command(first, "!remember board:plan private note") == "Saved note board:plan");
   assert(group(second, "visitor: !board get plan") == "bring lunch");
   timeMs += 61000; f.radio.sent.clear();
   const auto duplicate = first.targetedGroup(f.bot.publicKey(), "Alice: !board put plan only once", policy.channel, policy.pathWidth);
@@ -2564,7 +2571,7 @@ static void native_board() {
   second.timestamp = first.timestamp + 1;
   f.deliver(second.targetedGroup(f.bot.publicKey(), "different-name: !board put plan rate bypass", policy.channel, policy.pathWidth)); f.step();
   const auto limited = first.groupReplies(f.radio, policy.pathWidth);
-  assert(limited.size() == 2 && limited.back() == "Board plan replaced; committed");
+  assert(limited.size() == 2 && limited.back() == "Saved board entry plan");
   assert(group(first, "Alice: !board get plan") == "rate bypass");
   for (uint8_t width : {1, 2, 3}) {
     f.bot.stop(); policy.pathWidth = width; assert(saveBotRadioPolicy(policy)); f.start();
@@ -2585,13 +2592,13 @@ static void native_board() {
   assert(first.groupReplies(f.radio, policy.pathWidth).empty());
   f.bot.stop(); strcpy(policy.channel, "#another-board"); assert(saveBotRadioPolicy(policy)); f.start();
   assert(group(first, "Alice: !board get plan") == "No board entry: plan");
-  assert(group(first, "Alice: !board put plan different key") == "Board plan created; committed");
+  assert(group(first, "Alice: !board put plan different key") == "Saved board entry plan");
   f.bot.stop(); strcpy(policy.channel, "#example1"); assert(saveBotRadioPolicy(policy)); f.start();
   assert(group(second, "Alice: !board get plan") == "rate bypass");
   identity_test::failCommit = true; assert(!f.bot.setSharedState(false)); identity_test::failCommit = false;
   assert(group(second, "owner: !board delete plan").find("not granted") != std::string::npos);
   assert(f.bot.setSharedState(true));
-  assert(group(second, "visitor: !board delete plan") == "Board plan deleted; committed");
+  assert(group(second, "visitor: !board delete plan") == "Deleted board entry plan");
   assert(group(first, "Alice: !board get plan") == "No board entry: plan");
   f.learn(first);
   assert(f.command(first, "!recall board:plan") == "private note");
@@ -2733,7 +2740,7 @@ static void native_find_path() {
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
   assert(!strcmp(reply, "pilot route=3:cc268ad12600 repair=0"));
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("fresh 3:cc268ad12600") != std::string::npos);
+  assert(replies.size() == 1 && replies[0].find("fresh cc268a,d12600") != std::string::npos);
   BotRepeaterPolicy retained; assert(loadBotRepeaterPolicy(retained));
   const uint32_t floodUtc = retained.targets[0].lastFloodUtc;
   // During the monitored flood cooldown, test the known route with new direct
@@ -2749,7 +2756,7 @@ static void native_find_path() {
   // after the actual attempt times out, retaining the saved flood cooldown.
   timeMs += 10000; f.step(300);
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("route confirmation timed out; cached 3:cc268ad12600") != std::string::npos);
+  assert(replies.size() == 1 && replies[0].find("route confirmation timed out; cached cc268a,d12600") != std::string::npos);
   assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
   f.deliver(response(peer, tag, false, true, Bytes{0xaa, 0xbb, 0xcc})); f.step();
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
@@ -2889,13 +2896,13 @@ static void native_find_path_session() {
   response(tag, false); assert(f.bot.jobsInUse());
   response(confirmationTag, false);
   auto replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("fresh 3:cc268ad12600") != std::string::npos && !f.bot.jobsInUse());
+  assert(replies.size() == 1 && replies[0].find("fresh cc268a,d12600") != std::string::npos && !f.bot.jobsInUse());
   BotRepeaterPolicy retained; assert(loadBotRepeaterPolicy(retained));
   const auto floodUtc = retained.targets[0].lastFloodUtc;
   ask(); packets = requests(); assert(packets.size() == 1 && packets[0].isRouteDirect());
   tag = requestTag(packets[0], 3); response(tag, false);
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("cached route confirmed 3:cc268ad12600") != std::string::npos &&
+  assert(replies.size() == 1 && replies[0].find("cached route confirmed cc268a,d12600") != std::string::npos &&
          !f.bot.jobsInUse() && requests().size() == 1);
   assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
   ask(); assert(requests().size() == 1);
@@ -3026,11 +3033,11 @@ static void native_best_path() {
   };
   ask(); auto answers = run(true, 0);
   assert(route() == "pilot route=3:cc268ad12600 repair=0");
-  assert(answers.size() == 1 && answers[0].find("selected 3:cc268ad12600") != std::string::npos &&
+  assert(answers.size() == 1 && answers[0].find("selected cc268a,d12600") != std::string::npos &&
          answers[0].find("current=0/2 flood=2/2") != std::string::npos);
   ask(); answers = run(true, 1);
   assert(route() == "pilot route=3:cc268ad12600 repair=0");
-  assert(answers.size() == 1 && answers[0].find("kept 3:cc268ad12600") != std::string::npos &&
+  assert(answers.size() == 1 && answers[0].find("kept cc268a,d12600") != std::string::npos &&
          answers[0].find("current=2/2 seed=2/2 flood=1/2") != std::string::npos);
   // A new comparison during the persisted flood cooldown still tests known
   // alternatives, but cannot emit another anonymous discovery request.
@@ -3038,7 +3045,7 @@ static void native_best_path() {
   f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
   answers = run(false, 2);
   assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
-         answers[0].find("cached 3:cc268ad12600") != std::string::npos);
+         answers[0].find("cached cc268a,d12600") != std::string::npos);
   ask(); answers = run(true, 3);
   assert(route() == "pilot route=3:cc268ad12600 repair=0");
   assert(answers.size() == 1 && answers[0].find("permission") != std::string::npos);
@@ -3051,10 +3058,10 @@ static void native_best_path() {
          answers[0].find("incomplete") != std::string::npos);
   ask(); answers = run(true, 5);
   assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
-         answers[0].find("kept 3:cc268ad12600") != std::string::npos);
+         answers[0].find("kept cc268a,d12600") != std::string::npos);
   ask(); answers = run(true, 4);
   assert(route() == "pilot route=3:112233 repair=0" && answers.size() == 1 &&
-         answers[0].find("selected 3:112233") != std::string::npos);
+         answers[0].find("selected 112233") != std::string::npos);
   f.bot.repeaterCommand("remove pilot", reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
   destination = &stranger;
   for (unsigned i = 0; i < 32; ++i) snprintf(key + i * 2, 3, "%02X", stranger.self_id.pub_key[i]);
@@ -3063,7 +3070,7 @@ static void native_best_path() {
   assert(route() == "pilot route=unknown repair=0");
   ask(); answers = run(true, 7);
   assert(route() == "pilot route=3:d72600 repair=0" && answers.size() == 1 &&
-         answers[0].find("selected 3:d72600") != std::string::npos && answers[0].find("flood=2/2") != std::string::npos);
+         answers[0].find("selected d72600") != std::string::npos && answers[0].find("flood=2/2") != std::string::npos);
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
   puts("PASS best path: two tagged trials per route, shared 30s pacing, measured promotion, seed/current/flood comparison, stale/foreign/reflected rejection, cached fallback, saved cooldown and cancellation/revocation retain routes");
 }
@@ -3128,7 +3135,7 @@ static void anonymous_channel_routes() {
     trace.path_len = 2; trace.path[0] = trace.path[1] = 20;
     uint8_t wire[255]; const size_t size = trace.writeTo(wire);
     f.deliver(Bytes(wire, wire + size)); f.step(300);
-    assert(caller.groupReplies(f.radio) == std::vector<std::string>{"Trace 2 hops; SNR 5.00 5.00"});
+    assert(caller.groupReplies(f.radio) == std::vector<std::string>{"Trace 2 hops; SNR dB: 5,5"});
     snprintf(command, sizeof(command), "visitor: !find-path %s", key);
     ask(command, addressed);
     auto probes = packets(PAYLOAD_TYPE_ANON_REQ); assert(probes.size() == 1);
@@ -3136,7 +3143,7 @@ static void anonymous_channel_routes() {
     probes = packets(PAYLOAD_TYPE_REQ); assert(probes.size() == 1);
     returned(false, requestTag(probes[0], false));
     const auto replies = caller.groupReplies(f.radio);
-    assert(replies.size() == 1 && replies[0].find("fresh 3:aabbcc") != std::string::npos);
+    assert(replies.size() == 1 && replies[0].find("fresh aabbcc") != std::string::npos);
   }
   // Addressed-only policy silences bare probes and replies, despite public command visibility.
   for (const char *text : {"visitor: !trace 1:a1b2", static_cast<const char *>(command)}) {
@@ -3250,7 +3257,7 @@ static void find_path_full_contact_scan() {
   tag = probeTag(PAYLOAD_TYPE_REQ); assert(tag);
   respond(tag, false);
   const auto replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("fresh 3:") != std::string::npos && !f.bot.jobsInUse());
+  assert(replies.size() == 1 && replies[0].find("fresh no repeaters") != std::string::npos && !f.bot.jobsInUse());
   assert(status(f).find("Contacts=16/16 observed=15") == 0);
   // The caller must still decrypt without being re-imported from the companion.
   assert(f.command(caller, "!ping") == "Pong");
@@ -3492,6 +3499,18 @@ static void native_repeater_monitor() {
              snapshots[0].nextPollSeconds >= snapshots[0].nextDiscoverySeconds);
       restart.bot.repeaterCommand("timing pilot", reply, sizeof(reply));
       assert(strstr(reply, "wait=discovery") && strstr(reply, "sampled-utc=0"));
+      Peer caller; restart.learn(caller);
+      snprintf(command, sizeof(command), "!find-path %s", key);
+      restart.radio.sent.clear();
+      restart.deliver(caller.command(restart.bot.publicKey(), command)); restart.step();
+      const auto messages = caller.replies(restart.bot.publicKey(), restart.radio);
+      assert(messages.size() == 1);
+      const auto &blocked = messages.front();
+      unsigned seconds = 0;
+      assert(sscanf(blocked.c_str(), "Error: !find-path: Discovery available in %us; no cached route", &seconds) == 1 &&
+             seconds > 0 && seconds <= snapshots[0].nextDiscoverySeconds &&
+             snapshots[0].nextDiscoverySeconds - seconds <= 2);
+      assert(blocked.find("bot repeaters") == std::string::npos);
       timeMs += (snapshots[0].nextDiscoverySeconds - 1) * 1000;
       receiveNetworkTime(floodUtc + 899); restart.step();
       assert(!restart.bot.jobsInUse());
@@ -3908,13 +3927,14 @@ static void native_diagnostics() {
   Fixture f; f.start(); Peer first, second; f.learn(first); f.learn(second);
   f.bot.setNodeRoles(0, 0);
   const auto status = f.command(first, "!status");
-  assert(status.find("bot=ready") != std::string::npos &&
-         status.find("roles selected/ready=0/0") != std::string::npos &&
-         status.find("WiFi=unavailable") != std::string::npos);
+  assert(status.find("Bot ready") != std::string::npos &&
+         status.find("no roles selected") != std::string::npos &&
+         status.find("WiFi unavailable") != std::string::npos);
   assert(f.command(first, "!about") ==
-         "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
+         "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins shows loaded commands");
   const auto version = f.command(first, "!version");
-  assert(version.find("Version: MeshCore d92964352441; Lua 5.5.1; built ") == 0 &&
+  BotNodeSnapshot snapshot; f.bot.nodeSnapshot(snapshot);
+  assert(version.find(std::string("Version: MeshCore ") + snapshot.nativeRevision + "; Lua 5.5.1; built ") == 0 &&
          version.find("image hash unavailable") == std::string::npos);
   assert(f.command(first, "!uptime").find("Uptime:") == 0);
   RadioDashboard::RoleStatus botStatus; f.bot.dashboardStatus(botStatus);
@@ -5415,8 +5435,15 @@ static int botHostRunner(int argc, char **argv) {
 
 #ifdef ONCHIP_BOT_RUNTIME_TEST
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--selection-identity-test")) {
+    selection_identity();
+    puts("PASS disabled bot keeps fixture allocations and identities; selection/restart/failure recovery");
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--diagnostics-test")) {
     native_diagnostics();
+    command_mesh_experience();
+    commands_and_packets();
     return 0;
   }
 #ifdef MESH_PACKET_ENGINE_API
@@ -5657,8 +5684,15 @@ int main(int argc, char **argv) {
 }
 #else
 int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "--selection-identity-test")) {
+    selection_identity();
+    puts("PASS disabled bot keeps fixture allocations and identities; selection/restart/failure recovery");
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--diagnostics-test")) {
     native_diagnostics();
+    command_mesh_experience();
+    commands_and_packets();
     return 0;
   }
 #ifdef MESH_PACKET_ENGINE_API

@@ -175,9 +175,8 @@ bool formatBotPath(const BotPath &path, char *output, size_t capacity) {
   return true;
 }
 
-namespace {
 bool formatDisplayPath(const BotPath &path, char *output, size_t capacity,
-                       const uint8_t *widths = nullptr) {
+                       const uint8_t *widths) {
   if (!path.valid()) return false;
   if (!path.count) {
     constexpr char empty[] = "no repeaters";
@@ -197,6 +196,39 @@ bool formatDisplayPath(const BotPath &path, char *output, size_t capacity,
   }
   return true;
 }
+bool formatBotTrace(const BotTraceInfo &trace, char *output, size_t capacity,
+                    size_t replyLimit, bool &truncated) {
+  if (!capacity || trace.count > BotTraceHopLimit) return false;
+  const size_t limit = std::min(capacity - 1, replyLimit);
+  const int header = snprintf(output, capacity, "Trace %u hops; SNR dB:", unsigned(trace.count));
+  if (header < 1 || size_t(header) > limit) return false;
+  const auto measurement = [&](unsigned i, char (&text)[16]) {
+    snprintf(text, sizeof(text), "%.2f", double(trace.snr[i]) / 4);
+    size_t size = strlen(text);
+    while (size && text[size - 1] == '0') text[--size] = 0;
+    if (size && text[size - 1] == '.') text[--size] = 0;
+    return size;
+  };
+  size_t required = size_t(header);
+  for (unsigned i = 0; i < trace.count; ++i) {
+    char text[16]; required += 1 + measurement(i, text);
+  }
+  truncated = required > limit;
+  constexpr char suffix[] = "; truncated";
+  const size_t reserve = truncated ? sizeof(suffix) - 1 : 0;
+  if (size_t(header) + reserve > limit) return false;
+  size_t used = size_t(header);
+  for (unsigned i = 0; i < trace.count; ++i) {
+    char text[16]; const size_t size = measurement(i, text);
+    if (used + 1 + size + reserve > limit) break;
+    output[used++] = i ? ',' : ' ';
+    memcpy(output + used, text, size); used += size;
+  }
+  if (truncated) { memcpy(output + used, suffix, reserve); used += reserve; }
+  output[used] = 0;
+  return true;
+}
+namespace {
 bool formatObservedPaths(const BotEvent &event, char *output, size_t capacity) {
   if (!capacity) return false;
   const int limit = int(std::min(capacity - 1, size_t(event.replyLimit)));
@@ -388,25 +420,25 @@ local private="Error: personal notes require an authenticated private DM"
 function remember(key,text)
   if not personal() then return private end
   local ok,state=kv.put(key,text)
-  return "Note "..key.." "..state.."; committed"
+  return "Saved note "..key
 end
 function recall(key)
   if not personal() then return private end
   local value,safe=kv.get(key)
   if not value then return "No note: "..key end
-  if not safe then return "Error: note empty, non-ASCII or exceeds RF capacity; ask owner to inspect data" end
+  if not safe then return "Error: note contains unsupported text or exceeds the reply size" end
   return value
 end
 function forget(key)
   if not personal() then return private end
   local ok,state=kv.delete(key)
   if state=="absent" then return "No note: "..key end
-  return "Note "..key.." deleted; committed"
+  return "Deleted note "..key
 end
 function notes(prefix)
   if not personal() then return private end
   local r=kv.list(prefix)
-  if not r.rf_safe then return "Error: non-ASCII note keys; ask owner to inspect stored data" end
+  if not r.rf_safe then return "Error: note names contain unsupported text" end
   if r.count==0 then return "No notes" end
   local out="Notes ("..tostring(r.count).."):"
   local more="; truncated; narrow prefix"
@@ -422,17 +454,17 @@ function notes(prefix)
   return out
 end
 command("ping","","Reply Pong")
-command("test","","Heard path and measured RSSI/SNR; local marked")
-command("path","","Received flood path; direct path may be unknown")
+command("test","","Received route, SNR and RSSI")
+command("path","","Repeater hops in the received flood path")
 command("mt","seconds?:int:1:30","Observe unique paths; default 5s","mt","public","!mt 5")
-command("trace","route?:string:154","TRACE width:hex or heard route")
-command("remind","duration:string:10,text:text:120","DM; grant, trusted time and direct route")
-command("reminders","","Personal IDs/states/deadlines; sent is TX only")
-command("cancel","id:string:10","Cancel personal ID; unknown is uncertain TX")
-command("remember","key:string:32,text:text:120","Private note; overwrites key")
-command("recall","key:string:32","Read private key")
-command("forget","key:string:32","Delete private key")
-command("notes","prefix?:string:32","Private keys; narrow prefix if truncated")
+command("trace","route?:string:154","Send TRACE along width:hex or the received route")
+command("remind","duration:string:10,text:text:120","Private reminder; needs trusted time and a route")
+command("reminders","","List your reminders; sent means radio transmission")
+command("cancel","id:string:10","Cancel a reminder by ID; uncertain transmissions stay unknown")
+command("remember","key:string:32,text:text:120","Save a private note by key; replaces an existing note")
+command("recall","key:string:32","Read a private note by key")
+command("forget","key:string:32","Delete a private note by key")
+command("notes","prefix?:string:32","List your notes; use PREFIX to shorten the list")
 command("list-memories","prefix?:string:32","Alias of notes","notes")
 )lua";
 static_assert(sizeof(BotDefaultSource) - 1 <= BotSourceLimit, "Bundled source exceeds staging capacity");
@@ -468,8 +500,8 @@ function service(name,args)
   end
   return "Error: service supports health, echo or weather only"
 end
-command("weather","place?:text:80","Configured home weather; DM/grant; place required","weather","home","!weather Calgary")
-command("service","name:string:7,args?:text:120","DM/grant; health, echo TEXT or weather PLACE","service","home","!service health")
+command("weather","place?:text:80","Weather for PLACE from the configured home service","weather","home","!weather Calgary")
+command("service","name:string:7,args?:text:120","Home service: health, echo TEXT or weather PLACE","service","home","!service health")
 )lua";
 static_assert(sizeof(BotNetworkSource) <= 2048, "Keep compiled RPC commands independently bounded");
 const char BotBoardSource[] = R"lua(
@@ -482,13 +514,13 @@ function board(action,key,value)
     if value then return "Error: use !board list [prefix]" end
     local prefix=key or ""
     local r=kv.list("board:"..prefix,"channel")
-    if not r.rf_safe then return "Error: non-ASCII board keys; ask owner to inspect stored data" end
+    if not r.rf_safe then return "Error: board entry names contain unsupported text" end
     if r.count==0 then return "No board entries" end
     local out="Board ("..tostring(r.count).."):"
     local more="; truncated; narrow prefix"
     local size=#out
     for i=1,r.count do
-      if #prefix+#r.suffixes[i]==0 then return "Error: empty board key; ask owner to inspect stored data" end
+      if #prefix+#r.suffixes[i]==0 then return "Error: board entry has an empty name" end
       size=size+#prefix+#r.suffixes[i]+3
     end
     local reserve=0
@@ -508,20 +540,20 @@ function board(action,key,value)
   if action=="put" then
     if not value or #value==0 or #value>120 then return "Error: board put requires 1..120 text bytes" end
     local ok,state=kv.put(stored,value,"channel")
-    return "Board "..key.." "..state.."; committed"
+    return "Saved board entry "..key
   end
   if value then return "Error: board get/delete take only a key" end
   if action=="get" then
     local text,safe=kv.get(stored,"channel")
     if not text then return "No board entry: "..key end
-    if not safe then return "Error: board value empty, non-ASCII or exceeds RF capacity; ask owner to inspect data" end
+    if not safe then return "Error: board entry contains unsupported text or exceeds the reply size" end
     return text
   end
   local ok,state=kv.delete(stored,"channel")
   if state=="absent" then return "No board entry: "..key end
-  return "Board "..key.." deleted; committed"
+  return "Deleted board entry "..key
 end
-command("board","action:string:6,key?:string:26,text?:text:120","Target/grant: put KEY TEXT|get KEY|list [PREFIX]|delete KEY","board","shared","!@BOTKEY8 board put plan lunch")
+command("board","action:string:6,key?:string:26,text?:text:120","Channel board: put KEY TEXT, get KEY, list [PREFIX], delete KEY","board","shared","!@BOTKEY8 board put plan lunch")
 )lua";
 static_assert(sizeof(BotBoardSource) <= 3072, "Keep compiled board commands independently bounded");
 const char BotDiagnosticSource[] = R"lua(
@@ -538,12 +570,12 @@ function admin(text) return node.admin(text or "bot help") end
 command("about","","Bot introduction and command help")
 command("version","","MeshCore/Lua versions and build date")
 command("uptime","","Elapsed time since boot")
-command("status","","Bot readiness, roles and WiFi snapshot")
-command("signal","","Request RSSI/SNR/path; local reflection marked")
-command("air","page?:int:1:4","Scheduler airtime, queues and TX counters","air","public","!air 2")
-command("help","name?:string:24,page?:int:1:40","Commands/arguments; !help PAGE or NAME [PAGE]","help","public","!help remember")
-command("plugins","page?:int:1:4","Active source/manifest/modules; shared Lua namespace","plugins","public","!plugins 2")
-command("neighbors","page?:int:1:16","Contacts from signed adverts and cached routes","neighbors","public","!neighbors 2")
+command("status","","Bot readiness, radio roles and WiFi")
+command("signal","","Received signal strength and repeater hops")
+command("air","page?:int:1:4","Radio airtime, queues and transmission counters","air","public","!air 2")
+command("help","name?:string:24,page?:int:1:40","List commands or show usage; !help NAME [PAGE]","help","public","!help remember")
+command("plugins","page?:int:1:4","Loaded commands, Lua modules and scheduled events","plugins","public","!plugins 2")
+command("neighbors","page?:int:1:16","Heard adverts, signal strength and cached routes","neighbors","public","!neighbors 2")
 command("find-path","prefix:string:64","Fresh route; waits up to 30s, probes 10s","find_path","public","!find-path d2")
 command("admin","text?:text:155","Trusted-owner DM: bot status/help/cancel","admin","owner","!admin bot status")
 )lua"
@@ -567,12 +599,19 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
   const auto &a = e.air;
   int size = 0;
   if (!strcmp(name, "path")) {
-    if (!formatBotPath(e.path, output, capacity)) {
+    if (!e.path.valid()) {
       size = snprintf(output, capacity, "Error: received direct/local packet has no complete flood path");
       return size > 0 && size < int(capacity) && size <= e.replyLimit;
     }
-    return strlen(output) <= e.replyLimit ||
-           error("Path exceeds reply capacity; use a private DM");
+    auto path = e.path;
+    const size_t available = std::min(capacity, size_t(e.replyLimit) + 1);
+    size_t reserve = 0;
+    while (!formatDisplayPath(path, output, available > reserve ? available - reserve : 0)) {
+      if (path.count <= 1) return error("Path exceeds the reply size");
+      --path.count; reserve = 3;
+    }
+    if (reserve) strcat(output, "...");
+    return true;
   }
   if (!strcmp(name, "signal") || !strcmp(name, "test")) {
     const bool test = !strcmp(name, "test");
@@ -580,7 +619,7 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
     if (e.local) strcpy(signal, "local reflection; RF unmeasured");
     else if (!e.signal) strcpy(signal, "RF measurement unavailable");
     else snprintf(signal, sizeof(signal), "SNR %.6g dB; RSSI %.6g dBm", double(e.snr), double(e.rssi));
-    if (!(test ? formatBotPath(e.path, path, sizeof(path)) : formatDisplayPath(e.path, path, sizeof(path))))
+    if (!formatDisplayPath(e.path, path, sizeof(path)))
       strcpy(path, "unknown (direct)");
     size = snprintf(output, capacity, "%s: %s; path %s", test ? "Connected" : "Signal", signal, path);
     if (size >= int(capacity) || size > e.replyLimit)
@@ -602,7 +641,7 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
       size = snprintf(output, capacity, "Airtime: gen=%u cfg=%u; 60s limit=%u ms; counters wrap/reset",
                       unsigned(a.generation), unsigned(a.configurationGeneration), unsigned(a.limitMs));
   } else if (!strcmp(name, "about")) {
-    size = snprintf(output, capacity, "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins lists installed programs");
+    size = snprintf(output, capacity, "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins shows loaded commands");
   } else if (!strcmp(name, "version")) {
     if (!n.available || !n.nativeRevision[0] || !n.build[0])
       size = snprintf(output, capacity, "Error: build metadata unavailable");
@@ -619,11 +658,27 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
   } else if (!strcmp(name, "status")) {
     if (!n.available) size = snprintf(output, capacity, "Error: node snapshot unavailable");
     else {
-      char roles[40] = "unavailable";
-      if (n.rolesKnown) snprintf(roles, sizeof(roles), "%u/%u (R1 room2 C4 O8)", n.selectedRoles, n.readyRoles);
-      size = snprintf(output, capacity, "Status: bot=%s fault=%s WiFi=%s; roles selected/ready=%s",
-                      !n.enabled ? "off" : n.ready ? "ready" : "not-ready", n.fault ? "yes" : "no",
+      char roles[40] = "roles unavailable", waiting[40]{};
+      if (n.rolesKnown) {
+        unsigned selected = 0, ready = 0;
+        const char *names[] = {"repeater", "room", "companion", "observer"};
+        for (unsigned i = 0; i < 4; ++i) if (n.selectedRoles & (1u << i)) {
+          ++selected;
+          if (n.readyRoles & (1u << i)) ++ready;
+          else {
+            if (waiting[0]) strcat(waiting, ",");
+            strcat(waiting, names[i]);
+          }
+        }
+        if (selected) snprintf(roles, sizeof(roles), "roles %u/%u ready", ready, selected);
+        else strcpy(roles, "no roles selected");
+      }
+      size = snprintf(output, capacity, "Bot %s%s; WiFi %s; %s",
+                      !n.enabled ? "off" : n.ready ? "ready" : "not ready", n.fault ? "; fault" : "",
                       !n.wifiKnown ? "unavailable" : n.wifiConnected ? "connected" : "disconnected", roles);
+      if (waiting[0] && size > 0 && size_t(size) + 10 + strlen(waiting) < capacity &&
+          size_t(size) + 10 + strlen(waiting) <= e.replyLimit)
+        size += snprintf(output + size, capacity - size, "; waiting %s", waiting);
     }
   } else return error("Unsupported diagnostic name");
   if (size < 1 || size >= int(capacity) || size > e.replyLimit)

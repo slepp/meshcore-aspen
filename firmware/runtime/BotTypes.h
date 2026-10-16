@@ -301,6 +301,10 @@ struct BotVmLimits {
 bool parseBotCommand(const char *text, size_t size, BotEvent &event,
                      char *error, size_t errorSize);
 bool formatBotPath(const BotPath &path, char *output, size_t capacity);
+bool formatDisplayPath(const BotPath &path, char *output, size_t capacity,
+                       const uint8_t *widths = nullptr);
+bool formatBotTrace(const BotTraceInfo &trace, char *output, size_t capacity,
+                    size_t replyLimit, bool &truncated);
 bool formatBotDiagnostic(const BotEvent &event, const char *name, unsigned page,
                          const char *luaVersion, char *output, size_t capacity);
 extern const char BotDefaultSource[];

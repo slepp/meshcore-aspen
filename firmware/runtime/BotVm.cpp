@@ -2172,7 +2172,13 @@ int trace(lua_State *s) {
 }
 int commandHelp(lua_State *s) {
   auto &call = context(s);
-  const char *name = lua_isnoneornil(s, 1) ? "" : luaL_checkstring(s, 1);
+  const char *input = lua_isnoneornil(s, 1) ? "" : luaL_checkstring(s, 1);
+  if (*input == '!') ++input;
+  if (strlen(input) > onchip::BotNameLimit) return luaL_error(s, "Command name exceeds 24 bytes");
+  char folded[onchip::BotNameLimit + 1];
+  strcpy(folded, input);
+  for (char *p = folded; *p; ++p) *p = char(tolower(static_cast<unsigned char>(*p)));
+  const char *name = folded;
   char output[onchip::BotReplyLimit + 1]{};
   const size_t limit = call.event ? call.event->replyLimit : onchip::BotReplyLimit;
   unsigned page = 1;
@@ -2198,20 +2204,58 @@ int commandHelp(lua_State *s) {
     auto *entry = call.manifest->find(name);
     if (!entry && call.installed) entry = call.installed->find(name);
     if (!entry) snprintf(output, sizeof(output), "Error: unknown command !%s", name);
-    else if (!available(*entry))
-      snprintf(output, sizeof(output), "Error: !%s unavailable here; requires its native scope/grant", entry->name);
+    else if (!available(*entry)) {
+      const char *condition = "Unavailable in this conversation";
+      switch (onchip::botCommandPermission(*entry)) {
+      case onchip::BotCommand::Private: condition = "Use a private DM"; break;
+      case onchip::BotCommand::Owner: condition = "Owner-only private DM"; break;
+      case onchip::BotCommand::Channel: condition = "Use a joined channel"; break;
+      case onchip::BotCommand::Shared: condition = "Requires an enabled channel board"; break;
+      case onchip::BotCommand::Reminder: condition = "Requires private DM and enabled reminders"; break;
+      case onchip::BotCommand::Home: condition = "Requires private DM and enabled home service"; break;
+      case onchip::BotCommand::Public: break;
+      }
+      snprintf(output, sizeof(output), "!%s: %s", entry->name, condition);
+    }
     else {
+      char usage[128];
+      size_t used = snprintf(usage, sizeof(usage), "!%s", entry->name);
+      for (const char *parameter = entry->schema; *parameter;) {
+        const char *colon = strchr(parameter, ':');
+        const char *next = strchr(parameter, ',');
+        if (!colon || (next && colon > next)) break;
+        const bool optional = colon > parameter && colon[-1] == '?';
+        usage[used++] = ' ';
+        if (optional) usage[used++] = '[';
+        for (const char *p = parameter; p < colon - (optional ? 1 : 0); ++p)
+          usage[used++] = char(toupper(static_cast<unsigned char>(*p)));
+        if (optional) usage[used++] = ']';
+        parameter = next ? next + 1 : parameter + strlen(parameter);
+      }
+      usage[used] = 0;
       char detail[320];
-      snprintf(detail, sizeof(detail), "!%s %s: %s%s%s", entry->name, entry->schema, entry->help,
+      snprintf(detail, sizeof(detail), "%s: %s%s%s", usage, entry->help,
                entry->example[0] ? "; e.g. " : "", entry->example);
       const size_t size = strlen(detail);
       if (limit <= 50) return luaL_error(s, "Help exceeds RF capacity");
       const size_t chunk = size <= limit ? limit : limit - 50;
-      const unsigned pages = unsigned((size + chunk - 1) / chunk);
+      unsigned starts[40]{}, lengths[40]{}, pages = 0;
+      for (size_t offset = 0; offset < size;) {
+        if (pages == 40) return luaL_error(s, "Command help exceeds 40 pages");
+        size_t end = std::min(size, offset + chunk);
+        if (end < size) {
+          while (end > offset && detail[end] != ' ') --end;
+          if (end == offset) end = std::min(size, offset + chunk);
+        }
+        starts[pages] = unsigned(offset); lengths[pages++] = unsigned(end - offset);
+        offset = end;
+        while (detail[offset] == ' ') ++offset;
+      }
       if (page > pages) return luaL_error(s, "Command help has %d pages", int(pages));
       if (pages == 1) strcpy(output, detail);
       else {
-        snprintf(output, sizeof(output), "Help %u/%u: %.*s", page, pages, int(chunk), detail + (page - 1) * chunk);
+        snprintf(output, sizeof(output), "Help %u/%u: %.*s", page, pages,
+                 int(lengths[page - 1]), detail + starts[page - 1]);
         if (page < pages) {
           char next[40]; snprintf(next, sizeof(next), "; !help %s %u", entry->name, page + 1); strcat(output, next);
         }
@@ -2251,8 +2295,7 @@ int commandHelp(lua_State *s) {
     strcat(output, suffix);
   }
   if (strlen(output) > limit) {
-    if (limit < 3) return luaL_error(s, "Help exceeds RF capacity");
-    strcpy(output + limit - 3, "...");
+    return luaL_error(s, "Help exceeds the reply size");
   }
   lua_pushstring(s, output);
   return 1;
@@ -2265,11 +2308,17 @@ int pluginInfo(lua_State *s) {
   const unsigned pages = 1 + (manifest.moduleCount + 2) / 3;
   if (page < 1 || page > pages) return luaL_error(s, "Plugins has %d pages", int(pages));
   char output[onchip::BotReplyLimit + 1]{};
-  if (page == 1)
-    snprintf(output, sizeof(output), "Bundled %u commands; active g%u %s %u commands, %u modules, events=%u%s",
-             onchip::BotBuiltinCommandLimit, call.event->node.sourceGeneration,
-             manifest.isBundled() ? "bundled" : "custom", manifest.count, manifest.moduleCount,
-             manifest.eventMask, pages > 1 ? "; !plugins 2" : "; shared Lua namespace");
+  if (page == 1) {
+    snprintf(output, sizeof(output), "Commands: %u bundled", onchip::BotBuiltinCommandLimit);
+    if (!manifest.isBundled()) {
+      char installed[32]; snprintf(installed, sizeof(installed), "; %u installed", manifest.count);
+      strcat(output, installed);
+    }
+    char details[64];
+    snprintf(details, sizeof(details), "; Lua modules %u; events %s%s", manifest.moduleCount,
+             manifest.eventMask ? "on" : "off", pages > 1 ? "; !plugins 2" : "");
+    strcat(output, details);
+  }
   else {
     snprintf(output, sizeof(output), "Modules %u/%u:", unsigned(page), pages);
     for (unsigned i = unsigned(page - 2) * 3; i < manifest.moduleCount && i < unsigned(page - 1) * 3; ++i) {

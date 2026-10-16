@@ -787,6 +787,7 @@ $('wasm-file').onchange=()=>action('Reading Wasm binary file',async()=>{
       throw Error('Selected file does not declare the supported Wasm runtime/API.');
     offset=end+1;
   }
+  // copy-check: allow contrast -- Identifies which file format can be installed by this control.
   if(!magic.every((b,n)=>bytes[offset+n]===b)) throw Error('Expected portable Wasm version 1, not Lua source or AOT.');
   wasmBytes=bytes;
   $('wasm-info').textContent=file.name+' · '+bytes.length+' binary bytes · SHA256 '+sha256(bytes)+' · not installed';

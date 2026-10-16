@@ -203,12 +203,12 @@ of upload time. Zero/untrusted RF timestamps have no age or heard-state value.
 Repeated uploads of a quiet ring do not reset its RF age. The one-hour state
 timeline reports whether the exported observation is within an hour; an
 expired report or untrusted clock remains unknown. Historical signal graphs
-show exported ring snapshots, not every individual packet.
+show the ring statistics captured in each report.
 
 ## Panel-to-metric map
 
 VictoriaMetrics' default Influx mapping is `measurement_field`. Braces below
-denote field alternatives, not literal metric names.
+denote field alternatives.
 
 | Dashboard section | Metric names / query semantics | Labels used |
 | --- | --- | --- |
@@ -219,10 +219,10 @@ denote field alternatives, not literal metric names.
 | Lua | `meshcore_lua_jobs_in_use`: gauge; `meshcore_lua_{vm_failures,rejected,busy,sender_limited,channel_limited,global_limited,airtime_limited,events_queued,events_completed,events_failed,events_dropped,replies}_total`: rates; `meshcore_lua_last_vm_{seconds,load_seconds,init_seconds,invoke_seconds,cleanup_seconds,instructions,peak_bytes,free_internal_bytes,free_psram_bytes,stack_free_bytes}`: latest-operation gauges. | `device` (no plugin/bot label) |
 | Companion bot | `meshcore_bot_{connected,radio_offline,reconnecting,uptime_seconds,command_queue,capture_queue,capture_queue_capacity,collection_duration_seconds,collection_last_success_timestamp_seconds}`: gauges; `meshcore_bot_{collection_failures,status_skips,edge_counter_evictions}_total`: rates. | `mesh`, `site` |
 | Delivery | `meshcore_exporter_{failures,dropped_lines}_total`: rates; `meshcore_exporter_{queue_bytes,oldest_age_seconds,last_success_timestamp_seconds,last_request_duration_seconds}`: gauges. Zero success timestamps are suppressed in age graphs. | `mesh`, `site` |
-| RF work | `meshcore_radio_work_{queue_depth,running,oldest_queued_seconds,running_seconds}`: gauges; `meshcore_radio_work_{completed,failed,cancelled}_total`: rates, not packet outcomes. | `mesh`, `site`, `work_class` |
+| RF work | `meshcore_radio_work_{queue_depth,running,oldest_queued_seconds,running_seconds}`: gauges; `meshcore_radio_work_{completed,failed,cancelled}_total`: completed, failed and cancelled jobs per second. | `mesh`, `site`, `work_class` |
 | Passive RF/commands | `meshcore_packets_total / meshcore_packets_window_seconds`; `meshcore_packets_window`: category counts; `meshcore_packets_{snr_db,rssi_dbm}_{min,mean,max}` gated by matching `_samples`; `meshcore_command_{requests,replies,without_reply}`: window gauges. | `mesh`, `site`, `route_type`, `payload_type`, `command`, `kind` |
 | Sources/storage/populations | `meshcore_source_ok`, `meshcore_storage_{database,wal}_bytes`, `meshcore_nodes_heard_nodes`, `meshcore_graph_{edges,edges_exported}`, `meshcore_paths_nodes`, `meshcore_neighbours_links`: gauges. | `mesh`, `site`, `source`, `window` |
-| Returned node status | `meshcore_node_{uptime,bat,tx_queue_len}`: gauges (`bat / 1000` yields volts); `meshcore_node_{nb_recv,nb_sent,recv_errors,direct_dups,flood_dups,airtime,rx_airtime}`: **unsuffixed monotonic counters**, rates. | `mesh`, `site`, `node`; `role` retained in legends |
+| Returned node status | `meshcore_node_{uptime,bat,tx_queue_len}`: gauges (`bat / 1000` yields volts); `meshcore_node_{nb_recv,nb_sent,recv_errors,direct_dups,flood_dups,airtime,rx_airtime}`: **unsuffixed monotonic counters**, rates. | `mesh`, `site`, `node`; `role` appears in legends |
 | Poll/probe | `meshcore_poll_ok`, `meshcore_probe_ok`: outcome gauges; `meshcore_link_snr`: directed link gauge. | Poll `node`, `kind`; probe/link `route`; links `src`, `dst`; all have `mesh`, `site` |
 
 ### On-device remote-repeater dashboard
@@ -245,7 +245,7 @@ limited to the configured interval, normally 300 seconds per remote repeater.
 
 These are the native 56-byte status fields returned by the configured
 MeshCore 1.18.0 repeaters. Their last RSSI/SNR describe the remote radio's last
-received packet, not the monitor-to-repeater link. Additional sensors,
+received packet, not the monitor-to-repeater link. Additional sensors, <!-- copy-check: allow contrast -- Prevents interpreting a remote receiver measurement as this polling link's signal. -->
 neighbour discovery and firmware-version discovery are not requested.
 Future firmware-specific fields need an explicit target capability contract.
 
@@ -279,18 +279,18 @@ The external Python emitter also supplies these families/fields:
 
 | Measurement | Other fields and interpretation |
 | --- | --- |
-| `meshcore_bot` | `consecutive_send_failures` gauge; `probe_skips_total` counter (retained at zero with queued probes). |
+| `meshcore_bot` | `consecutive_send_failures` gauge; `probe_skips_total` counter (stays at zero with queued probes). |
 | `meshcore_exporter` | `attempts_total`, `sent_lines_total` counters; `queue_batches`, `last_http_status` gauges. |
 | `meshcore_radio_work` | `wait_seconds_total`, `run_seconds_total`: cumulative job duration counters. |
 | `meshcore_packets` | `with_hash`, `unique_hashes`, `repeat_observations`, `wire_bytes`, `wire_byte_samples`, `malformed_records`, signal `_samples`, `window_seconds`: trailing-window gauges. Wire bytes exclude radio framing. |
 | `meshcore_packet_prefix`, `meshcore_packet_hops` | `window` gauges with `bytes_per_hop` or `hops` buckets, including unknown. |
 | `meshcore_messages` | `messages`, `senders`, `snr_samples`, `snr_db_mean`, `rssi_samples`, `rssi_dbm_mean`, `hop_samples`, `hops_mean`, `hops_max`, `window_seconds`: window gauges, `kind=dm/channel`. |
 | `meshcore_commands` | `requests`, `replies`, `window_seconds`: aggregate command-window gauges. |
-| `meshcore_paths`, `meshcore_path` | Aggregate `nodes`, `nodes_exported`, `window_seconds`; per-`pubkey` `variants`, `new_variants`, `max_hops`, `age_seconds`: gauges, not route-change counters. |
+| `meshcore_paths`, `meshcore_path` | Aggregate `nodes`, `nodes_exported`, `window_seconds`; per-`pubkey` `variants`, `new_variants`, `max_hops`, `age_seconds`: gauges of the current path summary. |
 | `meshcore_neighbours`, `meshcore_neighbour` | Aggregate `links_exported`; per-`src/dst` `age_seconds`, `observations`, `snr_db_last`, `snr_db_best`, `snr_db_mean`: cached/lifetime-row gauges. Reading them starts no discovery. |
 | `meshcore_edge`, `meshcore_edge_observed` | `graph_observations`, `age_seconds`, `hop_position`: stored-summary gauges. Only `meshcore_edge_observed_total` is an accepted-observation-hook counter. `src_kind/dst_kind` distinguish full keys from unresolved prefixes; never merge by a short prefix. |
-| `meshcore_heard` | `adverts`, `hops`, `age_seconds`: retained-contact gauges with `node`, `pubkey`, `role`. Contact adverts are not a rateable counter contract. |
-| `meshcore_node` | `sent_flood`, `sent_direct`, `recv_flood`, `recv_direct`, `full_evts`: monotonic status counters; `noise_floor`, `last_rssi`, `last_snr`: gauges. Self stats can include additional numeric firmware-returned fields, not a fixed sensor schema. |
+| `meshcore_heard` | `adverts`, `hops`, `age_seconds`: cached-contact gauges with `node`, `pubkey`, `role`. Read their values directly. |
+| `meshcore_node` | `sent_flood`, `sent_direct`, `recv_flood`, `recv_direct`, `full_evts`: monotonic status counters; `noise_floor`, `last_rssi`, `last_snr`: gauges. Additional numeric self-stat fields vary with the device firmware. |
 | `meshcore_poll`, `meshcore_probe` | `duration_seconds`, probe `hops`, local-poll `airtime_cost` (zero), unresolved-contact `reason_not_found` (one): gauges. The dashboard does not infer remote-poll airtime cost. |
 | `meshcore_repeater_neighbours`, `meshcore_repeater_neighbour` | `count`, `returned`; per-`repeater/neighbour` `snr`, `age_seconds`: returned neighbour-table gauges. Optional RF job. |
 | `meshcore_telemetry` | Optional LPP `value` gauge with `node`, `pubkey`, `channel`, `sensor`. Sensor names/units come from returned LPP; no unitless mixed-sensor panel is provided. |

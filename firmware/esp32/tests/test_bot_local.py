@@ -191,9 +191,9 @@ class LocalLuaTests(unittest.TestCase):
                     "@source remove", "@pump 800", "@restart", "!ping", "!recall camp", "!about",
                 ],
                 "expect": [
-                    {"type": "reply", "text_contains": "Mesh command bot. !help"},
+                    {"type": "reply", "text_contains": "Mesh command bot; !help"},
                     {"type": "reply", "text": "Pong from the regional bot"},
-                    {"type": "reply", "text": "Note camp created; committed"},
+                    {"type": "reply", "text": "Saved note camp"},
                     {"type": "reply", "text": "tea"},
                     {"type": "reply", "text": "No note: camp"},
                     {"type": "restart", "source": "journal"},
@@ -215,7 +215,7 @@ class LocalLuaTests(unittest.TestCase):
                     {"type": "restart", "source": "bundled"},
                     {"type": "reply", "text": "Pong"},
                     {"type": "reply", "text": "tea"},
-                    {"type": "reply", "text_contains": "Mesh command bot. !help"},
+                    {"type": "reply", "text_contains": "Mesh command bot; !help"},
                 ],
             }))
             result = self.local(EXAMPLES / "overrides.lua", scenario)
@@ -307,7 +307,7 @@ class LocalLuaTests(unittest.TestCase):
         self.assertTrue(replies["!roll 0d6"].startswith("Error:"))
         self.assertTrue(replies["!choose tea|coffee"].startswith("Choice "))
         self.assertTrue(replies["!choose tea||coffee"].startswith("Error:"))
-        self.assertEqual(replies["!remember plan dinner"], "Note plan replaced; committed")
+        self.assertEqual(replies["!remember plan dinner"], "Saved note plan")
         self.assertEqual(replies["!recall plan"], "dinner")
         self.assertEqual(replies["!notes pl"], replies["!list-memories pl"])
         self.assertEqual(replies["!forget plan"], "No note: plan")

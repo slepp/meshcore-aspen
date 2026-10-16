@@ -133,7 +133,7 @@ const char *commandErrorMessage(const char *error) {
     }
   }
   if (!strcmp(error, "Native TRACE timed out"))
-    return "TRACE timed out; no reply received. Check the route and try again.";
+    return "TRACE timed out; no reply received";
   return error;
 }
 }
@@ -745,23 +745,23 @@ struct CommandBot::Core : mesh::Mesh {
     for (const auto &contact : contacts) if (contact.used && contact.observed) {
       if (++count == page) selected = &contact;
     }
-    if (!count && page == 1) { snprintf(text, capacity, "No observed signed adverts; not a live neighbor scan"); return; }
+    if (!count && page == 1) { snprintf(text, capacity, "No adverts heard"); return; }
     if (!selected) { snprintf(text, capacity, "Error: neighbors has %u pages", count); return; }
     const auto &c = *selected;
-    char key[9], rx[12] = "direct", route[20] = "none", signal[36] = "RF unmeasured";
+    char key[9], rx[16] = "direct", route[20] = "unknown", signal[44] = "RF unmeasured";
     for (unsigned i = 0; i < 4; ++i) snprintf(key + 2 * i, 3, "%02x", c.id.pub_key[i]);
-    if (c.observedWidth) snprintf(rx, sizeof(rx), "%ub/%uh", c.observedWidth, c.observedHops);
+    if (c.observedWidth) snprintf(rx, sizeof(rx), "%u hops", c.observedHops);
     if (c.route.length != 0xff)
-      snprintf(route, sizeof(route), "%ub/%uh", (c.route.length >> 6) + 1, c.route.length & 63);
+      snprintf(route, sizeof(route), "%u hops", c.route.length & 63);
     if (c.local) strcpy(signal, "local reflection");
-    else if (c.measured) snprintf(signal, sizeof(signal), "last-hop %.0fdBm/%.2gdB", double(c.rssi), double(c.snr));
-    char next[32] = "; not live adjacency";
+    else if (c.measured) snprintf(signal, sizeof(signal), "RSSI %.0f dBm; SNR %.2g dB", double(c.rssi), double(c.snr));
+    char next[32]{};
     if (page < count) snprintf(next, sizeof(next), "; !neighbors %u", page + 1);
-    const int size = snprintf(text, capacity, "Seen %u/%u %.20s %s age=%us rx=%s cached=%s; %s%s",
+    const int size = snprintf(text, capacity, "Seen %u/%u %.20s %s; age %us; heard %s; route %s; %s%s",
              page, count, c.name, key, unsigned(millis() - c.observedAt) / 1000,
              rx, route, signal, next);
     if (size >= int(capacity))
-      snprintf(text, capacity, "Observed %u/%u %s age=%us rx=%s cached=%s%s",
+      snprintf(text, capacity, "Seen %u/%u %s; age %us; heard %s; route %s%s",
                page, count, key, unsigned(millis() - c.observedAt) / 1000, rx, route, next);
   }
   bool recoverContacts(const uint8_t *hash) {
@@ -1324,12 +1324,13 @@ struct CommandBot::Core : mesh::Mesh {
     } else {
       const auto &candidate = job.best.candidates[unsigned(selected)];
       const unsigned width = (candidate.route.length >> 6) + 1;
-      const unsigned bytes = (candidate.route.length & 63) * width;
-      char path[2 * MAX_PATH_SIZE + 3]{};
+      BotPath route;
+      route.known = true; route.width = uint8_t(width); route.count = candidate.route.length & 63;
+      memcpy(route.bytes, candidate.route.bytes, route.size());
+      char path[3 * MAX_PATH_SIZE + 1]{};
       char average[20] = "unavailable";
       if (candidate.received) snprintf(average, sizeof(average), "%ums", candidate.elapsed / candidate.received);
-      snprintf(path, sizeof(path), "%u:", width);
-      for (unsigned i = 0; i < bytes; ++i) snprintf(path + 2 + 2 * i, sizeof(path) - 2 - 2 * i, "%02x", candidate.route.bytes[i]);
+      formatDisplayPath(route, path, sizeof(path));
       const int size = snprintf(job.result.value, capacity, "%02x%02x%02x %s %s%s; %s; avg=%s", job.io.principal[0],
           job.io.principal[1], job.io.principal[2], changed ? "selected" : candidate.received ? "kept" : "cached", path,
           complete ? "" : " (incomplete)", detail, average);
@@ -1378,13 +1379,16 @@ struct CommandBot::Core : mesh::Mesh {
     if (!fresh && !cached) {
       snprintf(job.result.value, capacity, "%s %s (10s); no cached route", key, timeout);
     } else {
-      const int used = snprintf(job.result.value, capacity, "%s %s %u:", key,
-                                fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : fallback, unsigned(width));
-      if (used < 0 || size_t(used) + 2 * size >= capacity)
+      BotPath route;
+      route.known = true; route.width = width; route.count = size / width;
+      if (size) memcpy(route.bytes, bytes, size);
+      char path[3 * MAX_PATH_SIZE + 1]{};
+      formatDisplayPath(route, path, sizeof(path));
+      const int used = snprintf(job.result.value, capacity, "%s %s %s", key,
+                               fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : fallback, path);
+      if (used < 0 || size_t(used) >= capacity)
         snprintf(job.result.value, capacity, "%s %s %u hops (%u-byte); route exceeds reply limit", key,
                  fresh ? (job.io.routeType ? "cached route confirmed" : "fresh") : fallback, size / width, unsigned(width));
-      else for (unsigned i = 0; i < size; ++i)
-        snprintf(job.result.value + used + 2 * i, capacity - used - 2 * i, "%02x", bytes[i]);
     }
     // A timeout is a completed probe result, but cancellation still wins.
     finishRadio(job, nullptr, !fresh);
@@ -1497,7 +1501,7 @@ struct CommandBot::Core : mesh::Mesh {
         }
       }
     }
-    if (!count) { finishRadio(job, "Unknown key prefix; receive or share the repeater's signed advert first"); return; }
+    if (!count) { finishRadio(job, "No known repeater matches that key prefix"); return; }
     if (count > 1) {
       snprintf(job.result.value, job.event.replyLimit + 1, "%u matches: %s; use a longer prefix", count, choices);
       finishRadio(job); return;
@@ -1516,7 +1520,9 @@ struct CommandBot::Core : mesh::Mesh {
       knownSession = snapshot.fresh;
       if (snapshot.nextDiscoverySeconds) {
         if (targetContact->route.length == 0xff) {
-          finishRadio(job, "Repeater flood cooldown active and no cached route; inspect bot repeaters timing"); return;
+          char message[96];
+          snprintf(message, sizeof(message), "Discovery available in %us; no cached route", unsigned(snapshot.nextDiscoverySeconds));
+          finishRadio(job, message); return;
         }
         directProbe = true;
       }
@@ -1777,15 +1783,11 @@ struct CommandBot::Core : mesh::Mesh {
     job.result.found = true;
     job.result.queued = true; job.result.transmitted = job.traceTransmitted;
     job.result.radioJob = job.traceJob;
-    size_t used = snprintf(job.result.value, sizeof(job.result.value),
-                           "Trace %u hops; SNR", unsigned(job.traceResult.count));
-    const unsigned shown = std::min(unsigned(job.traceResult.count), 12u);
-    for (unsigned i = 0; i < shown; ++i)
-      used += snprintf(job.result.value + used, sizeof(job.result.value) - used,
-                       " %.2f", double(job.traceResult.snr[i]) / 4);
-    job.result.truncated = shown < job.traceResult.count;
-    if (job.result.truncated) strcat(job.result.value, "; truncated");
     job.traceActive = false;
+    if (!formatBotTrace(job.traceResult, job.result.value, sizeof(job.result.value),
+                        job.event.replyLimit, job.result.truncated)) {
+      finishRadio(job, "TRACE measurements exceed the reply size"); return;
+    }
     finishRadio(job);
   }
   bool forwardAllowed(const Invocation &job) const {
