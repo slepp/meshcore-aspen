@@ -181,6 +181,8 @@ result means a matching response arrived; the remote response itself reports
 whether the command succeeded.
 
 Read-only commands can repair the route and retry once after a missing reply.
+Repair exchanges login and return paths, then sends the command. Its reply
+confirms delivery.
 Queries such as `gps` use `!rcmd`; changes such as `gps on` use `!rcmd-write`.
 A login that confirms insufficient admin access reports that condition directly.
 `bot repeaters config ALIAS` shows the bot's last observed CLI access as

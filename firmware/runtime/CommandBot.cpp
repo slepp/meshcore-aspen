@@ -886,7 +886,7 @@ struct CommandBot::Core : mesh::Mesh {
   bool sendFindPathReturn(Invocation &job) {
     if (job.returnRoute.length == 0xff) return false;
     // Keep the login TX owner until its completion, then send the reciprocal
-    // PATH before confirmation. REQ packets otherwise outrank PATH packets.
+    // PATH before the next request, which otherwise outranks PATH packets.
     if (job.outbound) return true;
     auto *contact = findPathContact(job);
     if (!contact || !owner.worker_.ioCurrent(job.io.token) || !routeSearchCurrent(job) ||
@@ -1472,9 +1472,20 @@ struct CommandBot::Core : mesh::Mesh {
     if (sendFindPathReturn(job)) return;
     const bool best = job.io.kind == BotIoRequest::FindBestPath;
     if (job.io.revision != 1 || job.outbound || (!best && !job.result.transmitted)) return;
-    const auto *session = findPathContact(job);
+    auto *session = findPathContact(job);
     if (job.repeaterCommandRepair && session && session->loginKnown && (session->loginPermissions & 3) != 3) {
       finishRadio(job, "Repeater login did not grant this bot admin access; command was not retried"); return;
+    }
+    if (job.repeaterCommandRepair) {
+      if (!session || !repeaterCommandCurrent(job) || !owner.worker_.ioCurrent(job.io.token) ||
+          int32_t(millis() - job.deadline) >= 0) {
+        finishRadio(job, "Repeater connection repair expired; command was not retried"); return;
+      }
+      session->route.learn(job.io.route, uint8_t((job.io.routeWidth - 1) << 6 |
+                                               (job.io.routeSize / job.io.routeWidth)));
+      learnedPath(*session);
+      // The command reply confirms delivery; CLI repair needs no telemetry probe.
+      finishFindPath(job, true); return;
     }
     if (!owner.worker_.ioCurrent(job.io.token) || int32_t(millis() - job.deadline) >= 0) {
       finishRadio(job, "Route confirmation cancelled or deadline expired; no confirmation sent"); return;

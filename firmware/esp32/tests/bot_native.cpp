@@ -4660,16 +4660,6 @@ static void native_repeater_delivery(const char *sourcePath) {
     memcpy(packet->path, reverse.data(), reverse.size());
     f.deliver(peer.wire(packet)); f.step(600);
   };
-  const auto confirm = [&]() {
-    const auto sent = requests();
-    assert(!sent.empty() && sent.back().type == PAYLOAD_TYPE_REQ);
-    uint8_t secret[32]{}, plain[8]{};
-    peer.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, sent.back().tag);
-    plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; plain[6] = 1; plain[7] = 120;
-    auto *packet = peer.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, sizeof(plain));
-    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
-    f.deliver(peer.wire(packet)); f.step(300);
-  };
   const auto answer = [&](const std::string &text) {
     uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
     peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
@@ -4682,8 +4672,8 @@ static void native_repeater_delivery(const char *sourcePath) {
   ask("!rcmd pilot ver");
   assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
   login(3);
-  assert(count(PAYLOAD_TYPE_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
-  size_t reciprocalAt = 0, confirmationAt = 0;
+  assert(count(PAYLOAD_TYPE_REQ) == 0 && count(PAYLOAD_TYPE_TXT_MSG) == 1);
+  size_t reciprocalAt = 0, commandAt = 0;
   for (size_t i = 0; i < f.radio.sent.size(); ++i) {
     mesh::Packet packet; assert(packet.readFrom(f.radio.sent[i].data(), f.radio.sent[i].size()));
     if (packet.getPayloadType() == PAYLOAD_TYPE_PATH) {
@@ -4694,10 +4684,14 @@ static void native_repeater_delivery(const char *sourcePath) {
       reciprocalAt = i;
       assert(size > 4 && plain[0] == 0x81 && !memcmp(plain + 1, reverse.data(), reverse.size()));
     }
-    if (packet.getPayloadType() == PAYLOAD_TYPE_REQ) confirmationAt = i;
+    if (packet.getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      if (mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2) > 0)
+        commandAt = i;
+    }
   }
-  assert(reciprocalAt && reciprocalAt < confirmationAt);
-  confirm(); assert(count(PAYLOAD_TYPE_TXT_MSG) == 1);
+  assert(reciprocalAt && reciprocalAt < commandAt);
   answer(requests().back().text.substr(0, 3) + "Version"); assert(!f.bot.jobsInUse());
   f.bot.repeaterCommand("config pilot", reply, sizeof(reply)); assert(strstr(reply, "cli=admin"));
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply)); assert(strstr(reply, "route=3:112233"));
@@ -4710,8 +4704,9 @@ static void native_repeater_delivery(const char *sourcePath) {
   const auto original = requests().back(); assert(original.text.substr(3) == "gps");
   timeMs += 16000; f.step(30);
   assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 1);
-  login(3); confirm();
+  login(3);
   assert(count(PAYLOAD_TYPE_TXT_MSG) == 2);
+  assert(count(PAYLOAD_TYPE_REQ) == 0); // A missing telemetry reply cannot prevent the CLI retry.
   const auto retry = requests().back(); assert(retry.tag > original.tag && retry.text.substr(0, 3) != original.text.substr(0, 3));
   answer(original.text.substr(0, 3) + "Late"); assert(f.bot.jobsInUse());
   answer(retry.text.substr(0, 3) + "GPS off"); assert(!f.bot.jobsInUse());
@@ -4728,11 +4723,11 @@ static void native_repeater_delivery(const char *sourcePath) {
   f.bot.repeaterCommand("config pilot", reply, sizeof(reply)); assert(strstr(reply, "cli=read"));
   ask("!rcmd pilot ver"); // Recheck an observed denial after the owner changes ACL.
   assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
-  login(3); confirm(); answer(requests().back().text.substr(0, 3) + "Admin restored");
+  login(3); answer(requests().back().text.substr(0, 3) + "Admin restored");
   assert(!f.bot.jobsInUse());
 
   ask("!rcmd pilot gps diag");
-  timeMs += 16000; f.step(30); login(3); confirm();
+  timeMs += 16000; f.step(30); login(3);
   assert(count(PAYLOAD_TYPE_TXT_MSG) == 2 && count(PAYLOAD_TYPE_ANON_REQ) == 1);
   timeMs += 16000; f.step(300);
   assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 2 && count(PAYLOAD_TYPE_ANON_REQ) == 1);
