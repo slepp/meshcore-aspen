@@ -4,8 +4,8 @@ package buildinfo
 
 const (
 	Profile = "birch"
-	ProductVersion = "0.1.3"
-	HostVersion = "birch-0.1.3"
+	ProductVersion = "0.1.4"
+	HostVersion = "birch-0.1.4"
 	MeshCoreCompanionProtocol = 14
 	MeshCoreReference = "1.18.0"
 	MeshCoreTag = "companion-v1.18.0"
