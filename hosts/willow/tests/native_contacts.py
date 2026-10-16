@@ -133,7 +133,7 @@ class NativeContacts(unittest.TestCase):
         modem = self.start()
         original_worker = self.worker()
         self.send("!remember camp retained-recovery")
-        self.assertIn(b"committed", self.reply())
+        self.assertIn(b"Saved note camp", self.reply())
         self.service.stop_process()
         self.assertFalse((Path("/proc") / str(original_worker)).exists())
         self.service.start_process(native=True)

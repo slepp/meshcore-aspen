@@ -68,8 +68,8 @@ class Reconciliation(Migration):
             modem.send(2, 0, packet(4, parse(advert(2))[4], route=2, width=3))
             time.sleep(.1)
             for offset, text, expected in (
-                    (1, "!remember migration updated native data", b"committed"),
-                    (2, "!remember handover added native note", b"committed")):
+                    (1, "!remember migration updated native data", b"Saved note migration"),
+                    (2, "!remember handover added native note", b"Saved note handover")):
                 modem.send(2, 0, command(5, stamp+offset, text, flags=0))
                 reply = modem.receive(lambda item: item["port"] == 2 and parse(item["raw"])[0] == 2)
                 self.assertIn(expected, body(reply["raw"], 2, 5))

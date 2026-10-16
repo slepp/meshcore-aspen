@@ -197,7 +197,7 @@ class BinaryBundle(unittest.TestCase):
                         return body(reply["raw"], 2, 5).lower()
 
                     self.assertIn(
-                        b"committed", note("!remember bundle retained note", stamp)
+                        b"saved note bundle", note("!remember bundle retained note", stamp)
                     )
                     modem.send(1, 0, login(stamp=stamp + 1))
                     modem.receive(
@@ -250,7 +250,7 @@ class BinaryBundle(unittest.TestCase):
                         self.assertIn(expected, note("!recall bundle", stamp))
                         if target == b:
                             self.assertIn(
-                                b"committed",
+                                b"saved note bundle",
                                 note("!remember bundle latest note", stamp + 1),
                             )
                             modem.send(1, 0, login(stamp=stamp + 2))

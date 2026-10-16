@@ -77,7 +77,7 @@ class Upgrade(unittest.TestCase):
         time.sleep(.1)
         modem.send(2, 0, text(2, 5, stamp, "!remember upgrade latest data"))
         note = modem.receive(lambda item: item["port"] == 2 and parse(item["raw"])[0] == 2)
-        self.assertIn(b"committed", body(note["raw"], 2, 5))
+        self.assertIn(b"Saved note upgrade", body(note["raw"], 2, 5))
         modem.send(1, 0, login(2, 4, stamp + 1))
         modem.receive(lambda item: item["port"] == 1 and parse(item["raw"])[0] == 1)
         post = b"Latest candidate room post"

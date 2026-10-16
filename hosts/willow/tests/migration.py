@@ -73,7 +73,7 @@ class Migration(unittest.TestCase):
             modem.send(2,0,advert(2)); time.sleep(.15)
             modem.send(2,0,text(2,5,1700000800,"!remember migration native data"))
             reply=modem.receive(lambda j:j["port"]==2 and parse(j["raw"])[0]==2)
-            if b"committed" not in body(reply["raw"],2,5): raise AssertionError("fixture note was not committed")
+            if b"Saved note migration" not in body(reply["raw"],2,5): raise AssertionError("fixture note was not saved")
             service.stop_process()
             shutil.copytree(service.root/"native",cls.source/"bot/native")
         cls.before=hashes(inventory(cls.source))
