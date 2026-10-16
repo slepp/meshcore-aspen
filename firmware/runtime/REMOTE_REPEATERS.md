@@ -145,6 +145,8 @@ one on another frequency remains unavailable to fleet commands. CLI requests
 use the same learned routes as monitoring. An unknown route starts a MeshCore
 login and PATH exchange to establish the outbound and return routes.
 
+This source requires Aspen 0.1.18 or a host worker with the read-only retry
+option. `source api repeater-cli` reports `read-retry=1` when it is available.
 Install the source additively:
 
 ```sh
