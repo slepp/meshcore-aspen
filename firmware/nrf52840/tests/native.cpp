@@ -4,9 +4,12 @@
 #include "RuntimeConfig.h"
 #include "NoteStore.h"
 #include "CompanionInterface.h"
+#include "PineEthernetCompanion.h"
+#include <thread>
 #include "CompanionProtocol.h"
 #include "../../esp32/FirmwareIdentity.h"
 #include <helpers/SimpleMeshTables.h>
+#include <helpers/ethernet/SerialEthernetInterface.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/TransportKeyStore.h>
 #include <cassert>
@@ -300,6 +303,35 @@ struct Frames : BaseSerialInterface {
   }
 };
 
+struct EthernetBytes : SerialEthernetInterface {
+  std::deque<uint8_t> incoming;
+  std::vector<uint8_t> outgoing;
+  bool connected = true;
+  nrfmast::PineEthernetCompanion* queued = nullptr;
+  void onClientConnected() override {
+    SerialEthernetInterface::onClientConnected();
+    if (queued) queued->newConnection();
+  }
+  std::atomic<bool> block{false}, entered{false};
+  void loop() override {
+    entered.store(true);
+    while (block.load()) std::this_thread::yield();
+  }
+  bool isConnected() const override { return connected; }
+  int available() override { return incoming.size(); }
+  int read() override {
+    if (incoming.empty()) return -1;
+    const auto byte = incoming.front(); incoming.pop_front(); return byte;
+  }
+  size_t write(const uint8_t* bytes, size_t length) override {
+    outgoing.insert(outgoing.end(), bytes, bytes + length); return length;
+  }
+};
+
+static nrfmast::CompanionInterface* testEthernetSession = nullptr;
+static unsigned testEthernetResets = 0;
+static void resetTestEthernetSession() { ++testEthernetResets; testEthernetSession->resetConnection(); }
+
 static void testCompanion() {
   Clock clock;
   RTC rtc;
@@ -478,6 +510,101 @@ static void testCompanion() {
   mesh::LocalIdentity retained;
   assert(store.load("_main", retained) && retained.matches(relay));
   assert(store.load("_nrfbot", retained) && retained.matches(bot.self_id));
+  // Exercise the real TCP framing adapter with split headers and payloads.
+  EthernetBytes ethernet;
+  ethernet.enable();
+  nrfmast::CompanionInterface tcp(bot, config, ethernet, nullptr);
+  ethernet.incoming = {'<', 2};
+  tcp.loop();
+  assert(ethernet.outgoing.empty());
+  ethernet.incoming = {0, CMD_DEVICE_QUERY};
+  tcp.loop();
+  assert(ethernet.outgoing.empty());
+  ethernet.incoming.push_back(3);
+  tcp.loop();
+  assert(ethernet.outgoing.empty());  // Reply is queued until the next poll.
+  tcp.loop();
+  assert(ethernet.outgoing.size() == 85 && ethernet.outgoing[0] == '>' &&
+         ethernet.outgoing[1] == 82 && ethernet.outgoing[2] == 0 &&
+         ethernet.outgoing[3] == RESP_CODE_DEVICE_INFO);
+  ethernet.outgoing.clear();
+  ethernet.incoming = {'<', 2, 0, CMD_DEVICE_QUERY, 3, '<', 1, 0, CMD_EXPORT_PRIVATE_KEY};
+  for (unsigned poll = 0; poll < 4; ++poll) tcp.loop();
+  assert(ethernet.outgoing.size() == 89 && ethernet.outgoing[85] == '>' &&
+         ethernet.outgoing[86] == 1 && ethernet.outgoing[88] == RESP_CODE_DISABLED);
+  ethernet.incoming = {'<', 2, 0, CMD_DEVICE_QUERY};
+  tcp.loop();
+  ethernet.onClientConnected();  // A new TCP client cannot complete the old partial frame.
+  ethernet.outgoing.clear();
+  ethernet.incoming = {'<', 2, 0, CMD_DEVICE_QUERY, 3};
+  tcp.loop(); tcp.loop();
+  assert(ethernet.outgoing.size() == 85 && ethernet.outgoing[3] == RESP_CODE_DEVICE_INFO);
+  EthernetBytes network;
+  nrfmast::PineEthernetCompanion queued(network);
+  nrfmast::CompanionInterface queuedCompanion(bot, config, queued, nullptr);
+  testEthernetSession = &queuedCompanion;
+  network.queued = &queued;
+  assert(queued.begin(resetTestEthernetSession));
+  queued.enable(); network.enable(); network.onClientConnected();
+  queued.pollNetwork(); queuedCompanion.loop();
+  auto receive = [&](std::vector<uint8_t> payload) {
+    network.incoming.push_back('<'); network.incoming.push_back(payload.size()); network.incoming.push_back(0);
+    for (auto byte : payload) network.incoming.push_back(byte);
+    queued.pollNetwork(); queuedCompanion.loop();
+  };
+  receive({CMD_GET_CONTACTS});  // Leave the old client's reply and iterator pending.
+  network.onClientConnected();
+  const uint8_t staleReply[] = {RESP_CODE_ERR};
+  assert(queued.writeFrame(staleReply, sizeof(staleReply)) == sizeof(staleReply));
+  queued.pollNetwork();  // An old handler finishing after replacement retains its old generation.
+  receive({CMD_DEVICE_QUERY, 3});
+  for (unsigned poll = 0; poll < 4; ++poll) { queued.pollNetwork(); queuedCompanion.loop(); }
+  assert(network.outgoing.size() == 85 && network.outgoing[3] == RESP_CODE_DEVICE_INFO);
+  network.outgoing.clear();
+  std::vector<uint8_t> login(33);
+  login[0] = CMD_SEND_LOGIN; memcpy(login.data() + 1, contact.id.pub_key, PUB_KEY_SIZE);
+  receive(login);
+  queued.pollNetwork(); queued.pollNetwork();
+  assert(network.outgoing.size() >= 4 && network.outgoing[3] == RESP_CODE_SENT);
+  network.outgoing.clear();
+  network.onClientConnected();
+  receive(login);  // The old request cannot leave ERR_BAD_STATE on the new client.
+  queued.pollNetwork(); queued.pollNetwork();
+  assert(network.outgoing.size() >= 4 && network.outgoing[3] == RESP_CODE_SENT);
+  network.outgoing.clear();
+  network.onClientConnected(); queued.pollNetwork(); queuedCompanion.loop();
+  network.entered.store(false); network.block.store(true);
+  std::thread blockedLease([&] { queued.pollNetwork(); });
+  while (!network.entered.load()) std::this_thread::yield();
+  const auto readsBefore = physical.reads;
+  for (unsigned poll = 0; poll < 10; ++poll) { queuedCompanion.loop(); bot.loop(); }
+  assert(physical.reads > readsBefore);  // DHCP/network work cannot block radio/application polling.
+  network.block.store(false); blockedLease.join();
+  network.onClientConnected(); queued.pollNetwork(); queuedCompanion.loop();
+  network.outgoing.clear();
+  for (unsigned frame = 0; frame < 4; ++frame) {
+    network.incoming = {'<', 2, 0, CMD_DEVICE_QUERY, 3};
+    queued.pollNetwork();  // Fill RX without the application consuming it.
+  }
+  const uint8_t reply[] = {RESP_CODE_OK};
+  for (unsigned frame = 0; frame < 4; ++frame) assert(queued.writeFrame(reply, 1) == 1);
+  assert(queued.isWriteBusy());
+  for (unsigned poll = 0; poll < 10; ++poll) queued.pollNetwork();
+  assert(!queued.isWriteBusy() && network.outgoing.size() == 16);
+  uint8_t received[MAX_FRAME_SIZE];
+  for (unsigned frame = 0; frame < 4; ++frame)
+    assert(queued.checkRecvFrame(received) == 2 && received[0] == CMD_DEVICE_QUERY);
+  assert(!queued.checkRecvFrame(received));
+  queued.loop();
+  const auto resets = testEthernetResets;
+  network.onClientConnected();
+  network.incoming = {'<', 2, 0, CMD_DEVICE_QUERY, 3};
+  queued.pollNetwork();  // Replacement arrives between the application's loop and dequeue.
+  assert(queued.checkRecvFrame(received) == 2 && received[0] == CMD_DEVICE_QUERY);
+  assert(testEthernetResets == resets + 1);
+  std::puts("Ethernet queues: full RX retains commands while TX drains; old-generation replies discarded");
+  std::puts("Ethernet task: old replies/contact iteration/login cleared on replacement; radio progresses during blocked network work");
+  std::puts("Ethernet companion: split and consecutive frames, reply framing, key export denied, client parser reset passed");
   std::puts("companion: secured gate, v13 frame layouts, saved name/PIN, bounded inbox and denied RF/key authority");
 }
 

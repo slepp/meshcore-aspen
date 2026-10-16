@@ -1,4 +1,6 @@
 #include "../PineFieldUpdate.h"
+#include "../PineApplication.h"
+#include "../PineFirstInstall.h"
 #include "../PineTrustedTime.h"
 #include <cassert>
 #include <cstdio>
@@ -68,6 +70,15 @@ static void retainedTrustExpiry() {
   std::puts("Pine UTC: >49.71-day outage stays revoked after millis wrap; inactive-job housekeeping, missed polls, companion correction after expiry, refresh across wrap, fresh +300s/-2s guard, explicit admin correction, bounds and reboot passed");
 }
 int main() {
+  uint32_t erased[] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+  assert(nrfmast::erasedFlash(erased, 3));
+  erased[2] = 0xFFFFFFFE;
+  assert(!nrfmast::erasedFlash(erased, 3));
+  erased[2] = UINT32_MAX; erased[0] = 0;
+  assert(!nrfmast::erasedFlash(erased, 3));
+  assert(!nrfmast::erasedFlash(nullptr, 3) && !nrfmast::erasedFlash(erased, 0));
+  assert(nrfmast::applicationBytes(0x26000, 0x26018, 0x20006000, 0x20006000, 0xEA000, 0x26000) == 24);
+  assert(!nrfmast::applicationBytes(0x26000, 0x26018, 0x20006000, 0x20006000, 0xEA000));
   retainedTrustExpiry();
   assert(nrfmast::authenticatedBleBond(true, true, true, 1, 3));
   assert(nrfmast::authenticatedBleBond(true, true, true, 1, 4));

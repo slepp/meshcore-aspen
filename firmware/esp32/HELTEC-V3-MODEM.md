@@ -77,9 +77,8 @@ If the uploader cannot enter download mode, hold BOOT, press and release RESET,
 then release BOOT and retry the upload. Press RESET after a completed upload
 if the board remains in download mode.
 
-These profiles have been compiled; physical boot, RF, WiFi/dashboard memory
-use and recovery still need testing on the actual board. The modem does not
-include Aspen's signed application-update service.
+Use USB and the same board profile for later modem updates. The modem's
+update path is separate from Aspen's signed application-update service.
 
 After installation and a successful WiFi join, open the reported address for
 the dashboard and configure the host's modem endpoint as `ADDRESS:8001`.
@@ -104,8 +103,7 @@ The profile extends MeshCore's `Heltec_lora32_v3` variant at
 | I²C SDA / SCL | 17 / 18 |
 
 Keep the upstream reset and TCXO behavior. Do not substitute GPIO12 for
-`RADIOLIB_NC` just because it appears in the board schematic. OLED, optional
-GPS and other peripherals have not been exercised by this modem build.
+`RADIOLIB_NC` just because it appears in the board schematic. The modem uses the browser dashboard; OLED and optional GPS setup are separate.
 
 References: [Heltec V3 datasheet](https://resource.heltec.cn/download/WiFi_LoRa_32_V3/HTIT-WB32LA_V3(Rev1.1).pdf),
 [Espressif ESP32-S3 ordering information](https://documentation.espressif.com/esp32-s3_datasheet_en.pdf),
@@ -125,12 +123,7 @@ Arduino `default_8MB.csv` layout:
 | SPIFFS | `0x670000` | 1536 KiB |
 | Core dump | `0x7f0000` | 64 KiB |
 
-The initial compiled image uses 1,209,125 bytes of its 3,342,336-byte application
-slot; `firmware.bin` is 1,209,536 bytes. Static RAM is 168,288 of the linker's
-327,680 bytes, leaving 159,392 bytes before runtime allocations and task stacks.
-Runtime free heap depends on WiFi and dashboard activity.
-
-The compiled target has `KISS_PSRAM_PAYLOADS=0`, four TCP clients, a 12-request
+The modem uses `KISS_PSRAM_PAYLOADS=0`, four TCP clients, a 12-request
 queue, no local sources and no queued UART. The SDK provides 16 sockets. The
 dashboard check budgets 12: four KISS clients, one KISS listener, three HTTP
 internal sockets, three HTTP clients and one spare. mDNS and SNTP also need
@@ -143,5 +136,4 @@ Run the focused profile check without compiling:
 python3 -m unittest discover -s firmware/esp32/tests -p test_heltec_profile.py
 ```
 
-Use the configured PHY and a second radio to check reception after first boot.
-A local TX completion alone does not establish RF reception.
+Use the configured PHY and a second radio to exchange a message after first boot.

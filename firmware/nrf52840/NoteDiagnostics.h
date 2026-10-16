@@ -35,7 +35,8 @@ void printNoteVolumeStatus(Output& output, const NoteVolumeStatus& status) {
 template <typename Output>
 void printNoteState(Output& output, const NoteStore& notes, uint32_t storageUsed,
                     uint32_t storageTotal, bool bleActive, uint32_t inboxDrops,
-                    size_t slots, uint32_t jedec, const NotePartitionStatus& partition) {
+                    size_t slots, uint32_t jedec, const NotePartitionStatus& partition,
+                    bool external = true) {
   // The pinned Print::printf has a 256-byte buffer; keep every call below that limit.
   output.printf("bot state notes=%s notes_used=%u notes_limit=16 principal_used=%u principal_limit=8 per_principal=4 value_bytes=96 ",
                 notes.ready() ? "ready" : "unavailable", unsigned(notes.countNotes()),
@@ -45,6 +46,7 @@ void printNoteState(Output& output, const NoteStore& notes, uint32_t storageUsed
                 unsigned(bleActive), static_cast<unsigned long>(inboxDrops),
                 unsigned(NoteStore::DEVICE_WRITE_BURST), unsigned(NoteStore::PRINCIPAL_WRITE_BURST),
                 static_cast<unsigned long>(NoteStore::WRITE_REFILL_MS / 1000));
+  if (!external) { output.printf("notes_backend=internalfs\n"); return; }
   output.printf("notes_backend=qspi-ring notes_partition_kb=512 notes_slots=%u notes_jedec=%06lx notes_guard=%s notes_mount_result=%d notes_traverse_result=%d notes_overlap_blocks=%lu\n",
                 unsigned(slots), static_cast<unsigned long>(jedec), partition.label(),
                 partition.mountResult, partition.traverseResult,

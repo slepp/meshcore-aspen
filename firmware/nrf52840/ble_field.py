@@ -19,7 +19,9 @@ APP_START, APP_LIMIT = 0x27000, 0xED000
 LEGACY_APP_LIMIT = 0xEA000
 
 
-def validate_package(path):
+def validate_package(path, *, application_start=APP_START, softdevice_id=0x123):
+    if (application_start, softdevice_id) not in ((APP_START, 0x123), (0x26000, 0xB6)):
+        raise ValueError("Unsupported application/SoftDevice layout")
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         if len(names) != len(set(names)) or set(names) != {
@@ -32,28 +34,28 @@ def validate_package(path):
         if application["bin_file"] != "firmware.bin" or application["dat_file"] != "firmware.dat":
             raise ValueError("Unexpected application file names")
         binary, init = archive.read("firmware.bin"), archive.read("firmware.dat")
-        if len(binary) < 8 or len(binary) % 4 or len(binary) > APP_LIMIT - APP_START:
+        if len(binary) < 8 or len(binary) % 4 or len(binary) > APP_LIMIT - application_start:
             raise ValueError("Application size crosses reserved bootloader/InternalFS boundary")
-        if len(binary) > LEGACY_APP_LIMIT - APP_START:
+        if len(binary) > LEGACY_APP_LIMIT - application_start:
             raise ValueError("Application exceeds Legacy 0.6.1 DFU capacity; end must be at or below 0xEA000")
         stack, reset = struct.unpack_from("<II", binary)
         if not (0x20000000 < stack <= 0x20040000 and stack % 8 == 0 and
-                reset & 1 and APP_START <= reset - 1 < APP_START + len(binary)):
-            raise ValueError("BIN vector table is not an nRF52840 application linked at 0x27000")
+                reset & 1 and application_start <= reset - 1 < application_start + len(binary)):
+            raise ValueError(f"BIN vector table is not an nRF52840 application linked at {application_start:#x}")
         if len(init) != 14:
             raise ValueError("Unexpected Nordic legacy init packet")
         device, revision, version, count, softdevice, checksum = struct.unpack("<HHIHHH", init)
         crc = binascii.crc_hqx(binary, 0xFFFF)
         expected = dict(device_type=device, device_revision=revision,
                         application_version=version, softdevice_req=[softdevice], firmware_crc16=crc)
-        if count != 1 or device != 0x52 or softdevice != 0x123 or checksum != crc:
+        if count != 1 or device != 0x52 or softdevice != softdevice_id or checksum != crc:
             raise ValueError("Init packet device/SoftDevice/CRC does not match Pine application")
         if application["init_packet_data"] != expected:
             raise ValueError("Manifest and init packet disagree")
         return {"format": "Nordic legacy DFU 0.5 application", "bytes": len(binary),
                 "application_sha256": hashlib.sha256(binary).hexdigest(),
                 "softdevice_id": softdevice, "signed": False,
-                "storage_end_exclusive": hex(APP_START + len(binary))}
+                "storage_end_exclusive": hex(application_start + len(binary))}
 
 
 def time_frame(epoch):
@@ -94,6 +96,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("package", "inspect", "time"))
     parser.add_argument("--zip", type=Path)
+    parser.add_argument("--board", choices=("xiao", "sensecap-solar", "rak4631"), default="xiao",
+                        help="Hardware layout for the package check")
     parser.add_argument("--address", help="Explicit, previously verified Pine BLE address")
     parser.add_argument("--adapter", help="Explicit Linux controller, e.g. hci0")
     parser.add_argument("--repeat", action="store_true", help="Refresh UTC every 30min on this connection")
@@ -101,7 +105,8 @@ def main():
     if args.operation == "package":
         if not args.zip:
             parser.error("package requires --zip")
-        print(json.dumps(validate_package(args.zip), indent=2))
+        layout = {"application_start": 0x26000, "softdevice_id": 0xB6} if args.board == "rak4631" else {}
+        print(json.dumps(validate_package(args.zip, **layout), indent=2))
     else:
         if not args.address or not args.adapter:
             parser.error("BLE operations require explicit --address and --adapter")

@@ -11,8 +11,15 @@
 #include "CompanionInterface.h"
 #include "PineFieldUpdate.h"
 #include "PineApplication.h"
+#if PINE_FIRST_INSTALL
+#include "PineFirstInstall.h"
+#endif
 #include <helpers/sensors/GpsTime.h>
 #include <helpers/nrf52/SerialBLEInterface.h>
+#if NRFMAST_ETHERNET_COMPANION
+#include <helpers/ethernet/EthernetInterface.h>
+#include "PineEthernetCompanion.h"
+#endif
 #if NRFMAST_PRODUCTION_LUA
 #include "PineAdmin.h"
 #include "CompanionStore.h"
@@ -122,14 +129,37 @@ static void releaseOriginalNotes() {
   delete noteJournal; noteJournal = nullptr;
 }
 #else
+#if NRFMAST_QSPI_NOTES
 static nrfmast::NoteJournal noteJournalStorage(noteFlash);
 static nrfmast::NoteStore notesStorage(InternalFS, clockMillis, &noteJournalStorage);
 static auto* noteJournal = &noteJournalStorage;
+#else
+static nrfmast::NoteStore notesStorage(InternalFS, clockMillis);
+static nrfmast::NoteJournal* noteJournal = nullptr;
+#endif
 static auto* notes = &notesStorage;
 #endif
 static SerialBLEInterface ble;
 static bool bleStarted;
 static uint32_t activeBlePin;
+#if NRFMAST_ETHERNET_COMPANION
+static void ethernetClientConnected();
+static void resetEthernetSession();
+class PineEthernetDriver : public RAK13800EthernetInterface {
+  void onClientConnected() override {
+    SerialEthernetInterface::onClientConnected();
+    ethernetClientConnected();
+  }
+};
+static PineEthernetDriver ethernetDriver;
+static nrfmast::PineEthernetCompanion ethernet(ethernetDriver);
+static void ethernetClientConnected() { ethernet.newConnection(); }
+static void runEthernet(void*) {
+  while (!ethernetDriver.begin()) vTaskDelay(pdMS_TO_TICKS(30000));
+  ethernetDriver.enable();
+  for (;;) { ethernet.pollNetwork(); vTaskDelay(pdMS_TO_TICKS(2)); }
+}
+#endif
 static void radioInfo(nrfmast::CompanionRadioInfo& info) {
   info = repeater.activeProfile;
   info.power = repeater.getNodePrefs()->tx_power_dbm;
@@ -154,7 +184,12 @@ static void storageRead(uint32_t& used, uint32_t& total) {
   used = result < 0 ? 0 : (count * filesystem->cfg->block_size) / 1024;
   total = (filesystem->cfg->block_count * filesystem->cfg->block_size) / 1024;
 }
+#if NRFMAST_ETHERNET_COMPANION
+static nrfmast::CompanionInterface companion(bot, runtimeConfig, ethernet, radioInfo, batteryRead, storageRead);
+static void resetEthernetSession() { companion.resetConnection(); }
+#else
 static nrfmast::CompanionInterface companion(bot, runtimeConfig, ble, radioInfo, batteryRead, storageRead);
+#endif
 #if NRFMAST_PRODUCTION_LUA
 static nrfmast::CompanionStore companionStore(bot);
 static bool companionRestoreDone;
@@ -522,7 +557,8 @@ static void runCommand() {
                   onchip::commandBotService().sourceReady(), (unsigned long)used, (unsigned long)total);
 #else
     nrfmast::printNoteState(Serial, *notes, used, total, bleStarted, companion.inboxDrops,
-                          noteJournal->usedSlots(), noteFlash.jedecId(), noteFlash.partitionStatus());
+                          noteJournal ? noteJournal->usedSlots() : 0, noteFlash.jedecId(),
+                          noteFlash.partitionStatus(), noteJournal != nullptr);
 #endif
   } else if (strcmp(command, "bot notes reset confirm") == 0) {
 #if NRFMAST_PRODUCTION_LUA
@@ -538,6 +574,8 @@ static void runCommand() {
     char reply[160]{};
     luaAdminCommand(command, reply);
     Serial.println(reply);
+#elif !NRFMAST_QSPI_NOTES
+    Serial.println("Notes are stored in InternalFS; this board has no external notes volume");
 #else
     nrfmast::printNoteProvisionWarning(Serial);
     if (strcmp(command, nrfmast::NOTE_PROVISION_CONFIRM) == 0) {
@@ -548,7 +586,9 @@ static void runCommand() {
                          notes->ready() ? "current notes unchanged" : notes->error());
 #endif
   } else if (strcmp(command, "bot notes volume") == 0) {
-    if (!notes || notes->externalVolumeRetired()) {
+    if (!NRFMAST_QSPI_NOTES) {
+      Serial.println("Notes are stored in InternalFS; this board has no external notes volume");
+    } else if (!notes || notes->externalVolumeRetired()) {
       Serial.println("notes volume: old external filesystem retired; legacy inventory disabled; use bot state");
     } else if (noteFlash.jedecId() != 0x856015) {
       Serial.println("notes volume: expected QSPI chip unavailable; no filesystem access");
@@ -589,8 +629,19 @@ void setup() {
     radioBackoff = radioBackoff < 15000 ? radioBackoff * 2 : 30000;
   }
   rng.begin(radio_driver.getRngSeed());
-  if (!InternalFS.Adafruit_LittleFS::begin())
+  if (!InternalFS.Adafruit_LittleFS::begin()) {
+#if PINE_FIRST_INSTALL
+    // Adafruit InternalFileSystem.cpp: seven 4 KiB pages, below the bootloader.
+    // Never invoke its formatting fallback on an existing or damaged volume.
+    if (!nrfmast::erasedFlash(reinterpret_cast<const volatile uint32_t*>(0xED000),
+                             0x7000 / sizeof(uint32_t)))
+      halt("InternalFS contains existing data and cannot mount; restore it before installation");
+    if (!InternalFS.begin()) halt("InternalFS first installation failed; retry with USB recovery");
+    Serial.println("InternalFS initialized; creating native repeater and bot identities");
+#else
     halt("InternalFS mount failed; storage was not formatted; restore the existing Pine state");
+#endif
+  }
   IdentityStore store(InternalFS, "");
   loadIdentity(store, "_main", repeater.self_id);
   loadIdentity(store, "_nrfbot", bot.self_id);
@@ -644,8 +695,12 @@ void setup() {
 #endif
   if (!notesReady) Serial.printf("bot: %s; notes disabled; RF roles continue\n",
                                 notes ? notes->error() : "original notes allocation unavailable");
+#if NRFMAST_QSPI_NOTES
   Serial.printf("notes QSPI JEDEC=%06lx region=0x180000..0x200000 ready=%u\n",
                 static_cast<unsigned long>(noteFlash.jedecId()), notesReady);
+#else
+  Serial.printf("notes InternalFS ready=%u\n", notesReady);
+#endif
   if (notes) bot.setNotes(*notes);
 #if !NRFMAST_PRODUCTION_LUA
   const bool peerSelected = false;
@@ -663,7 +718,11 @@ void setup() {
 #if NRFMAST_PRODUCTION_LUA
     companion.setStore(companionStore);
 #endif
+#if NRFMAST_ETHERNET_COMPANION
+    Serial.println("BLE: firmware updates enabled; companion uses Ethernet port 5000");
+#else
     Serial.println("BLE: bot identity companion enabled; pair with configured PIN; shared radio read-only");
+#endif
   }
   if (!sharedRadio.setAirtimeFactor(prefs->airtime_factor))
     Serial.println("radio: invalid saved airtime factor; retaining 1.0 until corrected");
@@ -722,6 +781,13 @@ void setup() {
 #endif
   Serial.printf("nrfmast: RF %s; native repeater + separate command bot\n",
                 NRFMAST_RF_ENABLED ? "enabled" : "DISABLED");
+#if NRFMAST_ETHERNET_COMPANION
+  bot.setCompanion(companion);
+  if (ethernet.begin(resetEthernetSession) &&
+      xTaskCreate(runEthernet, "pine-ethernet", 1024, nullptr, 1, nullptr) == pdPASS)
+    ethernet.enable();
+  else Serial.println("Ethernet task unavailable; repeater and USB administration continue");
+#endif
   reportMemory();
 #if NRFMAST_LUA_PROBE
   extern void pineLuaProbeLink();
@@ -778,7 +844,12 @@ void loop() {
   if (sharedRadio.repeaterCanLoop()) repeater.loop();
   if (!nrfmast::fieldUpdatePending() && !botFirst && sharedRadio.botCanLoop()) bot.loop();
   botFirst = !botFirst;
-  if (bleStarted && sharedRadio.idle() && !nrfmast::fieldUpdatePending()
+#if NRFMAST_ETHERNET_COMPANION
+  const bool companionReady = ethernet.isEnabled();
+#else
+  const bool companionReady = bleStarted;
+#endif
+  if (companionReady && sharedRadio.idle() && !nrfmast::fieldUpdatePending()
 #if NRFMAST_PRODUCTION_LUA
       && (companionRestoreDone || !companionRestoreDeadline)
 #endif

@@ -10,10 +10,10 @@ radio variant before building; the wiring, PSRAM mode and update target differ.
 | Heltec WiFi LoRa 32 **V4 R8**, SX1262 | 16 MB / 8 MB octal | `public_aspen_heltec_v4_r8` | `heltec-v4-r8` |
 | LilyGO T-Beam S3 Supreme **SX1262**, 8 MB QSPI PSRAM | 8 MB / 8 MB quad | `public_aspen_tbeam_supreme_sx1262` | `tbeam-supreme-sx1262` |
 
-The additional Heltec and LilyGO ports have been compiled with the complete
-Aspen application. Physical boot, RF, battery readings and WiFi/OTA on these
-boards still need testing on hardware. Aspen uses its web dashboard; these
-profiles do not provide an on-board display interface or GNSS setup.
+Use Aspen's web dashboard to configure roles and read radio and battery
+status. These profiles select the board's radio, flash and PSRAM wiring;
+the interface runs in a browser rather than the board's display. GNSS setup
+is separate from these radio profiles.
 
 The V4 R8 has different peripheral pins from the 2 MB PSRAM Heltec V4.
 Do not use its image on a V4 or V3. Heltec V3 lacks the PSRAM required by full

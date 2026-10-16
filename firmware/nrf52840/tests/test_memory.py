@@ -35,3 +35,14 @@ class MemoryTest(unittest.TestCase):
         ]):
             with self.assertRaisesRegex(ValueError, "798724 > 798720"):
                 memory.measure(pathlib.Path("fixture.elf"), "size", "nm")
+
+    def test_rak_layout_uses_its_softdevice_boundary(self):
+        with patch.object(memory.subprocess, "check_output", side_effect=[
+            ".text 802816 155648\n", "20010000 B __HeapBase\n2003f800 B __HeapLimit\n2003f800 B __StackLimit\n20040000 B __StackTop\n"
+        ]):
+            result = memory.measure(pathlib.Path("fixture.elf"), "size", "nm")
+        self.assertEqual(result["application_start"], 0x26000)
+        self.assertEqual(result["application_flash_bytes"], 802816)
+        with patch.object(memory.subprocess, "check_output", side_effect=[".text 24 151552\n", ""]):
+            with self.assertRaisesRegex(ValueError, "application start"):
+                memory.measure(pathlib.Path("fixture.elf"), "size", "nm")

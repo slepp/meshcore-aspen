@@ -43,6 +43,9 @@ bool PineQspiFlash::custom(uint8_t opcode, uint8_t* output, size_t bytes) {
 }
 
 bool PineQspiFlash::begin() {
+#if !NRFMAST_QSPI_NOTES
+  return false;
+#else
   if (!mutex) mutex = xSemaphoreCreateRecursiveMutexStatic(&mutexStorage);
   if (!mutex) return false;
   Lock lock(*this);
@@ -68,6 +71,7 @@ bool PineQspiFlash::begin() {
   detected = uint32_t(id[0]) << 16 | uint32_t(id[1]) << 8 | id[2];
   usable = detected == 0x856015;  // P25Q16H, the pinned XIAO variant's 2MiB part.
   return usable;
+#endif
 }
 
 bool PineQspiFlash::read(uint32_t address, void* output, size_t bytes) {

@@ -12,17 +12,21 @@ from ble_field import APP_START, LEGACY_APP_LIMIT
 
 def measure(elf, size, nm):
     sections = subprocess.check_output([size, "-A", str(elf)], text=True)
-    sizes = {}
+    sizes, addresses = {}, {}
     for line in sections.splitlines():
         fields = line.split()
         if len(fields) >= 3 and fields[0].startswith("."):
             sizes[fields[0]] = int(fields[1])
+            addresses[fields[0]] = int(fields[2])
     symbols = {}
     for line in subprocess.check_output([nm, "--defined-only", str(elf)], text=True).splitlines():
         fields = line.split()
         if len(fields) == 3:
             symbols[fields[2]] = int(fields[0], 16)
-    flash_limit = LEGACY_APP_LIMIT - APP_START
+    flash_start = addresses[".text"]
+    if flash_start not in (0x26000, APP_START):
+        raise ValueError(f"Unsupported nRF application start: {flash_start:#x}")
+    flash_limit = LEGACY_APP_LIMIT - flash_start
     flash_bytes = sum(sizes.get(s, 0) for s in (".text", ".ARM.extab", ".ARM.exidx", ".data", ".svc_data", ".fs_data"))
     if flash_bytes > flash_limit:
         raise ValueError(f"Image exceeds the nRF application flash region: {flash_bytes} > {flash_limit}")
@@ -37,12 +41,13 @@ def measure(elf, size, nm):
         ):
             address = symbols.get(symbol)
             if address is not None:
-                offset = address - 0x27000
+                offset = address - flash_start
                 if offset < 0 or offset + 4 > len(image):
                     raise ValueError(f"{role} storage constant is outside the application image")
                 storage[role] = struct.unpack_from("<I", image, offset)[0]
     return {
         "elf": str(elf),
+        "application_start": flash_start,
         "application_flash_limit_bytes": flash_limit,
         "application_flash_bytes": flash_bytes,
         "application_ram_region_bytes": 0x40000 - 0x6000,

@@ -1,4 +1,10 @@
 #pragma once
+#ifndef NRFMAST_QSPI_NOTES
+#define NRFMAST_QSPI_NOTES 1
+#endif
+#if NRFMAST_PRODUCTION_LUA && !NRFMAST_QSPI_NOTES
+#error "Pine Lua requires external QSPI storage"
+#endif
 #if defined(NRF52_PLATFORM)
 #include "NoteJournal.h"
 #include "NotePartition.h"

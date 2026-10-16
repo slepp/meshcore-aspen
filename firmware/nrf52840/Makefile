@@ -4,6 +4,7 @@ BUILD := $(CURDIR)/.build
 UPSTREAM := $(BUILD)/upstream
 SOURCE ?= $(ROOT)/.tmp/onchip-upstream
 PIO ?= pio
+PIO_JOBS ?= 2
 PYTHON ?= python3
 ENV ?= nrfmast_rx
 LUA_ARCHIVE ?=
@@ -24,13 +25,13 @@ prepare:
 	$(PYTHON) prepare.py --source "$(SOURCE)" --output "$(UPSTREAM)"
 
 baseline: prepare
-	$(PIO) run -d "$(UPSTREAM)" -e nrfmast_baseline
+	$(PIO) run -d "$(UPSTREAM)" -e nrfmast_baseline -j $(PIO_JOBS)
 	$(ARM_OBJCOPY) -O binary "$(UPSTREAM)/.pio/build/nrfmast_baseline/firmware.elf" \
 		"$(UPSTREAM)/.pio/build/nrfmast_baseline/firmware.bin"
 	$(MAKE) size ENV=nrfmast_baseline
 
 build: prepare
-	TMPDIR="$(BUILD)" $(PIO) run -d "$(UPSTREAM)" -e "$(ENV)" -t buildprog -t create_uf2
+	TMPDIR="$(BUILD)" $(PIO) run -d "$(UPSTREAM)" -e "$(ENV)" -j $(PIO_JOBS) -t buildprog -t create_uf2
 	$(ARM_OBJCOPY) -O binary "$(UPSTREAM)/.pio/build/$(ENV)/firmware.elf" \
 		"$(UPSTREAM)/.pio/build/$(ENV)/firmware.bin"
 	$(MAKE) size
@@ -141,9 +142,9 @@ $(NATIVE)/note-lfs.o: $(FRAMEWORK)/libraries/Adafruit_LittleFS/src/littlefs/lfs.
 $(NATIVE)/note-lfs-util.o: $(FRAMEWORK)/libraries/Adafruit_LittleFS/src/littlefs/lfs_util.c
 	@mkdir -p "$(@D)"
 	$(CC) -O1 -g $(SANITIZE) -c "$<" -o "$@"
-$(NATIVE)/test: tests/native.cpp tests/note_journal.cpp ../runtime/AdaptiveAdmission.h CommandBot.cpp CommandBot.h RuntimeConfig.cpp RuntimeConfig.h SharedRadio.cpp SharedRadio.h NoteStore.cpp NoteStore.h NoteJournal.cpp NoteJournal.h NotePartition.cpp NotePartition.h NoteDiagnostics.h BleConfig.cpp BleConfig.h CompanionInterface.cpp CompanionInterface.h CompanionStore.cpp CompanionStore.h $(NATIVE_OBJECTS)
-	$(CXX) $(NATIVE_FLAGS) $(SANITIZE) -Wl,--gc-sections \
-		tests/native.cpp tests/note_journal.cpp CommandBot.cpp RuntimeConfig.cpp SharedRadio.cpp NoteStore.cpp NoteJournal.cpp NotePartition.cpp BleConfig.cpp CompanionInterface.cpp CompanionStore.cpp $(NATIVE_OBJECTS) -o "$@"
+$(NATIVE)/test: PineEthernetCompanion.h tests/ethernet-seams/rtos.h tests/seams/EthernetClock.h $(UPSTREAM)/src/helpers/ethernet/SerialEthernetInterface.h tests/native.cpp tests/note_journal.cpp ../runtime/AdaptiveAdmission.h CommandBot.cpp CommandBot.h RuntimeConfig.cpp RuntimeConfig.h SharedRadio.cpp SharedRadio.h NoteStore.cpp NoteStore.h NoteJournal.cpp NoteJournal.h NotePartition.cpp NotePartition.h NoteDiagnostics.h BleConfig.cpp BleConfig.h CompanionInterface.cpp CompanionInterface.h CompanionStore.cpp CompanionStore.h $(UPSTREAM)/src/helpers/ethernet/SerialEthernetInterface.cpp $(NATIVE_OBJECTS)
+	$(CXX) -Itests/ethernet-seams $(NATIVE_FLAGS) $(SANITIZE) -include tests/seams/EthernetClock.h -pthread -Wl,--gc-sections \
+		tests/native.cpp tests/note_journal.cpp CommandBot.cpp RuntimeConfig.cpp SharedRadio.cpp NoteStore.cpp NoteJournal.cpp NotePartition.cpp BleConfig.cpp CompanionInterface.cpp CompanionStore.cpp $(UPSTREAM)/src/helpers/ethernet/SerialEthernetInterface.cpp $(NATIVE_OBJECTS) -o "$@"
 
 -include $(wildcard $(NATIVE)/*/*.d)
 

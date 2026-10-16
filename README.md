@@ -22,6 +22,7 @@ Linux computer connected to a WiFi shared modem at the antenna.
 | Original LilyGO T-Beam v1.2 **SX1262 or SX1276**, or Heltec WiFi LoRa 32 **V3** | Shared modem for Willow or another host | [T-Beam modem](firmware/esp32/TBEAM-V12-MODEM.md) · [Heltec V3 modem](firmware/esp32/HELTEC-V3-MODEM.md) |
 | Heltec WiFi LoRa 32 **V4 R8**, or LilyGO T-Beam **Supreme SX1262** | Aspen with the board's own wiring and update target | [Board-specific setup](firmware/esp32/BOARDS.md) |
 | Seeed XIAO nRF52840 + Wio SX1262 | Pine: compact repeater and separately addressed Lua bot | [Pine installation and updates](firmware/nrf52840/README.md) |
+| WisBlock RAK4631 (RAK4630), with optional RAK13800 Ethernet and RAK19018 PoE | Pine: repeater, notes bot and Ethernet companion | [RAK setup](firmware/nrf52840/RAK4631.md) |
 
 Match the exact board and radio variant. The XIAO firmware image is for the
 XIAO; use the linked board profile for Heltec and LilyGO hardware. Full Aspen

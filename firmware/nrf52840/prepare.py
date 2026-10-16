@@ -80,6 +80,22 @@ def prepare(source, output):
         subprocess.run(["patch", "--quiet", "-p1", "-i", str(HERE.parent / "shared/queued-dispatch.patch")],
                        cwd=output, check=True)
         patched.write_text("queued-dispatch\n")
+    # Each Ethernet board supplies connection state; upstream has no base definition.
+    ethernet_header = output / "src/helpers/ethernet/SerialEthernetInterface.h"
+    ethernet_source = re.sub(r"(?:virtual\s+)*void onClientConnected\(\);",
+                             "virtual void onClientConnected();", ethernet_header.read_text())
+    ethernet_source = ethernet_source.replace(
+        "    bool hasPendingOutput() const { return send_queue_len != 0; }\n", "")
+    ethernet_header.write_text(ethernet_source.replace(
+        "bool isConnected() const override;", "bool isConnected() const override = 0;").replace(
+        "bool isWriteBusy() const override;",
+        "bool isWriteBusy() const override;\n    bool hasPendingOutput() const { return send_queue_len != 0; }"))
+    ethernet_cpp = output / "src/helpers/ethernet/SerialEthernetInterface.cpp"
+    ethernet_code = ethernet_cpp.read_text()
+    if "onClientConnected() {\n  send_queue_len = 0;" not in ethernet_code:
+        ethernet_cpp.write_text(ethernet_code.replace(
+            "void SerialEthernetInterface::onClientConnected() {",
+            "void SerialEthernetInterface::onClientConnected() {\n  send_queue_len = 0;"))
     dest = output / "examples" / "nrfmast"
     dest.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(HERE.parent / "shared"))

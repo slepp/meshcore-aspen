@@ -4,6 +4,9 @@
 #include <Utils.h>
 #include <cstdio>
 #include <cstring>
+#ifndef PINE_APPLICATION_START
+#define PINE_APPLICATION_START 0x27000
+#endif
 
 extern "C" {
 extern uint8_t __flash_arduino_start, __flash_arduino_end;
@@ -17,7 +20,7 @@ bool applicationCommand(const char* command, char* reply) {
   const auto bytes = applicationBytes(start, reinterpret_cast<uintptr_t>(&__etext),
                                      reinterpret_cast<uintptr_t>(&__data_start__),
                                      reinterpret_cast<uintptr_t>(&__data_end__),
-                                     reinterpret_cast<uintptr_t>(&__flash_arduino_end));
+                                     reinterpret_cast<uintptr_t>(&__flash_arduino_end), PINE_APPLICATION_START);
   if (!bytes) {
     strcpy(reply, "Error: application linker range outside Pine's retained flash layout");
     return true;
@@ -31,8 +34,8 @@ bool applicationCommand(const char* command, char* reply) {
     hash.finalize(binary, sizeof(binary));
     mesh::Utils::toHex(digest, binary, sizeof(binary));
   }
-  snprintf(reply, 160, "application start=0x27000 bytes=%lu sha256=%s",
-           static_cast<unsigned long>(bytes), digest);
+  snprintf(reply, 160, "application start=0x%lx bytes=%lu sha256=%s",
+           static_cast<unsigned long>(start), static_cast<unsigned long>(bytes), digest);
   return true;
 }
 }

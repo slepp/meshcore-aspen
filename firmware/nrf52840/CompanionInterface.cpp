@@ -7,6 +7,9 @@
 #endif
 #include <cstdio>
 #include <cmath>
+#ifndef NRFMAST_DEVICE_NAME
+#define NRFMAST_DEVICE_NAME "Seeed Xiao-nrf52"
+#endif
 
 namespace nrfmast {
 
@@ -53,14 +56,19 @@ void CompanionInterface::contactFrame(uint8_t code, const ContactInfo& contact) 
   transport.writeFrame(output, 148);
 }
 
+void CompanionInterface::resetConnection() {
+  iterating = false;
+  pendingType = 0;
+  expectedAck = 0;
+  memset(pendingKey, 0, sizeof(pendingKey));
+}
+
 void CompanionInterface::loop() {
   if (store_) store_->loop(bot.uptimeMillis());
   transport.loop();
   // SerialBLEInterface becomes connected only after the secured callback.
   if (!transport.isConnected()) {
-    iterating = false;
-    pendingType = 0;
-    expectedAck = 0;
+    resetConnection();
     return;
   }
   if (pendingType && uint32_t(bot.uptimeMillis() - pendingAt) > 30000) pendingType = 0;
@@ -99,7 +107,9 @@ void CompanionInterface::handle(size_t length) {
     output[3] = store_ ? CompanionStore::Channels : 0;
     put32(output + 4, config.ble.getPin());
     memcpy(output + 8, __DATE__, 11);
-    memcpy(output + 20, "Seeed Xiao-nrf52", 15);
+    static constexpr char deviceName[] = NRFMAST_DEVICE_NAME;
+    static_assert(sizeof(deviceName) <= 40, "Companion device name exceeds protocol field");
+    memcpy(output + 20, deviceName, sizeof(deviceName) - 1);
     memcpy(output + 60, MESHCORE_SLP_PINE_VERSION, sizeof(MESHCORE_SLP_PINE_VERSION) - 1);
     output[80] = 0;  // The companion/bot does not forward; the repeater does.
     output[81] = 2;  // Native hash-mode encoding for three-byte paths.
@@ -406,7 +416,7 @@ void CompanionInterface::received(const ContactInfo& contact, const mesh::Packet
   if (store_) store_->changed(bot.uptimeMillis());
   if (inboxCount == 4) {
     ++inboxDrops;
-    Serial.println("BLE: ordinary DM inbox full; message not retained");
+    Serial.println("Companion: ordinary DM inbox full; message not retained");
     return;
   }
   auto& frame = inbox[inboxCount++];

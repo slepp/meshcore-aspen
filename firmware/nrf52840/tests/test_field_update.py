@@ -90,6 +90,27 @@ class FieldUpdateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ble_field.validate_package(path)
 
+    def test_rak_package_requires_matching_softdevice_and_application_layout(self):
+        with tempfile.TemporaryDirectory(dir=HERE / ".build") as directory:
+            path = Path(directory) / "firmware.zip"
+            binary = struct.pack("<II", 0x20040000, 0x26009) + bytes(16)
+            crc = binascii.crc_hqx(binary, 0xFFFF)
+            data = dict(device_type=0x52, device_revision=0xFFFF, application_version=0xFFFFFFFF,
+                        softdevice_req=[0xB6], firmware_crc16=crc)
+            manifest = {"application": dict(bin_file="firmware.bin", dat_file="firmware.dat",
+                                            init_packet_data=data), "dfu_version": 0.5}
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("manifest.json", json.dumps({"manifest": manifest}))
+                archive.writestr("firmware.bin", binary)
+                archive.writestr("firmware.dat", struct.pack("<HHIHHH", 0x52, 0xFFFF,
+                                                          0xFFFFFFFF, 1, 0xB6, crc))
+            self.assertFalse(ble_field.validate_package(path, application_start=0x26000,
+                                                       softdevice_id=0xB6)["signed"])
+            with self.assertRaises(ValueError):
+                ble_field.validate_package(path)
+            with self.assertRaises(ValueError):
+                ble_field.validate_package(path, application_start=0x26000, softdevice_id=0x123)
+
     def test_embedded_cpp_termination_still_aborts(self):
         with tempfile.TemporaryDirectory(dir=HERE / ".build") as directory:
             root = Path(directory)

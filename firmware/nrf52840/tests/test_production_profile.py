@@ -55,3 +55,17 @@ class ProductionProfileTest(unittest.TestCase):
         self.assertNotIn("${sensor_base.build_flags}", solar["build_unflags"])
         self.assertIn("ENV_SKIP_GPS_DETECT=1", solar["build_flags"])
         self.assertIn("NRFMAST_PRODUCTION_LUA=1", solar["build_flags"])
+
+    def test_rak_native_profiles_preserve_board_layout_and_select_ethernet(self):
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(Path(__file__).resolve().parents[1] / "platformio.ini")
+        native = config["env:nrfmast_rak4631_rx"]
+        self.assertEqual(native["extends"], "rak4631")
+        self.assertIn("${rak4631.build_flags}", native["build_flags"])
+        self.assertIn("NRFMAST_QSPI_NOTES=0", native["build_flags"])
+        self.assertIn("PINE_APPLICATION_START=0x26000", native["build_flags"])
+        self.assertNotIn("NRFMAST_PRODUCTION_LUA=1", native["build_flags"])
+        ethernet = config["env:nrfmast_rak4631_rak13800"]
+        self.assertIn("ETHERNET_TCP_PORT=5000", ethernet["build_flags"])
+        self.assertIn("RAK13800EthernetInterface.cpp", ethernet["build_src_filter"])
+        self.assertNotIn("EthernetCLI", ethernet["build_src_filter"])

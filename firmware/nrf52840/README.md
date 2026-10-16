@@ -1,4 +1,10 @@
-# Standalone XIAO nRF52840 repeater and command bot
+# Pine nRF52840 repeater and command bot
+
+For a **RAK4631 WisBlock core**, use [RAK setup](RAK4631.md) to build the
+native repeater and note bot, install on a new board or update an existing
+node. Add RAK13800 Ethernet and optional RAK19018 PoE for a wired companion
+connection on port 5000. The Lua profiles below use external QSPI storage on
+XIAO and SenseCAP Solar hardware.
 
 Start with [Pine field setup](FIELD-SETUP.md) to update an initialized node,
 select Lua, Room, packet programs or BLE peer mode, and recover without clearing

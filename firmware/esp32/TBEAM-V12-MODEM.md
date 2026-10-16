@@ -8,11 +8,9 @@ the standalone Aspen application.
 
 The original T-Beam has **4 MB flash and 8 MB QSPI PSRAM**, an ESP32 and an
 AXP2101 power-management chip. It is different from the ESP32-S3 T-Beam Supreme.
-Full Aspen does not fit the original board's two standard OTA application
-slots. Removing Wasm, HTTPS and the shared-room frontend still leaves too
-little flash for the Lua bot plus Mast administration. A native-only build
-fits by also removing the bot and Mast administration, including signed OTA;
-use host roles on this board instead.
+Use Willow to run the roles with this board: its standard 4 MB flash layout
+keeps two modem application slots for updates. Full Aspen needs larger
+application slots.
 
 ## Select the radio and build
 
@@ -100,15 +98,15 @@ If the uploader cannot enter download mode, hold BOOT, press and release RESET,
 then release BOOT and retry the upload. Press RESET after a completed upload
 if the board remains in download mode.
 
-These profiles have been compiled; physical boot, RF, WiFi/dashboard memory
-use and recovery still need testing on the actual board. The modem does not
-include Aspen's signed application-update service.
+Use USB and the same board profile for later modem updates. The modem's
+update path is separate from Aspen's signed application-update service.
 
 After installation and a successful WiFi join, open the reported address for
 the dashboard and point the host at `ADDRESS:8001`. See the
 [Willow guide](../../hosts/willow/README.md) or
 [Go host guide](../../HOST_GUIDE.md) for host roles. Test reception with another
-radio on the same PHY; local TX completion alone does not establish reception.
+radio on the same PHY by exchanging a message between host roles and the
+other radio.
 
 ## Memory, layout and wiring
 

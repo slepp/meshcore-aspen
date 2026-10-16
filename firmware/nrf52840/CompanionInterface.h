@@ -48,6 +48,7 @@ public:
       : bot(commandBot), config(runtime), transport(interface), radioInfo(profile),
         battery(batteryRead), storage(storageRead) {}
   void loop();
+  void resetConnection();
   void setStore(CompanionStore& store) { store_ = &store; bot.setCompanionStore(store); }
   void discovered(const ContactInfo&, bool isNew);
   void pathUpdated(const ContactInfo&);
