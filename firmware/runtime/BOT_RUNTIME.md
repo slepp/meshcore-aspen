@@ -510,8 +510,8 @@ recovery remain separate. Source is text-only, at most **4096 B including its
 metadata**, with eight custom commands and eight declared modules.
 
 Four job slots include one reserved native diagnostic slot. Each invocation
-has at most eight native I/O operations (16 for Lua commands in a trusted owner's
-private DM), a 10,000-instruction bound and 100 ms
+has at most eight native I/O operations (36 for Lua commands in a trusted owner's
+private DM, or 16 on compact profiles), a 10,000-instruction bound and 100 ms
 cumulative active execution budget across resumes. The source generation has a 96 KiB allocator budget
 and a 16,384-step parser bound; installed-source loading is limited to one second
 and initialization to 100 ms. Compact profiles retain 20 ms invocation, 50 ms initialization and a 330 ms installed-source
@@ -2224,7 +2224,7 @@ owner grant; it never silently falls back to a nickname or private scope.
 
 `sleep(ms)` and `timer.sleep(ms)` yield the current invocation for 1..30,000 ms.
 They preserve nested Lua call stacks and free the VM/radio workers for other
-jobs. Each invocation admits at most eight I/O operations, or 16 for a Lua
+jobs. Each invocation admits at most eight I/O operations, or 36 (16 on compact profiles) for a Lua
 command in a trusted owner's private DM; timer completion
 over one second late fails visibly. These sleep timers are transient, not
 durable reminders; the distinct named deadline API follows below.

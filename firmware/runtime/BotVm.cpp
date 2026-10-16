@@ -1353,10 +1353,12 @@ int repeaterRequest(lua_State *s) {
   return lua_yieldk(s, 0, 0, finishIo);
 }
 int repeaterCommand(lua_State *s) {
-  if (lua_gettop(s) != 2) return luaL_error(s, "repeater.command requires an alias and command");
+  if (lua_gettop(s) < 2 || lua_gettop(s) > 3 || (lua_gettop(s) == 3 && !lua_isboolean(s, 3)))
+    return luaL_error(s, "repeater.command requires an alias, command and optional read-only boolean");
   auto &request = prepareIo(s, onchip::BotIoRequest::RepeaterCommand);
   boundedString(s, 1, request.key, 17);
   boundedString(s, 2, request.value, onchip::BotTextLimit - 2);
+  request.repeaterRead = lua_gettop(s) == 3 && lua_toboolean(s, 3);
   request.delayMs = 30000;
   return lua_yieldk(s, 0, 0, finishIo);
 }

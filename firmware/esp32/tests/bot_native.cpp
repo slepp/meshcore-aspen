@@ -4353,13 +4353,17 @@ static void native_repeater_cli(const char *sourcePath) {
   assert(f.startReplay(error));
   beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
   Peer owner, first, second, third, fourth, fifth, sixth, stranger;
+  Peer extra[6];
+  std::vector<Peer *> fleet{&first, &second, &third, &fourth, &fifth, &sixth};
+  for (auto &peer : extra) fleet.push_back(&peer);
   const auto key = [](const Peer &p) {
     char hex[65]{};
     for (unsigned i = 0; i < 32; ++i) snprintf(hex + i * 2, 3, "%02x", p.self_id.pub_key[i]);
     return std::string(hex);
   };
   assert(f.administer(("trust " + key(owner)).c_str()).find("Saved ") == 0);
-  for (auto *p : {&owner, &first, &second, &third, &fourth, &fifth, &sixth, &stranger}) f.learn(*p);
+  f.learn(owner); f.learn(stranger);
+  for (auto *peer : fleet) f.learn(*peer);
   char reply[192]{};
   for (const auto &p : {std::make_pair("p1", &first), std::make_pair("p2", &second),
                        std::make_pair("p3", &third), std::make_pair("p4", &fourth), std::make_pair("p5", &fifth),
@@ -4434,6 +4438,43 @@ static void native_repeater_cli(const char *sourcePath) {
   }
   assert(owner.replies(f.bot.publicKey(), f.radio).size() == 6 && !f.bot.jobsInUse());
   assert(timeMs.load() - fleetStarted < 6000); // Six replies need only ordinary radio/worker steps.
+  for (unsigned i = 0; i < 6; ++i) {
+    const auto remove = "remove p" + std::to_string(i + 1);
+    f.bot.repeaterCommand(remove.c_str(), reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved/applied", 13));
+  }
+  std::string allTargets;
+  for (unsigned i = 0; i < fleet.size(); ++i) {
+    char alias[17]; snprintf(alias, sizeof(alias), "repeater%03u", i + 1);
+    const auto add = "add " + std::string(alias) + " " + key(*fleet[i]) + " 912525000 3:";
+    f.bot.repeaterCommand(add.c_str(), reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved/applied", 13));
+    if (i) allTargets += ",";
+    allTargets += alias;
+  }
+  assert(allTargets.size() > 101); // The old selector bound also excluded valid full-fleet requests.
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(owner.command(f.bot.publicKey(), ("!rcmd " + allTargets + " ver").c_str())); f.step(300);
+  const auto allStarted = timeMs.load();
+  for (auto *peer : fleet) {
+    const auto sent = requests(*peer); assert(sent.size() == 1);
+    response(*peer, sent[0].substr(0, 3) + std::string(150, 'v')); f.step(300);
+  }
+  const auto fullReplies = owner.replies(f.bot.publicKey(), f.radio);
+  assert(fullReplies.size() == fleet.size() * 2 && !f.bot.jobsInUse());
+  for (const auto &message : fullReplies) assert(message.size() <= BotReplyLimit);
+  assert(timeMs.load() - allStarted < 10000);
+  for (unsigned i = 0; i < fleet.size(); ++i) {
+    char alias[17]; snprintf(alias, sizeof(alias), "repeater%03u", i + 1);
+    const auto remove = "remove " + std::string(alias);
+    f.bot.repeaterCommand(remove.c_str(), reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved/applied", 13));
+    if (i < 6) {
+      const auto add = "add p" + std::to_string(i + 1) + " " + key(*fleet[i]) + " 912525000 3:";
+      f.bot.repeaterCommand(add.c_str(), reply, sizeof(reply));
+      assert(!strncmp(reply, "Saved/applied", 13));
+    }
+  }
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(owner.command(f.bot.publicKey(), "!rcmd p1 ver")); f.step(300);
   sent = requests(first); assert(sent.size() == 1);
@@ -4506,7 +4547,7 @@ static void native_repeater_cli(const char *sourcePath) {
   timeMs += 30001;
   assert(f.completeSimulatedTxForTest(late.token, 10));
   f.setManualTxCompletionForTest(false); f.step(300);
-  assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back().find("not retried") != std::string::npos);
+  assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back().find("query") != std::string::npos);
 
   f.radio.airtime = 10;
   const auto direct = "add p1 " + key(first) + " 912525000 3:";
@@ -4557,7 +4598,164 @@ static void native_repeater_cli(const char *sourcePath) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
   assert(f.command(owner, "!snr").find("No repeater signal samples") == 0);
-  puts("PASS repeater CLI: owner-only fleet, six unpaced sequential targets, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, explicit writes, uncertain write not retried and live revocation");
+  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, explicit writes, uncertain write not retried and live revocation");
+}
+static void native_repeater_delivery(const char *sourcePath) {
+  assert(prepareHostRunner() && saveBotRepeaterPolicy({}));
+  BotRadioPolicy policy; policy.airtimeMs = 3600;
+  assert(saveBotRadioPolicy(policy));
+  Fixture::Options options; options.nativeAdministrationForReplay = true;
+  Fixture f(options); std::string error;
+  assert(f.startReplay(error));
+  beginNetworkClock(true); receiveNetworkTime(1800000000); f.step();
+  Peer owner, peer, replacement;
+  const auto key = [](const Peer &p) {
+    char hex[65]{};
+    for (unsigned i = 0; i < 32; ++i) snprintf(hex + i * 2, 3, "%02x", p.self_id.pub_key[i]);
+    return std::string(hex);
+  };
+  assert(f.administer(("trust " + key(owner)).c_str()).find("Saved ") == 0);
+  f.learn(owner); f.learn(peer);
+  char reply[192]{};
+  f.bot.repeaterCommand(("add pilot " + key(peer) + " 912525000").c_str(), reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  std::ifstream file(sourcePath); assert(file);
+  const std::string source{std::istreambuf_iterator<char>(file), {}};
+  assert(stageHostSource(f, source, true, error));
+  struct Request { unsigned type; uint32_t tag; std::string text; };
+  const auto requests = [&]() {
+    std::vector<Request> result;
+    for (const auto &raw : f.radio.sent) {
+      mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+      const auto type = packet.getPayloadType();
+      if (type != PAYLOAD_TYPE_ANON_REQ && type != PAYLOAD_TYPE_REQ && type != PAYLOAD_TYPE_TXT_MSG) continue;
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      const unsigned offset = type == PAYLOAD_TYPE_ANON_REQ ? 33 : 2;
+      const int size = mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + offset, packet.payload_len - offset);
+      if (size <= 5) continue;
+      if (type == PAYLOAD_TYPE_TXT_MSG && plain[4] != 4) continue;
+      const auto *end = std::find(plain + 5, plain + size, 0);
+      result.push_back({type, queued_tx::get32(plain), type == PAYLOAD_TYPE_TXT_MSG ?
+          std::string(reinterpret_cast<const char *>(plain + 5), size_t(end - plain - 5)) : std::string{}});
+      if (type == PAYLOAD_TYPE_ANON_REQ) assert(packet.isRouteFlood() && plain[4] == 0);
+    }
+    return result;
+  };
+  const auto count = [&](unsigned type) {
+    unsigned n = 0; for (const auto &r : requests()) n += r.type == type; return n;
+  };
+  const auto ask = [&](const char *command) {
+    timeMs += 61000; f.radio.sent.clear();
+    f.deliver(owner.command(f.bot.publicKey(), command)); f.step(300);
+  };
+  const Bytes path{0x11, 0x22, 0x33}, reverse{0xaa, 0xbb, 0xcc};
+  const auto login = [&](uint8_t permissions) {
+    uint8_t secret[32]{}, plain[13]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    queued_tx::put32(plain, companionClock().getCurrentTime()); plain[7] = permissions;
+    auto *packet = peer.createPathReturn(mesh::Identity(f.bot.publicKey()), secret, path.data(), 0x81,
+                                         PAYLOAD_TYPE_RESPONSE, plain, sizeof(plain));
+    assert(packet); packet->header |= ROUTE_TYPE_FLOOD; packet->path_len = 0x81;
+    memcpy(packet->path, reverse.data(), reverse.size());
+    f.deliver(peer.wire(packet)); f.step(600);
+  };
+  const auto confirm = [&]() {
+    const auto sent = requests();
+    assert(!sent.empty() && sent.back().type == PAYLOAD_TYPE_REQ);
+    uint8_t secret[32]{}, plain[8]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey()); queued_tx::put32(plain, sent.back().tag);
+    plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116; plain[6] = 1; plain[7] = 120;
+    auto *packet = peer.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, sizeof(plain));
+    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    f.deliver(peer.wire(packet)); f.step(300);
+  };
+  const auto answer = [&](const std::string &text) {
+    uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+    peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+    queued_tx::put32(plain, 1700000000); plain[4] = 4;
+    memcpy(plain + 5, text.data(), text.size());
+    auto *packet = peer.createDatagram(PAYLOAD_TYPE_TXT_MSG, mesh::Identity(f.bot.publicKey()), secret, plain, 5 + text.size());
+    assert(packet); packet->header |= ROUTE_TYPE_DIRECT; packet->path_len = 0x80;
+    f.deliver(peer.wire(packet)); f.step(300);
+  };
+  ask("!rcmd pilot ver");
+  assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
+  login(3);
+  assert(count(PAYLOAD_TYPE_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
+  size_t reciprocalAt = 0, confirmationAt = 0;
+  for (size_t i = 0; i < f.radio.sent.size(); ++i) {
+    mesh::Packet packet; assert(packet.readFrom(f.radio.sent[i].data(), f.radio.sent[i].size()));
+    if (packet.getPayloadType() == PAYLOAD_TYPE_PATH) {
+      uint8_t secret[32]{}, plain[MAX_PACKET_PAYLOAD]{};
+      peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
+      const int size = mesh::Utils::MACThenDecrypt(secret, plain, packet.payload + 2, packet.payload_len - 2);
+      if (size <= 0) continue; // Exclude the command acknowledgement to the owner.
+      reciprocalAt = i;
+      assert(size > 4 && plain[0] == 0x81 && !memcmp(plain + 1, reverse.data(), reverse.size()));
+    }
+    if (packet.getPayloadType() == PAYLOAD_TYPE_REQ) confirmationAt = i;
+  }
+  assert(reciprocalAt && reciprocalAt < confirmationAt);
+  confirm(); assert(count(PAYLOAD_TYPE_TXT_MSG) == 1);
+  answer(requests().back().text.substr(0, 3) + "Version"); assert(!f.bot.jobsInUse());
+  f.bot.repeaterCommand("config pilot", reply, sizeof(reply)); assert(strstr(reply, "cli=admin"));
+  f.bot.repeaterCommand("route pilot", reply, sizeof(reply)); assert(strstr(reply, "route=3:112233"));
+
+  ask("!rcmd pilot ver"); // The healthy shared route adds no setup exchange.
+  assert(requests().size() == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 1);
+  answer(requests().back().text.substr(0, 3) + "Fast"); assert(!f.bot.jobsInUse());
+
+  ask("!rcmd-write pilot gps"); // Exact GPS query is a read even through rcmd-write.
+  const auto original = requests().back(); assert(original.text.substr(3) == "gps");
+  timeMs += 16000; f.step(30);
+  assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 1);
+  login(3); confirm();
+  assert(count(PAYLOAD_TYPE_TXT_MSG) == 2);
+  const auto retry = requests().back(); assert(retry.tag > original.tag && retry.text.substr(0, 3) != original.text.substr(0, 3));
+  answer(original.text.substr(0, 3) + "Late"); assert(f.bot.jobsInUse());
+  answer(retry.text.substr(0, 3) + "GPS off"); assert(!f.bot.jobsInUse());
+
+  ask("!rcmd-write pilot gps on"); // A GPS mutation is never re-executed.
+  timeMs += 16000; f.step(300);
+  assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_ANON_REQ) == 0);
+  assert(owner.replies(f.bot.publicKey(), f.radio).back().find("may have applied; not retried") != std::string::npos);
+
+  ask("!rcmd pilot ver");
+  timeMs += 16000; f.step(30); login(1);
+  assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_REQ) == 0);
+  assert(owner.replies(f.bot.publicKey(), f.radio).back().find("admin access") != std::string::npos);
+  f.bot.repeaterCommand("config pilot", reply, sizeof(reply)); assert(strstr(reply, "cli=read"));
+  ask("!rcmd pilot ver"); // Recheck an observed denial after the owner changes ACL.
+  assert(count(PAYLOAD_TYPE_ANON_REQ) == 1 && count(PAYLOAD_TYPE_TXT_MSG) == 0);
+  login(3); confirm(); answer(requests().back().text.substr(0, 3) + "Admin restored");
+  assert(!f.bot.jobsInUse());
+
+  ask("!rcmd pilot gps diag");
+  timeMs += 16000; f.step(30); login(3); confirm();
+  assert(count(PAYLOAD_TYPE_TXT_MSG) == 2 && count(PAYLOAD_TYPE_ANON_REQ) == 1);
+  timeMs += 16000; f.step(300);
+  assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 2 && count(PAYLOAD_TYPE_ANON_REQ) == 1);
+  assert(owner.replies(f.bot.publicKey(), f.radio).back().find("query timed out") != std::string::npos);
+
+  ask("!rcmd pilot ver");
+  timeMs += 16000; f.step(30);
+  assert(count(PAYLOAD_TYPE_ANON_REQ) == 1);
+  f.bot.repeaterCommand(("add pilot " + key(replacement) + " 912525000 3:").c_str(), reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  login(3); // A reply from the previous key must not resume against its replacement.
+  assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_REQ) == 0);
+  assert(owner.replies(f.bot.publicKey(), f.radio).back().find("changed") != std::string::npos);
+
+  f.bot.repeaterCommand(("add pilot " + key(peer) + " 912525000 3:").c_str(), reply, sizeof(reply));
+  assert(!strncmp(reply, "Saved/applied", 13));
+  ask("!rcmd pilot ver");
+  timeMs += 16000; f.step(30); assert(count(PAYLOAD_TYPE_ANON_REQ) == 1);
+  assert(f.administer("trust none").find("Saved ") == 0); f.step(300);
+  login(3);
+  assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_REQ) == 0);
+  assert(owner.replies(f.bot.publicKey(), f.radio).back().find("changed") != std::string::npos);
+  puts("PASS repeater delivery: shared login/PATH repair, reciprocal ordering, known-route fast path, one safe GPS read retry, no GPS write replay, observed permissions, ACL refresh and repair revocation");
 }
 #if ONCHIP_BOT_WASM
 static void native_runtime_admission_isolation(const char *modules) {
@@ -5560,7 +5758,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc == 3 && !strcmp(argv[1], "--repeater-cli-test")) {
-    native_repeater_cli(argv[2]); return 0;
+    native_repeater_cli(argv[2]); native_repeater_delivery(argv[2]); return 0;
   }
   if (argc > 1) return botHostRunner(argc, argv);
 #else
@@ -5815,7 +6013,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc == 3 && !strcmp(argv[1], "--repeater-cli-test")) {
-    native_repeater_cli(argv[2]); return 0;
+    native_repeater_cli(argv[2]); native_repeater_delivery(argv[2]); return 0;
   }
   if (argc > 1) return botHostRunner(argc, argv);
 #else

@@ -51,7 +51,6 @@ constexpr unsigned BotObservationLimit = 8;
 #define ONCHIP_BOT_JOB_LIMIT 4
 #endif
 constexpr unsigned BotJobLimit = ONCHIP_BOT_JOB_LIMIT, BotIoLimit = 8;
-constexpr unsigned BotOwnerIoLimit = 16;
 static_assert(BotJobLimit >= 1 && BotJobLimit <= 4, "Bot worker job capacity is 1..4");
 constexpr size_t BotKeyLimit = 32;
 #if ONCHIP_BOT_COMPACT_PROFILE
@@ -68,6 +67,8 @@ constexpr unsigned BotTransactionLimit = 4;
 #endif
 constexpr unsigned BotReceiveLimit = 4, BotReceiveDedupLimit = 16;
 constexpr unsigned BotRepeaterLimit = ONCHIP_BOT_COMPACT_PROFILE ? 4 : 12;
+// Each fleet target needs one request and up to two response chunks.
+constexpr unsigned BotOwnerIoLimit = ONCHIP_BOT_COMPACT_PROFILE ? 16 : 3 * BotRepeaterLimit;
 constexpr unsigned BotSourcePartLimit = 8;
 constexpr unsigned BotThreadRuleLimit = 8;
 struct BotThreadRule {
@@ -192,7 +193,7 @@ struct BotIoRequest {
   uint32_t deadline = 0, grant = 0, revision = 0, delaySeconds = 0;
   enum PacketKind : uint8_t { TextPacket, ChannelPacket, TracePacket } packetKind = TextPacket;
   enum WaitKind : uint8_t { TextWait, AckWait, TraceWait, ChannelWait } waitKind = TextWait;
-  bool waitAck = false, reply = false, exact = false, traceSendOnly = false;
+  bool waitAck = false, reply = false, exact = false, traceSendOnly = false, repeaterRead = false;
   uint8_t pathWidth = 0, routeType = 0;
   uint32_t packetId = 0;
   uint8_t route[BotTraceLimit]{}, routeSize = 0, routeWidth = 1;

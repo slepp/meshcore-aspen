@@ -141,9 +141,9 @@ setperm COMMAND_BOT_FULL_PUBLIC_KEY 3
 ```
 
 Keep the existing configured targets and learned routes. A disabled target or
-one on another frequency remains unavailable to fleet commands. If its route
-is unknown, run `!find-path` with its public-key prefix first. CLI requests use
-the known route without flooding or changing the monitor's due times.
+one on another frequency remains unavailable to fleet commands. CLI requests
+use the same learned routes as monitoring. An unknown route starts a MeshCore
+login and PATH exchange to establish the outbound and return routes.
 
 Install the source additively:
 
@@ -158,11 +158,13 @@ In an authenticated private DM from a trusted owner:
 ```text
 !rcmd d1,d2,d4,d7,wye ver
 !rcmd d1,d2 neighbors
+!rcmd d1,d2 gps
 !rcmd-write d1,d2 set flood.max 4
 ```
 
-Select 1..6 distinct configured aliases, separated by commas; alias case does
-not matter. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
+Select distinct configured aliases, separated by commas; alias case does
+not matter. You can select every configured repeater whose aliases fit in the
+command message. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
 Identity, access, radio and restart commands run on one target at a time.
 Existing command and radio-action permissions still apply.
 
@@ -176,16 +178,24 @@ holds 256 bytes per target and marks longer responses as truncated. An `ok`
 result means a matching response arrived; the remote response itself reports
 whether the command succeeded.
 
+Read-only commands can repair the route and retry once after a missing reply.
+Queries such as `gps` use `!rcmd`; changes such as `gps on` use `!rcmd-write`.
+A login that confirms insufficient admin access reports that condition directly.
+`bot repeaters config ALIAS` shows the bot's last observed CLI access as
+`cli=admin`, `read`, `none` or `unknown`.
+
 A timed-out write may have applied. It is sent once: read back the affected
 setting before deciding whether to repeat it. Passwords and private keys do
 not belong in the installed Lua source.
 
-For another Lua command, `repeater.command(alias, text)` yields
+For another Lua command, `repeater.command(alias, text[, read_only])` yields
 `{ok, text, reply, error, queued, transmitted, truncated}`. `text` retains line
 breaks; `reply` replaces them with spaces for RF output. Native code checks the
 current trusted-owner DM, target enable state, frequency and policy generation
 at admission and completion. Scheduled events cannot execute remote CLI.
-The monitor can remain off while the owner uses this API.
+The monitor can remain off while the owner uses this API. The optional third
+argument defaults to `false`; pass `true` for a query safe to repeat after
+route repair. Writes are sent once.
 
 ## Replace or compose Lua sources
 
