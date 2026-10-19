@@ -31,7 +31,7 @@ pub actor ResultSlot {
 }
 
 pub actor Connector {
-    let endpoint: ChildRef<duplex.Endpoint>;
+    let endpoint: duplex.Endpoint;
     let profile: bytes;
     let completed: ResultSlot;
     receive fn idle() {}

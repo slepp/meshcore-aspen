@@ -25,7 +25,7 @@ pub fn supervision_testing() -> bool {
     }) == 1
 }
 
-pub fn native_read(slot: Option<ChildRef<process.WorkerOwner>>, timeout: i64) -> bytes {
+pub fn native_read(slot: Option<process.WorkerOwner>, timeout: i64) -> bytes {
     match slot {
         .Some(owner) => match owner.read(timeout) {
             .Ok(result) => compatibility_read(result),
@@ -35,7 +35,7 @@ pub fn native_read(slot: Option<ChildRef<process.WorkerOwner>>, timeout: i64) ->
     }
 }
 
-pub fn native_send(slot: Option<ChildRef<process.WorkerOwner>>, data: bytes) -> bool {
+pub fn native_send(slot: Option<process.WorkerOwner>, data: bytes) -> bool {
     match slot {
         .Some(owner) => match owner.write(data) {
             .Ok(result) => result.is_ok(),
@@ -45,7 +45,7 @@ pub fn native_send(slot: Option<ChildRef<process.WorkerOwner>>, data: bytes) -> 
     }
 }
 
-pub fn native_pid(slot: Option<ChildRef<process.WorkerOwner>>) -> i64 {
+pub fn native_pid(slot: Option<process.WorkerOwner>) -> i64 {
     match slot {
         .Some(owner) => match owner.id() {
             .Ok(pid) => pid,
@@ -55,7 +55,7 @@ pub fn native_pid(slot: Option<ChildRef<process.WorkerOwner>>) -> i64 {
     }
 }
 
-pub fn native_close(slot: Option<ChildRef<process.WorkerOwner>>) {
+pub fn native_close(slot: Option<process.WorkerOwner>) {
     if let .Some(owner) = slot {
         match owner.retire() {
             .Ok(result) => {
@@ -87,7 +87,7 @@ fn compatibility_read(result: duplex.Read) -> bytes {
     output
 }
 
-pub fn modem_read(connection: ChildRef<supervised_io.Endpoint>, timeout: i64) -> bytes {
+pub fn modem_read(connection: supervised_io.Endpoint, timeout: i64) -> bytes {
     let result = supervised_io.read(connection, timeout);
     match result {
         duplex.Read.End => {

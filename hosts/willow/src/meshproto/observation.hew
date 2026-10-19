@@ -140,9 +140,9 @@ pub fn timestamp(stamp: i64) -> Result<string, string> {
     if millis == 0 {
         return .Ok(base + "Z");
     }
-    var fraction = to_string(millis + 1000).slice(1, 4);
+    var fraction = to_string(millis + 1000)[1..4];
     while fraction.ends_with("0") {
-        fraction = fraction.slice(0, fraction.len() - 1);
+        fraction = fraction[0..fraction.len() - 1];
     }
     .Ok(base + "." + fraction + "Z")
 }
@@ -153,10 +153,10 @@ pub fn topic(cfg: Config) -> Result<string, string> {
     }
     var prefix = cfg.prefix;
     while prefix.starts_with("/") {
-        prefix = prefix.slice(1, prefix.len());
+        prefix = prefix[1..];
     }
     while prefix.ends_with("/") {
-        prefix = prefix.slice(0, prefix.len() - 1);
+        prefix = prefix[0..prefix.len() - 1];
     }
     if prefix.is_empty() {
         prefix = "meshcore";

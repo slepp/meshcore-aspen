@@ -98,8 +98,8 @@ pub fn shared_filter(filter: string) -> string {
     if !shared(filter) {
         return filter;
     }
-    let slash = filter.slice(7, filter.len()).find("/").expect("validated shared group") + 7;
-    filter.slice(slash + 1, filter.len())
+    let slash = filter[7..].find("/").expect("validated shared group") + 7;
+    filter[slash + 1..]
 }
 
 pub fn matches(filter: string, topic: string) -> bool {

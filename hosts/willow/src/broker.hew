@@ -34,8 +34,8 @@ pub fn configuration(path: string) -> Result<Config, string> {
             continue;
         }
         let at = line.find("=").ok_or("MQTT config requires key=value lines") handle failure { return .Err(failure); };
-        let key = line.slice(0, at);
-        let value = line.slice(at + 1, line.len());
+        let key = line[0..at];
+        let value = line[at + 1..];
         for previous in keys {
             if previous == key {
                 return .Err("duplicate MQTT configuration key");

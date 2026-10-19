@@ -50,7 +50,7 @@ import std.fs;
 
 import std.net.ipnet;
 
-fn control_write(fd: ChildRef<duplex.Endpoint>, packet: bytes, stage: string, epoch: i64) -> bool {
+fn control_write(fd: duplex.Endpoint, packet: bytes, stage: string, epoch: i64) -> bool {
     match duplex.write(fd, packet) {
         .Ok(_) => true,
         .Err(error) => {
@@ -106,7 +106,7 @@ type WorkerProgress {
 }
 
 type NativeWorker {
-    fd: Option<ChildRef<process.WorkerOwner>>;
+    fd: Option<process.WorkerOwner>;
     key: i64;
     ready: bool;
     management: bool;
@@ -178,18 +178,18 @@ fn config(root: string) -> Config {
             .Some(position) => position,
             _ => panic(f"configuration line {number}: expected key=value"),
         };
-        let key = line.slice(0, at);
-        let value = line.slice(at + 1, line.len());
+        let key = line[0..at];
+        let value = line[at + 1..];
         if key.starts_with("observer.") {
-            observer_options = observer_options + key.slice(9, key.len()) + "=" + value + "\n";
+            observer_options = observer_options + key[9..] + "=" + value + "\n";
             continue;
         }
         if key.starts_with("relay.") {
-            relay_options = relay_options + key.slice(6, key.len()) + "=" + value + "\n";
+            relay_options = relay_options + key[6..] + "=" + value + "\n";
             continue;
         }
         if key.starts_with("room.") {
-            room_options = room_options + key.slice(5, key.len()) + "=" + value + "\n";
+            room_options = room_options + key[5..] + "=" + value + "\n";
             continue;
         }
         match key {
@@ -299,7 +299,7 @@ fn launch_worker(executable: string, root: string) -> Option<process.Child> {
     transport.worker(executable, root)
 }
 
-fn launch_native(owner: ChildRef<process.WorkerOwner>, executable: string, root: string) -> Option<ChildRef<process.WorkerOwner>> {
+fn launch_native(owner: process.WorkerOwner, executable: string, root: string) -> Option<process.WorkerOwner> {
     let injected = transport.supervision_testing() && !storage.absent(root + "-verify.inject");
     if injected || executable != worker_identity.path() || !transport.verify_worker(worker_identity.inputs(), worker_identity.digest()) {
         println("BOT_OFFLINE native worker verification failed; relay and room remain online; reinstall the bundle or rebuild the source installation");
@@ -359,7 +359,7 @@ fn init_generated() -> string {
     var out = "";
     for b in entropy {
         let at = (b & 31) as i64;
-        out = out + alphabet.slice(at, at + 1);
+        out = out + alphabet[at..at + 1];
     }
     out
 }
@@ -1129,7 +1129,7 @@ pub supervisor RoleBranch(plan: RolePlan) {
     child role: RoleWorker { plan: plan };
 }
 
-fn log_outcomes(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>) {
+fn log_outcomes(link: session.Session, relay: RoleWorker, room: RoleWorker) {
     for event in link.outcomes().expect("terminal TX logging outcomes") {
         let delivered = if event.port == 0 {
             relay.outcome(event.raw, event.value, transport.now()).is_ok()
@@ -1146,12 +1146,12 @@ fn log_outcomes(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildR
 }
 
 type HealthPlan {
-    control: ChildRef<owner_control.Control>;
-    relay: ChildRef<RoleWorker>;
-    room: ChildRef<RoleWorker>;
-    bot: ChildRef<RoleWorker>;
-    publisher: ChildRef<observer_client.Publisher>;
-    outbox: ChildRef<observer_queue.Outbox>;
+    control: owner_control.Control;
+    relay: RoleWorker;
+    room: RoleWorker;
+    bot: RoleWorker;
+    publisher: observer_client.Publisher;
+    outbox: observer_queue.Outbox;
     relay_key: string;
     room_key: string;
     bot_key: string;
@@ -1162,7 +1162,7 @@ type HealthPlan {
     started_ms: i64;
 }
 
-fn role_health(worker: ChildRef<RoleWorker>, name: string, key: string, generation: i64) -> host_health.Role {
+fn role_health(worker: RoleWorker, name: string, key: string, generation: i64) -> host_health.Role {
     match worker.health(generation) {
         .Ok(value) => value,
         .Err(_) => host_health.Role { name: name, key: key, started_ms: 0, running: false, native: false, phy_generation: generation },
@@ -1257,7 +1257,7 @@ fn initialize_role(seed: bytes, kind: i64, name: string, cfg: Config, state: str
     stopped(role);
 }
 
-fn tick_roles(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool, root: string, relay_environment: RoleEnvironment, room_environment: RoleEnvironment, var last_relay_flood: i64, var last_room_flood: i64) -> (i64, i64) {
+fn tick_roles(link: session.Session, relay: RoleWorker, room: RoleWorker, bot: RoleWorker, native: bool, root: string, relay_environment: RoleEnvironment, room_environment: RoleEnvironment, var last_relay_flood: i64, var last_room_flood: i64) -> (i64, i64) {
     // A turn owns its forked tasks; the service's lifetime must not retain them.
     let relay_tick = fork relay.tick(transport.now());
     let room_tick = fork room.tick(transport.now());
@@ -1305,7 +1305,7 @@ fn tick_roles(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef
     (last_relay_flood, last_room_flood)
 }
 
-fn tick_bot(bot: ChildRef<RoleWorker>, native: bool, now: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
+fn tick_bot(bot: RoleWorker, native: bool, now: i64) -> Result<Vec<roles.Tx>, RoleFailure> {
     if native {
         return .Ok(Vec.new());
     }
@@ -1315,14 +1315,14 @@ fn tick_bot(bot: ChildRef<RoleWorker>, native: bool, now: i64) -> Result<Vec<rol
     }
 }
 
-fn role_deadline(worker: ChildRef<RoleWorker>, now: i64) -> i64 {
+fn role_deadline(worker: RoleWorker, now: i64) -> i64 {
     match worker.next_deadline(now) {
         .Ok(value) => value,
         .Err(_) => 9223372036854775807,
     }
 }
 
-fn role_timer(relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool) -> i64 {
+fn role_timer(relay: RoleWorker, room: RoleWorker, bot: RoleWorker, native: bool) -> i64 {
     let utc = transport.now();
     var due = role_deadline(relay, utc);
     let room_due = role_deadline(room, utc);
@@ -1345,7 +1345,7 @@ fn role_timer(relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: Chil
     })
 }
 
-fn native_watch(slot: Option<ChildRef<process.WorkerOwner>>, group: events.Group) -> i64 {
+fn native_watch(slot: Option<process.WorkerOwner>, group: events.Group) -> i64 {
     let result = match slot {
         .Some(owner) => owner.watch(events.share(group)),
         .None => return 0,
@@ -1363,7 +1363,7 @@ fn native_watch(slot: Option<ChildRef<process.WorkerOwner>>, group: events.Group
     }
 }
 
-fn start_native(var worker: NativeWorker, owner: ChildRef<process.WorkerOwner>, cfg: Config, root: string, seed: bytes, airtime: bytes, group: events.Group) -> NativeWorker {
+fn start_native(var worker: NativeWorker, owner: process.WorkerOwner, cfg: Config, root: string, seed: bytes, airtime: bytes, group: events.Group) -> NativeWorker {
     stop(worker.decoder);
     stopped(worker.decoder);
     worker.decoder = spawn session.WorkerDecoder { buffer: bytes.new() };
@@ -1433,7 +1433,7 @@ fn emit(link: session.Session, port: i64, frames: Vec<roles.Tx>) {
     }
 }
 
-fn sync_role_policy(link: session.Session, worker: ChildRef<RoleWorker>, port: i64, other_control: bool) {
+fn sync_role_policy(link: session.Session, worker: RoleWorker, port: i64, other_control: bool) {
     if port == 0 && other_control {
         return;
     }
@@ -1447,13 +1447,13 @@ fn sync_role_policy(link: session.Session, worker: ChildRef<RoleWorker>, port: i
     }
 }
 
-fn fence_restarted_role(link: session.Session, worker: ChildRef<RoleWorker>, port: i64) {
+fn fence_restarted_role(link: session.Session, worker: RoleWorker, port: i64) {
     if let .Ok(true) = worker.take_restart() {
         link.fence_role(port).expect("retire previous role transmissions");
     }
 }
 
-fn reconnect_factor(worker: ChildRef<RoleWorker>, environment: RoleEnvironment, port: i64) -> bytes {
+fn reconnect_factor(worker: RoleWorker, environment: RoleEnvironment, port: i64) -> bytes {
     match worker.expected_factor() {
         .Ok(value) => value,
         .Err(_) => {
@@ -1464,7 +1464,7 @@ fn reconnect_factor(worker: ChildRef<RoleWorker>, environment: RoleEnvironment, 
     }
 }
 
-fn policy_results(link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>) {
+fn policy_results(link: session.Session, relay: RoleWorker, room: RoleWorker) {
     for result in link.policy_results().expect("role source policy outcomes") {
         let frames = if result.port == 0 {
             relay.policy_complete(result.factor, result.ok)
@@ -1511,7 +1511,7 @@ fn advert_times(root: string, relay: i64, room: i64) {
     }
 }
 
-fn cancel_native(fd: Option<ChildRef<process.WorkerOwner>>, decoder: session.WorkerDecoder, control: ChildRef<owner_control.Control>, admin: ChildRef<owner_control.Admin>) -> bool {
+fn cancel_native(fd: Option<process.WorkerOwner>, decoder: session.WorkerDecoder, control: owner_control.Control, admin: owner_control.Admin) -> bool {
     let request_id: i64 = 4294967294;
     if !transport.native_send(fd, session.frame(4, wire.cat(wire.le(request_id, 4), "cancel".to_bytes()))) {
         return false;
@@ -1563,7 +1563,7 @@ fn cancel_native(fd: Option<ChildRef<process.WorkerOwner>>, decoder: session.Wor
     confirmed && transport.native_send(fd, session.frame(9, wire.byte(1)))
 }
 
-fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay: ChildRef<RoleWorker>, room: ChildRef<RoleWorker>, bot: ChildRef<RoleWorker>, native: bool, ready: bool, worker_fd: Option<ChildRef<process.WorkerOwner>>, observer: ChildRef<observer_queue.Outbox>, observing: bool) -> bool {
+fn receive_packets(packets: Vec<session.Reception>, link: session.Session, relay: RoleWorker, room: RoleWorker, bot: RoleWorker, native: bool, ready: bool, worker_fd: Option<process.WorkerOwner>, observer: observer_queue.Outbox, observing: bool) -> bool {
     if packets.is_empty() {
         return true;
     }

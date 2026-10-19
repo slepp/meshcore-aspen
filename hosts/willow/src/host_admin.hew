@@ -33,7 +33,7 @@ pub fn role_allowed(command: string) -> bool {
 
 pub fn native_command(command: string) -> string {
     if command.starts_with("bot ") {
-        return command.slice(4, command.len());
+        return command[4..];
     }
     if command == "role config bot" {
         return "config";
@@ -164,7 +164,7 @@ pub fn decode(data: bytes) -> Decode {
                 return .Invalid;
             }
         }
-        let value = line.slice(parts[0].len() + 1, line.len()).trim();
+        let value = line[parts[0].len() + 1..].trim();
         if name == "host" {
             host = value;
         } else if name == "origin" {

@@ -110,7 +110,7 @@ fn main() {
         return;
     }
     let seed = if args[3].starts_with("@") {
-        storage.read(args[3].slice(1, args[3].len()))
+        storage.read(args[3][1..args[3].len()])
     } else {
         hex.decode(args[3]).expect("valid hexadecimal")
     };

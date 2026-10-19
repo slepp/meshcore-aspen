@@ -946,7 +946,7 @@ pub actor Base {
                     let target = if authority.type_of() == json.Kind.Object {
                         path
                     } else {
-                        path.slice(0, path.len() - "companion.json".len()) + "identity-state.json"
+                        path[0..path.len() - "companion.json".len()] + "identity-state.json"
                     };
                     let committed = state.commit(target, envelope);
                     if committed == -2 {

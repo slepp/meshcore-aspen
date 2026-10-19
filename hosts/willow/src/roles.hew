@@ -38,10 +38,10 @@ type Held {
 
 fn without_leading_spaces(text: string) -> string {
     var at: i64 = 0;
-    while at < text.len() && text.slice(at, at + 1) == " " {
+    while at < text.len() && text[at..at + 1] == " " {
         at = at + 1;
     }
-    text.slice(at, text.len())
+    text[at..]
 }
 
 fn valid_note(key: string, value: string) -> bool {
@@ -292,8 +292,8 @@ fn configured(options: string, role: i64, initial: RoleSettings) -> Option<RoleS
             continue;
         }
         let at = line.find("=").expect("role setting requires key=value");
-        let key = line.slice(0, at);
-        let value = line.slice(at + 1, line.len());
+        let key = line[0..at];
+        let value = line[at + 1..];
         match key {
             "name" => {
                 prefs.name = value;
@@ -682,9 +682,9 @@ pub actor Role {
         }
         var command = management.trim_left(input);
         var prefix = "";
-        if command.to_bytes().len() > 3 && command.to_bytes()[2] == 124 {
-            prefix = command.slice(0, 3);
-            command = management.trim_left(command.slice(3, command.len()));
+        if command.len() > 3 && command.to_bytes()[2] == 124 {
+            prefix = command[0..3];
+            command = management.trim_left(command[3..]);
         }
         var reply = "Err - unsupported by host role";
         var frames: Vec<Tx> = Vec.new();
@@ -693,11 +693,11 @@ pub actor Role {
         } else if command == "help" {
             reply = cli.help("");
         } else if command.starts_with("help ") {
-            reply = cli.help(string.trim(command.slice(5, command.len())));
+            reply = cli.help(command[5..].trim());
         } else if command == "wifi" || command.starts_with("wifi ") {
             reply = cli.help("wifi");
         } else if command == "stats" || command.starts_with("stats ") {
-            reply = cli.stats(string.trim(command.slice(5, command.len())), diagnostics.readings, diagnostics.metrics);
+            reply = cli.stats(command[5..].trim(), diagnostics.readings, diagnostics.metrics);
         } else if command == "get stats" {
             reply = f"recv={diagnostics.metrics.received} sent={diagnostics.metrics.sent} uptime={diagnostics.metrics.uptime}s";
         } else if command == "board" {
@@ -715,11 +715,11 @@ pub actor Role {
             var requested = stamp + 1;
             var valid = true;
             if command.starts_with("time ") {
-                let text = string.trim(command.slice(5, command.len()));
+                let text = command[5..].trim();
                 valid = !text.is_empty();
                 var digits = text;
                 if text.starts_with("+") {
-                    digits = text.slice(1, text.len());
+                    digits = text[1..];
                 }
                 if digits.is_empty() {
                     valid = false;
@@ -805,7 +805,7 @@ pub actor Role {
             reply = "Error: mast-admin required for shared radio";
         } else if command.starts_with("password ") {
             var p = settings();
-            p.admin = management.truncate(command.slice(9, command.len()), 15);
+            p.admin = management.truncate(command[9..], 15);
             if p.local_seconds < 3600 {
                 p.local_seconds = 0;
             }
@@ -813,7 +813,7 @@ pub actor Role {
             reply = "password now: " + p.admin;
         } else if command.starts_with("setperm ") {
             var words: Vec<string> = Vec.new();
-            for word in string.replace(command, "\t", " ").split(" ") {
+            for word in command.replace("\t", " ").split(" ") {
                 if !word.is_empty() {
                     words.push(word);
                 }
@@ -835,7 +835,7 @@ pub actor Role {
             }
             frames.push(tx(packet, 1500));
         } else if role == 2 && command.starts_with("discover.neighbors") {
-            if !string.trim(command.slice(18, command.len())).is_empty() {
+            if !command[18..].trim().is_empty() {
                 reply = "Err - discover.neighbors has no options";
             } else {
                 let tag = crypto.random_bytes(4).expect("discovery tag entropy");
@@ -866,7 +866,7 @@ pub actor Role {
                 reply = "-none-";
             }
         } else if role == 2 && command.starts_with("neighbor.remove ") {
-            let key = hex.decode(string.trim(command.slice(16, command.len()))) handle _ { bytes.new() };
+            let key = hex.decode(command[16..].trim()) handle _ { bytes.new() };
             if key.is_empty() || key.len() > 32 {
                 reply = "ERR: bad pubkey";
             } else {
@@ -895,7 +895,7 @@ pub actor Role {
             }
             reply = result.reply;
         } else if role == 3 && (command == "room.post" || command.starts_with("room.post ")) {
-            let body = string.trim(command.slice(9, command.len()));
+            let body = command[9..].trim();
             if body.is_empty() {
                 reply = "ERR empty message";
             } else {
@@ -947,7 +947,7 @@ pub actor Role {
                 reply = "Error, physical source-policy management is not connected";
             } else {
                 let key = words[1];
-                let value = command.slice(5 + key.len(), command.len());
+                let value = command[5 + key.len()..];
                 match preferences.change(settings(), key, value) {
                     .Ok(p) => {
                         if (p.rxdelay != 0.0 || (p.repeat && (p.txdelay != 0.0 || p.direct_delay != 0.0))) && airtime_table.len() != 1024 {
@@ -1789,7 +1789,7 @@ pub actor Role {
                 let colon = message.find(": ");
                 match colon {
                     .Some(at) => {
-                        command = message.slice(at + 2, message.len());
+                        command = message[at + 2..];
                     }
                     .None => {
                         return out;
@@ -1858,12 +1858,12 @@ pub actor Role {
             if command.starts_with("!@") {
                 match command.find(" ") {
                     .Some(at) => {
-                        let target = command.slice(2, at);
+                        let target = command[2..at];
                         let pubhex = hex.encode(selfkey);
                         if (target.len() != 8 && target.len() != 64) || !pubhex.starts_with(target) {
                             return out;
                         }
-                        command = "!" + command.slice(at + 1, command.len());
+                        command = "!" + command[at + 1..];
                     }
                     .None => {
                         return out;
@@ -1884,7 +1884,7 @@ pub actor Role {
             } else if command == "!mt" || command.starts_with("!mt ") {
                 var seconds: i64 = 5;
                 if command.len() > 4 {
-                    seconds = match string.to_int(command.slice(4, command.len())) {
+                    seconds = match string.to_int(command[4..]) {
                         .Ok(value) => value,
                         .Err(_) => 0,
                     };
@@ -1925,10 +1925,10 @@ pub actor Role {
                 }
             } else if (command == "!remember" || command.starts_with("!remember ")) && !group {
                 reply = "Error: !remember requires a 1-32 byte key and 1-120 byte text";
-                let rest = without_leading_spaces(command.slice(9, command.len()));
+                let rest = without_leading_spaces(command[9..]);
                 if let .Some(at) = rest.find(" ") {
-                    let note_key = rest.slice(0, at);
-                    let value = without_leading_spaces(rest.slice(at + 1, rest.len()));
+                    let note_key = rest[0..at];
+                    let value = without_leading_spaces(rest[at + 1..]);
                     if valid_note(note_key, value) && !value.is_empty() {
                         let owner = hex.encode(key);
                         var found: i64 = -1;
@@ -1958,7 +1958,7 @@ pub actor Role {
                     }
                 }
             } else if command.starts_with("!recall ") && !group {
-                let note_key = without_leading_spaces(command.slice(8, command.len()));
+                let note_key = without_leading_spaces(command[8..]);
                 reply = "No note: " + note_key;
                 for note in notes {
                     if note.owner == hex.encode(key) && note.key == note_key {
@@ -1967,7 +1967,7 @@ pub actor Role {
                 }
             } else if command.starts_with("!forget ") && !group {
                 var retained: Vec<Note> = Vec.new();
-                let note_key = without_leading_spaces(command.slice(8, command.len()));
+                let note_key = without_leading_spaces(command[8..]);
                 for note in notes {
                     if note.owner != hex.encode(key) || note.key != note_key {
                         retained.push(note);
@@ -2009,7 +2009,7 @@ pub actor Role {
                 155
             };
             if reply.len() > limit {
-                reply = reply.slice(0, limit - 26) + "; truncated; narrow prefix";
+                reply = reply[0..limit - 26] + "; truncated; narrow prefix";
             }
             diagnostics.commands = diagnostics.commands + 1;
             if group {
@@ -2513,7 +2513,7 @@ pub actor Role {
                         155
                     };
                     if reply.len() > limit {
-                        reply = reply.slice(0, limit - 11) + "; truncated";
+                        reply = reply[0..limit - 11] + "; truncated";
                     }
                     var plain = wire.cat(wire.le(timestamp(now), 4), wire.byte(0));
                     if job.group {

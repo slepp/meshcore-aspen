@@ -67,7 +67,7 @@ type Message {
 pub type Plan {
     root: string;
     lock: i32;
-    worker: ChildRef<process.WorkerOwner>;
+    worker: process.WorkerOwner;
 }
 
 pub type RoleRequest {
@@ -627,7 +627,7 @@ pub actor Admin {
         } else {
             admin_pending = admin_clock;
             admin_name = if command.starts_with("bot name ") {
-                command.slice(9, command.len())
+                command[9..]
             } else {
                 ""
             };
@@ -794,7 +794,7 @@ pub actor Lifetime {
     }
 }
 
-pub fn drive(control: ChildRef<Control>, admin: ChildRef<Admin>, lifetime: Lifetime, end: i64) {
+pub fn drive(control: Control, admin: Admin, lifetime: Lifetime, end: i64) {
     let group = events.open().expect("open owner control readiness");
     let (output, input) = stream.pipe<events.Event>(64).expect("owner readiness stream");
     let pump = spawn events.Pump { group: events.share(group), output: output };
@@ -804,7 +804,7 @@ pub fn drive(control: ChildRef<Control>, admin: ChildRef<Admin>, lifetime: Lifet
     stopped(pump);
 }
 
-pub fn drive_events(control: ChildRef<Control>, admin: ChildRef<Admin>, lifetime: Lifetime, end: i64, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: Option<events.Channel>) {
+pub fn drive_events(control: Control, admin: Admin, lifetime: Lifetime, end: i64, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: Option<events.Channel>) {
     let shutdown = events.driver(group, input);
     lifetime.bind(events.share(group)).expect("bind owner driver lifetime");
     var failed = false;

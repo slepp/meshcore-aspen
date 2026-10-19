@@ -69,7 +69,7 @@ pub fn hardware_busy(frame: bytes) -> bool {
     frame.len() == 3 && (frame[0] & 15) == 6 && frame[1] == 241 && frame[2] == 7
 }
 
-pub fn request(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, command: i64, body: bytes) -> bytes {
+pub fn request(fd: duplex.Endpoint, decoder: wire.Decoder, port: i64, command: i64, body: bytes) -> bytes {
     let stage = command_name(command);
     let response = response_command(command);
     let expected = hex.encode(wire.byte(response));
@@ -168,21 +168,21 @@ fn reject(stage: string, port: i64, expected: string, actual: bytes) -> Option<N
     .None
 }
 
-pub fn negotiate(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool) -> Option<Negotiated> {
+pub fn negotiate(fd: duplex.Endpoint, decoder: wire.Decoder, profile: bytes, need_worker: bool) -> Option<Negotiated> {
     negotiate_ports(fd, decoder, profile, need_worker, 3)
 }
 
-pub fn negotiate_ports(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64) -> Option<Negotiated> {
+pub fn negotiate_ports(fd: duplex.Endpoint, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64) -> Option<Negotiated> {
     negotiate_factors(fd, decoder, profile, need_worker, ports, Vec.new())
 }
 
-pub fn negotiate_factors(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
+pub fn negotiate_factors(fd: duplex.Endpoint, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
     assert(ports == 3 || ports == 4);
     negotiate_factor(fd, decoder, profile, need_worker, ports, factors)
 }
 
 /// One ordinary KISS source, without requesting an aggregate logical-port session.
-pub fn negotiate_source(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, factor: f64) -> Option<Negotiated> {
+pub fn negotiate_source(fd: duplex.Endpoint, decoder: wire.Decoder, profile: bytes, factor: f64) -> Option<Negotiated> {
     let encoded = match binary.float32(factor) {
         .Some(value) => value,
         .None => {
@@ -195,7 +195,7 @@ pub fn negotiate_source(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, pr
     negotiate_factor(fd, decoder, profile, true, 1, [encoded])
 }
 
-fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
+fn negotiate_factor(fd: duplex.Endpoint, decoder: wire.Decoder, profile: bytes, need_worker: bool, ports: i64, factors: Vec<bytes>) -> Option<Negotiated> {
     assert(factors.is_empty() || factors.len() == ports);
     decoder.buffer_native().expect("negotiation RF backlog");
     var generations: Vec<i64> = Vec.new();
@@ -270,7 +270,7 @@ fn negotiate_factor(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, profil
     .Some(Negotiated { generations: generations, phy_generations: phy_generations, airtime: airtime, initial_frames: decoder.take_native().expect("negotiation RF backlog"), parser: decoder.parser_state().expect("negotiation parser state") })
 }
 
-pub fn announce(fd: ChildRef<duplex.Endpoint>, decoder: wire.Decoder, port: i64, generation: i64, key: bytes) {
+pub fn announce(fd: duplex.Endpoint, decoder: wire.Decoder, port: i64, generation: i64, key: bytes) {
     let reply = request(fd, decoder, port, 38, wire.cat(wire.cat(wire.byte(1), wire.byte(port)), key));
     if reply.len() != 8 || reply[0] != 1 || reply[1] != 0 || wire.uint(wire.cut(reply, 2, 6)) != generation {
         println(f"ROLE_PRESENCE port={port} overlap=unknown");
@@ -353,7 +353,7 @@ pub fn result(token: i64, state: i64, reason: i64, metrics: bytes) -> bytes {
 }
 
 pub actor Session {
-    let fd: ChildRef<duplex.Endpoint>;
+    let fd: duplex.Endpoint;
     var ports: Vec<PortState>;
     var pending: Vec<Pending>;
     var online: bool = true;
@@ -682,7 +682,7 @@ pub actor Session {
     }
 }
 
-pub fn create(fd: ChildRef<duplex.Endpoint>, generations: Vec<i64>) -> Session {
+pub fn create(fd: duplex.Endpoint, generations: Vec<i64>) -> Session {
     assert(generations.len() == 1 || generations.len() == 3 || generations.len() == 4);
     var ports: Vec<PortState> = Vec.new();
     for generation in generations {

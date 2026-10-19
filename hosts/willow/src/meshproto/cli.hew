@@ -98,9 +98,9 @@ pub fn physical(key: string, profile: bytes) -> string {
     let bw = binary.integer(binary.slice(profile, 4, 8).expect("profile bandwidth")).expect("bandwidth");
     var bandwidth = to_string(bw / 1000);
     if bw % 1000 != 0 {
-        var tail = to_string(1000 + bw % 1000).slice(1, 4);
+        var tail = to_string(1000 + bw % 1000)[1..4];
         while tail.ends_with("0") {
-            tail = tail.slice(0, tail.len() - 1);
+            tail = tail[0..tail.len() - 1];
         }
         bandwidth = bandwidth + "." + tail;
     }

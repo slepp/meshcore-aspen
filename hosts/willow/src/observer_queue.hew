@@ -397,18 +397,18 @@ pub type Checkpoint {
 /// Serial disk owner; Outbox remains available while this actor syncs a file.
 pub actor Writer {
     mailbox 1;
-    fn persist(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) -> i64 {
+    fn persist(outbox: Outbox, checkpoint: Checkpoint) -> i64 {
         let result = observer_store.save(checkpoint.path, checkpoint.config, checkpoint.snapshot);
         let _ = outbox.saved(checkpoint.incarnation, checkpoint.generation, result);
         result
     }
-    receive fn write(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) {
+    receive fn write(outbox: Outbox, checkpoint: Checkpoint) {
         let _ = persist(outbox, checkpoint);
     }
-    receive fn flush(outbox: ChildRef<Outbox>, checkpoint: Checkpoint) -> i64 {
+    receive fn flush(outbox: Outbox, checkpoint: Checkpoint) -> i64 {
         persist(outbox, checkpoint)
     }
-    receive fn restore(outbox: ChildRef<Outbox>, request: Restore) {
+    receive fn restore(outbox: Outbox, request: Restore) {
         let plan = request.plan;
         var result: Result<observer_store.Snapshot, string> = .Err("checkpoint recovery failed");
         if storage.recover(plan.path, plan.lock) {

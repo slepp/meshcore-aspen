@@ -240,7 +240,7 @@ pub fn policy_valid(prefs: json.Value) -> bool {
             }
         }
         let unmarked = if name.starts_with("#") {
-            name.slice(1, name.len())
+            name[1..]
         } else {
             name
         };
@@ -248,7 +248,7 @@ pub fn policy_valid(prefs: json.Value) -> bool {
             let previous = item(regions, j);
             let previous_name = text(previous, "name");
             let previous_unmarked = if previous_name.starts_with("#") {
-                previous_name.slice(1, previous_name.len())
+                previous_name[1..]
             } else {
                 previous_name
             };

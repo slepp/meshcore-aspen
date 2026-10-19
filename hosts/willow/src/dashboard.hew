@@ -234,7 +234,7 @@ pub fn http_body(data: bytes, ready: bool) -> Result<json.Value, string> {
     if status.len() < 2 || (status[1] != "200" && !(ready && status[1] == "503")) {
         return .Err("health endpoint returned an unexpected HTTP status");
     }
-    let body = text.slice(parts[0].len() + 4, text.len());
+    let body = text[parts[0].len() + 4..];
     match json.parse(body) {
         .Ok(value) => if value.type_of() == json.Kind.Object {
             .Ok(value)

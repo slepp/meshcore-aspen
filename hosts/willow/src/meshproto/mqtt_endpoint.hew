@@ -30,10 +30,10 @@ fn hex_digit(value: u8) -> bool {
 
 fn valid_host(host: string) -> bool {
     if host.starts_with("[") && host.ends_with("]") {
-        return ipnet.is_v6(host.slice(1, host.len() - 1));
+        return ipnet.is_v6(host[1..host.len() - 1]);
     }
     let name = if host.ends_with(".") {
-        host.slice(0, host.len() - 1)
+        host[0..host.len() - 1]
     } else {
         host
     };
@@ -49,7 +49,7 @@ fn valid_host(host: string) -> bool {
     if numeric {
         return ipnet.is_v4(name);
     }
-    for label in string.split(lower_ascii(name), ".") {
+    for label in lower_ascii(name).split(".") {
         if label.is_empty() || label.len() > 63 || label.starts_with("-") || label.ends_with("-") {
             return false;
         }
@@ -76,19 +76,19 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
         .Some(value) => value,
         .None => return .Err("MQTT URL requires tcp, tls, ssl, ws or wss scheme"),
     };
-    let scheme = lower_ascii(text.slice(0, boundary));
+    let scheme = lower_ascii(text[0..boundary]);
     let websocket = scheme == "ws" || scheme == "wss";
     let tls = scheme == "tls" || scheme == "ssl" || scheme == "wss";
     if !websocket && scheme != "tcp" && scheme != "tls" && scheme != "ssl" {
         return .Err("MQTT URL requires tcp, tls, ssl, ws or wss scheme");
     }
-    let rest = text.slice(boundary + 3, text.len());
+    let rest = text[boundary + 3..];
     let slash = match rest.find("/") {
         .Some(value) => value,
         .None => rest.len(),
     };
-    let authority = rest.slice(0, slash);
-    var path = rest.slice(slash, rest.len());
+    let authority = rest[0..slash];
+    var path = rest[slash..];
     if authority.find("@").is_some() {
         return .Err("MQTT credentials belong in separate settings, not the URL");
     }
@@ -99,11 +99,11 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
             .Some(value) => value + 1,
             .None => return .Err("MQTT IPv6 address requires closing bracket"),
         };
-        host = authority.slice(0, closing);
-        suffix = authority.slice(closing, authority.len());
+        host = authority[0..closing];
+        suffix = authority[closing..];
     } else if let .Some(colon) = authority.find(":") {
-        host = authority.slice(0, colon);
-        suffix = authority.slice(colon, authority.len());
+        host = authority[0..colon];
+        suffix = authority[colon..];
     }
     if !valid_host(host) {
         return .Err("MQTT broker requires a hostname, IPv4 address or bracketed IPv6 address");
@@ -121,7 +121,7 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
         if !suffix.starts_with(":") || suffix.len() < 2 || suffix.len() > 6 {
             return .Err("MQTT port must be an integer from 1 through 65535");
         }
-        let digits = suffix.slice(1, suffix.len());
+        let digits = suffix[1..];
         for byte in digits.to_bytes() {
             if byte < 48 || byte > 57 {
                 return .Err("MQTT port must be an integer from 1 through 65535");

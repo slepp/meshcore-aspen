@@ -257,7 +257,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
             }
         }
         "owner.info" => {
-            p.owner = string.replace(text, "|", "\n");
+            p.owner = text.replace("|", "\n");
         }
         "loop.detect" => {
             p.loop_mode = match text {
@@ -357,7 +357,7 @@ pub fn get(p: Preferences, key: string) -> Option<string> {
     let value = match key {
         "name" => p.name,
         "guest.password" => p.guest,
-        "owner.info" => string.replace(p.owner, "\n", "|"),
+        "owner.info" => p.owner.replace("\n", "|"),
         "multi.acks" => to_string(p.multi_acks),
         "allow.read.only" => if p.read_only {
             "on"

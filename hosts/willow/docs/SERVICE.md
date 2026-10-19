@@ -618,7 +618,7 @@ scopes ordinary adverts. There is no region tree, editor or key rotation.
 
 The modem connection, role workers and native worker owner are separate actors.
 A declarative supervisor owns each role/transport branch, with an independent
-two-restart/60-second budget and stable ChildRef. A role actor replacement
+two-restart/60-second budget and stable child reference. A role actor replacement
 loads verified committed state, never a new empty role. See
 [production supervision](SUPERVISION.md) for the actual ownership boundaries.
 A native-worker failure restarts that child without closing healthy relay/room

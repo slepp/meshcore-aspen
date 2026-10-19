@@ -21,7 +21,7 @@ fn item() -> observation.Reception {
 }
 
 actor Producer {
-    let outbox: ChildRef<observer_queue.Outbox>;
+    let outbox: observer_queue.Outbox;
     receive fn fill(count: i64) {
         for index in 0..count {
             let _ = outbox.observe(item()).expect("admission actor");

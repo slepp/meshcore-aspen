@@ -49,7 +49,7 @@ pub fn utc(milliseconds: i64) -> string {
         f"{ms}"
     };
     while fraction.ends_with("0") && !fraction.is_empty() {
-        fraction = fraction.slice(0, fraction.len() - 1);
+        fraction = fraction[0..fraction.len() - 1];
     }
     let tail = if ms == 0 {
         "Z"

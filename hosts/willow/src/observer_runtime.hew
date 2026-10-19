@@ -67,8 +67,8 @@ fn settings(root: string, options: string, lock: i32, apply: bool) -> Settings {
             continue;
         }
         let at = line.find("=").expect("observer setting requires key=value");
-        let key = line.slice(0, at);
-        let value = line.slice(at + 1, line.len());
+        let key = line[0..at];
+        let value = line[at + 1..];
         match key {
             "enabled" => {
                 assert(value == "0" || value == "1");
@@ -190,7 +190,7 @@ fn settings(root: string, options: string, lock: i32, apply: bool) -> Settings {
     Settings { enabled: enabled, config: config, capacity: capacity, url: url, ca_file: ca_file, client_id: client_id, username: username, password: password, audience: audience, seed: seed }
 }
 
-pub fn observe(outbox: ChildRef<observer_queue.Outbox>, received: session.Reception) {
+pub fn observe(outbox: observer_queue.Outbox, received: session.Reception) {
     let origin = received.metadata[8];
     let reflected = origin == 1;
     let rssi = binary.finite_float32(wire.cut(received.metadata, 0, 4)).expect("receiver RSSI");
@@ -230,7 +230,7 @@ pub actor Lifetime {
 /// Run as a scoped native task, independently of modem negotiation/reconnect.
 /// Expected broker failures stay values; the stable child reference survives
 /// a publisher panic without replacing its independently owned outbox.
-pub fn drive(publisher: ChildRef<observer_client.Publisher>, outbox: ChildRef<observer_queue.Outbox>, writer: ChildRef<observer_queue.Writer>, lifetime: Lifetime, end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
+pub fn drive(publisher: observer_client.Publisher, outbox: observer_queue.Outbox, writer: observer_queue.Writer, lifetime: Lifetime, end: i64, enabled: bool, consume group: events.Group, consume input: stream.Stream<events.Event>, consume channel: events.Channel) {
     if !enabled {
         return;
     }

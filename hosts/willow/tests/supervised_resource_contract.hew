@@ -43,7 +43,7 @@ supervisor Branch(initial: i64) {
     child owner: Owner { initial: initial };
 }
 
-fn current(reference: ChildRef<Owner>) -> Counter {
+fn current(reference: Owner) -> Counter {
     reference.child().expect("stable child reference")
 }
 

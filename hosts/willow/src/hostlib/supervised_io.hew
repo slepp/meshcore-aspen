@@ -84,28 +84,28 @@ pub supervisor Branch {
     child endpoint: Endpoint;
 }
 
-pub fn open(endpoint: ChildRef<Endpoint>, host: string, port: i64, timeout_ms: i64) -> Result<bool, duplex.IoError> {
+pub fn open(endpoint: Endpoint, host: string, port: i64, timeout_ms: i64) -> Result<bool, duplex.IoError> {
     match endpoint.open(host, port, timeout_ms) {
         .Ok(result) => result,
         .Err(_) => .Err(duplex.IoError.ActorStopped),
     }
 }
 
-pub fn read(endpoint: ChildRef<Endpoint>, timeout_ms: i64) -> duplex.Read {
+pub fn read(endpoint: Endpoint, timeout_ms: i64) -> duplex.Read {
     match endpoint.read(timeout_ms) {
         .Ok(result) => result,
         .Err(_) => duplex.Read.Failed(duplex.IoError.ActorStopped),
     }
 }
 
-pub fn watch(endpoint: ChildRef<Endpoint>, group: events.Group) -> Result<i64, duplex.IoError> {
+pub fn watch(endpoint: Endpoint, group: events.Group) -> Result<i64, duplex.IoError> {
     match endpoint.watch(events.share(group)) {
         .Ok(result) => result,
         .Err(_) => .Err(duplex.IoError.ActorStopped),
     }
 }
 
-pub fn write(endpoint: ChildRef<Endpoint>, data: bytes) -> Result<i64, duplex.WriteFailure> {
+pub fn write(endpoint: Endpoint, data: bytes) -> Result<i64, duplex.WriteFailure> {
     match endpoint.write(data) {
         .Ok(result) => result,
         .Err(_) => .Err(duplex.WriteFailure { error: duplex.IoError.ActorStopped, committed: -1 }),
@@ -113,6 +113,6 @@ pub fn write(endpoint: ChildRef<Endpoint>, data: bytes) -> Result<i64, duplex.Wr
 }
 
 /// Retires this epoch without replacing the supervisor or resetting its budget.
-pub fn close(endpoint: ChildRef<Endpoint>) {
+pub fn close(endpoint: Endpoint) {
     let _ = endpoint.retire();
 }

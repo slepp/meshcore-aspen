@@ -48,7 +48,7 @@ pub fn empty() -> Table {
 
 pub fn normalized(name: string) -> string {
     if name.starts_with("#") {
-        name.slice(1, name.len())
+        name[1..]
     } else {
         name
     }
@@ -242,7 +242,7 @@ fn retain_key(var table: Table, key: bytes) -> Result<Table, string> {
     if key.len() != 16 || table.entries.len() >= 32 || table.next > 65535 {
         return .Err("region table full");
     }
-    let name = "$willow-" + hex.encode(key).slice(0, 16);
+    let name = "$willow-" + hex.encode(key)[0..16];
     if lookup(table, name) >= 0 {
         return .Err("generated region name collides with retained name");
     }
@@ -614,13 +614,13 @@ pub fn execute(original: Table, loading: Option<Load>, input: string, owner: str
                 var jump = "";
                 var has_jump = false;
                 if let .Some(at) = segment.find("|") {
-                    name = segment.slice(0, at);
-                    jump = segment.slice(at + 1, segment.len());
+                    name = segment[0..at];
+                    jump = segment[at + 1..];
                     has_jump = true;
                 }
                 if let .Some(at) = name.find(",") {
-                    name = name.slice(0, at);
-                    jump = segment.slice(at + 1, segment.len());
+                    name = name[0..at];
+                    jump = segment[at + 1..];
                     has_jump = true;
                 }
                 if name.is_empty() {
@@ -678,13 +678,13 @@ pub fn load_line(original: Table, active: Load, input: string, owner: string) ->
     if indent >= 8 {
         return unchanged(original, .Some(load), "Err - region nesting exceeds 7 levels");
     }
-    let parts = words(input.slice(indent, input.len()));
+    let parts = words(input[indent..]);
     if parts.is_empty() {
         return unchanged(original, .Some(load), "");
     }
     var name = parts[0];
     if name.ends_with("^") {
-        name = name.slice(0, name.len() - 1);
+        name = name[0..name.len() - 1];
     }
     var entry = Entry { id: 0, parent: load.stack[indent - 1], flags: if parts.len() > 1 && parts[1] == "F" {
         0
