@@ -184,8 +184,15 @@ constexpr size_t LegacyRepeaterSize =
     offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, discoverySeconds);
 constexpr size_t Version2RepeaterSize =
     offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, disabledTargets);
+// Aspen 0.1.18 and earlier wrote the whole version 3 record, so its size includes the
+// two tail-padding bytes after disabledTargets that groups now occupy.
 constexpr size_t Version3RepeaterSize =
-    offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, groups);
+    (offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, disabledTargets) + sizeof(uint16_t) +
+     alignof(uint32_t) - 1) & ~(alignof(uint32_t) - 1);
+static_assert(Version3RepeaterSize > offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, groups) &&
+                  Version3RepeaterSize < offsetof(RepeaterRecord, policy) + offsetof(BotRepeaterPolicy, groups) +
+                                             sizeof(BotRepeaterPolicy::Group),
+              "Version 3 files end inside the first group");
 struct RepeaterWorkspace { RepeaterRecord record, check; };
 struct RepeaterWorkspaceDeleter {
   void operator()(RepeaterWorkspace *workspace) const { releaseRoleStorage(workspace); }
@@ -228,6 +235,9 @@ bool readRepeaterFile(const RepeaterReference &reference, RepeaterRecord &record
   uint8_t digest[32];
   if (!complete) return failed("repeater monitor file read", ESP_ERR_INVALID_STATE);
   repeaterDigest(record, digest, size);
+  // The authority digest covers the file as stored. Version 3 files end with padding
+  // bytes that now overlap the first group, so discard them before validation.
+  if (version3) memset(record.policy.groups, 0, sizeof(record.policy.groups));
   if (memcmp(digest, reference.digest, sizeof(digest)) ||
       memcmp(record.magic, legacy ? "BRM\1" : version2 ? "BRM\2" : version3 ? "BRM\3" : "BRM\4", 4) ||
       !record.policy.valid())

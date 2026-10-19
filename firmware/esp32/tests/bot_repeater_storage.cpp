@@ -145,13 +145,16 @@ int main() {
   mesh::Utils::sha256(v2Reference.data() + 5, 32, version2.data(), version2.size());
   expect(old);
   assert(saveBotRepeaterPolicy(next));expect(next);
-  // A version 3 record has targets and disabled flags but no groups.
+  // Aspen 0.1.18 wrote version 3 as its whole struct: the 2-byte disabledTargets field
+  // plus 2 tail-padding bytes (arbitrary stack contents), 4 bytes past the new groups offset.
   identity_test::durable.clear(); filesystem_test::files.clear();
   auto &version3 = filesystem_test::files["/repeaters-a.bin"];
-  const size_t version3Size = 4 + offsetof(BotRepeaterPolicy, groups);
-  version3.resize(version3Size);
+  const size_t version3Size = 4 + offsetof(BotRepeaterPolicy, disabledTargets) + 4;
+  static_assert(offsetof(BotRepeaterPolicy, groups) == offsetof(BotRepeaterPolicy, disabledTargets) + 2,
+                "Groups follow disabledTargets directly");
+  version3.assign(version3Size, 0xA5);
   memcpy(version3.data(), "BRM\3", 4);
-  memcpy(version3.data() + 4, &old, version3Size - 4);
+  memcpy(version3.data() + 4, &old, offsetof(BotRepeaterPolicy, disabledTargets) + 2);
   auto &v3Reference = identity_test::durable[Key];
   v3Reference.resize(37);memcpy(v3Reference.data(), "BRF\1", 4);v3Reference[4] = 0;
   mesh::Utils::sha256(v3Reference.data() + 5, 32, version3.data(), version3.size());
