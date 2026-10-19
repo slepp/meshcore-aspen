@@ -176,6 +176,36 @@ cloudroom-lifecycle-test:
 		-o "$(TEST_BUILD)/cloudroom-lifecycle"
 	for mode in identity join create convert errors faults guards malformed owner refusals unlink share probe idle advert widths; do "$(TEST_BUILD)/cloudroom-lifecycle" $$mode || exit 1; done
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT) python3 -m unittest -v tools.tests.test_cloudroom_trust
+E2E_SOURCES := tests/cloudroom_e2e.cpp CloudRoomLink.cpp CloudRoomNode.cpp CloudRoomPreferences.cpp RoleIdentity.cpp \
+	CloudRoomLifecycle.cpp $(ROOT)/firmware/shared/cloudroom/CloudRoomGrammar.cpp $(ROOT)/firmware/shared/cloudroom/CloudRoomWire.cpp
+E2E_FLAGS = -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter $(TEST_FLAGS) \
+	-ffunction-sections -fdata-sections -Wl,--gc-sections \
+	-DMESHCORE_MAST_ADMIN=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 -DONCHIP_CLOUD_ROOM_TEST_HOOKS=1 \
+	-DONCHIP_CLOUD_ROOM_CONNECTIONS=2 -DONCHIP_CLOUD_ROOM_LINK_TEST=1 \
+	-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+	-I$(ROOT)/firmware/shared -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO)
+# The device agent for services/shared-room/test/e2e: the real lifecycle code on a loopback
+# socket. `cloudroom-e2e-agent` builds both variants (without a compile-time provider and two slots; with one and a single slot, as the private build).
+.PHONY: cloudroom-e2e-agent
+cloudroom-e2e-agent:
+	$(PHY_MAKE) prepare $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o \
+		$(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,$(LIFECYCLE_UNITS))) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED)))
+	@mkdir -p "$(TEST_BUILD)"
+	cc -std=c99 -O2 -DJSON_MAX_DEPTH=8 -I$(ROOT)/firmware/shared/cloudroom/third_party/coreJSON \
+		-c $(ROOT)/firmware/shared/cloudroom/third_party/coreJSON/core_json.c -o "$(TEST_BUILD)/cloudroom-core-json.o"
+	$(CXX) $(E2E_FLAGS) $(E2E_SOURCES) "$(TEST_BUILD)/cloudroom-core-json.o" $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o \
+		$(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,$(LIFECYCLE_UNITS))) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED))) -o "$(TEST_BUILD)/cloudroom-e2e-agent"
+	$(CXX) $(E2E_FLAGS) -UONCHIP_CLOUD_ROOM_CONNECTIONS -DONCHIP_CLOUD_ROOM_CONNECTIONS=1 -DE2E_PROVIDER=1 -DMESHCORE_CLOUD_ROOM=1 $(E2E_SOURCES) "$(TEST_BUILD)/cloudroom-core-json.o" \
+		$(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o $(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,$(LIFECYCLE_UNITS))) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED))) -o "$(TEST_BUILD)/cloudroom-e2e-agent-provider"
+	@echo "$(TEST_BUILD)/cloudroom-e2e-agent"
+# The lifecycle against a local Worker (`wrangler dev`): minutes, needs `npm ci` in services/shared-room.
+.PHONY: cloudroom-e2e-test
+cloudroom-e2e-test: cloudroom-e2e-agent
+	cd $(ROOT)/services/shared-room && E2E_AGENT="$(TEST_BUILD)/cloudroom-e2e-agent" \
+		E2E_AGENT_PROVIDER="$(TEST_BUILD)/cloudroom-e2e-agent-provider" npm run test:e2e
 public-provisioning-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
 		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o

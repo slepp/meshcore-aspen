@@ -56,7 +56,7 @@ export function redeemBody(node, origin, op, {code, name, pub, key, pw, avoid, t
 
 export function originOf(base) {return "https://" + new URL(base).hostname.toLowerCase();}
 
-async function post(base, path, body, token) {
+export async function post(base, path, body, token) {
   const headers = {"Content-Type": "application/json"};
   if (token) headers.Authorization = "Bearer " + token;
   const response = await fetch(new URL(path, base), {method: "POST", headers, body: JSON.stringify(body)});

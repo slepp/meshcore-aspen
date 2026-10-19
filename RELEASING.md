@@ -33,6 +33,11 @@ namespace). State the minimum Worker version in the release notes; a node
 reports the Worker's version with `cloudroom probe`. Never deploy the hosted
 Worker over the project's static `aspen-shared-room` Worker.
 
+After a change to the shared-room code on either side, `make -C firmware/esp32
+cloudroom-e2e-test` runs the join, create, convert, unlink, self-hosted and
+legacy-provider flows between node code and a local Worker. It takes a few
+minutes and needs `npm ci` in `services/shared-room`.
+
 Retain the copyright notices and licenses listed in
 [THIRD_PARTY.md](THIRD_PARTY.md).
 
