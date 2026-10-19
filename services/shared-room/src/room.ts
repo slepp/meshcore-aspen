@@ -1,5 +1,5 @@
 import {DurableObject} from "cloudflare:workers";
-import {aliases, ApiError, authorize, credential, equalToken, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
+import {aliases, ApiError, type Alias, authorize, credential, equalToken, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 import {RadioCodec, opaque, OPAQUE_PROTOCOL, type ParticipantProfile} from "./native";
 import {base64, fromHex, unbase64} from "./native-crypto";
@@ -9,6 +9,7 @@ import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOr
   webBody, webCredential, webPath, webResponse, webText, WEB_PROTOCOL, WEB_SESSION_SECONDS,
   type WebConnection, type WebSession} from "./web";
 
+interface Grant {aliases: string[]; token?: string; credential?: string}
 export interface Transmit {
   type: "transmit"; alias: string; dispatchId: string; packet: string;
   delayMs: number; priority: number;
@@ -160,10 +161,20 @@ export class Room extends DurableObject<Env> {
   private pending(alias: string, client: string): Pending | undefined {
     return this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending WHERE alias=? AND client=?`, alias, client)[0];
   }
+  /** Room configuration seam: the server-owned aliases, frontend grants, mode and history limit. */
+  private aliasMap(): Record<string, Alias> {return aliases(this.env);}
+  private grants(): Record<string, Grant> {return JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, Grant>;}
+  private async grantCredential(grant?: Grant): Promise<string | undefined> {
+    if (!grant) return;
+    return grant.credential ?? (grant.token ? credential(grant.token) : undefined);
+  }
+  private isOpaque(): boolean {return opaque(this.env);}
+  private region(frontend: string): string | undefined {return frontendRegion(this.env, frontend);}
+  private historyLimitSetting(): string | undefined {return this.env.HISTORY_LIMIT;}
   private needsPathAck(): boolean {
     // Separate frontend grants do not isolate RF: either modem can hear a
     // bare ACK from another room. Scope this choice to the whole service.
-    return new Set(Object.values(aliases(this.env)).map(a => a.backend)).size > 1;
+    return new Set(Object.values(this.aliasMap()).map(a => a.backend)).size > 1;
   }
   private send(ws: WebSocket, value: unknown): void {
     try {
@@ -173,7 +184,7 @@ export class Room extends DurableObject<Env> {
     } catch {ws.close(1011, "Frontend connection failed");}
   }
   private bindIdentity(alias: string): void {
-    const configured = aliases(this.env)[alias];
+    const configured = this.aliasMap()[alias];
     const existing = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", alias)[0];
     if (existing && existing.public_key !== configured.publicKey) fail(409, "Use a new alias ID when replacing its advertised public key");
     if (!existing) this.sql.exec("INSERT INTO identities VALUES (?, ?)", alias, configured.publicKey);
@@ -186,11 +197,11 @@ export class Room extends DurableObject<Env> {
       const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-zA-Z0-9_-]{1,64})\/(socket|operations)$/);
       if (!match) fail(404, "Unknown endpoint");
       const connection = await authorize(request, this.env, match[1]);
-      const alias = aliases(this.env)[connection.alias];
+      const alias = this.aliasMap()[connection.alias];
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
       this.bindIdentity(connection.alias);
-      const isOpaque = opaque(this.env);
-      const region = frontendRegion(this.env, connection.frontend);
+      const isOpaque = this.isOpaque();
+      const region = this.region(connection.frontend);
       if (isOpaque) this.codec.identity(connection.alias, region);
       if (match[2] === "socket") {
         if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") fail(426, "WebSocket upgrade required");
@@ -259,9 +270,9 @@ export class Room extends DurableObject<Env> {
       if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) fail(400, "Invalid request id");
       const connection = ws.deserializeAttachment() as Connection;
       // Recheck configuration after hibernation, including revoked tokens/aliases.
-      const frontend = (JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>)[connection.frontend];
-      const alias = aliases(this.env)[connection.alias];
-      if (!frontend?.aliases.includes(connection.alias) || !frontend.token || await credential(frontend.token) !== connection.credential || !alias ||
+      const frontend = this.grants()[connection.frontend];
+      const alias = this.aliasMap()[connection.alias];
+      if (!frontend?.aliases.includes(connection.alias) || await this.grantCredential(frontend) !== connection.credential || !alias ||
           !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Frontend alias authorization changed");
       this.bindIdentity(connection.alias);
       const result = await this.handle(connection, envelope.operation);
@@ -282,8 +293,8 @@ export class Room extends DurableObject<Env> {
 
   /** Internal DO RPC: prefix resolution stays behind the Worker binding. */
   nativeMembers(alias: string, prefix: string, frontend: string): Member[] {
-    const config = aliases(this.env)[alias];
-    const grants = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]}>;
+    const config = this.aliasMap()[alias];
+    const grants = this.grants();
     if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend)) ||
         !grants[frontend]?.aliases.includes(alias) || !/^[a-f0-9]{0,64}$/.test(prefix)) fail(403, "Invalid native lookup");
     const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", alias)[0];
@@ -311,7 +322,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private async handle(c: Connection, operation: Operation): Promise<Result | {accepted: boolean; transmission?: Transmit}> {
-    if (!opaque(this.env)) return this.run(c, operation);
+    if (!this.isOpaque()) return this.run(c, operation);
     const op = operation as unknown as {op?: string; packet?: string; dispatchId?: string; outcome?: string};
     if (!op || typeof op !== "object") fail(400, "Operation required");
     if (op.op === "txReceipt") {
@@ -331,14 +342,14 @@ export class Room extends DurableObject<Env> {
       }
       return {accepted: true};
     }
-    if (op.op === "advertise") return {accepted: true, transmission: this.dispatch(c, this.codec.advertisement(this.codec.identity(c.alias, frontendRegion(this.env, c.frontend))), 0)};
+    if (op.op === "advertise") return {accepted: true, transmission: this.dispatch(c, this.codec.advertisement(this.codec.identity(c.alias, this.region(c.frontend))), 0)};
     if (op.op !== "rf") fail(403, "Opaque mode accepts only rf, txReceipt and explicit advertise operations");
     let wire: Uint8Array;
     try {wire = unbase64(string(op.packet, "native packet", 340));} catch {return fail(400, "Invalid native packet base64");}
-    const configured = aliases(this.env);
-    const grant = (JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]}>)[c.frontend];
-    const identities = grant.aliases.map(alias => this.codec.identity(alias, frontendRegion(this.env, c.frontend)));
-    const profile = this.codec.profile(wire, this.codec.identity(c.alias, frontendRegion(this.env, c.frontend)));
+    const configured = this.aliasMap();
+    const grant = (this.grants())[c.frontend];
+    const identities = grant.aliases.map(alias => this.codec.identity(alias, this.region(c.frontend)));
+    const profile = this.codec.profile(wire, this.codec.identity(c.alias, this.region(c.frontend)));
     if (profile) {
       const changed = this.ctx.storage.transactionSync(() => {
         const previous = this.rows<ParticipantProfile>(`SELECT ${PROFILE_COLUMNS} FROM profiles WHERE public_key=?`, profile.publicKey)[0];
@@ -402,7 +413,7 @@ export class Room extends DurableObject<Env> {
       let session = this.session(c.alias, client);
       if (operation.op === "login") {
         const password = string(operation.password, "room password", 256);
-        if (password !== aliases(this.env)[c.alias].password && !(password === "" && session)) fail(403, "Incorrect room password");
+        if (password !== this.aliasMap()[c.alias].password && !(password === "" && session)) fail(403, "Incorrect room password");
         const stamp = timestamp(operation.timestamp);
         const since = timestamp(operation.since, "since");
         const returnRoute = route(operation.route);
@@ -494,7 +505,7 @@ export class Room extends DurableObject<Env> {
         return {};
       }
       if (!p.proof || !pendingProofs(p).includes(hex(operation.proof, "ACK proof", 4))) fail(403, "ACK proof does not match this delivery");
-      if (p.requirePathAck || (opaque(this.env) && this.needsPathAck())) fail(403, "This delivery requires an authenticated PATH ACK");
+      if (p.requirePathAck || (this.isOpaque() && this.needsPathAck())) fail(403, "This delivery requires an authenticated PATH ACK");
       this.sql.exec("UPDATE sessions SET cursor=MAX(cursor,?) WHERE alias=? AND client=?", p.seq, c.alias, client);
       this.confirmRadioDelivery(p);
       this.sql.exec("DELETE FROM pending WHERE alias=? AND client=?", c.alias, client);
@@ -507,12 +518,12 @@ export class Room extends DurableObject<Env> {
   }
 
   private historyBinding(connection: Connection): string {
-    return JSON.stringify([connection.credential, frontendRegion(this.env, connection.frontend) ?? null]);
+    return JSON.stringify([connection.credential, this.region(connection.frontend) ?? null]);
   }
 
   private async scheduleHistoryRetry(sockets: Map<string, WebSocket>): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
-    if (!opaque(this.env)) {
+    if (!this.isOpaque()) {
       if (current !== null) await this.ctx.storage.deleteAlarm();
       return;
     }
@@ -532,8 +543,8 @@ export class Room extends DurableObject<Env> {
 
   private async pump(retryDue = false): Promise<void> {
     const sockets = new Map<string, WebSocket>();
-    const configuredAliases = aliases(this.env);
-    const configuredFrontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
+    const configuredAliases = this.aliasMap();
+    const configuredFrontends = this.grants();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       const c = ws.deserializeAttachment() as Connection | WebConnection;
@@ -541,8 +552,8 @@ export class Room extends DurableObject<Env> {
       const alias = configuredAliases[c.alias], frontend = configuredFrontends[c.frontend];
       const boundKey = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", c.alias)[0]?.public_key;
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend)) ||
-          boundKey !== alias.publicKey || !frontend?.aliases.includes(c.alias) || !frontend.token ||
-          await credential(frontend.token) !== c.credential) {
+          boundKey !== alias.publicKey || !frontend?.aliases.includes(c.alias) ||
+          await this.grantCredential(frontend) !== c.credential) {
         ws.close(1008, "Frontend alias authorization changed"); continue;
       }
       sockets.set(`${c.alias}:${c.frontend}`, ws);
@@ -567,7 +578,7 @@ export class Room extends DurableObject<Env> {
         const connection = ws.deserializeAttachment() as Connection;
         const pending = this.pending(s.alias, s.client);
         if (pending) {
-          if (!retryDue || !opaque(this.env) || pending.frontend !== s.frontend || pending.retryAt <= 0 ||
+          if (!retryDue || !this.isOpaque() || pending.frontend !== s.frontend || pending.retryAt <= 0 ||
               pending.retryAt > Date.now() || pending.retryBinding !== this.historyBinding(connection)) continue;
           if (pending.retryCount >= HISTORY_RETRY_DELAYS.length) {
             this.sql.exec("UPDATE pending SET retry_at=0 WHERE alias=? AND client=?", s.alias, s.client);
@@ -579,7 +590,7 @@ export class Room extends DurableObject<Env> {
           const proofs = new Set(pathAck ? pendingProofs(pending) : occupied);
           const delivery: Delivery = {type: "delivery", alias: s.alias, client: s.client, deliveryId: pending.deliveryId,
             route: pathAck ? base64(new Uint8Array([1, 0, 0x80])) : s.route, message};
-          const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
+          const encoded = this.codec.delivery(this.codec.identity(s.alias, this.region(s.frontend)), delivery, proofs);
           if (!encoded) {
             this.sql.exec("UPDATE pending SET retry_at=0 WHERE alias=? AND client=?", s.alias, s.client);
             console.warn("Radio history retry paused: native ACK attempt space is occupied", s.alias, s.client.slice(0, 8), pending.seq);
@@ -606,12 +617,12 @@ export class Room extends DurableObject<Env> {
         if (!message) continue;
         const deliveryId = crypto.randomUUID();
         const delivery: Delivery = {type: "delivery", alias: s.alias, client: s.client, deliveryId, route: s.route, message};
-        if (opaque(this.env)) {
+        if (this.isOpaque()) {
           // Native clients return a MAC-authenticated PATH+ACK for flooded
           // signed history even when they already know a direct route.
           if (requirePathAck) delivery.route = base64(new Uint8Array([1, 0, 0x80]));
           const proofs = requirePathAck ? new Set<string>() : occupied;
-          const encoded = this.codec.delivery(this.codec.identity(s.alias, frontendRegion(this.env, s.frontend)), delivery, proofs);
+          const encoded = this.codec.delivery(this.codec.identity(s.alias, this.region(s.frontend)), delivery, proofs);
           if (!encoded) continue;
           proofs.add(encoded.proof);
           const transmit = this.dispatch(connection, encoded.wire, HISTORY_TURNAROUND_MS, s.client, deliveryId, message.seq);
@@ -653,7 +664,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private historyFloor(): number {
-    const limit = Number(this.env.HISTORY_LIMIT ?? "0");
+    const limit = Number(this.historyLimitSetting() ?? "0");
     if (!Number.isSafeInteger(limit) || limit < 0) fail(503, "Invalid HISTORY_LIMIT");
     const latest = this.rows<{seq: number}>("SELECT COALESCE(MAX(seq),0) AS seq FROM messages")[0].seq;
     return limit ? Math.max(0, latest - limit) : 0;
@@ -677,8 +688,8 @@ export class Room extends DurableObject<Env> {
 
   private async webMessages(messages: Message[]): Promise<Array<Message & {rf: RadioDelivery}>> {
     const connected = new Map<string, Connection>();
-    const configuredAliases = aliases(this.env);
-    const frontends = JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, {aliases: string[]; token: string}>;
+    const configuredAliases = this.aliasMap();
+    const frontends = this.grants();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       const connection = ws.deserializeAttachment() as Connection | WebConnection;
@@ -687,7 +698,7 @@ export class Room extends DurableObject<Env> {
       const bound = this.rows<{public_key: string}>("SELECT public_key FROM identities WHERE alias=?", connection.alias)[0];
       if (config && this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend)) &&
           bound?.public_key === config.publicKey && frontend?.aliases.includes(connection.alias) &&
-          frontend.token && await credential(frontend.token) === connection.credential)
+          await this.grantCredential(frontend) === connection.credential)
         connected.set(`${connection.alias}:${connection.frontend}`, connection);
     }
     const sessions = this.rows<Session>(`SELECT ${SESSION_COLUMNS} FROM sessions`);
@@ -717,7 +728,7 @@ export class Room extends DurableObject<Env> {
         status.attempts = Math.max(status.attempts, count);
         if (recipient.attempts.some(attempt => attempt.state === "acknowledged")) {++status.acknowledged; continue;}
         const connection = connected.get(`${session?.alias ?? latest?.alias}:${selected?.frontend ?? session?.frontend ?? latest?.frontend}`);
-        if (!connection || selected && opaque(this.env) && selected.retryBinding !== this.historyBinding(connection))
+        if (!connection || selected && this.isOpaque() && selected.retryBinding !== this.historyBinding(connection))
           ++status.paused;
         if (count > 1) ++status.retrying;
         if (selected && selected.retryCount >= HISTORY_RETRY_DELAYS.length && !selected.retryAt)
@@ -751,7 +762,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private webAlias(alias: string) {
-    const config = aliases(this.env)[alias];
+    const config = this.aliasMap()[alias];
     if (!config || !this.ctx.id.equals(this.env.ROOMS.idFromName(config.backend))) fail(403, "Room does not belong to this backend");
     this.bindIdentity(alias);
     return config;
