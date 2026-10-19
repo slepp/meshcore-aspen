@@ -293,8 +293,10 @@ make -C firmware/nrf52840 production-lua-source-parser-test \
 application region. It also fails an image that links newlib's floating-point
 scanf or wide-character tables, the C++ exception unwinder or the `std::string`
 error paths. `PineLibc.cpp` and the bounded text builders in the command code keep
-those out; a new `%f` `sscanf` format or `std::string` use needs a different
-approach to stay under the Legacy DFU limit.
+those out. `PineLibc.cpp` also routes `sscanf` to the integer-only scanf engine, so
+`test_production_profile.py` rejects `%e`, `%f`, `%g` and wide `sscanf` formats in
+the Pine and shared command sources. A `std::string` use needs a different approach
+to stay under the Legacy DFU limit.
 
 The production target runs ABI-realistic native32 shared API tests, actual
 LittleFS/NOR power-cut and failed-read tests, borrowed-manifest lifetimes across

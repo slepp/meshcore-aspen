@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// Pine links the full newlib C library. These definitions replace the few
-// entry points whose newlib implementations pull large tables or duplicate
-// engines into the application image. The tables and engines are not used.
+// Production Lua images link the full newlib C library. These definitions
+// replace the few entry points whose newlib implementations pull large tables
+// or duplicate engines into the application image. The tables and engines are
+// not used. The newlib-nano profiles keep nano's own scanf and assert code.
+#if defined(NRFMAST_PRODUCTION_LUA) && NRFMAST_PRODUCTION_LUA
 #include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
@@ -28,3 +30,4 @@ int sscanf(const char *input, const char *format, ...) {
 // handler formats a message through stdio; stop without it.
 [[noreturn]] void __assert_func(const char *, int, const char *, const char *) { abort(); }
 }
+#endif
