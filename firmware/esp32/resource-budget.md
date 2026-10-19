@@ -82,17 +82,33 @@ remain internal. Queue capacities, frame limits and session-renewal behavior
 are unchanged. Allocation happens after PSRAM initialization; failure stops
 radio startup, without falling back to internal RAM.
 
-An enabled observer allocates 8,232 bytes in PSRAM for its MQTT settings and
-JSON workspace, including when MQTT is unconfigured. Its atomics and FreeRTOS
-queues remain internal. Failure leaves the observer faulted without stopping
-the native roles. A disabled observer needs no payload allocation.
+An enabled observer allocates 12,760 bytes in PSRAM for its MQTT settings, JSON
+workspace, pending transmit attributions and role snapshots, including when MQTT
+is unconfigured. Its atomics and FreeRTOS queues remain internal. Failure leaves
+the observer faulted without stopping the native roles. A disabled observer needs
+no payload allocation.
 
-Matched `public_aspen` builds before and after these buffer moves use
-135,440 and 87,960 linker RAM bytes respectively: **47,480 bytes reclaimed**.
-This profile includes Lua, Wasm, HTTPS and native shared-room support. Different
-TCP/UART client counts change the KISS workspace size. Linker RAM excludes
-runtime task stacks, SDK heaps and dynamic PSRAM allocations; read
-`stats memory` and `stats psram` for the running node.
+Each role radio (repeater, room, companion, command bot and cloud room) keeps a
+2,800-byte receive ring and transmit-result queue in PSRAM from the time it
+attaches to the shared modem until it detaches. If the allocation fails, the
+role does not attach and reports the PSRAM failure.
+
+A signed application update and the running-image hash each take a 4 KiB scratch
+buffer from internal heap while they run and free it afterwards. An upload that
+cannot get the buffer answers 503 before it touches the update partition.
+
+The packet-program loader task (16 KiB stack) exists only while a program is
+loading and being reclaimed. If its stack cannot be allocated, the install or
+boot load fails with "packet loader busy or unavailable; use retry".
+
+Matched `public_aspen` builds before and after the KISS and observer buffer
+moves use 135,440 and 87,960 linker RAM bytes respectively: **47,480 bytes
+reclaimed**. The role-radio, update-scratch and observer moves above reduce
+`.data` plus `.bss` further, from 89,016 to 66,432 bytes on the current baseline. This profile includes
+Lua, Wasm, HTTPS and native shared-room support. Different TCP/UART client counts
+change the KISS workspace size. Linker RAM excludes runtime task stacks, SDK heaps
+and dynamic PSRAM allocations; read `stats memory` and `stats psram` for the
+running node.
 
 Lua's compiled prototypes/bytecode and Wasm's retained module bytes already
 use PSRAM, as do their interpreter data allocations. Native interpreter
