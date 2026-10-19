@@ -1,4 +1,5 @@
 #include "RadioDashboard.h"
+#include "RadioNetwork.h"
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -48,6 +49,8 @@ int main() {
   assert(dashboard.snapshot(snapshot));
   assert(RadioDashboard::formatJSON(snapshot, "radio", json, sizeof(json)));
   assert(std::string(json).find("\"dma_free_bytes\":12345,\"dma_largest_bytes\":6789,\"dma_minimum_bytes\":64") !=
+         std::string::npos);
+  assert(std::string(json).find("\"rssi_dbm\":-51,\"hostname\":\"meshcore-radio\",") !=
          std::string::npos);
   assert(heap_reads == 3); // Readers retain the sampled values; they never query the heap.
   publishDashboard();

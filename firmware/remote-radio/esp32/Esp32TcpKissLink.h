@@ -29,9 +29,9 @@ public:
     if (_started)
       return;
     WiFi.persistent(false);
-    if (!WiFi.setHostname(radio_network::hostname) ||
+    if (!WiFi.setHostname(radio_network::hostname()) ||
         !WiFi.getHostname() ||
-        strcmp(WiFi.getHostname(), radio_network::hostname) != 0) {
+        strcmp(WiFi.getHostname(), radio_network::hostname()) != 0) {
       RemoteKissDiagnostics::record(RemoteKissDiagnostics::WiFi,
                                     "PHY-less WiFi hostname configuration failed");
       abort();

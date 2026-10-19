@@ -221,7 +221,7 @@ DASHBOARD_BUILD := $(ROOT)/.tmp/onchip-dashboard-tests
 CRYPTO := $(ROOT)/.tmp/MeshCore/.pio/libdeps/Xiao_S3_WIO_kiss_wifi/Crypto
 LPP := $(ROOT)/.tmp/MeshCore/.pio/libdeps/Xiao_S3_WIO_kiss_wifi/CayenneLPP/src
 BASE64 ?= $(ROOT)/.tmp/native-test-deps/base64/src
-test: local-test lifecycle-test clock-network-test syslog-test
+test: local-test lifecycle-test clock-network-test syslog-test hostname-test
 	$(MAKE) -f $(ROOT)/test_support/phy_parity/Makefile BUILD=$(STREAM_BUILD) \
 		CXXFLAGS='-std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder -ffunction-sections -fdata-sections -DKISS_MAX_TCP_CLIENTS=4 -DONCHIP_COMPANION_MAX_CLIENTS=2' \
 		stream-test
@@ -294,6 +294,24 @@ syslog-test:
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Werror tests/syslog.cpp -o $(TEST_BUILD)/syslog
 	$(TEST_BUILD)/syslog
 .PHONY: syslog-test
+hostname-test:
+	@mkdir -p $(TEST_BUILD)
+	$(CXX) -std=c++11 -O1 -g -Wall -Wextra -Werror -DARDUINO_ARCH_ESP32 -DMESHCORE_ONCHIP=1 -Itests/seams -I../shared \
+		-DKISS_HOSTNAME='"aspen"' -DEXPECTED_HOSTNAME='"aspen-8807b0"' tests/hostname.cpp -o $(TEST_BUILD)/hostname
+	$(TEST_BUILD)/hostname
+	$(CXX) -std=c++11 -O1 -g -Wall -Wextra -Werror -DARDUINO_ARCH_ESP32 -DMESHCORE_ONCHIP=1 -Itests/seams -I../shared \
+		-DKISS_HOSTNAME='"aspen"' -DKISS_HOSTNAME_FIXED=1 -DEXPECTED_HOSTNAME='"aspen"' \
+		tests/hostname.cpp -o $(TEST_BUILD)/hostname-fixed
+	$(TEST_BUILD)/hostname-fixed
+	$(CXX) -std=c++11 -O1 -g -Wall -Wextra -Werror -DARDUINO_ARCH_ESP32 -Itests/seams -I../shared \
+		-DKISS_HOSTNAME='"birch"' -DEXPECTED_HOSTNAME='"birch"' tests/hostname.cpp -o $(TEST_BUILD)/hostname-modem
+	$(TEST_BUILD)/hostname-modem
+	$(CXX) -std=c++11 -fsyntax-only -DARDUINO_ARCH_ESP32 -DMESHCORE_ONCHIP=1 -Itests/seams -I../shared \
+		-DKISS_HOSTNAME='"abcdefghijklmnopqrstuvwxy"' -DEXPECTED_HOSTNAME='""' tests/hostname.cpp 2>&1 | \
+		grep -q 'at most 24 characters'
+	$(CXX) -std=c++11 -fsyntax-only -DARDUINO_ARCH_ESP32 -DMESHCORE_ONCHIP=1 -Itests/seams -I../shared \
+		-DKISS_HOSTNAME='"abcdefghijklmnopqrstuvwxy"' -DKISS_HOSTNAME_FIXED=1 -DEXPECTED_HOSTNAME='""' tests/hostname.cpp
+.PHONY: hostname-test
 radio-time-test:
 	@mkdir -p $(TEST_BUILD)
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra tests/radio_time_protocol.cpp -o $(TEST_BUILD)/radio-time

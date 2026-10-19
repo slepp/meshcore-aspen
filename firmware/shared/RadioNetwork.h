@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef KISS_TCP_PORT
@@ -18,9 +19,73 @@
 #endif
 #endif
 
+// Aspen (MESHCORE_ONCHIP) names itself KISS_HOSTNAME followed by the last
+// three bytes of the factory WiFi MAC, such as aspen-8807b0, so several radios
+// can share a LAN and each keeps its name across firmware updates and erases.
+// KISS_HOSTNAME_FIXED=1 uses KISS_HOSTNAME unchanged. Radio-only modem builds
+// keep their fixed name by default because hosts address them by it.
+#ifndef KISS_HOSTNAME_FIXED
+#ifdef MESHCORE_ONCHIP
+#define KISS_HOSTNAME_FIXED 0
+#else
+#define KISS_HOSTNAME_FIXED 1
+#endif
+#endif
+#if !KISS_HOSTNAME_FIXED && (defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST))
+#define RADIO_NETWORK_HOSTNAME_MAC 1
+#include <esp_system.h>
+#endif
+
 namespace radio_network {
-constexpr char hostname[] = KISS_HOSTNAME;
+constexpr char hostnamePrefix[] = KISS_HOSTNAME;
+constexpr bool hostnameFixed = KISS_HOSTNAME_FIXED;
+constexpr size_t HostnameCapacity = 32;  // Arduino's WiFi buffer, terminator included.
+constexpr size_t HostnameSuffixLength = 7; // "-" and six hex digits.
 bool startStation();
+
+// Writes PREFIX-XXXXXX from the last three MAC bytes, or PREFIX alone when
+// fixed. Returns false, leaving an empty string, if the name does not fit.
+inline bool formatHostname(const char* prefix, const uint8_t mac[6], bool fixed,
+                           char* out, size_t size) {
+  static const char hex[] = "0123456789abcdef";
+  size_t n = 0;
+  while (prefix[n]) ++n;
+  const size_t length = n + (fixed ? 0 : HostnameSuffixLength);
+  if (!size) return false;
+  if (length >= size || length >= HostnameCapacity) {
+    out[0] = 0;
+    return false;
+  }
+  for (size_t i = 0; i < n; ++i) out[i] = prefix[i];
+  if (!fixed) {
+    out[n++] = '-';
+    for (unsigned i = 3; i < 6; ++i) {
+      out[n++] = hex[mac[i] >> 4];
+      out[n++] = hex[mac[i] & 15];
+    }
+  }
+  out[n] = 0;
+  return true;
+}
+
+// The device's mDNS, DHCP and syslog name, computed once on first use. A
+// board whose MAC cannot be read, and host builds, use the prefix alone.
+inline const char* hostname() {
+  struct Name {
+    char text[HostnameCapacity]{};
+    Name() {
+      uint8_t mac[6]{};
+#ifdef RADIO_NETWORK_HOSTNAME_MAC
+      const bool fixed = esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK;
+#else
+      const bool fixed = true;
+#endif
+      formatHostname(hostnamePrefix, mac, fixed, text, sizeof(text));
+    }
+  };
+  static const Name name;
+  return name.text;
+}
 
 // SDK association and DHCP are separate states. All deadlines use millis(),
 // including across its wrap; event callbacks only supply a loss generation.
@@ -101,9 +166,15 @@ constexpr bool validHostname(const char* name) {
   return *name && *name != '-' && hostnameTail(name, 31);
 }
 
+constexpr size_t prefixLength(const char* p) { return *p ? 1 + prefixLength(p + 1) : 0; }
+
 // Arduino's WiFi hostname buffer is 32 bytes, including the terminator.
-static_assert(validHostname(hostname),
+static_assert(validHostname(hostnamePrefix),
               "KISS_HOSTNAME must be a 1..31 character DNS label: letters, digits, interior hyphens; no .local suffix");
+static_assert(hostnameFixed ||
+                  prefixLength(hostnamePrefix) + HostnameSuffixLength < HostnameCapacity,
+              "KISS_HOSTNAME must be at most 24 characters to leave room for -XXXXXX; "
+              "set KISS_HOSTNAME_FIXED=1 to use a longer fixed name");
 static_assert(KISS_TCP_PORT > 0 && KISS_TCP_PORT <= 65535,
               "KISS TCP port must be 1..65535");
 static_assert(KISS_HTTP_PORT > 0 && KISS_HTTP_PORT <= 65535,

@@ -74,8 +74,8 @@ bool origin(httpd_req_t *request) {
     return (KISS_HTTP_PORT == 80 && !strcasecmp(host, name)) || !strcasecmp(host, withPort);
   };
   char localName[64];
-  snprintf(localName, sizeof(localName), "%s.local", radio_network::hostname);
-  bool known = allowed(radio_network::hostname) || allowed(localName) || allowed(ONCHIP_MAST_WEB_HOST);
+  snprintf(localName, sizeof(localName), "%s.local", radio_network::hostname());
+  bool known = allowed(radio_network::hostname()) || allowed(localName) || allowed(ONCHIP_MAST_WEB_HOST);
 #ifdef ARDUINO_ARCH_ESP32
   if (WiFi.status() == WL_CONNECTED) known = known || allowed(WiFi.localIP().toString().c_str());
 #endif

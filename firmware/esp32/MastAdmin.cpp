@@ -2113,9 +2113,10 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
     const bool connected = recovery.enabled() && (bits & STA_CONNECTED_BIT) &&
                            (bits & STA_HAS_IP_BIT) && uint32_t(WiFi.localIP());
     snprintf(reply.text, sizeof(reply.text),
-             "wifi saved=%u ssid-bytes=%u connected=%u enabled=%u attempts=%u retry-ms=%u",
+             "wifi saved=%u ssid-bytes=%u connected=%u enabled=%u attempts=%u retry-ms=%u hostname=%s",
              saved, saved ? unsigned(strlen(credentials.ssid)) : 0, connected,
-             recovery.enabled(), recovery.attempts(), unsigned(recovery.retryIn(millis())));
+             recovery.enabled(), recovery.attempts(), unsigned(recovery.retryIn(millis())),
+             radio_network::hostname());
 #else
     snprintf(reply.text, sizeof(reply.text), "wifi saved=%u ssid-bytes=%u connectivity=unavailable",
              saved, saved ? unsigned(strlen(credentials.ssid)) : 0);

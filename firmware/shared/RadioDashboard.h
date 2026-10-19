@@ -95,6 +95,7 @@ public:
     Client client[KISS_MAX_TCP_CLIENTS]{};
     bool wifi_connected = false;
     int16_t wifi_rssi = 0;
+    const char* hostname = nullptr; // Network name without .local; static storage.
     uint32_t free_heap = 0;
     uint32_t minimum_heap = 0;
     uint32_t dma_free_heap = 0;

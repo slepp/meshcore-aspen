@@ -786,7 +786,8 @@ function render(data) {
   text('frequency', (p.frequency_hz / 1000000).toFixed(3) + ' MHz');
   text('modulation', number(p.bandwidth_hz / 1000) + ' kHz / SF' + p.sf + ' / CR 4/' + p.cr + ' / ' + p.tx_power_dbm + ' dBm');
   text('uptime', duration(data.uptime_ms));
-  text('wifi', data.wifi.connected ? 'WiFi ' + data.wifi.rssi_dbm + ' dBm / up ' + duration(data.wifi.uptime_ms) : 'WiFi disconnected');
+  text('wifi', (data.wifi.hostname ? data.wifi.hostname + '.local / ' : '') +
+    (data.wifi.connected ? 'WiFi ' + data.wifi.rssi_dbm + ' dBm / up ' + duration(data.wifi.uptime_ms) : 'WiFi disconnected'));
   text('client-count', data.kiss.connected + ' / ' + data.kiss.capacity);
   renderPacketReports(data);
   renderTopology(data);

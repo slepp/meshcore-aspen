@@ -118,6 +118,7 @@ void publishDashboard() {
 #endif
   kiss_stream.dashboardStatus(status);
   status.wifi_connected = wifi_was_connected;
+  status.hostname = radio_network::hostname();
   if (status.wifi_connected) status.wifi_rssi = WiFi.RSSI();
   status.free_heap = ESP.getFreeHeap();
   status.minimum_heap = ESP.getMinFreeHeap();
@@ -215,11 +216,12 @@ bool radio_network::startStation() {
 
 void connectWifi() {
   WiFi.persistent(false);
-  if (!WiFi.setHostname(radio_network::hostname) ||
-      strcmp(WiFi.getHostname(), radio_network::hostname) != 0) {
+  if (!WiFi.setHostname(radio_network::hostname()) ||
+      strcmp(WiFi.getHostname(), radio_network::hostname()) != 0) {
     Serial.println("WiFi hostname configuration failed");
     halt();
   }
+  Serial.printf("WiFi hostname: %s\n", radio_network::hostname());
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
 #ifdef MESHCORE_ONCHIP
     char message[80];
@@ -296,7 +298,7 @@ void connectWifi() {
 }
 
 bool startDiscovery(bool http_ready) {
-  if (!MDNS.begin(radio_network::hostname) ||
+  if (!MDNS.begin(radio_network::hostname()) ||
       !MDNS.addService("kiss", "tcp", KISS_TCP_PORT) ||
       (http_ready && !MDNS.addService("http", "tcp", KISS_HTTP_PORT))) {
     Serial.println("mDNS discovery unavailable; radio services remain reachable by IP");
@@ -304,10 +306,10 @@ bool startDiscovery(bool http_ready) {
     return false;
   }
   Serial.printf("mDNS hostname: %s.local; KISS TCP port %u\n",
-                radio_network::hostname, KISS_TCP_PORT);
+                radio_network::hostname(), KISS_TCP_PORT);
   if (http_ready)
     Serial.printf("Dashboard: http://%s.local:%u/\n",
-                  radio_network::hostname, KISS_HTTP_PORT);
+                  radio_network::hostname(), KISS_HTTP_PORT);
   return true;
 }
 

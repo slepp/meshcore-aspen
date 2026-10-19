@@ -156,6 +156,7 @@ static RadioDashboard::RadioStatus profile() {
   status.credit_ms = 36000;
   status.wifi_connected = true;
   status.wifi_rssi = -51;
+  status.hostname = "aspen-8807b0";
   return status;
 }
 

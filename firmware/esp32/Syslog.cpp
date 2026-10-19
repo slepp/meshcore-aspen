@@ -105,7 +105,7 @@ void sendSyslog(const char *message, DiagnosticSubsystem subsystem, uint32_t utc
   if (WiFi.status() != WL_CONNECTED) { ++offline; return; }
   if (!rate.admit(millis())) { ++limited; return; }
   char packet[512];
-  const size_t size = formatSyslog(radio_network::hostname, subsystem, utc, uptimeMs,
+  const size_t size = formatSyslog(radio_network::hostname(), subsystem, utc, uptimeMs,
                                  message, packet, sizeof(packet));
   if (!size) { ++failed; return; }
   UdpSend send{};

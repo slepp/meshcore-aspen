@@ -8,6 +8,7 @@
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
 #include "EspFieldUpdate.h"
+#include "RadioNetwork.h"
 #include "bot_parser_cases.h"
 #include <functional>
 #include <limits>
@@ -236,6 +237,39 @@ static void forced_restart_admission() {
   reset();
   request("/admin/logout", "", token);
   std::cout << "Forced device restart transport authentication/acknowledgement and busy admission passed\n";
+}
+#endif
+#ifdef MESHCORE_MAST_WEB_TEST
+// The Web Host allow-list follows the MAC-suffixed name, not the bare prefix.
+static void mast_web_hostname() {
+  BetaFixture f;
+  TestHTTPServer server;
+  assert(registerMastWeb(&server) == ESP_OK);
+  const std::string name = radio_network::hostname();
+  assert(name == "meshcore-radio-8807b0");
+  const auto login = [&](const std::string &host, const std::string &origin = "") {
+    httpd_req_t r;
+    r.body = "mast-pass-12"; r.content_len = r.body.size();
+    r.headers["Host"] = host;
+    if (!origin.empty()) r.headers["Origin"] = origin;
+    timeMs += 1100;
+    assert(server.routes.at("/admin/login").handler(&r) == ESP_OK);
+    if (r.status == "200 OK") {
+      httpd_req_t out;
+      out.headers["Host"] = host; out.headers["X-Mast-Session"] = r.response;
+      assert(server.routes.at("/admin/logout").handler(&out) == ESP_OK);
+    }
+    return r.status;
+  };
+  assert(login("meshcore-radio.local") == "403 Forbidden");
+  assert(login("meshcore-radio") == "403 Forbidden");
+  assert(login("meshcore-radio-000000.local") == "403 Forbidden");
+  assert(login(name + ".local") == "200 OK");
+  assert(login(name) == "200 OK");
+  assert(login("MESHCORE-RADIO-8807B0.LOCAL") == "200 OK");
+  assert(login(name + ".local", "http://" + name + ".local") == "200 OK");
+  assert(login(name + ".local", "http://meshcore-radio.local") == "403 Forbidden");
+  std::cout << "Web Host allow-list accepted the MAC-suffixed hostname\n";
 }
 #endif
 #ifdef ONCHIP_RUNTIME_CONFIG_ADMIN_TEST
@@ -3615,6 +3649,7 @@ int main(int argc, char **argv) {
     management_cli_compatibility();
 #ifdef MESHCORE_MAST_WEB_TEST
     forced_restart_admission();
+    mast_web_hostname();
 #endif
     management_cli_core();
     management_native_acl();

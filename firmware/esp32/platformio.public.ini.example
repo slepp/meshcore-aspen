@@ -28,6 +28,7 @@ build_flags =
   -D ONCHIP_CLOUD_ROOM_CONNECTIONS=2
   -D JSON_MAX_DEPTH=8
   -D ONCHIP_COMMAND_BOT_DEFAULT_ENABLED=1
+  ; Network name aspen-XXXXXX from the board's MAC; add KISS_HOSTNAME_FIXED=1 for plain aspen.
   -D KISS_HOSTNAME='"aspen"'
   -D WIFI_SSID='""'
   -D WIFI_PWD='""'

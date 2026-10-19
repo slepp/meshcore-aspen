@@ -288,6 +288,10 @@ size_t RadioDashboard::formatJSON(const Snapshot &s, const char *name,
     j.append("%d", r.wifi_rssi);
   else
     j.append("null");
+  if (r.hostname) {
+    j.append(",\"hostname\":");
+    j.string(r.hostname);
+  }
   j.append(",\"uptime_ms\":%" PRIu64
            "},\"memory\":{\"free_bytes\":%u,\"minimum_bytes\":%u,"
            "\"dma_free_bytes\":%u,\"dma_largest_bytes\":%u,\"dma_minimum_bytes\":%u}",
