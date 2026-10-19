@@ -133,32 +133,32 @@ static void native_find_path_queue() {
       return count;
     };
     const auto ask = [&](Peer &caller) { f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300); };
-    ask(first); assert(probes() == 1 && f.bot.jobsInUse());
+    // Requests start as soon as the previous one completes; there is no admission spacing.
+    ask(first); assert(probes() == 1 && f.bot.jobsInUse() == 1);
     timeMs += 10000; f.step(300); assert(!f.bot.jobsInUse());
-    ask(second); assert(probes() == 1 && f.bot.jobsInUse());
+    ask(second); assert(probes() == 2 && f.bot.jobsInUse() == 1);
     ask(third);
-    const auto rejected = third.replies(f.bot.publicKey(), f.radio);
-    assert(rejected.size() == 1 && rejected[0].find("already waiting") != std::string::npos);
-    // The actual Lua command remains suspended past its original 10s response budget.
-    timeMs += 11000; f.step(300); assert(probes() == 1 && f.bot.jobsInUse());
-    timeMs += 10000; f.step(300); assert(probes() == 2 && f.bot.jobsInUse());
-    timeMs += 8000; f.step(300); assert(f.bot.jobsInUse());
-    timeMs += 3000; f.step(300); assert(!f.bot.jobsInUse());
+    assert(third.replies(f.bot.publicKey(), f.radio).empty() && probes() == 2 && f.bot.jobsInUse() == 2);
+    // The queued command stays suspended until the earlier probe's 10s response window ends.
+    timeMs += 5000; f.step(300); assert(probes() == 2 && f.bot.jobsInUse() == 2);
+    timeMs += 5000; f.step(300); assert(probes() == 3 && f.bot.jobsInUse() == 1);
+    timeMs += 10000; f.step(300); assert(!f.bot.jobsInUse());
     const auto response = second.replies(f.bot.publicKey(), f.radio);
     assert(response.size() == 1 && response[0].find("no discovery reply (10s); no cached route") != std::string::npos);
-    // Revoke the permission while a new command waits for the shared spacing.
-    timeMs += 61000; ask(first); timeMs += 10000; f.step(300);
-    ask(second); const auto admitted = probes();
+    // Revoking the permission cancels the probe in flight and the command queued behind it.
+    timeMs += 61000; ask(first); ask(second);
+    assert(f.bot.jobsInUse() == 2); const auto admitted = probes();
     char reply[192]{};
     f.bot.radioPolicyCommand("access dm action_trace 2", reply, sizeof(reply)); f.step(300);
     assert(!f.bot.jobsInUse() && probes() == admitted);
+    timeMs += 11000; f.step(300); assert(probes() == admitted);
     f.bot.radioPolicyCommand("access dm action_trace inherit", reply, sizeof(reply));
-    timeMs += 61000; ask(first); timeMs += 10000; f.step(300); ask(second);
-    assert(f.bot.jobsInUse()); const auto beforeCancel = probes();
+    timeMs += 61000; ask(first); ask(second);
+    assert(f.bot.jobsInUse() == 2); const auto beforeCancel = probes();
     f.bot.cancelJobs(); f.step(300); timeMs += 31000; f.step(300);
     assert(!f.bot.jobsInUse() && probes() == beforeCancel);
     f.bot.stop();
   }
   filesystem_test::files = files; identity_test::durable = records; beginClocks();
-  puts("PASS find-path VM queue: one 30s admission wait then full10s response, second waiter rejected, permission revocation and cancellation emit no probe");
+  puts("PASS find-path VM queue: back-to-back probes with a full 10s response window, queued waiter, permission revocation and cancellation emit no further probe");
 }
