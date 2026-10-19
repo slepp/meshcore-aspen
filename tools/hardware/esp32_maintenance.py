@@ -114,6 +114,13 @@ def roles_ready(roles):
     return bool(roles) and all(role.get("ready") or role.get("state") == "disabled" for role in roles)
 
 
+def unready_roles(roles):
+    """Role name, state and fault text of every role that is neither ready nor disabled."""
+    return [{"role": str(role.get("role", ""))[:32], "state": str(role.get("state", ""))[:32],
+             "fault": str(role.get("fault") or "")[:96]}
+            for role in roles or [] if not (role.get("ready") or role.get("state") == "disabled")]
+
+
 def radio_state(client, state=None):
     if state is None:
         state = json_request(client, "/api/status")
@@ -255,9 +262,15 @@ def finish(client, record, receipt, connect, deadline, interval):
                 if candidate is None:
                     candidate = connect()
                 status = json_request(candidate, "/admin/update")
+                if running(status, signed["sha256"], signed["size"]):
+                    dashboard = json_request(candidate, "/api/status")
+                    # Keep the new image's own role faults: a failed candidate reverts to the old image.
+                    failed = unready_roles(dashboard.get("roles"))
+                    if failed and failed != record.get("unready_roles"):
+                        record["unready_roles"] = failed
+                        save_receipt(receipt, record)
                 if (running(status, signed["sha256"], signed["size"]) and
                         status.get("state") == "idle" and status.get("boot_health") == "healthy"):
-                    dashboard = json_request(candidate, "/api/status")
                     if roles_ready(dashboard.get("roles")):
                         after = radio_state(candidate, dashboard)
                         restore_sampler(candidate, record, receipt)

@@ -645,5 +645,16 @@ class MaintenanceTests(unittest.TestCase):
         self.assertTrue(self.radio.sampler_enabled)
 
 
+class RoleFaultTests(unittest.TestCase):
+    def test_unready_roles_keep_the_reported_fault(self):
+        roles = [{"role": "bot", "state": "running", "ready": True, "fault": None},
+                 {"role": "observer", "state": "disabled", "ready": False, "fault": None},
+                 {"role": "command-bot", "state": "fault", "ready": False,
+                  "fault": "Repeater monitor policy unavailable"}]
+        self.assertEqual(maintenance.unready_roles(roles), [
+            {"role": "command-bot", "state": "fault", "fault": "Repeater monitor policy unavailable"}])
+        self.assertEqual(maintenance.unready_roles(None), [])
+
+
 if __name__ == "__main__":
     unittest.main()
