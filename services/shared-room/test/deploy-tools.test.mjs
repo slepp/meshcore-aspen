@@ -17,6 +17,7 @@ const pkg = join(scratch, "pkg");
 const mock = join(scratch, "wrangler-mock.mjs");
 const log = join(scratch, "wrangler.jsonl");
 const state = join(scratch, "wrangler-state.json");
+const failFlag = join(scratch, "fail-deploy");
 let server, origin;
 const adminCalls = [];
 // The stand-in Worker learns ADMIN_TOKEN_HASH the way the real one does: from the secret upload.
@@ -29,6 +30,7 @@ let stdin = ""; for await (const c of process.stdin) stdin += c;
 appendFileSync(${JSON.stringify(log)}, JSON.stringify({args, stdin}) + "\\n");
 const st = existsSync(${JSON.stringify(state)}) ? JSON.parse(readFileSync(${JSON.stringify(state)}, "utf8")) : {secrets: []};
 if (args[0] === "whoami") process.exit(0);
+if (args[0] === "deploy" && existsSync(${JSON.stringify(failFlag)})) process.exit(1);
 if (args[0] === "deploy") {console.log("Deployed worker\\n  https://aspen-test.example.workers.dev"); process.exit(0);}
 if (args[0] === "secret" && args[1] === "list") {console.log(JSON.stringify(st.secrets.map(name => ({name, type: "secret_text"})))); process.exit(0);}
 if (args[0] === "secret" && args[1] === "put") {
@@ -132,6 +134,18 @@ test("rerunning keeps secrets and uploads nothing new", async () => {
   const renamed = await run("setup.mjs", ["--name", "other", "--url", origin]);
   assert.equal(renamed.code, 1);
   assert.match(renamed.stderr, /already names the Worker "aspen-test"/);
+});
+
+test("a rerun after a failed first deploy still mints the create code and reminds about the key backup", async () => {
+  await rm(join(pkg, ".deploy/url"));
+  await writeFile(failFlag, "");
+  const failed = await run("setup.mjs", ["--url", origin]);
+  assert.equal(failed.code, 1);
+  await rm(failFlag);
+  const r = await run("setup.mjs", ["--url", origin]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Copy \.deploy\/room-kek\.json to your password manager/);
+  assert.match(r.stdout, /cloudroom create ABCD-EFGH-JKMN-PQRS@/);
 });
 
 test("rotate adds a key id and keeps the old key; restore re-uploads a backup", async () => {

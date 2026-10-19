@@ -102,14 +102,16 @@ async function main() {
   }
 
   const config = await localConfig(opts);
-  const firstRun = !await exists(files.token);
+  // The address file is written only after a deploy succeeds, so a failed first deploy stays a first run.
+  const firstRun = !await exists(files.url);
+  const newToken = !await exists(files.token);
   let created = false;
   if (!await exists(files.kek)) {
     const k = newKek();
     await writePrivate(files.kek, JSON.stringify({current: k.id, keys: {[k.id]: k.key}}) + "\n");
     created = true;
   }
-  if (firstRun) await writePrivate(files.token, newAdminToken() + "\n");
+  if (newToken) await writePrivate(files.token, newAdminToken() + "\n");
   const kek = parseKek(await privateFile(files.kek, "ROOM_KEK file"));
   const token = (await privateFile(files.token, "Admin token file")).trim();
 
@@ -118,7 +120,7 @@ async function main() {
 
   const have = await secretNames();
   if (created || !have.has("ROOM_KEK")) await putSecret("ROOM_KEK", JSON.stringify(kek));
-  if (firstRun || !have.has("ADMIN_TOKEN_HASH")) await putSecret("ADMIN_TOKEN_HASH", sha256Hex(token));
+  if (newToken || !have.has("ADMIN_TOKEN_HASH")) await putSecret("ADMIN_TOKEN_HASH", sha256Hex(token));
 
   const route = config.routes?.[0]?.pattern;
   const found = dep.stdout.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/i)?.[0];
@@ -137,7 +139,7 @@ async function main() {
   }
   if (!info) fail(`Deployed, but ${base.origin}/v1/info did not answer. Run: node tools/doctor.mjs`);
   console.log(`Worker ${config.name} runs at ${base.origin} (version ${info.version}, signup ${info.signup}).`);
-  if (created) console.log("Copy .deploy/room-kek.json to your password manager. Without it, hosted rooms cannot be recovered.");
+  if (created || firstRun) console.log("Copy .deploy/room-kek.json to your password manager. Without it, hosted rooms cannot be recovered.");
   if (firstRun) console.log("The operator token is in .deploy/admin-token; node tools/admin.mjs reads it from there.");
 
   if (firstRun || opts.mint) {
