@@ -1,4 +1,4 @@
-import { aliases, fail, publicRegion, type Env } from "./config";
+import { aliases, fail, publicRegion, type Alias, type Env } from "./config";
 import type { Delivery, Member, Operation, Result } from "./protocol";
 import {
   NativeCrypto,
@@ -103,17 +103,22 @@ export function nativeRoute(raw: string): {
 export class RadioCodec {
   readonly crypto = new NativeCrypto();
   private keys?: Record<string, string>;
+  private overlay?: { aliases: Record<string, Alias>; keys: Record<string, string> };
   constructor(private env: Env) {}
+  /** A hosted room supplies its single alias and unsealed key; the environment is then ignored. */
+  setOverlay(overlay?: { aliases: Record<string, Alias>; keys: Record<string, string> }): void {
+    this.overlay = overlay;
+  }
   identity(alias: string, region?: string): Identity {
-    if (!this.keys) {
+    if (!this.keys && !this.overlay) {
       try {
         this.keys = JSON.parse(this.env.ROOM_KEYS ?? "{}");
       } catch {
         return fail(503, "Invalid ROOM_KEYS configuration");
       }
     }
-    const config = aliases(this.env)[alias],
-      raw = this.keys?.[alias];
+    const config = (this.overlay?.aliases ?? aliases(this.env))[alias],
+      raw = (this.overlay?.keys ?? this.keys)?.[alias];
     if (!config || typeof raw !== "string" || !/^[a-f0-9]{128}$/.test(raw))
       return fail(503, "Native room key is not configured");
     const key = fromHex(raw);

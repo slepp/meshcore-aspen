@@ -10,9 +10,12 @@
   "routes": [{"pattern": "aspen.ve6slp.ca", "custom_domain": true}],
   "assets": {"directory": "./web", "binding": "ASSETS", "run_worker_first": ["/v1/*"]},
   "durable_objects": {
-    "bindings": [{"name": "ROOMS", "class_name": "Room"}, {"name": "ACCOUNTS", "class_name": "Accounts"}]
+    "bindings": [{"name": "ROOMS", "class_name": "Room"}, {"name": "ACCOUNTS", "class_name": "Accounts"},
+      {"name": "REGISTRY", "class_name": "Registry"}]
   },
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["Room"]},
-    {"tag": "v2", "new_sqlite_classes": ["Accounts"]}],
+    {"tag": "v2", "new_sqlite_classes": ["Accounts"]},
+    {"tag": "v3", "new_sqlite_classes": ["Registry"]}],
+  "observability": {"enabled": false},
   "vars": {"HISTORY_LIMIT": "0", "MODE": "opaque"}
 }

@@ -98,14 +98,20 @@ export function nodeJson(body: Record<string, unknown>, status = 200, headers: R
   return new Response(JSON.stringify(body), {status, headers: {"Content-Type": "application/json",
     "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers}});
 }
+export interface FailureParts {status: number; body: Record<string, unknown>; retryAfter?: number}
+/** Status and fixed-text body for a node, control or admin error. */
+export function failureParts(error: NodeError): FailureParts {
+  const extra = {...error.extra};
+  const retryAfter = typeof extra.retryAfter === "number" ? extra.retryAfter : undefined;
+  delete extra.retryAfter;
+  return {status: error.status, body: {ok: 0, e: error.e, m: error.text, ...extra}, retryAfter};
+}
+export function partsResponse(parts: FailureParts): Response {
+  return nodeJson(parts.body, parts.status, parts.retryAfter !== undefined ? {"Retry-After": String(parts.retryAfter)} : {});
+}
 /** Error body for any node, control or admin route. Logs only a fixed string and the error class. */
 export function nodeError(error: unknown, route: string): Response {
-  if (error instanceof NodeError) {
-    const headers: Record<string, string> = {};
-    const extra = {...error.extra};
-    if (typeof extra.retryAfter === "number") {headers["Retry-After"] = String(extra.retryAfter); delete extra.retryAfter;}
-    return nodeJson({ok: 0, e: error.e, m: error.text, ...extra}, error.status, headers);
-  }
+  if (error instanceof NodeError) return partsResponse(failureParts(error));
   console.error("node route failed", route, error instanceof Error ? error.constructor.name : typeof error);
   return nodeJson({ok: 0, e: "internal", m: failures.internal[1]}, 500);
 }

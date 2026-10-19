@@ -2,7 +2,11 @@ import {DurableObject} from "cloudflare:workers";
 import {aliases, ApiError, type Alias, authorize, credential, equalToken, errorResponse, fail, frontendRegion, wellFormed, type Connection, type Env} from "./config";
 import type {Delivery, Member, Message, Operation, Result} from "./protocol";
 import {RadioCodec, opaque, OPAQUE_PROTOCOL, type ParticipantProfile} from "./native";
-import {base64, fromHex, unbase64} from "./native-crypto";
+import {base64, fromHex, toHex, unbase64} from "./native-crypto";
+import {HOSTED_ALIAS, HOSTED_DDL, OWNER_DELAY, type HostedFrontendRow, type HostedGrant, type HostedMaterial, type HostedRow, type GrantReply} from "./hosted";
+import {memoryLimit, intSetting} from "./limits";
+import {NodeError, failureParts, nodeFail, codeHash, formatCode, generatedPassword, randomCode, validPassword, type FailureParts} from "./node-protocol";
+import {newToken, openRoom, parseKek, sealRoom, tokenHash} from "./seal";
 import {accountCredential, checkPassword, deviceChallenge, DEVICE_PROTOCOL, username, webUsers} from "./accounts";
 import {passkeyMode} from "./authority";
 import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOrigin, sequence, sessionCookie,
@@ -10,6 +14,8 @@ import {cookieToken, displayName, isWebConnection, PAGE_SIZE, POST_BYTES, sameOr
   type WebConnection, type WebSession} from "./web";
 
 interface Grant {aliases: string[]; token?: string; credential?: string}
+type ControlReply = FailureParts;
+const sec = (): number => Math.floor(Date.now() / 1000);
 export interface Transmit {
   type: "transmit"; alias: string; dispatchId: string; packet: string;
   delayMs: number; priority: number;
@@ -77,6 +83,13 @@ export class Room extends DurableObject<Env> {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.codec = new RadioCodec(env);
+    this.hostedName = ctx.id.name?.startsWith("rt-") ?? false;
+    // A hosted object creates no table until `provision`; only then is its state loaded.
+    if (this.hostedName) ctx.blockConcurrencyWhile(() => this.loadHosted());
+    else this.initStatic();
+  }
+
+  private initStatic(): void {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS identities (alias TEXT PRIMARY KEY, public_key TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (
@@ -162,16 +175,23 @@ export class Room extends DurableObject<Env> {
     return this.rows<Pending>(`SELECT ${PENDING_COLUMNS} FROM pending WHERE alias=? AND client=?`, alias, client)[0];
   }
   /** Room configuration seam: the server-owned aliases, frontend grants, mode and history limit. */
-  private aliasMap(): Record<string, Alias> {return aliases(this.env);}
-  private grants(): Record<string, Grant> {return JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, Grant>;}
+  private aliasMap(): Record<string, Alias> {
+    if (this.hostedName) return this.hostedActive() ? {[this.hostedRow!.alias]: this.hostedAlias!} : {};
+    return aliases(this.env);
+  }
+  private grants(): Record<string, Grant> {
+    if (this.hostedName) return this.hostedGrants();
+    return JSON.parse(this.env.FRONTENDS ?? "{}") as Record<string, Grant>;
+  }
   private async grantCredential(grant?: Grant): Promise<string | undefined> {
     if (!grant) return;
     return grant.credential ?? (grant.token ? credential(grant.token) : undefined);
   }
-  private isOpaque(): boolean {return opaque(this.env);}
-  private region(frontend: string): string | undefined {return frontendRegion(this.env, frontend);}
-  private historyLimitSetting(): string | undefined {return this.env.HISTORY_LIMIT;}
+  private isOpaque(): boolean {return this.hostedName || opaque(this.env);}
+  private region(frontend: string): string | undefined {return this.hostedName ? undefined : frontendRegion(this.env, frontend);}
+  private historyLimitSetting(): string | undefined {return this.hostedName ? String(intSetting(this.env.HOSTED_HISTORY_LIMIT, 2000, 0)) : this.env.HISTORY_LIMIT;}
   private needsPathAck(): boolean {
+    if (this.hostedName) return false; // one alias per hosted room
     // Separate frontend grants do not isolate RF: either modem can hear a
     // bare ACK from another room. Scope this choice to the whole service.
     return new Set(Object.values(this.aliasMap()).map(a => a.backend)).size > 1;
@@ -193,10 +213,14 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     try {
       const browser = webPath(new URL(request.url).pathname);
+      if (this.hostedName) this.hostedGate(request, browser);
       if (browser) return await this.webFetch(request, browser[1], browser[2]);
       const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-zA-Z0-9_-]{1,64})\/(socket|operations)$/);
       if (!match) fail(404, "Unknown endpoint");
-      const connection = await authorize(request, this.env, match[1]);
+      const connection = this.hostedName ? await this.hostedAuthorize(request, match[1]) : await authorize(request, this.env, match[1]);
+      if (this.hostedName && match[2] === "operations" &&
+          !(await this.hostedAdmit(undefined, connection.credential, Number(request.headers.get("content-length")) || 0)))
+        fail(403, "Room is disabled");
       const alias = this.aliasMap()[connection.alias];
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
       this.bindIdentity(connection.alias);
@@ -264,6 +288,8 @@ export class Room extends DurableObject<Env> {
     }
     let id: string | undefined;
     try {
+      if (this.hostedName && !await this.hostedAdmit(ws, (ws.deserializeAttachment() as Connection).credential,
+          typeof frame === "string" ? textEncoder.encode(frame).length : frame.byteLength)) return;
       if (typeof frame !== "string" || textEncoder.encode(frame).length > MAX_FRAME) fail(400, "Use JSON text frames up to 4096 bytes");
       const envelope = this.parse(frame) as unknown as {id: string; operation: Operation};
       id = string(envelope.id, "request id", 32);
@@ -514,6 +540,7 @@ export class Room extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    if (this.hostedName) await this.hostedHousekeeping();
     await this.pump(true);
   }
 
@@ -532,6 +559,10 @@ export class Room extends DurableObject<Env> {
       const ws = sockets.get(`${pending.alias}:${pending.frontend}`);
       if (!ws || pending.retryBinding !== this.historyBinding(ws.deserializeAttachment() as Connection)) continue;
       if (next === undefined || pending.retryAt < next) next = pending.retryAt;
+    }
+    if (this.hostedName && this.hostedRow && this.hostedRow.state !== "deleted") {
+      const daily = this.dailyAt() * 1000;
+      if (next === undefined || daily < next) next = daily;
     }
     if (next === undefined) {
       if (current !== null) await this.ctx.storage.deleteAlarm();
@@ -957,6 +988,377 @@ export class Room extends DurableObject<Env> {
     this.send(server, {type: "ready", version: 1, alias, publicKey: config.publicKey, name: config.name});
     await this.pumpWebSocket(server, connection);
     return new Response(null, {status: 101, webSocket: client, headers: {"Sec-WebSocket-Protocol": WEB_PROTOCOL}});
+  }
+
+  // ---- Hosted rooms: `rt-<alias>` objects ------------------------------------------------------------
+  // Created only by `provision`. A hosted object that was never provisioned answers 404 and writes nothing.
+  private hostedName: boolean;
+  private hostedRow?: HostedRow;
+  private hosted?: HostedMaterial;
+  private hostedAlias?: Alias;
+  private hostedFailed = false;
+  private budgetDay = 0;
+  private budgetCount = 0;
+  private budgetSaved = 0;
+
+  private registry() {return this.env.REGISTRY.getByName("registry");}
+  private meta(key: string): number | undefined {
+    return this.rows<{v: number}>("SELECT v FROM hosted_meta WHERE k=?", key)[0]?.v;
+  }
+  private setMeta(key: string, value: number): void {
+    this.sql.exec("INSERT INTO hosted_meta(k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", key, value);
+  }
+  private async loadHosted(): Promise<void> {
+    if (!this.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room'").length) return;
+    const row = this.rows<HostedRow>("SELECT * FROM hosted_room WHERE id=1")[0];
+    if (!row) return;
+    this.hostedRow = row;
+    if (row.state === "deleted") return;
+    await this.openHosted(row);
+    this.budgetDay = this.meta("wday") ?? 0;
+    this.budgetCount = this.meta("wcount") ?? 0;
+  }
+  private async openHosted(row: HostedRow): Promise<void> {
+    const kek = parseKek(this.env);
+    try {
+      if (!kek || !row.sealed) throw new Error("sealed");
+      this.hosted = await openRoom(kek, row.alias, row.public_key, row.kid, new Uint8Array(row.sealed));
+      this.hostedAlias = {backend: "rt-" + row.alias, publicKey: row.public_key, name: row.name, password: this.hosted.password};
+      this.codec.setOverlay({aliases: {[row.alias]: this.hostedAlias}, keys: {[row.alias]: toHex(this.hosted.key)}});
+      this.hostedFailed = false;
+    } catch {
+      this.hostedFailed = true;
+      this.hosted = undefined;
+    }
+  }
+  private hostedActive(): boolean {return !!this.hosted && !!this.hostedAlias && this.hostedRow?.state === "active";}
+  private hostedGrants(): Record<string, Grant> {
+    if (!this.hostedActive()) return {};
+    const grants: Record<string, Grant> = {};
+    for (const f of this.rows<{node: string; token_hash: string}>("SELECT node, token_hash FROM hosted_frontend WHERE revoked=0"))
+      grants[f.node.slice(0, 16)] = {aliases: [this.hostedRow!.alias], credential: f.token_hash};
+    return grants;
+  }
+
+  /** Request gate for a hosted object: only the Worker's validated alias header reaches storage. */
+  private hostedGate(request: Request, browser: unknown): void {
+    const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-z2-7]{30})\/(socket|operations)$/);
+    if (browser || !match || !HOSTED_ALIAS.test(match[1]) || request.headers.get("x-aspen-hosted-alias") !== match[1] ||
+        this.ctx.id.name !== "rt-" + match[1] || !this.hostedRow || this.hostedRow.state === "deleted")
+      fail(404, "Unknown room alias");
+    if (this.hostedFailed) fail(503, "Hosted room is not available");
+  }
+  private async hostedAuthorize(request: Request, alias: string): Promise<Connection> {
+    const client = request.headers.get("x-aspen-client") ?? "none";
+    const token = request.headers.get("Authorization")?.match(/^Bearer (ar1_[a-f0-9]{64})$/)?.[1];
+    const credentialHash = token ? await tokenHash(token) : undefined;
+    const row = credentialHash ?
+      this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE token_hash=? AND revoked=0", credentialHash)[0] : undefined;
+    if (!row) {
+      if (memoryLimit("bad:" + client, 20, 60)) fail(429, "Too many failed frontend attempts; wait one minute");
+      fail(401, "Unknown frontend token");
+    }
+    if (this.hostedRow!.state === "disabled") fail(403, "Room is disabled");
+    if (memoryLimit("conn:" + credentialHash, 12, 60)) fail(429, "Too many frontend connections; wait one minute");
+    const now = sec();
+    if (now - (row.last_seen ?? 0) > 3600) {
+      this.sql.exec("UPDATE hosted_frontend SET last_seen=? WHERE node=?", now, row.node);
+      this.sql.exec("UPDATE hosted_room SET last_seen=? WHERE id=1", now);
+      this.hostedRow!.last_seen = now;
+      try {await this.registry().touchRoom(alias);} catch {/* the index is advisory */}
+    }
+    return {alias, frontend: row.node.slice(0, 16), credential: credentialHash!};
+  }
+
+  /** Counts one inbound operation against the per-token and daily room limits. False closes the socket. */
+  private async hostedAdmit(ws: WebSocket | undefined, credentialHash: string, bytes: number): Promise<boolean> {
+    if (memoryLimit("fr:" + credentialHash, 20, 1) || memoryLimit("by:" + credentialHash, 65536, 60, Date.now() / 1000, bytes)) {
+      ws?.close(1008, "Frame limit exceeded");
+      return false;
+    }
+    return this.hostedBudget(ws);
+  }
+  private async hostedBudget(ws?: WebSocket): Promise<boolean> {
+    const now = sec(), day = Math.floor(now / 86400), limit = intSetting(this.env.ROOM_WRITES_PER_DAY, 20000);
+    if (this.budgetDay !== day) {this.budgetDay = day; this.budgetCount = 0;}
+    if (++this.budgetCount > limit) {
+      await this.hostedSetState("disabled", "write-budget");
+      ws?.close(1008, "Room write limit reached");
+      return false;
+    }
+    if (now - this.budgetSaved >= 60) {
+      this.budgetSaved = now;
+      this.setMeta("wday", this.budgetDay); this.setMeta("wcount", this.budgetCount);
+    }
+    return true;
+  }
+  private async hostedSetState(state: "active" | "disabled", reason?: string): Promise<void> {
+    if (!this.hostedRow || this.hostedRow.state === "deleted" || this.hostedRow.state === state) return;
+    this.sql.exec("UPDATE hosted_room SET state=? WHERE id=1", state);
+    this.hostedRow.state = state;
+    if (reason) {
+      try {
+        await this.registry().recordAudit("system", reason, this.hostedRow.alias, state);
+        await this.registry().setRoomState(this.hostedRow.alias, state);
+      } catch {await this.registry().adminSetDirty(this.hostedRow.alias).catch(() => undefined);}
+    }
+    await this.pump();
+  }
+  private dailyAt(): number {return this.meta("daily_at") ?? 0;}
+
+  private async hostedHousekeeping(): Promise<void> {
+    const row = this.hostedRow;
+    if (!row || row.state === "deleted") return;
+    const now = sec();
+    if (now < this.dailyAt()) return;
+    const day = Math.floor(now / 86400), limit = intSetting(this.env.HOSTED_HISTORY_LIMIT, 2000);
+    this.ctx.storage.transactionSync(() => {
+      // Rows have no timestamps, so a daily row-id mark ages them: anything older than the 14-day mark goes.
+      if (this.meta("mark:" + (day - 14)) !== undefined) {
+        const a = this.meta("amax:" + (day - 14)) ?? 0, d = this.meta("dmax:" + (day - 14)) ?? 0;
+        this.sql.exec("DELETE FROM attempts WHERE rowid<=?", a);
+        this.sql.exec("DELETE FROM dispatches WHERE rowid<=?", d);
+      }
+      for (const k of this.rows<{k: string}>("SELECT k FROM hosted_meta WHERE k LIKE 'mark:%' OR k LIKE 'amax:%' OR k LIKE 'dmax:%'")) {
+        const n = Number(k.k.split(":")[1]);
+        if (n < day - 15) this.sql.exec("DELETE FROM hosted_meta WHERE k=?", k.k);
+      }
+      this.setMeta("mark:" + day, 1);
+      this.setMeta("amax:" + day, this.rows<{n: number}>("SELECT COALESCE(MAX(rowid),0) AS n FROM attempts")[0].n);
+      this.setMeta("dmax:" + day, this.rows<{n: number}>("SELECT COALESCE(MAX(rowid),0) AS n FROM dispatches")[0].n);
+      // History beyond the limit, and any delivery still pointing at it, goes.
+      const latest = this.rows<{n: number}>("SELECT COALESCE(MAX(seq),0) AS n FROM messages")[0].n;
+      if (latest > limit) {
+        this.sql.exec("DELETE FROM pending WHERE seq<=?", latest - limit);
+        this.sql.exec("DELETE FROM messages WHERE seq<=?", latest - limit);
+      }
+      // Session table stays bounded; the least recently active clients go first.
+      this.sql.exec(`DELETE FROM sessions WHERE rowid IN (SELECT rowid FROM sessions ORDER BY last_timestamp DESC LIMIT -1 OFFSET 1000)`);
+      this.setMeta("daily_at", now + 86400);
+    });
+    if (row.pending_delete !== null && now >= row.pending_delete) {
+      await this.hostedPurge("delete");
+      return;
+    }
+    if (now - row.last_seen > 365 * 86400) {await this.hostedPurge("idle-365"); return;}
+    if (row.state === "active" && now - row.last_seen > 180 * 86400) await this.hostedSetState("disabled", "idle-180");
+  }
+
+  private async hostedPurge(reason: string, actor = "system"): Promise<void> {
+    const row = this.hostedRow;
+    if (!row || row.state === "deleted") return;
+    for (const ws of this.ctx.getWebSockets()) ws.close(1008, "Room deleted");
+    this.ctx.storage.transactionSync(() => {
+      for (const table of ["identities", "messages", "sessions", "pending", "attempts", "dispatches", "web_sessions", "web_posts",
+        "web_login_limits", "profiles", "web_challenges", "web_devices", "hosted_frontend", "hosted_meta"])
+        this.sql.exec(`DELETE FROM ${table}`);
+      this.sql.exec("UPDATE hosted_room SET state='deleted', sealed=NULL, name='', public_key='', pending_delete=NULL WHERE id=1");
+    });
+    row.state = "deleted";
+    this.hosted = undefined; this.hostedAlias = undefined;
+    this.codec.setOverlay({aliases: {}, keys: {}});
+    await this.ctx.storage.deleteAlarm();
+    try {await this.registry().purgeRoom(row.alias, actor, reason);} catch {/* the Registry alarm drops stale rooms */}
+  }
+
+  // Internal RPC. Results are plain values: RPC does not carry error classes.
+  private requireHosted(alias: string): void {
+    if (!this.hostedName || this.ctx.id.name !== "rt-" + alias || !HOSTED_ALIAS.test(alias)) throw new Error("not a hosted room");
+  }
+  private async issue(node: string, role: number, creator = false): Promise<HostedGrant> {
+    const row = this.hostedRow!, now = sec();
+    const token = newToken(), hash = await tokenHash(token);
+    const existing = this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE node=?", node)[0];
+    const live = existing && !existing.revoked;
+    const finalRole = Math.max(live ? existing.role : 0, role);
+    const ownerSince = creator ? null : finalRole === 1 && !(live && existing.role === 1) ? now : live ? existing.owner_since : null;
+    this.sql.exec(`INSERT INTO hosted_frontend(node, token_hash, role, created, last_seen, revoked, owner_since) VALUES (?, ?, ?, ?, ?, 0, ?)
+      ON CONFLICT(node) DO UPDATE SET token_hash=excluded.token_hash, role=excluded.role, revoked=0, owner_since=excluded.owner_since,
+      created=CASE WHEN revoked=1 THEN excluded.created ELSE created END`, node, hash, finalRole, now, now, ownerSince);
+    if (existing) await this.pump(); // the replaced token's sockets close
+    return {alias: row.alias, name: row.name, pub: row.public_key, token, role: finalRole};
+  }
+  async provision(p: {alias: string; name: string; publicKey: string; key: string; password: string | null; node: string}):
+      Promise<GrantReply> {
+    this.requireHosted(p.alias);
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (this.hostedRow) {
+        if (this.hostedRow.state === "deleted") return {ok: false, e: "not_found"};
+        return {ok: true, grant: await this.issue(p.node, 1, true)};
+      }
+      const kek = parseKek(this.env);
+      if (!kek) return {ok: false, e: "closed"};
+      const key = fromHex(p.key);
+      let publicKey: string;
+      try {publicKey = toHex(this.codec.crypto.publicKey(key));} catch {return {ok: false, e: "key"};}
+      if (publicKey !== p.publicKey) return {ok: false, e: "key"};
+      const password = p.password ?? generatedPassword();
+      const {kid, sealed} = await sealRoom(kek, p.alias, publicKey, key, password);
+      key.fill(0);
+      this.initStatic();
+      this.sql.exec(HOSTED_DDL);
+      const now = sec();
+      this.sql.exec("INSERT INTO hosted_room(id, alias, name, public_key, sealed, kid, state, created, last_seen, pending_delete) VALUES (1, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)",
+        p.alias, p.name, publicKey, sealed.buffer as ArrayBuffer, kid, now, now);
+      this.hostedRow = this.rows<HostedRow>("SELECT * FROM hosted_room WHERE id=1")[0];
+      await this.openHosted(this.hostedRow);
+      this.setMeta("daily_at", now + 86400);
+      await this.ctx.storage.setAlarm(Date.now() + 86400_000);
+      return {ok: true, grant: await this.issue(p.node, 1, true)};
+    });
+  }
+  async addFrontend(p: {alias: string; node: string; role: number}): Promise<GrantReply> {
+    this.requireHosted(p.alias);
+    if (!this.hostedRow || this.hostedRow.state !== "active") return {ok: false, e: "not_found"};
+    if (this.hostedFailed) return {ok: false, e: "closed"};
+    return {ok: true, grant: await this.issue(p.node, p.role)};
+  }
+  async setState(alias: string, state: "active" | "disabled"): Promise<void> {
+    this.requireHosted(alias);
+    await this.hostedSetState(state);
+  }
+  async purge(alias: string): Promise<void> {
+    this.requireHosted(alias);
+    await this.hostedPurge("purge", "admin");
+  }
+  async revokeNode(alias: string, node: string): Promise<void> {
+    this.requireHosted(alias);
+    if (!this.hostedRow || this.hostedRow.state === "deleted") return;
+    const r = this.sql.exec("UPDATE hosted_frontend SET revoked=1 WHERE node=? AND revoked=0", node);
+    if (r.rowsWritten) await this.pump();
+  }
+
+  /** Owner and member calls on a hosted room, authenticated by the room token. */
+  async control(alias: string, bearer: string, body: Record<string, unknown>, meta: {host: string; client: string}): Promise<ControlReply> {
+    try {
+      return {status: 200, body: await this.controlNow(alias, bearer, body, meta)};
+    } catch (error) {
+      if (error instanceof NodeError) return failureParts(error);
+      console.error("control failed", error instanceof Error ? error.constructor.name : typeof error);
+      return {status: 500, body: {ok: 0, e: "internal", m: "Internal error."}};
+    }
+  }
+  private ownerCount(excluding: string): number {
+    return this.rows<{n: number}>("SELECT COUNT(*) AS n FROM hosted_frontend WHERE role=1 AND revoked=0 AND node<>?", excluding)[0].n;
+  }
+  private otherCount(excluding: string): number {
+    return this.rows<{n: number}>("SELECT COUNT(*) AS n FROM hosted_frontend WHERE revoked=0 AND node<>?", excluding)[0].n;
+  }
+  private async controlNow(alias: string, bearer: string, body: Record<string, unknown>, meta: {host: string; client: string}):
+      Promise<Record<string, unknown>> {
+    if (!this.hostedName || this.ctx.id.name !== "rt-" + alias || !this.hostedRow) nodeFail("not_found");
+    const room = this.hostedRow;
+    if (room.state === "deleted") nodeFail("gone");
+    if (this.hostedFailed) nodeFail("closed");
+    const hash = await tokenHash(bearer);
+    const me = this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE token_hash=? AND revoked=0", hash)[0];
+    if (!me) {
+      const wait = memoryLimit("bad:" + meta.client, 20, 60);
+      if (wait) nodeFail("rate", {retryAfter: wait});
+      nodeFail("auth");
+    }
+    const wait = memoryLimit("ctl:" + hash, 30, 60);
+    if (wait) nodeFail("rate", {retryAfter: wait});
+    const op = body.op, now = sec(), owner = me.role === 1;
+    if (room.state === "disabled" && op !== "leave") nodeFail("disabled");
+    const needOwner = () => {if (!owner) nodeFail("forbidden");};
+    const recent = (row: HostedFrontendRow) => row.owner_since !== null && now - row.owner_since < OWNER_DELAY;
+    switch (op) {
+      case "invite": {
+        needOwner();
+        const role = body.role === undefined ? "frontend" : body.role;
+        if (role !== "frontend" && role !== "owner") nodeFail("bad_request");
+        const max = role === "owner" ? 900 : 86400, def = role === "owner" ? 120 : 600;
+        const ttl = body.ttl === undefined ? def : body.ttl;
+        if (typeof ttl !== "number" || !Number.isInteger(ttl) || ttl < 60 || ttl > max) nodeFail("bad_request");
+        const code = randomCode();
+        const result = await this.registry().mintJoin({alias, hash: await codeHash(code), role: role === "owner" ? 1 : 0,
+          expires: now + ttl, issuer: me.node.slice(0, 8)});
+        if (result === "cap") nodeFail("cap");
+        if (result !== "ok") nodeFail("not_found");
+        return {ok: 1, code: formatCode(code), host: meta.host, ttl};
+      }
+      case "nodes": {
+        needOwner();
+        const offset = body.offset === undefined ? 0 : body.offset;
+        if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0 || offset > 100000) nodeFail("bad_request");
+        const rows = this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE revoked=0 ORDER BY role DESC, created, node LIMIT 6 OFFSET ?", offset);
+        const total = this.rows<{n: number}>("SELECT COUNT(*) AS n FROM hosted_frontend WHERE revoked=0")[0].n;
+        return {ok: 1, nodes: rows.slice(0, 5).map(r => ({id: r.node.slice(0, 8), r: r.role === 1 ? "o" : "f",
+          seen: Math.max(0, now - (r.last_seen ?? r.created))})), total, next: rows.length > 5 ? offset + 5 : null};
+      }
+      case "revoke": {
+        needOwner();
+        const id = body.id;
+        if (typeof id !== "string" || !/^[a-f0-9]{8,16}$/.test(id)) nodeFail("bad_request");
+        const match = this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE revoked=0 AND substr(node, 1, ?)=? LIMIT 2", id.length, id);
+        if (match.length !== 1) nodeFail("not_found");
+        const target = match[0];
+        if (target.node === me.node) nodeFail("self");
+        if (target.role === 1) {
+          if (this.ownerCount(target.node) < 1) nodeFail("last_owner");
+          if (recent(me)) nodeFail("too_new");
+        }
+        this.sql.exec("UPDATE hosted_frontend SET revoked=1 WHERE node=?", target.node);
+        await this.pump();
+        try {await this.registry().memberRemove(target.node, alias);} catch {/* the Registry alarm re-checks bans */}
+        return {ok: 1};
+      }
+      case "password": {
+        needOwner();
+        const mode = body.mode;
+        if (mode === "get") return {ok: 1, pw: this.hosted!.password};
+        let next: string;
+        if (mode === "set") {
+          if (!validPassword(body.pw)) nodeFail("bad_request");
+          next = body.pw;
+        } else if (mode === "open") next = "";
+        else if (mode === "new") next = generatedPassword();
+        else return nodeFail("bad_request");
+        const kek = parseKek(this.env);
+        if (!kek) nodeFail("closed");
+        const key = this.hosted!.key.slice();
+        const {kid, sealed} = await sealRoom(kek, alias, room.public_key, key, next);
+        key.fill(0);
+        this.sql.exec("UPDATE hosted_room SET sealed=?, kid=? WHERE id=1", sealed.buffer as ArrayBuffer, kid);
+        room.kid = kid;
+        this.hosted!.password = next; this.hostedAlias!.password = next;
+        return {ok: 1, pw: next};
+      }
+      case "leave": {
+        if (owner && this.ownerCount(me.node) < 1 && this.otherCount(me.node) > 0) nodeFail("last_owner");
+        const pw = this.hosted?.password ?? "";
+        if (this.otherCount(me.node) === 0) {
+          await this.hostedPurge("leave", me.node.slice(0, 8));
+          return {ok: 1, deleted: 1, pw};
+        }
+        this.sql.exec("UPDATE hosted_frontend SET revoked=1 WHERE node=?", me.node);
+        await this.pump();
+        try {await this.registry().memberRemove(me.node, alias);} catch {/* see revoke */}
+        return {ok: 1, deleted: 0};
+      }
+      case "delete": {
+        needOwner();
+        if (body.confirm !== alias) nodeFail("bad_request");
+        if (recent(me)) nodeFail("too_new");
+        if (this.ownerCount(me.node) < 1) {
+          await this.hostedPurge("delete", me.node.slice(0, 8));
+          return {ok: 1};
+        }
+        const at = room.pending_delete ?? now + OWNER_DELAY;
+        this.sql.exec("UPDATE hosted_room SET pending_delete=? WHERE id=1", at);
+        room.pending_delete = at;
+        return {ok: 1, pending: Math.max(0, at - now)};
+      }
+      case "cancel_delete": {
+        needOwner();
+        this.sql.exec("UPDATE hosted_room SET pending_delete=NULL WHERE id=1");
+        room.pending_delete = null;
+        return {ok: 1};
+      }
+      default:
+        return nodeFail("bad_request");
+    }
   }
 
   private async pumpWebSocket(ws: WebSocket, connection: WebConnection): Promise<void> {

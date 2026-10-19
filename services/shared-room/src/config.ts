@@ -1,5 +1,6 @@
 import type {Room} from "./room";
 import type {Accounts} from "./authority";
+import type {Registry} from "./registry";
 
 export interface Alias {backend: string; publicKey: string; name: string; password: string}
 export interface Frontend {token: string; aliases: string[]; region?: string}
@@ -17,6 +18,17 @@ export interface Env {
   PASSKEY_RP_ID?: string;
   WEB_ENROLLMENTS?: string;
   ASSETS?: Fetcher;
+  // Hosted rooms (registry.ts). Static configuration above always wins.
+  REGISTRY: DurableObjectNamespace<Registry>;
+  ROOM_KEK?: string;
+  ADMIN_TOKEN_HASH?: string;
+  SIGNUP_MODE?: string;
+  MAX_ROOMS?: string;
+  MAX_FRONTENDS?: string;
+  HOSTED_HISTORY_LIMIT?: string;
+  REGISTRY_WRITES_PER_DAY?: string;
+  ROOM_WRITES_PER_DAY?: string;
+  NODE_LIMIT?: {limit(options: {key: string}): Promise<{success: boolean}>};
 }
 export interface Connection {alias: string; frontend: string; credential: string}
 export class ApiError extends Error {
