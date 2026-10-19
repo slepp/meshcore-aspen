@@ -65,6 +65,56 @@ int main() {
 '''
         self.compile_run(source, ROOT / "firmware/esp32/CloudRoomService.cpp")
 
+    def test_cloud_room_registers_on_first_link_without_taking_a_slot_at_boot(self):
+        self.compile_run(r'''
+#include "CloudRoomRegistration.h"
+#include <cassert>
+using namespace onchip;
+struct Service final : NativeNetworkService {
+  void poll(unsigned) override {}
+  void close() override {}
+};
+struct Host final : NativeNetworkHost {
+  NativeServiceRegistry registry{2};
+  unsigned attaches = 0;
+  bool refuse = false;
+  bool ensureNativeHttps() override { return true; }
+  NativeServiceRegistration attachNetworkService(NativeNetworkService &service,
+                                                 const NativeServiceBudget &budget) override {
+    ++attaches;
+    return refuse ? NativeServiceRegistration::Full : registry.attach(service, budget);
+  }
+};
+int main() {
+  Host host;
+  Service cloud, other;
+  CloudRoomRegistration registration;
+  registration.bind(host);
+  // Booted with nothing linked: both registry slots and every reserved socket stay free.
+  assert(!registration.registered() && host.attaches == 0 && host.registry.size() == 0);
+  assert(host.registry.attach(other, {"other", 2, 1}) == NativeServiceRegistration::Attached);
+  Host later;
+  CloudRoomRegistration second;
+  second.bind(later);
+  // The first link job registers once, with the socket budget the room already reserved.
+  assert(second.ensure(cloud, {"cloud-room", 2, 1}) && later.attaches == 1 && later.registry.size() == 1);
+  assert(second.ensure(cloud, {"cloud-room", 2, 1}) && later.attaches == 1);
+  assert(later.registry.attach(other, {"other", 1, 1}) == NativeServiceRegistration::SocketBudget);
+  assert(later.registry.attach(other, {"other", 0, 1}) == NativeServiceRegistration::Attached);
+  // A refused registration is reported and retried on the next job.
+  Host full;
+  CloudRoomRegistration refused;
+  refused.bind(full);
+  full.refuse = true;
+  NativeServiceRegistration reason = NativeServiceRegistration::Attached;
+  assert(!refused.ensure(cloud, {"cloud-room", 2, 1}, &reason) && reason == NativeServiceRegistration::Full);
+  full.refuse = false;
+  assert(refused.ensure(cloud, {"cloud-room", 2, 1}) && refused.registered());
+  CloudRoomRegistration unbound;
+  assert(!unbound.ensure(cloud, {"cloud-room", 2, 1}, &reason) && reason == NativeServiceRegistration::Unavailable);
+}
+''')
+
     def test_registry_admission_budgets_fairness_and_shutdown(self):
         self.compile_run(r'''
 #include "NativeServices.h"

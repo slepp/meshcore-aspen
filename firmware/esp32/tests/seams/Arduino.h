@@ -31,12 +31,15 @@ inline char *ltoa(long value, char *buffer, int radix) {
 }
 namespace serial_test {
 inline thread_local bool forbidWrites = false;
+// A test may collect Serial output to check what a feature prints.
+inline std::string *capture = nullptr;
 }
 class TestSerial : public Stream {
 public:
   using Stream::write;
   size_t write(const uint8_t *data, size_t size) override {
     assert(!serial_test::forbidWrites && "Dispatch must not wait for diagnostic Serial output");
+    if (serial_test::capture) serial_test::capture->append(reinterpret_cast<const char *>(data), size);
     return fwrite(data, 1, size, stderr);
   }
 };

@@ -151,6 +151,30 @@ cloudroom-preferences-test:
 		tests/cloudroom_wrapper.cpp CloudRoomConfig.cpp -o "$(TEST_BUILD)/cloudroom-wrapper-header-only"
 	"$(TEST_BUILD)/cloudroom-wrapper-header-only"
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v tools.hardware.tests.test_cloudroom_config
+LIFECYCLE_UNITS := AES128 AESCommon BlockCipher Crypto Hash SHA256 SHA512 Ed25519 Curve25519 BigNumberUtil
+LIFECYCLE_ED := add_scalar fe ge key_exchange keypair sc sha512 sign verify
+.PHONY: cloudroom-lifecycle-test
+cloudroom-lifecycle-test:
+	$(PHY_MAKE) prepare $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o \
+		$(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,$(LIFECYCLE_UNITS))) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED)))
+	@mkdir -p "$(TEST_BUILD)"
+	cc -std=c99 -O2 -DJSON_MAX_DEPTH=8 -I$(ROOT)/firmware/shared/cloudroom/third_party/coreJSON \
+		-c $(ROOT)/firmware/shared/cloudroom/third_party/coreJSON/core_json.c -o "$(TEST_BUILD)/cloudroom-core-json.o"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_MAST_ADMIN=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 -DONCHIP_CLOUD_ROOM_TEST_HOOKS=1 \
+		-DONCHIP_CLOUD_ROOM_CONNECTIONS=2 -DONCHIP_CLOUD_ROOM_LINK_TEST=1 \
+		-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(ROOT)/firmware/shared -I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/cloudroom_lifecycle.cpp CloudRoomLink.cpp CloudRoomNode.cpp CloudRoomPreferences.cpp RoleIdentity.cpp \
+		CloudRoomLifecycle.cpp \
+		$(ROOT)/firmware/shared/cloudroom/CloudRoomGrammar.cpp $(ROOT)/firmware/shared/cloudroom/CloudRoomWire.cpp \
+		"$(TEST_BUILD)/cloudroom-core-json.o" $(PHY_BUILD)/Identity.o $(PHY_BUILD)/Utils.o \
+		$(addprefix $(PHY_BUILD)/crypto/,$(addsuffix .o,$(LIFECYCLE_UNITS))) \
+		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED))) \
+		-o "$(TEST_BUILD)/cloudroom-lifecycle"
+	for mode in identity join create convert errors faults guards malformed owner refusals unlink share probe idle advert widths; do "$(TEST_BUILD)/cloudroom-lifecycle" $$mode || exit 1; done
 public-provisioning-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
 		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o
@@ -276,6 +300,8 @@ python-test: bot-host-runner
 
 local-test: mast-phy-test python-test arbiter-test
 local-test: cloudroom-grammar-test
+local-test: cloudroom-preferences-test
+local-test: cloudroom-lifecycle-test
 arbiter-test: prepare
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	$(PHY_BUILD)/combined

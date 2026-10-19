@@ -3,6 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Lifecycle verbs need saved settings and the shared-room service in the image.
+#if defined(ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG) && ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG && \
+    ((defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM) || defined(ONCHIP_CLOUD_ROOM_LINK_TEST))
+#define ONCHIP_CLOUD_ROOM_LINK 1
+#else
+#define ONCHIP_CLOUD_ROOM_LINK 0
+#endif
+
 namespace onchip {
 // Saves nothing itself: flush state, then restart after `delayMs`. The Management
 // layer supplies the strong definition; the weak default reports that no restart
@@ -12,6 +20,7 @@ bool cloudRoomScheduleRestart(uint32_t delayMs);
 // Runtime reports what the local Room role does this boot, for `cloudroom status`.
 enum class CloudRoomRoomMode : uint8_t { Off, Local, Cloud };
 void cloudRoomReportRoom(CloudRoomRoomMode mode);
+CloudRoomRoomMode cloudRoomRoomMode();
 
 // True when a saved owner alias holds the local Room role's key, so the Room role
 // stays stopped while the shared room serves it. Reads the record header and keys
