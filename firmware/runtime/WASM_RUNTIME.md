@@ -100,7 +100,7 @@ make -C firmware/esp32 bot-firmware ONCHIP_BOT_WASM=0 \
 ```
 
 The example profile uses `${sysenv.ONCHIP_BOT_WASM}`, exported by Make.
-It also requires a valid `MESHCORE_HOSTNAME` DNS label. For build-only
+It also requires a valid `MESHCORE_HOSTNAME` DNS label of up to 24 characters. For build-only
 fixtures, prefix the commands with `MESHCORE_HOSTNAME=wasm-fixture`; configure
 the other operator-owned environment values before building an image to
 install.

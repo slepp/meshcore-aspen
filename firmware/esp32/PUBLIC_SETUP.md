@@ -93,7 +93,7 @@ before using a whole-board erase.
 | Port busy, access denied or connection fails | Close serial monitors, other flasher tabs and programs using the port. Check OS serial permissions; on Linux the serial-device group is commonly `dialout` or `uucp`. |
 | No serial data or wrong boot mode | Re-enter ROM bootloader mode with BOOT while connecting USB, and retry the connection. Do not erase storage as a connection fix. |
 | Flash completed but board stays in the bootloader | Release BOOT and press RESET. Select the runtime port again if USB enumerates with a different port name. |
-| `aspen.local` does not resolve | Find the board’s DHCP address in your router or USB boot log; open `http://ADDRESS/` and `http://ADDRESS/admin`. |
+| `aspen-XXXXXX.local` does not resolve | Check the name in the USB boot log line `WiFi hostname: aspen-XXXXXX` (the last six hex digits of the board's MAC). If mDNS is unavailable, find the board’s DHCP address in your router or the boot log and open `http://ADDRESS/` and `http://ADDRESS/admin`. |
 | Dashboard works but app does not connect | Enable the Companion role, choose the app’s WiFi connection, and use the same board address with port `5000`. Check LAN client isolation. |
 | App connects but a separate radio cannot exchange messages | Match the RF profile, send that companion’s advert, then address the bot’s own contact with `!ping`. A local reply through Aspen’s Base alone does not check the RF path. |
 | Setup invalid or RF/administration disabled | Keep the private setup files and inspect the USB error. Follow the recovery procedure below; preserve existing NVS/SPIFFS before considering replacement. |
@@ -263,7 +263,8 @@ python3 "$ESPTOOL" --chip esp32s3 --port "$PORT" --after no_reset write_flash \
 Reset the board after both operations. USB diagnostics should report
 `Public setup loaded; saved role preferences and identities retained`, then
 the selected native roles becoming ready. With WiFi enabled, use
-`http://aspen.local/admin` or the printed IP address and your `mast_password`
+`http://aspen-XXXXXX.local/admin` (the name printed as `WiFi hostname:`) or
+the printed IP address and your `mast_password`
 to log in. The dashboard shows the roles and shared PHY; confirm the intended
 frequency/power before sending messages. With WiFi disabled there is no Web UI;
 use your companion radio for authenticated Management RF interaction.

@@ -43,8 +43,10 @@ setup ZIP and operator seed outside public source and downloads.
    administrator settings.
 3. Save the private setup ZIP and first-install BIN. Select that BIN under
    **Custom Firmware** in the MeshCore flasher and flash over USB.
-4. Open `http://aspen.local/admin`, or the DHCP address shown by your router.
-   Sign in and check the radio profile and ready roles.
+4. Open `http://aspen-XXXXXX.local/admin`, where `XXXXXX` is the last six hex
+   digits of the board's WiFi MAC address. The USB boot log prints the exact
+   name (`WiFi hostname: aspen-8807b0`), and your router lists it with the DHCP
+   address, which also works. Sign in and check the radio profile and ready roles.
 5. In the MeshCore app, choose **Connect → WiFi**, enter the node's address and
    port **5000**, and skip radio setup. Send an advert, then a private `!ping`
    to the command bot. Expect `Pong`; `!help` lists the available commands.

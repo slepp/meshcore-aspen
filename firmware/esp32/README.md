@@ -34,7 +34,8 @@ the ESP32 Lua images below do not run on nRF.
 
 ## Radio dashboard
 
-Open `http://NODE_IP/` to see the radio profile, available companion slots,
+Open `http://aspen-XXXXXX.local/` (the name printed at boot as `WiFi hostname:`)
+or `http://NODE_IP/` to see the radio profile, available companion slots,
 repeater signals and recent packets. Use **Administration** for settings,
 programs, backups and application updates.
 
@@ -110,7 +111,8 @@ not a regional channel recommendation. Match frequency, BW, SF and CR on the
 companion radio you will use. Set the environment variables referenced by the
 configuration through your protected provisioning process:
 
-- `MESHCORE_HOSTNAME`, `WIFI_SSID`, `WIFI_PWD`;
+- `MESHCORE_HOSTNAME` (a prefix of up to 24 characters; see
+  [hostname and discovery](../shared/DASHBOARD.md#hostname-and-discovery)), `WIFI_SSID`, `WIFI_PWD`;
 - `ONCHIP_ADMIN_PASSWORD` for native repeater/room administration;
 - `ONCHIP_ROOM_PASSWORD` for room users; an empty value permits public room login;
 - `ONCHIP_MQTT_URI`; empty disables MQTT publishing;
@@ -398,8 +400,8 @@ supplies valid saved credentials. Retrying never formats storage, erases
 credentials, creates an identity or changes the LoRa profile.
 
 Use authenticated Management `wifi status` to read `connected` (usable IPv4),
-`enabled` (runtime join policy), `attempts` (capped at 3) and `retry-ms` (time
-until the next retry; zero when connected, disabled or due). `get wifi.status`
+`enabled` (runtime join policy), `attempts` (capped at 3), `retry-ms` (time
+until the next retry; zero when connected, disabled or due) and `hostname`. `get wifi.status`
 retains the numeric Arduino status. For an outage, check the AP and DHCP service
 and read `get diagnostics` / `stats system` for dropped logs and dispatch delays.
 USB diagnostics show SDK request failures; WiFi transition logs distinguish a

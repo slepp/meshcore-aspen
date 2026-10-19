@@ -34,8 +34,10 @@ default/overridden power and hostnames, idempotence and explicit setup failures.
 
 The device hostname defaults to `meshcore-phyless`, independently of
 `KISS_MODEM_HOST`, which names the remote radio service. Set `KISS_HOSTNAME` to
-a unique DNS label per device. Existing explicit `WIFI_HOSTNAME` or `HOSTNAME`
-settings are preserved when `KISS_HOSTNAME` is absent. Shared `RadioNetwork.h`
+a unique DNS label per device, or set `KISS_HOSTNAME_FIXED=0` to append the
+last six hex digits of the board's MAC as Aspen does. Existing explicit
+`WIFI_HOSTNAME` or `HOSTNAME` settings are preserved when `KISS_HOSTNAME` is
+absent. Shared `RadioNetwork.h`
 validation requires 1..31 ASCII letters, digits or interior hyphens, without
 a `.local` suffix. This configures the station hostname, not an mDNS server.
 

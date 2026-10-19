@@ -121,6 +121,17 @@ interior hyphens, without `.local`. Invalid values fail compilation rather
 than being silently truncated by Arduino's 32-byte hostname buffer.
 Do not rely on automatic mDNS conflict renaming for multiple radios.
 
+Aspen (`MESHCORE_ONCHIP`) builds append the last three bytes of the board's
+factory WiFi MAC in lowercase hex, so the public image answers at
+`aspen-XXXXXX.local`, for example `aspen-8807b0.local`. The name stays the
+same across firmware updates and flash erases, and several Aspen radios on one
+LAN do not clash. USB diagnostics print it at boot as `WiFi hostname: NAME`;
+`/api/status` reports it as `wifi.hostname`, the dashboard shows it beside the
+WiFi status and Management `wifi status` includes `hostname=NAME`. The
+`KISS_HOSTNAME` prefix is limited to 24 characters so the name fits the
+31-byte label. Add `-D KISS_HOSTNAME_FIXED=1` to use the prefix alone; give
+each such radio its own label.
+
 The responder starts during setup and handles subsequent address changes in
 its SDK task; the RF loop does not poll or restart it. Discovery failures are
 logged without stopping radio service. `.local` requires local multicast and

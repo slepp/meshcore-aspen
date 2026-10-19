@@ -119,7 +119,7 @@ Successful command results and errors are plain text, without JSON wrapping.
 | `set wifi.ssid TEXT`, `set wifi.pwd TEXT` | Encrypted RF only; literal printable text including spaces; an empty password explicitly selects an open network. Save first, then `wifi apply` |
 | `set wifi.enabled 0/1` | Encrypted RF only; `off/on` aliases accepted. Save and defer station stop/start until after the response. Default enabled; disabling retains credentials and RF roles |
 | `wifi apply`, `wifi forget` | Deferred reconnect using saved fields, or remove mast override for next boot |
-| `wifi status` | On ESP32: `wifi saved=S ssid-bytes=N connected=C`; never credentials |
+| `wifi status` | On ESP32: `wifi saved=S ssid-bytes=N connected=C enabled=E attempts=A retry-ms=R hostname=NAME`; never credentials |
 | `radio HZ BW SF CR DBM` | Deferred persistent PHY change |
 | `tempradio SECONDS HZ BW SF CR DBM` | Deferred temporary PHY, 1..3600 seconds, then automatic restore |
 | `trust KEY`, `trust none` | Replace/remove the legacy singleton full-key authority; compiled trust and all ACLs remain unchanged |
