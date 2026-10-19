@@ -10,7 +10,7 @@ import struct
 from ble_field import APP_START, LEGACY_APP_LIMIT
 
 
-def measure(elf, size, nm):
+def measure(elf, size, nm, reserve=0, forbid=()):
     sections = subprocess.check_output([size, "-A", str(elf)], text=True)
     sizes, addresses = {}, {}
     for line in sections.splitlines():
@@ -30,6 +30,12 @@ def measure(elf, size, nm):
     flash_bytes = sum(sizes.get(s, 0) for s in (".text", ".ARM.extab", ".ARM.exidx", ".data", ".svc_data", ".fs_data"))
     if flash_bytes > flash_limit:
         raise ValueError(f"Image exceeds the nRF application flash region: {flash_bytes} > {flash_limit}")
+    if flash_limit - flash_bytes < reserve:
+        raise ValueError(f"Image leaves {flash_limit - flash_bytes} bytes of application flash; "
+                         f"this profile keeps at least {reserve}")
+    linked = sorted(name for name in forbid if name in symbols)
+    if linked:
+        raise ValueError("Image links library code this profile replaces or avoids: " + ", ".join(linked))
     storage = {}
     binary = elf.with_suffix(".bin")
     if binary.exists():
@@ -66,6 +72,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--size", required=True)
     parser.add_argument("--nm", required=True)
+    parser.add_argument("--reserve", type=int, default=0,
+                        help="fail when fewer than this many application flash bytes remain")
+    parser.add_argument("--forbid", action="append", default=[],
+                        help="fail when this symbol is defined in the image (repeatable)")
     parser.add_argument("elf", type=pathlib.Path)
     args = parser.parse_args()
-    print(json.dumps(measure(args.elf, args.size, args.nm), indent=2))
+    print(json.dumps(measure(args.elf, args.size, args.nm, args.reserve, args.forbid), indent=2))

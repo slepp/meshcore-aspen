@@ -46,3 +46,23 @@ class MemoryTest(unittest.TestCase):
         with patch.object(memory.subprocess, "check_output", side_effect=[".text 24 151552\n", ""]):
             with self.assertRaisesRegex(ValueError, "application start"):
                 memory.measure(pathlib.Path("fixture.elf"), "size", "nm")
+
+
+class ProfileGuardTest(unittest.TestCase):
+    SECTIONS = ".text 700000 159744\n"
+    SYMBOLS = ("20010000 B __HeapBase\n2003f800 B __HeapLimit\n2003f800 B __StackLimit\n"
+               "20040000 B __StackTop\n00040000 T __ssvfscanf_r\n")
+
+    def measure(self, **options):
+        with patch.object(memory.subprocess, "check_output", side_effect=[self.SECTIONS, self.SYMBOLS]):
+            return memory.measure(pathlib.Path("fixture.elf"), "size", "nm", **options)
+
+    def test_reserve_fails_before_the_application_limit(self):
+        self.assertEqual(self.measure(reserve=98720)["application_flash_bytes"], 700000)
+        with self.assertRaisesRegex(ValueError, "leaves 98720 bytes.*at least 98721"):
+            self.measure(reserve=98721)
+
+    def test_forbidden_library_code_is_named(self):
+        with self.assertRaisesRegex(ValueError, "__ssvfscanf_r"):
+            self.measure(forbid=["_jp2uc_l", "__ssvfscanf_r"])
+        self.assertEqual(self.measure(forbid=["_jp2uc_l"])["application_flash_bytes"], 700000)

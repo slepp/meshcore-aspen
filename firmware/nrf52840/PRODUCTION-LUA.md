@@ -289,6 +289,13 @@ make -C firmware/nrf52840 production-lua-source-parser-test \
   SOURCE=/path/to/pinned/MeshCore
 ```
 
+`size` fails a production Lua image that leaves less than 8 KiB of the 798,720-byte
+application region. It also fails an image that links newlib's floating-point
+scanf or wide-character tables, the C++ exception unwinder or the `std::string`
+error paths. `PineLibc.cpp` and the bounded text builders in the command code keep
+those out; a new `%f` `sscanf` format or `std::string` use needs a different
+approach to stay under the Legacy DFU limit.
+
 The production target runs ABI-realistic native32 shared API tests, actual
 LittleFS/NOR power-cut and failed-read tests, borrowed-manifest lifetimes across
 suspended custom/native jobs, cancellation, replacement, rollback and failed

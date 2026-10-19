@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import configparser
 from pathlib import Path
+import re
 import unittest
 
 
@@ -69,3 +70,16 @@ class ProductionProfileTest(unittest.TestCase):
         self.assertIn("ETHERNET_TCP_PORT=5000", ethernet["build_flags"])
         self.assertIn("RAK13800EthernetInterface.cpp", ethernet["build_src_filter"])
         self.assertNotIn("EthernetCLI", ethernet["build_src_filter"])
+
+
+    def test_sscanf_formats_stay_within_the_integer_scanf_engine(self):
+        # PineLibc.cpp routes sscanf to newlib's integer-only engine: no %e, %f or %g, and no wide %ls or %lc.
+        root = Path(__file__).resolve().parents[3]
+        sources = list((root / "firmware/nrf52840").glob("*.cpp")) + list((root / "firmware/runtime").glob("*.cpp"))
+        formats = []
+        for source in sources:
+            formats += re.findall(r'\bsscanf\s*\([^;"]*"((?:[^"\\]|\\.)*)"', source.read_text())
+        self.assertGreater(len(formats), 10)
+        for text in formats:
+            self.assertIsNone(re.search(r"%[*0-9]*[lL]?[aAeEfFgG]", text), text)
+            self.assertIsNone(re.search(r"%[*0-9]*l[sc\[]", text), text)

@@ -48,8 +48,16 @@ lua-probe: prepare
 	$(PYTHON) lua_probe.py --archive "$(LUA_ARCHIVE)"
 	$(MAKE) build ENV=nrfmast_lua_probe
 
+# Production Lua images keep headroom under the Legacy DFU limit and stay free of
+# the newlib engines and C++ error machinery that PineLibc.cpp and the command
+# text code avoid: wide-character scanf tables, the floating-point scanf engine,
+# C++ exception unwinding and the std::string error paths.
+ifneq ($(filter nrfmast_fleet_lua nrfmast_solar_lua,$(ENV)),)
+SIZE_GUARD := --reserve 8192 $(addprefix --forbid ,_jp2uc_l __ssvfscanf_r __gxx_personality_v0 \
+	_ZSt19__throw_logic_errorPKc _ZSt20__throw_length_errorPKc)
+endif
 size:
-	$(PYTHON) memory.py --size "$(ARM_SIZE)" --nm "$(ARM_NM)" \
+	$(PYTHON) memory.py --size "$(ARM_SIZE)" --nm "$(ARM_NM)" $(SIZE_GUARD) \
 		"$(UPSTREAM)/.pio/build/$(ENV)/firmware.elf"
 
 test: prepare
