@@ -81,6 +81,13 @@ public-update-test:
 	ulimit -c 0; "$(TEST_BUILD)/public-update" different-owner
 	ulimit -c 0; "$(TEST_BUILD)/public-update" different-owner recovery
 .PHONY: public-provisioning-test
+.PHONY: cloudroom-grammar-test
+cloudroom-grammar-test:
+	@mkdir -p "$(TEST_BUILD)"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Werror -I$(ROOT)/firmware/shared/cloudroom \
+		$(ROOT)/firmware/shared/cloudroom/tests/grammar.cpp $(ROOT)/firmware/shared/cloudroom/CloudRoomGrammar.cpp \
+		-o "$(TEST_BUILD)/cloudroom-grammar"
+	"$(TEST_BUILD)/cloudroom-grammar"
 .PHONY: cloudroom-preferences-test
 cloudroom-preferences-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
@@ -236,6 +243,7 @@ python-test: bot-host-runner
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s $(ROOT)/tools/hardware/tests -p 'test_*.py' -v
 
 local-test: mast-phy-test python-test arbiter-test
+local-test: cloudroom-grammar-test
 arbiter-test: prepare
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	$(PHY_BUILD)/combined
