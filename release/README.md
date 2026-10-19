@@ -5,7 +5,7 @@ version and release tag; an update to one does not require updating the others.
 
 | Product | Source version | Download and setup |
 | --- | --- | --- |
-| Aspen | `0.1.19` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
+| Aspen | `0.1.20` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
 | Birch | `0.1.5` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
 | Pine | `0.1.5` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
 | Willow | `0.0.13` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
