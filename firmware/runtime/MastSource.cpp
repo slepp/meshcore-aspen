@@ -847,7 +847,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strcmp(input, "api repeater-cli")) {
     if (wasmRuntime_) { respond("Error: Repeater CLI requires Lua"); return; }
-    snprintf(reply, capacity, "Repeater CLI command(alias,text[,read]) owner-DM ACL=admin spacing=none reply-timeout=15..60s completion=first-reply read-retry=1 write-retry=0 io=%u", BotOwnerIoLimit);
+    snprintf(reply, capacity, "Repeater CLI command(alias,text[,read]) owner-DM ACL=admin reply-timeout=15..60s completion=first-reply read-retry=1 write-retry=0 groups=1 io=%u", BotOwnerIoLimit);
     return;
   }
   if (!strcmp(input, "api find-best-path")) {

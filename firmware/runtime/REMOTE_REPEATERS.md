@@ -146,7 +146,9 @@ use the same learned routes as monitoring. An unknown route starts a MeshCore
 login and PATH exchange to establish the outbound and return routes.
 
 This source requires Aspen 0.1.18 or a host worker with the read-only retry
-option. `source api repeater-cli` reports `read-retry=1` when it is available.
+option, and groups require `groups=1` in `source api repeater-cli`. The current
+source calls `repeater.targets(text)`, so install it only with firmware that
+reports `groups=1`.
 Install the source additively:
 
 ```sh
@@ -159,16 +161,44 @@ In an authenticated private DM from a trusted owner:
 
 ```text
 !rcmd d1,d2,d4,d7,wye ver
+!rcmd all get txdelay
 !rcmd d1,d2 neighbors
 !rcmd d1,d2 gps
 !rcmd-write d1,d2 set flood.max 4
 ```
 
-Select distinct configured aliases, separated by commas; alias case does
-not matter. You can select every configured repeater whose aliases fit in the
-command message. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
+Select configured aliases or group names, separated by commas; case does not
+matter, and a repeater named twice runs once. You can select every configured
+repeater whose aliases fit in the command message. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
 Identity, access, radio and restart commands run on one target at a time.
 Existing command and radio-action permissions still apply.
+
+### Repeater groups
+
+A group is a name for a set of configured repeaters, such as `all` for the
+nodes you operate or `sherwood` for one site. Define groups on the monitor's
+authenticated management connection:
+
+```text
+bot repeaters group all d1,d2,d4,d7,wye
+bot repeaters group sherwood d1,wye
+bot repeaters groups
+bot repeaters group all
+bot repeaters group sherwood -
+```
+
+Members are configured aliases or unique public-key prefixes of at least four
+hex digits (`d12600` selects the target whose key starts with those digits).
+The reply lists the aliases that were saved. `group NAME -` removes a group.
+Up to four groups are saved with the repeater settings, in the same file as the
+targets and without extra NVS entries. A group name follows the alias rules and
+cannot match an alias; an alias cannot be added with a group's name.
+
+`!rcmd all ver` and `!rcmd-write sherwood set flood.max 4` expand the group when
+the command starts. Removing a target removes it from every group, and a group
+left with no members is deleted. A new target never inherits memberships.
+Groups that include identity, access, radio or restart commands still run one
+repeater at a time, so those commands refuse a group of more than one member.
 
 Requests run sequentially. The next target starts as soon as the previous
 request completes and the radio can accept it. Background monitoring yields
@@ -193,6 +223,11 @@ A login that confirms insufficient admin access reports that condition directly.
 A timed-out write may have applied. It is sent once: read back the affected
 setting before deciding whether to repeat it. Passwords and private keys do
 not belong in the installed Lua source.
+
+`repeater.targets(text)` expands a comma-separated list of aliases and group
+names for the current trusted-owner DM. It yields a Lua array of distinct
+aliases, or `nil, message` when the list is empty or too long. Names that are
+not groups pass through unchanged, so `repeater.command` reports unknown aliases.
 
 For another Lua command, `repeater.command(alias, text[, read_only])` yields
 `{ok, text, reply, error, queued, transmitted, truncated}`. `text` retains line

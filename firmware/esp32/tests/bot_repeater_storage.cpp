@@ -38,6 +38,8 @@ static void expect(const BotRepeaterPolicy &policy) {
   assert(loadBotRepeaterPolicy(actual));
   assert(actual.enabled == policy.enabled && actual.intervalSeconds == policy.intervalSeconds &&
          actual.discoverySeconds == policy.discoverySeconds && actual.disabledTargets == policy.disabledTargets);
+  for (unsigned i = 0; i < BotRepeaterGroupLimit; ++i)
+    assert(!strcmp(actual.groups[i].name, policy.groups[i].name) && actual.groups[i].members == policy.groups[i].members);
   for (unsigned i = 0; i < BotRepeaterLimit; ++i)
     assert(!strcmp(actual.targets[i].alias, policy.targets[i].alias) &&
            !memcmp(actual.targets[i].key, policy.targets[i].key, 32) &&
@@ -131,7 +133,7 @@ int main() {
   expect(old);
   assert(!memcmp(legacy.data(), "BRM\1", 4));
   assert(saveBotRepeaterPolicy(next)); expect(next);
-  assert(!memcmp(filesystem_test::files.at("/repeaters-b.bin").data(), "BRM\3", 4));
+  assert(!memcmp(filesystem_test::files.at("/repeaters-b.bin").data(), "BRM\4", 4));
   identity_test::durable.clear(); filesystem_test::files.clear();
   auto &version2 = filesystem_test::files["/repeaters-a.bin"];
   const size_t version2Size = 4 + offsetof(BotRepeaterPolicy, disabledTargets);
@@ -143,9 +145,32 @@ int main() {
   mesh::Utils::sha256(v2Reference.data() + 5, 32, version2.data(), version2.size());
   expect(old);
   assert(saveBotRepeaterPolicy(next));expect(next);
+  // A version 3 record has targets and disabled flags but no groups.
+  identity_test::durable.clear(); filesystem_test::files.clear();
+  auto &version3 = filesystem_test::files["/repeaters-a.bin"];
+  const size_t version3Size = 4 + offsetof(BotRepeaterPolicy, groups);
+  version3.resize(version3Size);
+  memcpy(version3.data(), "BRM\3", 4);
+  memcpy(version3.data() + 4, &old, version3Size - 4);
+  auto &v3Reference = identity_test::durable[Key];
+  v3Reference.resize(37);memcpy(v3Reference.data(), "BRF\1", 4);v3Reference[4] = 0;
+  mesh::Utils::sha256(v3Reference.data() + 5, 32, version3.data(), version3.size());
+  expect(old);
+  auto grouped = old;
+  snprintf(grouped.groups[0].name, sizeof(grouped.groups[0].name), "all");
+  grouped.groups[0].members = 0b11;
+  assert(grouped.valid() && saveBotRepeaterPolicy(grouped)); expect(grouped);
+  BotRepeaterPolicy badGroup = grouped;
+  badGroup.groups[1] = badGroup.groups[0]; assert(!badGroup.valid());                     // duplicate name
+  badGroup = grouped; badGroup.groups[0].members = 0; assert(!badGroup.valid());          // empty named group
+  badGroup = grouped; badGroup.groups[0].members = uint16_t(1u << BotRepeaterLimit); assert(!badGroup.valid());
+  badGroup = grouped; badGroup.targets[1] = {}; assert(!badGroup.valid());                // member slot unused
+  badGroup = grouped; snprintf(badGroup.groups[0].name, sizeof(badGroup.groups[0].name), "%s", old.targets[0].alias);
+  assert(!badGroup.valid());                                                              // group shares an alias
+  badGroup = grouped; badGroup.groups[2].members = 1; assert(!badGroup.valid());          // members without a name
   BotRepeaterPolicy invalid;
   invalid.disabledTargets = 1;assert(!invalid.valid());
   invalid = old;invalid.disabledTargets = uint16_t(1u << BotRepeaterLimit);assert(!invalid.valid());
   assert(psram_test::allocations.empty());
-  puts("PASS repeater storage: v1/v2 migration, persisted per-target disable and cooldowns, 37-byte authority, verified slots, explicit faults and unchanged Lua reserve");
+  puts("PASS repeater storage: v1/v2/v3 migration and groups, persisted per-target disable and cooldowns, 37-byte authority, verified slots, explicit faults and unchanged Lua reserve");
 }

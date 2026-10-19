@@ -4479,6 +4479,42 @@ static void native_repeater_cli(const char *sourcePath) {
   }
   assert(owner.replies(f.bot.publicKey(), f.radio).size() == 6 && !f.bot.jobsInUse());
   assert(timeMs.load() - fleetStarted < 6000); // Six replies need only ordinary radio/worker steps.
+  // Groups expand to distinct aliases before the command runs and follow target removal.
+  const auto repeaterReply = [&](const std::string &command) {
+    f.bot.repeaterCommand(command.c_str(), reply, sizeof(reply)); return std::string(reply);
+  };
+  assert(repeaterReply("group pair p1,P2").find("Saved/applied repeater group pair=p1,p2") == 0);
+  assert(repeaterReply("group lead " + key(third).substr(0, 8)).find("lead=p3") != std::string::npos);
+  assert(repeaterReply("group p1 p2").find("Error:") == 0);
+  assert(repeaterReply("group bad nobody").find("Error:") == 0);
+  assert(repeaterReply("group bad 0000").find("Error:") == 0);
+  assert(repeaterReply("add pair " + key(first) + " 912525000 3:").find("Error:") == 0);
+  assert(repeaterReply("groups") == "Repeater groups pair=p1,p2 lead=p3");
+  {
+    BotRepeaterPolicy saved; assert(loadBotRepeaterPolicy(saved));
+    unsigned named = 0; for (const auto &group : saved.groups) named += group.name[0] != 0;
+    assert(named == 2);
+  }
+  timeMs += 61000; f.radio.sent.clear();
+  f.deliver(owner.command(f.bot.publicKey(), "!rcmd PAIR,p2,lead ver")); f.step(300);
+  for (auto *peer : {&first, &second, &third}) {
+    const auto sent = requests(*peer); assert(sent.size() == 1);
+    response(*peer, sent[0].substr(0, 3) + "Group version"); f.step(300);
+  }
+  assert(requests(fourth).empty());
+  assert(owner.replies(f.bot.publicKey(), f.radio).size() == 3 && !f.bot.jobsInUse());
+  assert(f.command(owner, "!rcmd-write pair setperm 00 3").find("one repeater") != std::string::npos);
+  assert(requests(first).empty());
+  assert(repeaterReply("remove p2").find("Saved/applied") == 0);
+  assert(repeaterReply("groups") == "Repeater groups pair=p1 lead=p3");
+  assert(repeaterReply("add p2 " + key(second) + " 912525000 3:").find("Saved/applied") == 0);
+  assert(repeaterReply("group pair").find("pair=p1") == 0 && repeaterReply("group pair").find("p2") == std::string::npos);
+  assert(repeaterReply("remove p3").find("Saved/applied") == 0);
+  assert(repeaterReply("groups") == "Repeater groups pair=p1");
+  assert(repeaterReply("add p3 " + key(third) + " 912525000 3:").find("Saved/applied") == 0);
+  assert(repeaterReply("group pair -").find("removed") != std::string::npos);
+  assert(repeaterReply("groups") == "Repeater groups none");
+  assert(f.command(stranger, "!rcmd pair ver").find("Error:") == 0);
   for (unsigned i = 0; i < 6; ++i) {
     const auto remove = "remove p" + std::to_string(i + 1);
     f.bot.repeaterCommand(remove.c_str(), reply, sizeof(reply));

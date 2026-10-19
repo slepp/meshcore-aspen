@@ -21,6 +21,7 @@
 #include <cstdarg>
 #include <cassert>
 #include <memory>
+#include <string>
 #if !defined(NRF52_PLATFORM) && !(defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
 #include "RoleProfile.h"
 #endif
@@ -1039,6 +1040,40 @@ struct CommandBot::Core : mesh::Mesh {
       slot->routeAt = millis();
     }
     return slot;
+  }
+  // Expands owner-defined groups in a comma-separated target list to distinct aliases.
+  // Other names pass through so the command reports its own unknown-alias error.
+  void resolveRepeaterTargets(Invocation &job) {
+    char input[BotIoTextLimit + 1]{};
+    snprintf(input, sizeof(input), "%s", job.io.value);
+    char *cursor = nullptr, output[BotIoTextLimit + 1]{};
+    size_t used = 0;
+    const char *failure = nullptr;
+    auto add = [&](const char *alias) {
+      const size_t length = strlen(alias);
+      for (const char *at = output; *at;) {
+        const char *end = strchr(at, ',');
+        const size_t existing = end ? size_t(end - at) : strlen(at);
+        if (existing == length && !strncmp(at, alias, length)) return;
+        at += existing + (end ? 1 : 0);
+        if (!end) break;
+      }
+      if (used + length + (used ? 1 : 0) >= sizeof(output)) { failure = "Target list exceeds the command bound"; return; }
+      if (used) output[used++] = ',';
+      memcpy(output + used, alias, length + 1); used += length;
+    };
+    for (char *token = strtok_r(input, ",", &cursor); token && !failure; token = strtok_r(nullptr, ",", &cursor)) {
+      for (char *c = token; *c; ++c) if (*c >= 'A' && *c <= 'Z') *c = char(*c + 32);
+      const BotRepeaterPolicy::Group *group = nullptr;
+      for (const auto &entry : repeaterPolicy.groups) if (entry.name[0] && !strcmp(entry.name, token)) group = &entry;
+      if (!group) { add(token); continue; }
+      for (unsigned i = 0; i < BotRepeaterLimit && !failure; ++i)
+        if (group->members & (1u << i)) add(repeaterPolicy.targets[i].alias);
+    }
+    if (!failure && !used) failure = "Select configured repeater aliases or groups, separated by commas";
+    if (failure) { finishRadio(job, failure); return; }
+    memcpy(job.result.value, output, used + 1);
+    finishRadio(job);
   }
   void startRepeater(Invocation &job) {
     for (const auto &waiting : invocations)
@@ -2094,6 +2129,11 @@ struct CommandBot::Core : mesh::Mesh {
       }
       if (request.kind == BotIoRequest::RepeaterCommand) {
         startRepeaterCommand(job); continue;
+      }
+      if (request.kind == BotIoRequest::RepeaterTargets) {
+        if (!ownerKey(job.event)) finishRadio(job, "Repeater groups require a currently trusted-owner private DM");
+        else resolveRepeaterTargets(job);
+        continue;
       }
       if (request.kind == BotIoRequest::RepeaterNext || repeaterIo(job)) {
         startRepeater(job); continue;
@@ -4054,10 +4094,79 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "on|off|enable ALIAS on|off; status [ALIAS]|timing [ALIAS]|config ALIAS|route ALIAS|storage; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; interval|discovery SEC");
+    snprintf(reply, capacity, "on|off|enable ALIAS on|off; status [ALIAS]|timing [ALIAS]|config ALIAS|route ALIAS|storage|groups; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; interval|discovery SEC");
+    return;
+  }
+  const auto memberNames = [&](const BotRepeaterPolicy &policy, const BotRepeaterPolicy::Group &group) {
+    std::string names;
+    for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+      if (group.members & (1u << i)) names += (names.empty() ? "" : ",") + std::string(policy.targets[i].alias);
+    return names;
+  };
+  if (!strcmp(action, "groups")) {
+    if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters groups"); return; }
+    std::string text;
+    for (const auto &group : core_->repeaterPolicy.groups)
+      if (group.name[0]) text += (text.empty() ? "" : " ") + std::string(group.name) + "=" + memberNames(core_->repeaterPolicy, group);
+    snprintf(reply, capacity, "Repeater groups %s", text.empty() ? "none" : text.c_str());
     return;
   }
   auto candidate = core_->repeaterPolicy;
+  if (!strcmp(action, "group")) {
+    const char *name = strtok_r(nullptr, " ", &cursor);
+    const char *members = name ? strtok_r(nullptr, " ", &cursor) : nullptr;
+    if (!name || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters group NAME [ALIAS|KEYPREFIX,...|-]"); return; }
+    auto *group = static_cast<BotRepeaterPolicy::Group *>(nullptr);
+    for (auto &entry : candidate.groups) if (entry.name[0] && !strcmp(entry.name, name)) group = &entry;
+    if (!members) {
+      if (!group) { error("repeater group is not configured"); return; }
+      snprintf(reply, capacity, "%s=%s", group->name, memberNames(candidate, *group).c_str()); return;
+    }
+    if (!strcmp(members, "-")) {
+      if (!group) { error("repeater group is not configured"); return; }
+      *group = {};
+    } else {
+      if (strlen(name) > 16) { error("repeater group name requires 1..16 lowercase identifier bytes"); return; }
+      uint16_t mask = 0;
+      char list[321]{}; snprintf(list, sizeof(list), "%s", members);
+      char *inner = nullptr;
+      for (char *item = strtok_r(list, ",", &inner); item; item = strtok_r(nullptr, ",", &inner)) {
+        for (char *c = item; *c; ++c) if (*c >= 'A' && *c <= 'Z') *c = char(*c + 32);
+        int slot = -1;
+        for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+          if (candidate.targets[i].used && !strcmp(candidate.targets[i].alias, item)) slot = int(i);
+        const size_t digits = strlen(item);
+        if (slot < 0 && digits >= 4 && digits <= 64 && strspn(item, "0123456789abcdef") == digits) {
+          unsigned matches = 0;
+          for (unsigned i = 0; i < BotRepeaterLimit; ++i) {
+            if (!candidate.targets[i].used) continue;
+            char key[65];
+            for (unsigned j = 0; j < 32; ++j) snprintf(key + j * 2, 3, "%02x", candidate.targets[i].key[j]);
+            if (!strncmp(key, item, digits)) { slot = int(i); ++matches; }
+          }
+          if (matches > 1) { error("repeater key prefix matches more than one target; use a longer prefix"); return; }
+        }
+        if (slot < 0) { error("repeater group members must be configured aliases or unique key prefixes of 4+ hex digits"); return; }
+        mask |= uint16_t(1u << slot);
+      }
+      if (!mask) { error("repeater group requires at least one member"); return; }
+      if (!group) for (auto &entry : candidate.groups) if (!entry.name[0]) { group = &entry; break; }
+      if (!group) { error("repeater group table is full"); return; }
+      *group = {};
+      snprintf(group->name, sizeof(group->name), "%s", name);
+      group->members = mask;
+    }
+    if (!candidate.valid()) { error("invalid repeater group name or members (a group cannot share an alias); policy unchanged"); return; }
+    char storageError[128]{};
+    if (!saveBotRepeaterPolicy(candidate, storageError, sizeof(storageError))) {
+      core_->repeaterPolicy.enabled = false;
+      fault(storageError); snprintf(reply, capacity, "Error: %s; live monitor disabled", storageError); return;
+    }
+    core_->repeaterPolicy = candidate;
+    if (!strcmp(members, "-")) snprintf(reply, capacity, "Saved/applied: repeater group %s removed", name);
+    else snprintf(reply, capacity, "Saved/applied repeater group %s=%s", name, memberNames(candidate, *group).c_str());
+    return;
+  }
   int changedTarget = -1;
   bool explicitPath = false;
   if (!strcmp(action, "enable")) {
@@ -4110,6 +4219,10 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       if (!target) { error("repeater alias is not configured"); return; }
       changedTarget = int(target - candidate.targets);
       candidate.disabledTargets &= ~(1u << unsigned(target - candidate.targets));
+      for (auto &group : candidate.groups) {
+        group.members &= uint16_t(~(1u << unsigned(target - candidate.targets)));
+        if (!group.members) group = {};
+      }
       *target = {};
     } else {
       const char *key = strtok_r(nullptr, " ", &cursor);

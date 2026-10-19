@@ -927,6 +927,19 @@ int finishIo(lua_State *s, int, lua_KContext) {
     boolean(s, "truncated", r.truncated);
     freeze(s); return 1;
   }
+  if (call.io->kind == onchip::BotIoRequest::RepeaterTargets && call.completion) {
+    if (!call.completion->ok) { lua_pushnil(s); lua_pushstring(s, call.completion->error); return 2; }
+    lua_newtable(s);
+    lua_Integer index = 0;
+    for (const char *at = call.completion->value; *at;) {
+      const char *end = strchr(at, ',');
+      lua_pushlstring(s, at, end ? size_t(end - at) : strlen(at));
+      lua_rawseti(s, -2, ++index);
+      if (!end) break;
+      at = end + 1;
+    }
+    return 1;
+  }
   if (call.io->kind == onchip::BotIoRequest::RepeaterNext && call.completion) {
     if (!call.completion->ok) return luaL_error(s, "%s", call.completion->error);
     if (call.completion->found) lua_pushstring(s, call.completion->value);
@@ -1362,8 +1375,16 @@ int repeaterCommand(lua_State *s) {
   request.delayMs = 30000;
   return lua_yieldk(s, 0, 0, finishIo);
 }
+int repeaterTargets(lua_State *s) {
+  if (lua_gettop(s) != 1) return luaL_error(s, "repeater.targets requires comma-separated aliases or group names");
+  auto &request = prepareIo(s, onchip::BotIoRequest::RepeaterTargets);
+  boundedString(s, 1, request.value, sizeof(request.value));
+  request.delayMs = 1000;
+  return lua_yieldk(s, 0, 0, finishIo);
+}
 void repeaterApi(lua_State *s) {
   lua_newtable(s);
+  lua_pushcfunction(s, repeaterTargets); lua_setfield(s, -2, "targets");
   lua_pushcfunction(s, repeaterNext); lua_setfield(s, -2, "next");
   lua_pushboolean(s, false); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "status");
   lua_pushboolean(s, true); lua_pushcclosure(s, repeaterRequest, 1); lua_setfield(s, -2, "login");

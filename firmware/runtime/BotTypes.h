@@ -67,8 +67,9 @@ constexpr unsigned BotTransactionLimit = 4;
 #endif
 constexpr unsigned BotReceiveLimit = 4, BotReceiveDedupLimit = 16;
 constexpr unsigned BotRepeaterLimit = ONCHIP_BOT_COMPACT_PROFILE ? 4 : 12;
+constexpr unsigned BotRepeaterGroupLimit = 4;
 // Each fleet target needs one request and up to two response chunks.
-constexpr unsigned BotOwnerIoLimit = ONCHIP_BOT_COMPACT_PROFILE ? 16 : 3 * BotRepeaterLimit;
+constexpr unsigned BotOwnerIoLimit = ONCHIP_BOT_COMPACT_PROFILE ? 16 : 3 * BotRepeaterLimit + 1;
 constexpr unsigned BotSourcePartLimit = 8;
 constexpr unsigned BotThreadRuleLimit = 8;
 struct BotThreadRule {
@@ -184,7 +185,7 @@ struct BotIoRequest {
                         ReminderSet, ReminderList, ReminderCancel, List, Cas, Transaction,
                         Inspect, Admin, HttpGet, HttpPost, PackageGet, Utility,
                         RepeaterNext, RepeaterStatus, RepeaterLogin, FindPath,
-                        RepeaterCommand, FindBestPath } kind = Sleep;
+                        RepeaterCommand, FindBestPath, RepeaterTargets } kind = Sleep;
   enum Scope : uint8_t { Caller, Conversation, Bot, Channel,
                         CallerThread, ConversationThread, BotThread, ChannelThread } scope = Caller;
   BotIoToken token{};

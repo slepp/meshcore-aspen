@@ -35,6 +35,11 @@ struct BotRepeaterPolicy {
   bool enabled = false;
   uint32_t discoverySeconds = 900;
   uint16_t disabledTargets = 0;
+  // A group names a set of target slots; removing a target clears its slot from every group.
+  struct Group {
+    char name[17]{};
+    uint16_t members = 0;
+  } groups[BotRepeaterGroupLimit];
   bool targetEnabled(unsigned index) const {
     return index < BotRepeaterLimit && targets[index].used && !(disabledTargets & (1u << index));
   }
