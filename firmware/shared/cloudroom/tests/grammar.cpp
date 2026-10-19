@@ -120,6 +120,11 @@ static void convert() {
         !strcmp(c.yesHost, "x.example.com") && !strcmp(c.host, "x.example.com"));
   CHECK(run("convert ABCDEFGHJKMNPQRS@x.example.com yes X.Example.com", c) == Parse::Ok &&
         !strcmp(c.yesHost, "x.example.com"));
+  // A named host needs its exact retype; a default-host convert takes a bare yes only.
+  CHECK(run("convert ABCDEFGHJKMNPQRS@x.example.com yes", c) == Parse::Ok && !c.yes && !c.yesHost[0]);
+  CHECK(run("convert ABCDEFGHJKMNPQRS@x.example.com yes y.example.com", c) == Parse::Ok && !c.yes && !c.yesHost[0]);
+  CHECK(run("convert ABCDEFGHJKMNPQRS yes x.example.com", c) == Parse::Ok && !c.yes && !c.yesHost[0]);
+  CHECK(run("convert ABCDEFGHJKMNPQRS yes", c) == Parse::Ok && c.yes);
   CHECK(run("convert ABCDEFGHJKMNPQRS no", c) == Parse::Usage);
   CHECK(run("convert ABCDEFGHJKMNPQRS yes a b", c) == Parse::Usage);
   CHECK(run("convert ABCDEFGHJKMNPQRS yes bad_host", c) == Parse::BadHost);
