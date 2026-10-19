@@ -1299,6 +1299,7 @@ static void worker_install_hooks_and_budgets() {
   timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = 181;
   f.deliver(peer.command(f.bot.publicKey(), "!ping")); f.step();
   assert(f.radio.sent.size() == 1 && peer.replies(f.bot.publicKey(), f.radio).empty());
+  f.bot.cancelJobs(); f.step(); // the reply waiting for budget is withdrawn with its job
   f.radio.airtime = 180;
   assert(f.command(peer, "!ping") == "Pong"); // exact 360 ms including ACK
   timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = 10;
@@ -4083,6 +4084,41 @@ static void native_durable_timer_reply() {
   assert(caller.replies(f.bot.publicKey(), f.radio).size() == 1);
   puts("PASS simulated native RF: durable timer yields, concurrent caller Pong, original principal/route and one budgeted reminder reply");
 }
+static void native_deferred_reply_admission() {
+  BotRadioPolicy policy; policy.airtimeMs = 3600; assert(saveBotRadioPolicy(policy));
+  Fixture f; f.start();
+  Peer caller; f.learn(caller);
+  beginClocks(); beginNetworkClock(true);
+  receiveNetworkTime(1767225600); loopClocks();
+  const char *source =
+      "function slow_answer() timer.set('once',2) timer.wait('once') return 'Late answer' end";
+  BotWorker::Result result;
+  assert(f.bot.stageSource(source, strlen(source))); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok);
+  assert(f.bot.activateStaged()); f.step();
+  assert(f.bot.pollSourceResult(result) && result.ok);
+  const auto ask = [&]() {
+    timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = 10;
+    f.deliver(caller.command(f.bot.publicKey(), "!slow_answer")); f.step();
+    assert(caller.replies(f.bot.publicKey(), f.radio).empty());
+  };
+  // The estimate fits an empty budget, but the command's own acknowledgement still counts against it.
+  ask(); f.radio.airtime = policy.airtimeMs;
+  timeMs += 3000; f.step();
+  assert(caller.replies(f.bot.publicKey(), f.radio).empty() && f.bot.jobsInUse() == 0);
+  // The reply goes out as soon as the earlier airtime ages out of the 60 s window.
+  timeMs += 57000; f.step(300);
+  assert(caller.replies(f.bot.publicKey(), f.radio) == std::vector<std::string>{"Late answer"});
+  const auto sentAfterReply = f.radio.sent.size();
+  f.step(300);
+  assert(f.radio.sent.size() == sentAfterReply);
+  // A reply that cannot fit even an empty budget is dropped immediately.
+  ask(); f.radio.airtime = policy.airtimeMs + 1;
+  timeMs += 3000; f.step(300); timeMs += 70000; f.step(300);
+  assert(caller.replies(f.bot.publicKey(), f.radio).empty());
+  assert(saveBotRadioPolicy({}));
+  puts("PASS deferred reply admission: budget-limited reply waits for airtime, oversized reply drops at once");
+}
 static void autonomous_personal_reminders() {
   const auto clear = [] {
     for (auto it = identity_test::durable.begin(); it != identity_test::durable.end();) {
@@ -6232,6 +6268,7 @@ int main(int argc, char **argv) {
   native_adaptive_admission();
   native_channel_storage();
   native_durable_timer_reply();
+  native_deferred_reply_admission();
   autonomous_personal_reminders();
   personal_notes();
   native_utilities();

@@ -49,6 +49,12 @@ have their own two-per-caller/four-global-per-minute admission, unrelated to
 command cooldown. `!status`, `!signal` and `!air` inspect readiness, actual
 RF metadata and airtime; a TX counter does not show recipient delivery.
 
+A finished command's reply that is refused only because the one-minute airtime
+budget or adaptive admission is full waits for it and is sent as soon as the
+earlier airtime ages out, for up to 60 seconds. The waiting reply holds its
+job slot. Cancelling the job withdraws it. A reply too large for an empty
+budget is refused at once.
+
 ## Channels and native command policy
 
 One bot can receive DMs and join up to eight channels at the same time, including

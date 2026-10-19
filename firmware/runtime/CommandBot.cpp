@@ -252,6 +252,10 @@ struct CommandBot::Core : mesh::Mesh {
   BotTargetAliases targetAliases;
   AdaptiveAdmission adaptive;
   const char *capacityError = nullptr;
+  // Set when the last capacity() refusal clears by itself: the estimate fits an empty budget.
+  bool capacityTransient = false;
+  bool replyWaiting = false;
+  static constexpr uint32_t DeferredReplyMs = 60000, DeferredReplyRetryMs = 250;
   mesh::GroupChannel channels[BotRadioPolicy::ChannelLimit]{};
   const char *lastAdmission = "none";
   uint32_t admissionAt = 0, admissionWait = 0, noticeAt = 0;
@@ -286,6 +290,10 @@ struct CommandBot::Core : mesh::Mesh {
     uint32_t deadline = 0, expectedAck = 0, rxAckAt = 0, traceTag = 0, traceAuth = 0;
     bool ioPending = false, ackExpected = false, acked = false, overflow = false;
     bool findPathWaiting = false;
+    // A finished command whose reply waits for TX airtime budget; the slot stays reserved meanwhile.
+    bool replyDeferred = false;
+    BotAction replyAction{};
+    uint32_t replyRetryAt = 0, replyUntil = 0;
     bool repeaterCommandWaiting = false;
     bool repeaterCommandRepair = false, repeaterCommandRepaired = false;
     char repeaterCliPrefix[3]{};
@@ -2497,6 +2505,7 @@ struct CommandBot::Core : mesh::Mesh {
   bool capacity(uint32_t estimate, bool charge, bool notice = false,
                 const mesh::Packet *packet = nullptr, const uint8_t *key = nullptr) {
     capacityError = "Bot configured TX airtime budget exceeded";
+    capacityTransient = false;
     const uint32_t now = millis(), used = reservedAirtime(now);
     Credit *slot = nullptr;
     for (auto &c : credit) {
@@ -2506,13 +2515,17 @@ struct CommandBot::Core : mesh::Mesh {
     }
     if (notice) slot = !noticeCredit.used || uint32_t(now - noticeCredit.at) >= 60000 ?
         &noticeCredit : nullptr;
-    if (!slot || estimate > policy.airtimeMs || used > policy.airtimeMs - estimate) return false;
+    if (!slot || estimate > policy.airtimeMs || used > policy.airtimeMs - estimate) {
+      capacityTransient = estimate <= policy.airtimeMs;
+      return false;
+    }
     if (charge && packet) {
       static const uint8_t service[32]{};
       const auto decision = adaptive.reserve(now, key ? key : service, packet, estimate, sampleAdmission());
       if (decision != AdaptiveAdmission::Allowed) {
         capacityError = AdaptiveAdmission::name(decision);
         lastAdmission = capacityError; admissionAt = now; admissionWait = 0;
+        capacityTransient = true;
         return false;
       }
     }
@@ -3127,6 +3140,32 @@ struct CommandBot::Core : mesh::Mesh {
     const uint64_t estimate = 500 + (uint64_t(owner.radio_.getEstAirtimeFor(packet->getRawLength())) * 6 + 250) * (hops + 1);
     return uint32_t(std::clamp<uint64_t>(estimate * 5 / 4, 15000, 60000));
   }
+  // Sends a command's reply. When only the airtime budget or admission is in the way, the reply waits
+  // for it (up to DeferredReplyMs) instead of being dropped; retryReplies() finishes the job.
+  bool actOrDefer(const BotAction &action, Invocation &invocation) {
+    replyWaiting = false;
+    const bool sent = act(action, invocation);
+    if (!sent && replyWaiting) {
+      const uint32_t now = millis();
+      invocation.replyDeferred = true; invocation.replyAction = action;
+      invocation.replyRetryAt = now + DeferredReplyRetryMs; invocation.replyUntil = now + DeferredReplyMs;
+      invocation.ioPending = invocation.collecting = invocation.deferred = false;
+      owner.diagnostic("Bot reply waiting for TX airtime budget: %s\n", capacityError);
+    }
+    return sent;
+  }
+  void retryReplies() {
+    const uint32_t now = millis();
+    for (auto &job : invocations) {
+      if (!job.used || !job.replyDeferred || int32_t(now - job.replyRetryAt) < 0) continue;
+      replyWaiting = false;
+      if (act(job.replyAction, job)) { wipe(&job, sizeof(job)); continue; }
+      if (replyWaiting && int32_t(now - job.replyUntil) < 0) { job.replyRetryAt = now + DeferredReplyRetryMs; continue; }
+      if (replyWaiting) reject("Bot reply dropped: TX airtime budget stayed exhausted for 60 s");
+      adminAcknowledged(job.adminTicket, false);
+      wipe(&job, sizeof(job));
+    }
+  }
   bool act(const BotAction &action, Invocation &invocation) {
     const auto &pending = invocation.event;
 #ifdef MESH_PACKET_ENGINE_API
@@ -3170,6 +3209,7 @@ struct CommandBot::Core : mesh::Mesh {
     const uint32_t cost = replyAirtime(response, invocation.route, traceBytes);
     if (!capacity(cost, true, false, response, principal(pending))) {
       releasePacket(response);
+      if (action.kind == BotAction::Reply && capacityTransient) { replyWaiting = true; return false; }
       reject(capacityError); return false;
     }
     if (invocation.adminTicket) {
@@ -3591,6 +3631,7 @@ uint32_t CommandBot::hostWaitMs() const {
   for (const auto &job : core_->invocations) if (job.used) {
     if (job.collecting) botEarlier(wait, now, job.collectionStart + job.event.windowMs);
     else if (job.deferred) botEarlier(wait, now, job.notBefore);
+    if (job.replyDeferred) botEarlier(wait, now, job.replyRetryAt);
     if (job.ioPending) botEarlier(wait, now, job.deadline);
     if (job.ioPending && job.io.kind == BotIoRequest::FindBestPath && job.io.revision == 3 && !job.outbound)
       botEarlier(wait, now, now);
@@ -3665,6 +3706,7 @@ void CommandBot::loop() {
   core_->loop();
   core_->sampleAdmission();
   core_->radioIo();
+  core_->retryReplies();
   core_->reminderIo();
   core_->statusEvents();
   const uint32_t dropped = radio_.getPacketsRecvErrors();
@@ -3711,7 +3753,7 @@ void CommandBot::loop() {
           strcpy(result.error, "Runtime code changed; pending operation outcome may be unknown");
         }
         bool submitted = false;
-        if (result.ok && result.action.kind != BotAction::None) submitted = core_->act(result.action, invocation);
+        if (result.ok && result.action.kind != BotAction::None) submitted = core_->actOrDefer(result.action, invocation);
         else if (!result.ok) {
           core_->adminAcknowledged(invocation.adminTicket, false); invocation.adminTicket = 0;
           ++core_->stats.vmFailures;
@@ -3739,7 +3781,11 @@ void CommandBot::loop() {
           else
             snprintf(action.text, std::min(sizeof(action.text), size_t(invocation.event.replyLimit) + 1),
                      "Error: !%s: %s", name, commandErrorMessage(result.error));
-          core_->act(action, invocation);
+          core_->actOrDefer(action, invocation);
+        }
+        if (invocation.replyDeferred) {
+          core_->audit(invocation.event, invocation.job, "completed", result.ok ? "ok" : "vm-failed");
+          break;
         }
         if (!submitted) core_->adminAcknowledged(invocation.adminTicket, false);
         core_->audit(invocation.event, invocation.job, "completed",
@@ -3965,7 +4011,10 @@ void CommandBot::cancelJobs(uint32_t except) {
   if (!core_) return;
   for (auto &job : core_->invocations) if (job.used && job.job != except) {
     if (!job.cancelled) core_->audit(job.event, job.job, "cancelled", "owner-request");
-    if (job.collecting || job.deferred) { wipe(&job, sizeof(job)); continue; }
+    if (job.collecting || job.deferred || job.replyDeferred) {
+      core_->adminAcknowledged(job.adminTicket, false);
+      wipe(&job, sizeof(job)); continue;
+    }
     job.cancelled = true;
     if (job.ioPending) core_->finishRadio(job, "Owner cancelled; admitted radio outcome may be unknown");
   }
