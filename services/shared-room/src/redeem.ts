@@ -3,7 +3,7 @@
 // Registry and Room objects over internal RPC. Error text is fixed and nothing
 // from a request body, header or secret is ever logged.
 import {aliases, type Env} from "./config";
-import {admitRedeem, intSetting, memoryLimit} from "./limits";
+import {admitMinute, admitRegistryWrite, intSetting, memoryLimit} from "./limits";
 import {NativeCrypto, fromHex, toHex} from "./native-crypto";
 import {NodeError, canonicalCode, codeHash, createSubject, nodeFail, nodeJson, partsResponse, sha256Hex, signedMessage,
   validName, validPassword, type NodeOp} from "./node-protocol";
@@ -81,9 +81,8 @@ export async function redeem(request: Request, env: Env): Promise<Response> {
   if (wait) nodeFail("rate", {retryAfter: wait});
   if (env.NODE_LIMIT && !(await env.NODE_LIMIT.limit({key: client})).success) nodeFail("rate", {retryAfter: 60});
   const registry = registryOf(env);
-  const admit = await admitRedeem(env, (day, n) => registry.addWrites(day, n));
-  if (admit === "rate") nodeFail("rate", {retryAfter: 60});
-  if (admit === "closed" || !kek) nodeFail("closed");
+  if (!admitMinute()) nodeFail("rate", {retryAfter: 60});
+  if (!kek) nodeFail("closed");
 
   // Field validation. Unknown or missing fields are `bad_request`; texts never echo input.
   if (body.p !== NODE_PROTOCOL) nodeFail("bad_request");
@@ -123,6 +122,8 @@ export async function redeem(request: Request, env: Env): Promise<Response> {
   const subject = op === "join" ? "-" : op === "create" ? await createSubject(name!) : pub!;
   const message = signedMessage({origin, op, code: open ? "open" : hash.slice(0, 32), node, ts, subject});
   if (!crypto_().verify(fromHex(node), fromHex(sig), message)) nodeFail("bad_sig");
+  // Only a signed request may write: count it against the daily Registry budget.
+  if (!await admitRegistryWrite(env, (day, n) => registry.addWrites(day, n))) nodeFail("closed");
 
   const mode = signupMode(env, kek);
   if (open && mode !== "open") nodeFail(mode === "closed" ? "closed" : "code_invalid");

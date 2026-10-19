@@ -30,18 +30,22 @@ export function intSetting(value: string | undefined, fallback: number, min = 1,
   const n = Number(value);
   return value !== undefined && value !== "" && Number.isSafeInteger(n) && n >= min && n <= max ? n : fallback;
 }
-/**
- * Counts one Registry-writing redeem request. Over the daily write budget the
- * service answers `closed`; above 600 anonymous redeems per minute it answers
- * `rate`. The count reaches the Registry at most once a minute per isolate.
- */
-export async function admitRedeem(env: Env, flush: BudgetFlush, nowMs = Date.now()): Promise<"ok" | "closed" | "rate"> {
-  const now = Math.floor(nowMs / 1000), day = Math.floor(now / 86400), minute = Math.floor(now / 60);
-  if (budget.day !== day) Object.assign(budget, {day, base: 0, pending: 0, flushedAt: 0});
+/** Anonymous redeem requests per minute across this isolate; memory only. */
+export function admitMinute(nowMs = Date.now()): boolean {
+  const minute = Math.floor(nowMs / 60000);
   if (budget.minute !== minute) Object.assign(budget, {minute, minuteCount: 0});
-  if (++budget.minuteCount > 600) return "rate";
+  return ++budget.minuteCount <= 600;
+}
+/**
+ * Counts one request that passed its signature and will write to the Registry.
+ * Over the daily budget the service answers `closed`. The count reaches the
+ * Registry at most once a minute per isolate.
+ */
+export async function admitRegistryWrite(env: Env, flush: BudgetFlush, nowMs = Date.now()): Promise<boolean> {
+  const now = Math.floor(nowMs / 1000), day = Math.floor(now / 86400);
+  if (budget.day !== day) Object.assign(budget, {day, base: 0, pending: 0, flushedAt: 0});
   const cap = intSetting(env.REGISTRY_WRITES_PER_DAY, 50000);
-  if (budget.base + budget.pending + 1 > cap) return "closed";
+  if (budget.base + budget.pending + 1 > cap) return false;
   budget.pending++;
   if (now - budget.flushedAt >= 60) {
     const n = budget.pending;
@@ -51,5 +55,5 @@ export async function admitRedeem(env: Env, flush: BudgetFlush, nowMs = Date.now
       budget.pending -= n;
     } catch {/* keep counting in memory */}
   }
-  return "ok";
+  return true;
 }
