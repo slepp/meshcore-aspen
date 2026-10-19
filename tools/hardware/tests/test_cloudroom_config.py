@@ -55,7 +55,7 @@ class CloudRoomConfig(unittest.TestCase):
                         " " * (config.LIMIT + 1)):
             with self.subTest(content=str(content)[:20]), self.assertRaises(ValueError):
                 config.encode(content)
-        for change in ({"schema": True}, {"schema": 2}, {"enabled": 1}, {"aliases": []},
+        for change in ({"schema": True}, {"schema": 3}, {"enabled": 1}, {"aliases": []},
                        {"aliases": self.profile["aliases"] * 3}, {"secret": "private"}):
             with self.subTest(change=change.keys()), self.assertRaises(ValueError):
                 config.encode(json.dumps(self.profile | change))
@@ -81,6 +81,43 @@ class CloudRoomConfig(unittest.TestCase):
             profile = self.profile | {"aliases": self.profile["aliases"] + [self.profile["aliases"][0] | change]}
             with self.assertRaises(ValueError):
                 config.encode(json.dumps(profile))
+
+    def test_schema_two_emits_the_lowest_record_version(self):
+        v1 = config.encode(json.dumps(self.profile))
+        # A schema 2 profile with default fields is byte for byte the version 1 record.
+        self.assertEqual(config.encode(json.dumps(self.profile | {"schema": 2})), v1)
+        self.assertEqual(config.encode(json.dumps(self.profile | {"schema": 2}) .replace(
+            '"public_key"', '"role": "frontend", "ca_mode": "pem", "advert_once": false, "public_key"')), v1)
+        owner = self.profile["aliases"][0] | {"role": "owner", "converted": True, "advert_once": True,
+                                              "public_key": "12" * 32}
+        record = config.encode(json.dumps(self.profile | {"schema": 2, "aliases": [owner]}))
+        self.assertEqual((len(record), record[:8]), (9304, b"CRC\2\1\1\0\0"))
+        self.assertEqual(record[-32:], hashlib.sha256(record[:-32]).digest())
+        alias = config.ALIAS_V2.unpack_from(record, 8)
+        self.assertEqual(alias[7:], (1, 1, 3, 0))
+        self.assertEqual(record[8 + config.ALIAS_V2.size:-32], bytes(config.ALIAS_V2.size))
+        system = self.profile["aliases"][0] | {"ca": "", "ca_mode": "system", "public_key": "12" * 32}
+        record = config.encode(json.dumps(self.profile | {"schema": 2, "aliases": [system]}))
+        alias = config.ALIAS_V2.unpack_from(record, 8)
+        self.assertEqual((alias[2], alias[7:]), (bytes(4097), (0, 0, 0, 0)))
+        empty = config.encode(json.dumps({"schema": 2, "enabled": True, "aliases": []}))
+        self.assertEqual((len(empty), empty[:8]), (9304, b"CRC\2\1\0\0\0"))
+        self.assertEqual(empty[8:-32], bytes(2 * config.ALIAS_V2.size))
+
+    def test_schema_two_rejects_inconsistent_fields(self):
+        base = self.profile["aliases"][0]
+        for change in ({"role": "admin"}, {"ca_mode": "none"}, {"converted": True},
+                       {"role": "owner", "converted": 1}, {"advert_once": "yes"},
+                       {"ca_mode": "system"}, {"public_key": "00" + "12" * 31, "role": "owner"},
+                       {"public_key": "ff" + "12" * 31, "role": "owner"}):
+            profile = self.profile | {"schema": 2, "aliases": [base | change]}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                config.encode(json.dumps(profile))
+        # Role and trust fields belong to schema 2 only.
+        with self.assertRaises(ValueError):
+            config.encode(json.dumps(self.profile | {"aliases": [base | {"role": "owner"}]}))
+        with self.assertRaises(ValueError):
+            config.encode(json.dumps({"schema": 1, "enabled": True, "aliases": []}))
 
     def test_idempotent_chunk_retries_and_uncertain_commit_not_replayed(self):
         record = config.encode(json.dumps(self.profile))
