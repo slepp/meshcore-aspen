@@ -24,7 +24,8 @@ settings and programs. Use the [initial USB setup](../firmware/esp32/PUBLIC_SETU
 only when commissioning a board. Keep private provisioning and node backups
 outside release archives. [Heltec V4 R8 and T-Beam Supreme SX1262 profiles](../firmware/esp32/BOARDS.md)
 are also available for source builds; read each board's wiring and installation
-limits before selecting a target.
+limits before selecting a target. Shared rooms on a Worker need the Worker
+version named in the release notes; see [Host your own shared rooms](../services/shared-room/SELF_HOSTING.md#update-the-worker).
 
 **Birch** is a Linux x86_64 host-tools and matching native-worker bundle for an
 already configured queued-v1 WiFi/TCP shared modem. It includes four host

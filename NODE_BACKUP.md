@@ -35,6 +35,14 @@ seed into a command, browser input or setup profile. A backup recipient does
 not receive administration permissions; authenticate separately using the
 node's existing owner key or administrator password.
 
+An Aspen backup includes its shared-room settings: the room tokens the Worker
+issued to this node, and the Management identity that signs them. Restoring
+that backup onto different hardware makes a second node with the same
+identity. Run `cloudroom unlink ALIAS` on the old node, or have an owner
+`cloudroom revoke` it, before the replacement connects. A room created on a
+Worker keeps its key there, outside the backup; back up the Worker's `ROOM_KEK` separately
+([self-hosting](services/shared-room/SELF_HOSTING.md#back-up-room_kek)).
+
 **These exports include private identities and credentials.** Keep both the
 encrypted file and operator seed private, with a separate copy of each.
 Extracted records are plaintext secrets. Encryption of the file does not

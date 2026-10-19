@@ -28,8 +28,8 @@ application address can overwrite the wrong OTA slot.
 
 The offline USB procedure below provisions a blank board's credentials
 without the website. This ESP32-S3 profile uses `.bin` files with esptool.
-Get the [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.15)
-or build the generic image using the
+Get the latest [published Aspen bundle](https://github.com/slepp/meshcore-aspen/releases)
+(tags named `aspen-vVERSION`) or build the generic image using the
 source-build procedure below. Keep public application files separate from your private
 per-node setup image. See the
 [release guide](../../release/README.md) for source builds.
@@ -43,8 +43,9 @@ trusted companion public key. Each on-device identity is generated locally
 after valid setup.
 One external KISS connection on port 8001 supports multiple logical MKISS
 ports; two companion clients and two live dashboard viewers remain available.
-The [shared-room frontend guide](../../services/shared-room/NATIVE.md) covers
-private aliases, CA and token configuration. It stays disabled until configured.
+The [shared-room guide](../../services/shared-room/NATIVE.md) covers joining,
+creating and converting rooms, plus private aliases, CA and token configuration.
+Shared rooms stay off until you join or create one.
 
 **SPIFFS provisioning is for a blank board only. Replacing SPIFFS on an existing
 node destroys its role preferences, ACLs, contacts, channels, source programs,
@@ -109,8 +110,8 @@ Windows or macOS path.
 
 On a Linux host, install Python 3.11 or newer with its `venv` support, `unzip`
 and `tar`. Download the Aspen ZIP, manifest and SHA256SUMS from the
-[GitHub release](https://github.com/slepp/meshcore-aspen/releases/tag/aspen-v0.1.15) into
-one new working directory. Extract the ZIP **before** checking SHA256SUMS:
+[GitHub release](https://github.com/slepp/meshcore-aspen/releases) for the Aspen version you
+are installing into one new working directory. Extract the ZIP **before** checking SHA256SUMS:
 the checksums cover both the ZIP and its extracted manifest.
 
 ```sh
@@ -118,15 +119,15 @@ WORK="$HOME/aspen-install"
 mkdir -p "$WORK"
 cd "$WORK"
 # Put the three downloaded release files here.
-unzip aspen-v0.1.15-xiao-esp32s3-sx1262-*.zip
-sha256sum --check aspen-v0.1.15-xiao-esp32s3-sx1262-*.SHA256SUMS
-APP=$(find "$WORK" -maxdepth 1 -type d -name 'aspen-v0.1.15-xiao-esp32s3-sx1262-*')
+unzip 'aspen-v*-xiao-esp32s3-sx1262-*.zip'
+sha256sum --check aspen-v*-xiao-esp32s3-sx1262-*.SHA256SUMS
+APP=$(find "$WORK" -maxdepth 1 -type d -name 'aspen-v*-xiao-esp32s3-sx1262-*')
 mkdir "$WORK/source"
 tar -xzf "$APP/source.tar.gz" -C "$WORK/source"
 cd "$WORK/source"
 ```
 
-Use the Aspen 0.1.15 files together in this directory. The filename suffix
+Use the files from one Aspen version together in this directory. The filename suffix
 identifies the source revision. The commands
 below run from this extracted source directory; no Git checkout or firmware
 compiler is needed. The release bundle supplies all four initial-install BIN
@@ -328,6 +329,22 @@ A pending, invalid or ambiguous OTA selection is refused; confirm or roll back
 the previous signed update first. This writes **one application slot only**.
 Do not write a merged/factory image, bootloader, partitions, OTA selection,
 SPIFFS or NVS for ordinary updates.
+
+## Join a shared room
+
+After first boot and a few minutes on WiFi, an operator can join a shared room
+from the companion app's Management console without a profile upload:
+
+```text
+cloudroom join ABCD-EFGH-JKMN-PQRS@HOST
+cloudroom result
+```
+
+The room's owner supplies the code and host with `cloudroom invite`. The node
+saves the room and restarts 10 seconds later. `cloudroom create` makes a new
+room across your nodes, and `cloudroom convert` shares the room this node
+already serves; see [shared rooms on an Aspen node](../../services/shared-room/NATIVE.md#join-create-or-convert-a-room).
+The node needs a trusted clock first: send `get sntp.server` and wait for SNTP.
 
 ## Move an initialized private build to a generic application
 

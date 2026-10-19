@@ -23,6 +23,13 @@ expose these ports directly to the Internet. Use encrypted authenticated RF
 or a protected local owner socket for the secret imports that those transports
 support.
 
+The hosted shared-room service (`rooms.ve6slp.ca`) is in scope for security
+reports, including code redemption, key custody and quota bypass. A Worker you
+deploy yourself is yours to operate; report flaws in the shared Worker source
+here. The service operator can read and send as every room it hosts
+([room-key custody](services/shared-room/TRUST.md#hosted-rooms)). Do not probe
+the hosted service beyond a single `cloudroom probe` and your own rooms.
+
 Configure independent administrator credentials and owner keys before
 enabling roles. Preserve identity storage during updates. Treat full-flash
 backups, private setup files and scoped caller exports as secrets.

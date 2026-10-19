@@ -77,6 +77,18 @@ KISS connection. Disabled services keep the image's capacity reservation.
 See [native frontend configuration](services/shared-room/NATIVE.md) and
 [native service registration](firmware/runtime/NATIVE_SERVICES.md).
 
+A node reaches a shared room in one of two ways. A saved profile carries a
+frontend token, issued for a statically configured room. A `cloudroom` command
+redeems a one-time code instead: the node signs the request with its
+Management identity, and the Worker returns a per-node token for a room it
+sealed itself or created from a converted Room role. Either way the node holds
+a token and forwards opaque packets over WSS. A node that converted its Room
+role stops that role while the shared room is enabled and resumes it after
+`unlink`. The Worker's `Registry` Durable Object keeps codes, quotas and the
+room index; each hosted room has its own Durable Object, and neither is on the
+frame path of a static room. See [self-hosting](services/shared-room/SELF_HOSTING.md)
+and [room-key custody](services/shared-room/TRUST.md#hosted-rooms).
+
 ## A bot command and its reply
 
 ```mermaid

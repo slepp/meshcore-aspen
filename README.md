@@ -86,6 +86,10 @@ separate WiFi modem. Both use the same shared-radio protocol.
 - **Watch your network:** collect [MQTT observations](firmware/esp32/OBSERVER.md),
   [monitor repeaters](firmware/runtime/REMOTE_REPEATERS.md) and view
   [Grafana dashboards](dashboards/grafana/README.md).
+- **Share a room across your nodes:** send `cloudroom join`, `create` or
+  `convert` from the companion app and any Aspen node with WiFi serves the same
+  room ([shared rooms](services/shared-room/NATIVE.md)). Use the hosted service
+  or [deploy your own](services/shared-room/SELF_HOSTING.md) in one command.
 - **Share room history:** [Aspen Rooms](https://aspen.ve6slp.ca) connects browser
   and [terminal clients](clients/room-tui/README.md) with radio frontends through
   a shared room service.

@@ -98,6 +98,11 @@ To use another account or device:
 ./room-tui --service https://YOUR_ROOM_WORKER --state-dir "$HOME/.config/aspen-other-device"
 ```
 
+`YOUR_ROOM_WORKER` is a Worker you deploy with browser accounts configured
+([self-hosting](../../services/shared-room/SELF_HOSTING.md) for the Worker,
+[WEB.md](../../services/shared-room/WEB.md) for accounts). Rooms made with
+`cloudroom` commands are radio-only and do not appear in this client.
+
 Drafts save as you type. Before sending, the client saves a UUID, author and
 text. A lost response retains this outbox entry through quit and restart;
 **Ctrl+R** explicitly sends that same ID, so an already stored post is returned
