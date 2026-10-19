@@ -5,12 +5,12 @@ WiFi shared modem. Add a Base companion for the MeshCore app, a browser
 dashboard and an MQTT broker. An optional observer publishes received radio
 packets to your broker.
 
-Download the [Willow 0.0.12 Linux bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.12)
+Download the [Willow 0.0.13 Linux bundle](https://github.com/slepp/meshcore-aspen/releases/tag/willow-v0.0.13)
 to install without a compiler. It includes all four services, the program
 worker, dashboard page, migration tools and source. Start below, or
 [build from source](#build-from-source).
 
-For Docker, use `ghcr.io/slepp/meshcore-willow:0.0.12` with the
+For Docker, use `ghcr.io/slepp/meshcore-willow:0.0.13` with the
 [container setup and Compose example](docs/CONTAINERS.md). The same image runs
 the host, Base, dashboard or broker with private persistent state.
 
@@ -23,14 +23,14 @@ sudo apt-get install python3 python3-cryptography python3-nacl \
   libssl3 libcjson1 libsodium23 libstdc++6 zlib1g ca-certificates
 ```
 
-Download `willow-v0.0.12-linux-x86_64.tar.gz` from the release above, extract it,
+Download `willow-v0.0.13-linux-x86_64.tar.gz` from the release above, extract it,
 and select a new versioned installation directory:
 
 ```sh
-tar -xzf willow-v0.0.12-linux-x86_64.tar.gz
-cd willow-v0.0.12-linux-x86_64
-python3 install-willow.py --prefix "$HOME/.local/lib/willow/0.0.12"
-cd "$HOME/.local/lib/willow/0.0.12/hosts/willow"
+tar -xzf willow-v0.0.13-linux-x86_64.tar.gz
+cd willow-v0.0.13-linux-x86_64
+python3 install-willow.py --prefix "$HOME/.local/lib/willow/0.0.13"
+cd "$HOME/.local/lib/willow/0.0.13/hosts/willow"
 ```
 
 The installer checks bundle files and never replaces an existing installation
@@ -124,7 +124,7 @@ cd hosts/willow
 python3 -B tools/willow.py --version
 ```
 
-Expected: `Willow 0.0.12`. Use the initialization, check and run commands above,
+Expected: `Willow 0.0.13`. Use the initialization, check and run commands above,
 or migrate an existing stopped node. `make willow-check` builds the services
 and checks them with local modem fixtures. `make willow-build` builds them
 without running those checks. The launcher defaults to four scheduler workers;

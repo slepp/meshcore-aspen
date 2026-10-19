@@ -5,10 +5,10 @@ version and release tag; an update to one does not require updating the others.
 
 | Product | Source version | Download and setup |
 | --- | --- | --- |
-| Aspen | `0.1.18` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
-| Birch | `0.1.4` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
-| Pine | `0.1.4` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
-| Willow | `0.0.12` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
+| Aspen | `0.1.19` | ESP32 standalone node: [USB setup and application updates](../firmware/esp32/PUBLIC_SETUP.md) |
+| Birch | `0.1.5` | Linux x86_64 host and native worker: [host installation](../HOST_GUIDE.md#install-the-birch-host-download) |
+| Pine | `0.1.5` | XIAO nRF52840 application update: [field setup](../firmware/nrf52840/FIELD-SETUP.md) |
+| Willow | `0.0.13` | Hew host services: [installation and retained-state upgrades](../hosts/willow/README.md) |
 
 Get packages from the [GitHub releases](https://github.com/slepp/meshcore-aspen/releases).
 Source versions can be ahead of published downloads. Product tags use
@@ -35,7 +35,7 @@ compare them with the host before installation. The normal release build uses
 Debian 12, GCC 12, OpenSSL 3 and cJSON.
 
 **Pine** updates an initialized Seeed XIAO nRF52840 + Wio SX1262 with its retained
-bootloader, identities, credentials and QSPI storage. Pine 0.1.4 includes Lua,
+bootloader, identities, credentials and QSPI storage. Pine 0.1.5 includes Lua,
 Room, packet programs, retained companion contacts/channels and BLE peer mode;
 [select one optional role](../firmware/nrf52840/FIELD-SETUP.md#choose-one-optional-role).
 The download contains app-only UF2/BIN and an inner Nordic Legacy DFU ZIP,
@@ -62,7 +62,7 @@ being released, run `python3 tools/product_versions.py`, then `make release-chec
 Each product advances its own version series independently of the MeshCore dependency.
 Generated firmware, Go and Willow identities use those versions. Companion
 firmware identities fit 19 ASCII bytes plus NUL; for example `aspen-0.1.16` or
-`pine-0.1.4`. The dashboard and manifests retain the full upstream and product
+`pine-0.1.5`. The dashboard and manifests retain the full upstream and product
 source revisions.
 
 The current MeshCore base is `companion-v1.18.0` at

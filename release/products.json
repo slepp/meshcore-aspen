@@ -9,10 +9,10 @@
     "companion_protocol": 14
   },
   "products": {
-    "aspen": {"version": "0.1.18"},
-    "birch": {"version": "0.1.4"},
-    "pine": {"version": "0.1.4"},
-    "willow": {"version": "0.0.12"}
+    "aspen": {"version": "0.1.19"},
+    "birch": {"version": "0.1.5"},
+    "pine": {"version": "0.1.5"},
+    "willow": {"version": "0.0.13"}
   },
   "compatibility": {
     "queued_phy": 1,
