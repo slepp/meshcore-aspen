@@ -1173,10 +1173,12 @@ void BotWorker::runNet() {
     if (transport) runBotHttpsProbe(*transport, storage_->httpsConfig, storage_->botKey, control_->stopping);
 #endif
     unsigned cursor = 0;
-    while (!control_->stopping.load()) {
+    for (;;) {
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
+      // Sample the wake revision before testing stop() so its wake cannot be lost.
       const auto revision = BotWake::shared().snapshot();
 #endif
+      if (control_->stopping.load()) break;
       for (unsigned i = 0; i < BotJobLimit; ++i) {
         auto &io = storage_->network[cursor];
         cursor = (cursor + 1) % BotJobLimit;
@@ -1302,12 +1304,14 @@ void BotWorker::runIo() {
 #endif
     BotIoResult *restoreResult = nullptr;
     uint32_t nextReminderPoll = 0;
-    while (!control_->stopping.load()) {
+    for (;;) {
+#if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
+      // Sample the wake revision before testing stop() so its wake cannot be lost.
+      const auto revision = BotWake::shared().snapshot();
+#endif
+      if (control_->stopping.load()) break;
 #if MESHCORE_NODE_BACKUP && defined(NRF52_PLATFORM)
       nodeBackup().work();
-#endif
-#if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
-      const auto revision = BotWake::shared().snapshot();
 #endif
       if (control_->data.load() == Pending) {
         control_->data = Running;
@@ -1834,10 +1838,12 @@ bool BotWorker::copySourceFile() {
   return true;
 }
 void BotWorker::run() {
-  while (!control_->stopping.load()) {
+  for (;;) {
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
+    // Sample the wake revision before testing stop() so its wake cannot be lost.
     const auto revision = BotWake::shared().snapshot();
 #endif
+    if (control_->stopping.load()) break;
     sampleBotHttpsMetrics();
     pumpJobs();
 #if ONCHIP_BOT_SINGLE_SESSION
