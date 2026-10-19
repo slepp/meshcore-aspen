@@ -112,6 +112,7 @@ build_src_filter = ${env:Xiao_S3_WIO_onchip.build_src_filter}
 build_flags =
   ${env:Xiao_S3_WIO_onchip_https.build_flags}
   -D MESHCORE_CLOUD_ROOM=1
+  -D ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1
   -D ONCHIP_CLOUD_ROOM_CONNECTIONS=2
   -D KISS_MAX_TCP_CLIENTS=1
   -D KISS_LOCAL_SOURCES=6
