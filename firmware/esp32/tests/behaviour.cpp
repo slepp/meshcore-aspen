@@ -353,19 +353,19 @@ static void embedded_sources() {
   }
   assert(repeater.queueTransmit(low, 2, 0, 0, 1000, lowJob));
   f.step();
-  clock_ms += 150;
+  clock_ms += 250;
   f.step();
   assert(repeater.pollQueuedResult(result) &&
          result.state == queued_tx::ACCEPTED && !result.has_rf_ms);
   assert(repeater.pollQueuedResult(result) &&
          result.state == queued_tx::UNKNOWN &&
-         result.reason == queued_tx::RF_TIMEOUT && result.rf_ms == 150 &&
+         result.reason == queued_tx::RF_TIMEOUT && result.rf_ms == 250 &&
          result.has_rf_ms);
   assert(!repeater.pollQueuedResult(result));
   assert(room.recvRaw(packet, sizeof(packet)) == 0);
   assert(repeater.getQueuedRadioStats(sample) &&
-         sample.source_rf_ms == 24 + admitted + 150 &&
-         sample.aggregate_rf_ms == 61 + admitted + 1 + 150 &&
+         sample.source_rf_ms == 24 + admitted + 250 &&
+         sample.aggregate_rf_ms == 61 + admitted + 1 + 250 &&
          sample.source_failures == 2 && sample.aggregate_failures == 2 &&
          sample.source_successes == 1 + admitted &&
          sample.aggregate_successes == 3 + admitted);
@@ -379,7 +379,7 @@ static void embedded_sources() {
   assert(replacement.attach(f.mux) && replacement.getQueuedRadioStats(sample) &&
          sample.generation != previousGeneration && sample.source_rf_ms == 0 &&
          sample.source_successes == 0 && sample.source_failures == 0 &&
-         sample.aggregate_rf_ms == 61 + admitted + 1 + 150);
+         sample.aggregate_rf_ms == 61 + admitted + 1 + 250);
   StatsDispatcher replacementNode(replacement, statsClock, statsPool);
   f.radio.maximum = f.radio.duration = 2500;
   assert(replacement.queueTransmit(low, 2, 0, 0, 5000, lowJob));

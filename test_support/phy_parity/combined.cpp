@@ -300,15 +300,15 @@ static void measured_budget_unknown_and_legacy() {
   f.radio.duration = 1000000;
   f.send(0, 0, {0xcc});
   assert(f.radio.transmitted.size() == 1);
-  clock_ms += 1500000;
+  clock_ms += 1500100; // One and a half estimates plus the fixed allowance.
   f.step();
   auto frames = receive(f.peers[0]);
   assert(frames == std::vector<std::vector<uint8_t>>({{6, 0xf8, 0}}));
   assert(receive(f.peers[1]).empty());
   f.hardware(1, {0x24, 1});
   frames = receive(f.peers[1]);
-  assert(frames.size() == 1 && queued_tx::get32(frames[0].data() + 11) == 1500000);
-  assert(queued_tx::get32(frames[0].data() + 7) == 300000);
+  assert(frames.size() == 1 && queued_tx::get32(frames[0].data() + 11) == 1500100);
+  assert(queued_tx::get32(frames[0].data() + 7) == 299900);
   f.radio.maximum = 1000000;
   f.job(1, 1, 0, 0, 0xdd);
   clock_ms += 31000;
@@ -317,6 +317,18 @@ static void measured_budget_unknown_and_legacy() {
   bool pong = false;
   for (auto& frame : frames) if (frame[1] == 0x97) pong = true;
   assert(pong && f.radio.transmitted.size() == 1);
+}
+
+static void fast_profile_tx_keeps_setup_allowance() {
+  Fixture f;
+  f.radio.duration = 4; // An SF5/BW500 acknowledgement.
+  f.job(0, 1, 0, 0, 0xce);
+  assert(f.radio.transmitted.size() == 1 && f.radio.sending);
+  receive(f.peers[0]);
+  clock_ms += 50; f.step(); // Setup and ramp outlast one and a half estimates.
+  assert(f.radio.sending && !event(receive(f.peers[0]), 3, queued_tx::RF_TIMEOUT));
+  f.finish(1);
+  assert(event(receive(f.peers[0]), 2));
 }
 
 static void kiss_data_frames_keep_arrival_order() {
@@ -885,7 +897,10 @@ static void dashboard_observes_rf_not_queue_or_reflection() {
   f.job(0, 2, 0, 0, 0xbb);
   f.radio.start_ok = true;
   f.job(0, 3, 0, 0, 0xcc);
-  clock_ms += 150;
+  clock_ms += 249;
+  f.step();
+  assert(f.radio.sending); // The 100 ms estimate plus margin and allowance has not expired.
+  clock_ms += 1;
   f.step();
   f.job(0, 4, 0, 1000, 0xdd);
   close(f.peers[0]); f.peers[0] = -1;
@@ -894,15 +909,15 @@ static void dashboard_observes_rf_not_queue_or_reflection() {
   assert(dashboard.publish(clock_ms, status) && dashboard.snapshot(snapshot));
   assert(snapshot.tx_accepted == 4 && snapshot.tx_succeeded == 1 &&
          snapshot.tx_failed == 2 && snapshot.tx_unknown == 1);
-  assert(snapshot.tx_rf_ms == 250 && snapshot.rx_packets == 0 && snapshot.event_count == 4);
+  assert(snapshot.tx_rf_ms == 350 && snapshot.rx_packets == 0 && snapshot.event_count == 4);
   RadioDashboard::Totals totals;
   assert(dashboard.totals(totals));
   assert(totals.tx_accepted == 4 && totals.tx_succeeded == 1 &&
          totals.tx_failed == 2 && totals.tx_unknown == 1 &&
-         totals.tx_rf_ms == 250 && totals.rx_packets == 0);
+         totals.tx_rf_ms == 350 && totals.rx_packets == 0);
   assert(snapshot.events[0].rf_ms == 100 && snapshot.events[0].queue_ms == 1000);
   assert(snapshot.events[1].reason == queued_tx::START_FAILED);
-  assert(snapshot.events[2].rf_ms == 150 && snapshot.events[2].reason == queued_tx::RF_TIMEOUT);
+  assert(snapshot.events[2].rf_ms == 250 && snapshot.events[2].reason == queued_tx::RF_TIMEOUT);
   assert(snapshot.events[3].reason == queued_tx::DISCONNECTED && snapshot.events[3].rf_ms == 0);
   assert(snapshot.radio.queued == 0 && snapshot.radio.clients == 1 && snapshot.radio.owner_slot == -1);
   for (size_t i = 0; i < snapshot.event_count; ++i) {
@@ -920,6 +935,7 @@ int main() {
   priority_and_controls();
   future_fifo_and_expiry();
   measured_budget_unknown_and_legacy();
+  fast_profile_tx_keeps_setup_allowance();
   kiss_data_frames_keep_arrival_order();
   full_queue_reserves_controls_and_fifo();
   configuration_is_owned_and_pending_jobs_are_stable();

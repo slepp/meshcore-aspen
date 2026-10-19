@@ -25,6 +25,10 @@ constexpr size_t RECORD_SIZE = sizeof(RECORD_PREFIX) + queued_tx::PROFILE_SIZE;
 constexpr char CONTROLS_KEY[] = "controls";
 constexpr uint8_t CONTROLS_PREFIX[] = {'M', 'C', 'C', 1};
 constexpr size_t CONTROLS_SIZE = 8;
+// The airtime estimate excludes radio setup and PA ramp. On fast profiles
+// (SF5/BW500 sends an ACK in about 4 ms) those take longer than half the
+// estimate, so a proportional margin alone ends healthy transmissions early.
+constexpr uint32_t RF_TIMEOUT_ALLOWANCE_MS = 100;
 
 bool restoreControls(uint16_t &agcSeconds, bool &rxConfigured, bool &rxBoost) {
   nvs_handle_t handle;
@@ -1786,7 +1790,7 @@ void WifiKissMultiplexer::serviceTransmit() {
   if (_transmitting) {
     if (_radio->isSendComplete())
       finishTransmit(SUCCEEDED, NONE);
-    else if (static_cast<uint32_t>(now - _rf_start) >= _rf_estimate * 3 / 2)
+    else if (static_cast<uint32_t>(now - _rf_start) >= _rf_estimate * 3 / 2 + RF_TIMEOUT_ALLOWANCE_MS)
       finishTransmit(UNKNOWN, RF_TIMEOUT);
     else
       return;
