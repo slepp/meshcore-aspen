@@ -218,9 +218,11 @@ export class Room extends DurableObject<Env> {
       const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-zA-Z0-9_-]{1,64})\/(socket|operations)$/);
       if (!match) fail(404, "Unknown endpoint");
       const connection = this.hostedName ? await this.hostedAuthorize(request, match[1]) : await authorize(request, this.env, match[1]);
-      if (this.hostedName && match[2] === "operations" &&
-          !(await this.hostedAdmit(undefined, connection.credential, Number(request.headers.get("content-length")) || 0)))
-        fail(403, "Room is disabled");
+      if (this.hostedName && match[2] === "operations") {
+        const admitted = await this.hostedAdmit(undefined, connection.credential, Number(request.headers.get("content-length")) || 0);
+        if (admitted === "limit") fail(429, "Too many operations; slow down");
+        if (admitted === "disabled") fail(403, "Room is disabled");
+      }
       const alias = this.aliasMap()[connection.alias];
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
       this.bindIdentity(connection.alias);
@@ -288,8 +290,8 @@ export class Room extends DurableObject<Env> {
     }
     let id: string | undefined;
     try {
-      if (this.hostedName && !await this.hostedAdmit(ws, (ws.deserializeAttachment() as Connection).credential,
-          typeof frame === "string" ? textEncoder.encode(frame).length : frame.byteLength)) return;
+      if (this.hostedName && await this.hostedAdmit(ws, (ws.deserializeAttachment() as Connection).credential,
+          typeof frame === "string" ? textEncoder.encode(frame).length : frame.byteLength) !== "ok") return;
       if (typeof frame !== "string" || textEncoder.encode(frame).length > MAX_FRAME) fail(400, "Use JSON text frames up to 4096 bytes");
       const envelope = this.parse(frame) as unknown as {id: string; operation: Operation};
       id = string(envelope.id, "request id", 32);
@@ -1071,12 +1073,12 @@ export class Room extends DurableObject<Env> {
   }
 
   /** Counts one inbound operation against the per-token and daily room limits. False closes the socket. */
-  private async hostedAdmit(ws: WebSocket | undefined, credentialHash: string, bytes: number): Promise<boolean> {
+  private async hostedAdmit(ws: WebSocket | undefined, credentialHash: string, bytes: number): Promise<"ok" | "limit" | "disabled"> {
     if (memoryLimit("fr:" + credentialHash, 20, 1) || memoryLimit("by:" + credentialHash, 65536, 60, Date.now() / 1000, bytes)) {
       ws?.close(1008, "Frame limit exceeded");
-      return false;
+      return "limit";
     }
-    return this.hostedBudget(ws);
+    return await this.hostedBudget(ws) ? "ok" : "disabled";
   }
   private async hostedBudget(ws?: WebSocket): Promise<boolean> {
     const now = sec(), day = Math.floor(now / 86400), limit = intSetting(this.env.ROOM_WRITES_PER_DAY, 20000);
@@ -1107,8 +1109,8 @@ export class Room extends DurableObject<Env> {
   private dailyAt(): number {return this.meta("daily_at") ?? 0;}
 
   private async hostedHousekeeping(): Promise<void> {
-    const row = this.hostedRow;
-    if (!row || row.state === "deleted") return;
+    if (!this.hostedRow || this.hostedRow.state === "deleted") return;
+    const row = this.hostedRow = this.rows<HostedRow>("SELECT * FROM hosted_room WHERE id=1")[0] ?? this.hostedRow;
     const now = sec();
     if (now < this.dailyAt()) return;
     const day = Math.floor(now / 86400), limit = intSetting(this.env.HOSTED_HISTORY_LIMIT, 2000);
