@@ -204,6 +204,16 @@ bool hostedId(View v) {
   }
   return true;
 }
+// An alias id minted by a hosted server; anything else is a room the node got from a provider
+// or a profile upload, which the shared-room server's control route does not know.
+bool hostedAliasId(const char *id) {
+  if (strlen(id) != 30) return false;
+  for (size_t i = 0; i < 30; ++i) {
+    const char c = id[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7'))) return false;
+  }
+  return true;
+}
 bool tokenText(View v) {
   if (v.type != JSONString || v.size != 68 || memcmp(v.data, "ar1_", 4)) return false;
   for (size_t i = 4; i < v.size; ++i) {
@@ -881,7 +891,12 @@ bool lifecycle(const cloudroom::Command &cmd, char *reply, size_t capacity) {
     const auto alias = s.aliases[index];
     const bool converted = alias.flags & CloudFlagConverted;
     if (lifecycleBlocked(reply, capacity)) return true;
-    if (cmd.local) {
+    const bool hosted = hostedAliasId(alias.base.id);
+    if (!hosted && cmd.remove) {
+      say(reply, capacity, "This room is not hosted on a shared-room server. Run \"cloudroom unlink ALIAS\" without delete.");
+      return true;
+    }
+    if (cmd.local || !hosted) {
       if (converted && !cmd.force) {
         char text[160];
         formatFail(Fail::SplitBrain, alias.base.host, 0, text);
@@ -895,8 +910,9 @@ bool lifecycle(const cloudroom::Command &cmd, char *reply, size_t capacity) {
       const Saved saved = saveAndRestart(s, why, sizeof(why), SavedFlushText);
       if (saved == Saved::Failed) { say(reply, capacity, "%s", why); return true; }
       nodeId(id);
-      say(reply, capacity, "%sAlias removed locally. The server still lists this node; an owner can revoke %s.",
-          converted ? "Local Room resumes; the server copy stays live. " : "", id);
+      if (!hosted) say(reply, capacity, "Alias removed locally.");
+      else say(reply, capacity, "%sAlias removed locally. The server still lists this node; an owner can revoke %s.",
+               converted ? "Local Room resumes; the server copy stays live. " : "", id);
       return true;
     }
     if (cmd.remove && alias.role != CloudRoleOwner) { say(reply, capacity, "Only an owner node can do that. Ask the owner for \"cloudroom invite owner\"."); return true; }

@@ -1015,6 +1015,14 @@ void unlinking() {
   assert(say("unlink") == "That room is not running yet. Restart, or use \"cloudroom unlink ALIAS local\".");
   assert(say("unlink local").rfind("Alias removed locally", 0) == 0);
   assert(say("unlink") == "Nothing linked. Use cloudroom join or create.");
+  // A room from a provider or a profile upload has no hosted id: the server's control route
+  // does not know it, so unlinking removes it locally without a request.
+  begin();
+  bootWith(linked(CloudRoleFrontend, false, 0, "A"));
+  assert(say("unlink delete") == "This room is not hosted on a shared-room server. Run \"cloudroom unlink ALIAS\" without delete.");
+  assert(say("unlink") == "Alias removed locally." && opens == 0 && seen.empty());
+  pump();
+  assert(current().count == 0 && restarts.size() == 1);
 }
 void sharing() {
   begin();

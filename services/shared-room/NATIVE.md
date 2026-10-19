@@ -120,6 +120,8 @@ node's Room role stays off while the room is shared.
   other nodes remain: invite another owner first, or add `delete` to remove the
   room. `unlink ALIAS local` removes the room on this node without contacting
   the server, for an unreachable server; ask an owner to revoke the node.
+  A room that came from a compiled-in provider or a profile upload is not hosted,
+  so plain `unlink` removes it on this node the same way.
 - A converted node runs its local Room role again after the restart that
   follows `unlink` or `share off`. The local room has the password it had
   before converting, or the server's current password when `unlink ALIAS
