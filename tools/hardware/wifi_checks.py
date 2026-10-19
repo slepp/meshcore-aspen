@@ -299,14 +299,7 @@ def lan_provision():
         client.close()
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
-        addresses = [inventory_value("mast_host")]
-        try:
-            resolved = socket.gethostbyname("meshcore-beta-lab.local")
-            if resolved not in addresses:
-                addresses.insert(0, resolved)
-        except socket.gaierror:
-            pass
-        for address in addresses:
+        for address in [inventory_value("mast_host")]:
             try:
                 data = status(address)
             except OSError:
