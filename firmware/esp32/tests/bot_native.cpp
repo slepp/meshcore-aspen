@@ -4551,6 +4551,23 @@ static void native_repeater_cli(const char *sourcePath) {
   assert(repeaterReply("group bad 0000").find("Error:") == 0);
   assert(repeaterReply("add pair " + key(first) + " 912525000 3:").find("Error:") == 0);
   assert(repeaterReply("groups") == "Repeater groups pair=p1,p2 lead=p3");
+  // The name is checked first, with its own message, before members or capacity.
+  const std::string nameError = "Error: repeater group name needs 1..16 bytes";
+  for (const char *bad : {"Bad", "9x", "-x", "abcdefghijklmnopq", "a.b"})
+    assert(repeaterReply("group " + std::string(bad) + " p1").find(nameError) == 0);
+  assert(repeaterReply("group p1 p2").find("matches a configured alias") != std::string::npos);
+  assert(repeaterReply("add pair " + key(fourth) + " 912525000 3:").find("matches a group name") != std::string::npos);
+  assert(repeaterReply("add P7 " + key(fourth) + " 912525000 3:").find("Error: repeater alias needs 1..16 bytes") == 0);
+  assert(repeaterReply("group third p4").find("Saved/applied") == 0);
+  assert(repeaterReply("group fourth p5").find("Saved/applied") == 0);
+  assert(repeaterReply("group Bad p1").find(nameError) == 0);
+  assert(repeaterReply("group fifth p1").find("table is full") != std::string::npos);
+  assert(repeaterReply("group third -").find("removed") != std::string::npos);
+  assert(repeaterReply("group fourth -").find("removed") != std::string::npos);
+  const auto help = repeaterReply("help"), groupHelp = repeaterReply("help groups");
+  assert(help.size() <= 162 && help.find("help groups") != std::string::npos);
+  assert(groupHelp.size() <= 162 && groupHelp.find("group NAME - removes") != std::string::npos &&
+         groupHelp.find("4+ hex key prefixes") != std::string::npos);
   assert(f.command(owner, "!rcmd pair,nosuch ver") ==
          "Unknown repeater nosuch; configured: p1,p2,p3,p4,p5,p6; groups: pair,lead");
   assert(requests(first).empty() && !f.bot.jobsInUse());
@@ -4739,7 +4756,7 @@ static void native_repeater_cli(const char *sourcePath) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
   assert(f.command(owner, "!snr").find("No repeater signal samples") == 0);
-  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, allow-listed group writes, read-only !rcmd, unknown names refused with choices, explicit writes, uncertain write not retried and live revocation");
+  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, allow-listed group writes, read-only !rcmd, unknown names refused with choices, group name checks, explicit writes, uncertain write not retried and live revocation");
 }
 static void native_repeater_delivery(const char *sourcePath) {
   assert(prepareHostRunner() && saveBotRepeaterPolicy({}));

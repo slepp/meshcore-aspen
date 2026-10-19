@@ -43,6 +43,16 @@ constexpr char AdaptivePolicyFault[] = "Adaptive policy unreadable; bot adaptive
 static_assert(sizeof(AdaptivePolicyFault) <= sizeof(RadioDashboard::RoleStatus::fault),
               "Adaptive policy fault must fit dashboard status");
 constexpr uint8_t NativeTelemetryRequest = 0x03;
+// Repeater aliases and group names: a lowercase letter, then lowercase letters,
+// digits, '-' or '_', 1..16 bytes in all.
+bool repeaterName(const char *name) {
+  const size_t length = strlen(name);
+  if (!length || length > 16 || name[0] < 'a' || name[0] > 'z') return false;
+  for (size_t i = 1; i < length; ++i)
+    if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= '0' && name[i] <= '9') ||
+          name[i] == '-' || name[i] == '_')) return false;
+  return true;
+}
 constexpr size_t ReadMarkerSize = 7;
 void readMarker(char *output, const uint8_t *request) {
   snprintf(output, ReadMarkerSize + 1, "[q:%02x] ", request[0]);
@@ -4095,7 +4105,11 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     error("repeater alias is not configured"); return;
   }
   if (!strcmp(action, "help")) {
-    snprintf(reply, capacity, "on|off|enable ALIAS on|off; status [ALIAS]|timing [ALIAS]|config ALIAS|route ALIAS|storage|groups; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; interval|discovery SEC");
+    const char *topic = strtok_r(nullptr, " ", &cursor);
+    if (topic && !strcmp(topic, "groups"))
+      snprintf(reply, capacity, "groups lists; group NAME reads; group NAME ALIAS|KEYPREFIX,... saves (up to 4); group NAME - removes; members are configured aliases or 4+ hex key prefixes");
+    else
+      snprintf(reply, capacity, "on|off|enable ALIAS on|off; status|timing [ALIAS]|config ALIAS|route ALIAS|storage; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; help groups; interval|discovery SEC");
     return;
   }
   const auto memberNames = [&](const BotRepeaterPolicy &policy, const BotRepeaterPolicy::Group &group) {
@@ -4117,6 +4131,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     const char *name = strtok_r(nullptr, " ", &cursor);
     const char *members = name ? strtok_r(nullptr, " ", &cursor) : nullptr;
     if (!name || strtok_r(nullptr, " ", &cursor)) { error("bot repeaters group NAME [ALIAS|KEYPREFIX,...|-]"); return; }
+    if (!repeaterName(name)) { error("repeater group name needs 1..16 bytes: a lowercase letter, then lowercase letters, digits, - or _"); return; }
     auto *group = static_cast<BotRepeaterPolicy::Group *>(nullptr);
     for (auto &entry : candidate.groups) if (entry.name[0] && !strcmp(entry.name, name)) group = &entry;
     if (!members) {
@@ -4127,7 +4142,10 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       if (!group) { error("repeater group is not configured"); return; }
       *group = {};
     } else {
-      if (strlen(name) > 16) { error("repeater group name requires 1..16 lowercase identifier bytes"); return; }
+      for (const auto &target : candidate.targets)
+        if (target.used && !strcmp(target.alias, name)) {
+          error("repeater group name matches a configured alias; choose another name"); return;
+        }
       uint16_t mask = 0;
       char list[321]{}; snprintf(list, sizeof(list), "%s", members);
       char *inner = nullptr;
@@ -4157,7 +4175,7 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       snprintf(group->name, sizeof(group->name), "%s", name);
       group->members = mask;
     }
-    if (!candidate.valid()) { error("invalid repeater group name or members (a group cannot share an alias); policy unchanged"); return; }
+    if (!candidate.valid()) { error("invalid repeater group; policy unchanged"); return; }
     char storageError[128]{};
     if (!saveBotRepeaterPolicy(candidate, storageError, sizeof(storageError))) {
       core_->repeaterPolicy.enabled = false;
@@ -4212,7 +4230,9 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     else candidate.discoverySeconds = seconds;
   } else if (!strcmp(action, "add") || !strcmp(action, "remove")) {
     const char *alias = strtok_r(nullptr, " ", &cursor);
-    if (!alias || strlen(alias) > 16) { error("repeater alias requires 1..16 lowercase identifier bytes"); return; }
+    if (!alias || !repeaterName(alias)) {
+      error("repeater alias needs 1..16 bytes: a lowercase letter, then lowercase letters, digits, - or _"); return;
+    }
     auto *target = static_cast<BotRepeaterPolicy::Target *>(nullptr);
     for (auto &entry : candidate.targets)
       if (entry.used && !strcmp(entry.alias, alias)) { target = &entry; break; }
@@ -4229,6 +4249,10 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       const char *key = strtok_r(nullptr, " ", &cursor);
       const char *frequency = strtok_r(nullptr, " ", &cursor);
       const char *path = strtok_r(nullptr, " ", &cursor);
+      for (const auto &group : candidate.groups)
+        if (group.name[0] && !strcmp(group.name, alias)) {
+          error("repeater alias matches a group name; remove the group or choose another alias"); return;
+        }
       if (!target) for (auto &entry : candidate.targets) if (!entry.used) { target = &entry; break; }
       if (!target) { error("repeater target table is full"); return; }
       changedTarget = int(target - candidate.targets);

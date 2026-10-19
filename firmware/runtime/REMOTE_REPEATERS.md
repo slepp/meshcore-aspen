@@ -212,8 +212,10 @@ Members are configured aliases or unique public-key prefixes of at least four
 hex digits (`d12600` selects the target whose key starts with those digits).
 The reply lists the aliases that were saved. `group NAME -` removes a group.
 Up to four groups are saved with the repeater settings, in the same file as the
-targets and without extra NVS entries. A group name follows the alias rules and
-cannot match an alias; an alias cannot be added with a group's name.
+targets and without extra NVS entries. Group names and aliases are 1..16 bytes:
+a lowercase letter, then lowercase letters, digits, `-` or `_`. A group name
+cannot match an alias, and an alias cannot be added with a group's name.
+`bot repeaters help groups` summarises these commands.
 
 `!rcmd all ver` and `!rcmd-write sherwood set flood.max 4` expand the group when
 the command starts. Removing a target removes it from every group, and a group
