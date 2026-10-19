@@ -37,6 +37,15 @@ struct Command {
 // result other than NotCloudroom, `out.verb` names the verb that was recognised.
 Parse parse(const char *line, Command &out);
 
+// The verb a line names, without parsing or copying its arguments. NotNew for anything else.
+// Gates use this so a refused request never copies a code, name or password.
+Verb verbOf(const char *line);
+// True for the verbs that carry or reveal a code, password or membership: encrypted
+// Management RF only. list, share and the legacy verbs are also available over the web.
+bool needsEncryptedRf(Verb verb);
+// Fixed refusal for a web request that needs encrypted Management RF.
+const char *encryptedRfMessage();
+
 // One-line usage for a verb ("Usage: cloudroom join CODE[@HOST]"), at most 145 bytes.
 const char *usage(Verb verb);
 // Fixed reply for a failed parse; Usage maps to usage(verb). Never echoes input.

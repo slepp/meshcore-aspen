@@ -38,6 +38,15 @@ char *word(char *&cursor) {
   while (*cursor == ' ') ++cursor;
   return value;
 }
+// Skips leading spaces and an optional "cloudroom" word.
+const char *skipPrefix(const char *line) {
+  while (*line == ' ') ++line;
+  if (!strncmp(line, "cloudroom", 9) && (!line[9] || line[9] == ' ')) {
+    line += 9;
+    while (*line == ' ') ++line;
+  }
+  return line;
+}
 bool nameByte(unsigned char c) {
   return c >= 32 && c <= 126 && !strchr(":[]\\,?*", c);
 }
@@ -126,18 +135,9 @@ const char *parseMessage(Parse result, Verb verb) {
   }
 }
 
-Parse parse(const char *line, Command &out) {
-  out = Command{};
-  out.verb = Verb::NotNew;
-  if (!line) return Parse::NotCloudroom;
-  while (*line == ' ') ++line;
-  if (!strncmp(line, "cloudroom", 9) && (!line[9] || line[9] == ' ')) {
-    line += 9;
-    while (*line == ' ') ++line;
-  }
-  const size_t length = strlen(line);
-  char buffer[RequestLimit + 1];
-  // Only the verb is needed to decide whether the line is ours at all.
+Verb verbOf(const char *line) {
+  if (!line) return Verb::NotNew;
+  line = skipPrefix(line);
   size_t verbLength = 0;
   while (line[verbLength] && line[verbLength] != ' ') ++verbLength;
   struct Entry { const char *name; Verb verb; };
@@ -146,10 +146,29 @@ Parse parse(const char *line, Command &out) {
     {"convert", Verb::Convert}, {"invite", Verb::Invite}, {"nodes", Verb::Nodes},
     {"revoke", Verb::Revoke}, {"password", Verb::Password}, {"unlink", Verb::Unlink},
     {"share", Verb::Share}, {"result", Verb::Result}, {"apply", Verb::Apply}};
-  Verb verb = Verb::NotNew;
   for (const auto &entry : verbs)
-    if (verbLength == strlen(entry.name) && !strncmp(line, entry.name, verbLength)) verb = entry.verb;
+    if (verbLength == strlen(entry.name) && !strncmp(line, entry.name, verbLength)) return entry.verb;
+  return Verb::NotNew;
+}
+
+bool needsEncryptedRf(Verb verb) {
+  return verb != Verb::NotNew && verb != Verb::List && verb != Verb::Share;
+}
+
+const char *encryptedRfMessage() {
+  return "Linking needs encrypted Management RF; send this from the companion app's Management console.";
+}
+
+Parse parse(const char *line, Command &out) {
+  out = Command{};
+  out.verb = Verb::NotNew;
+  if (!line) return Parse::NotCloudroom;
+  const Verb verb = verbOf(line);
   if (verb == Verb::NotNew) return Parse::Ok;
+  line = skipPrefix(line);
+  while (*line == ' ') ++line;
+  const size_t length = strlen(line);
+  char buffer[RequestLimit + 1];
   out.verb = verb;
   if (length + PrefixLength > RequestLimit) return Parse::TooLong;
   memcpy(buffer, line, length + 1);

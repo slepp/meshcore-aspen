@@ -230,8 +230,20 @@ static void limitsAndWipe() {
   CHECK(!strcmp(parseMessage(Parse::Usage, Verb::Create), usage(Verb::Create)));
 }
 
+static void gating() {
+  CHECK(verbOf("join ABCD") == Verb::Join);
+  CHECK(verbOf("cloudroom unlink") == Verb::Unlink);
+  CHECK(verbOf("status") == Verb::NotNew && verbOf("config chunk x") == Verb::NotNew && verbOf(nullptr) == Verb::NotNew);
+  CHECK(verbOf("joining") == Verb::NotNew && verbOf("") == Verb::NotNew);
+  for (Verb v : {Verb::Probe, Verb::Join, Verb::Create, Verb::Convert, Verb::Invite, Verb::Nodes, Verb::Revoke,
+                 Verb::Password, Verb::Unlink, Verb::Result, Verb::Apply})
+    CHECK(needsEncryptedRf(v));
+  for (Verb v : {Verb::NotNew, Verb::List, Verb::Share}) CHECK(!needsEncryptedRf(v));
+  CHECK(strlen(encryptedRfMessage()) <= RequestLimit);
+}
+
 int main() {
-  legacy(); codes(); hosts(); join(); create(); convert(); smallVerbs(); password(); unlink(); share(); limitsAndWipe();
+  legacy(); codes(); hosts(); join(); create(); convert(); smallVerbs(); password(); unlink(); share(); limitsAndWipe(); gating();
   if (failures) { printf("%d failure(s)\n", failures); return 1; }
   puts("cloudroom grammar ok");
   return 0;
