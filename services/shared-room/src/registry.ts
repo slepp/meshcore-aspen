@@ -14,7 +14,7 @@ const AUDIT_ROWS = 5000, AUDIT_DAYS = 30, ADMIN_AUDIT_ROWS = 1000;
 export interface ClaimParams {
   op: "join" | "create" | "convert"; hash: string; open: boolean; node: string; ts: number; subject: string;
   client: string; signup: string; maxRooms: number; maxFrontends: number; avoid: number[];
-  alias: string; pubHash?: string; pubFirst?: number; name?: string;
+  alias: string; pubHash?: string; pubFirst?: number; name?: string; writesPerDay: number;
 }
 export type ClaimResult =
   | {k: "claim"; alias: string; role: number; reclaim: boolean}
@@ -74,7 +74,9 @@ export class Registry extends DurableObject<Env> {
       // A new key prunes stale rows, then evicts the oldest when the table is full.
       this.sql.exec("DELETE FROM limits WHERE window_start<?", now - LIMITS_STALE);
       if (this.num("SELECT COUNT(*) AS n FROM limits") >= LIMITS_CAP)
-        this.sql.exec("DELETE FROM limits WHERE key=(SELECT key FROM limits ORDER BY window_start LIMIT 1)");
+        // Only per-client counters may be evicted; quota rows (cc, oc, os, mj, global) stay.
+        this.sql.exec(`DELETE FROM limits WHERE key=(SELECT key FROM limits
+          WHERE key LIKE 'rq%' OR key LIKE 'ci%' OR key LIKE 'adm:%' ORDER BY window_start LIMIT 1)`);
     }
     this.sql.exec("INSERT INTO limits(key, window_start, count) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET window_start=excluded.window_start, count=excluded.count",
       key, now, by);
@@ -90,10 +92,12 @@ export class Registry extends DurableObject<Env> {
   }
   private unbump(key: string): void {this.sql.exec("UPDATE limits SET count=MAX(0,count-1) WHERE key=?", key);}
 
-  async addWrites(day: number, n: number): Promise<number> {
-    const now = sec(), key = `global:day:${day}`;
-    this.bump(key, 86400, now, n);
-    return this.count(key, 86400, now);
+  /** Charges one admitted claim to the daily Registry write budget; false once the budget is spent. */
+  private chargeWrite(p: ClaimParams, now: number): boolean {
+    const key = `global:day:${Math.floor(now / 86400)}`;
+    if (this.count(key, 86400, now) >= p.writesPerDay) return false;
+    this.bump(key, 86400, now);
+    return true;
   }
   /** Anonymous-failure counter for the operator API; written only after a bounded in-memory gate. */
   adminFailure(client: string): {limited: boolean} {
@@ -167,6 +171,7 @@ export class Registry extends DurableObject<Env> {
       const member = this.num("SELECT COUNT(*) AS n FROM members WHERE alias=? AND node=?", row.alias, p.node);
       if (!member && this.num("SELECT COUNT(*) AS n FROM members WHERE alias=?", row.alias) >= p.maxFrontends) return {k: "err", e: "cap"};
       if (p.avoid.includes(room.pub_first)) return {k: "err", e: "collision"};
+      if (!this.chargeWrite(p, now)) return {k: "err", e: "closed"};
       this.sql.exec("UPDATE codes SET state='claimed', claimed_by=?, claimed_at=?, op=?, subject=?, first_ts=COALESCE(first_ts, ?) WHERE hash=?",
         p.node, now, p.op, p.subject, p.ts, row.hash);
       return {k: "claim", alias: row.alias!, role: row.role, reclaim};
@@ -182,6 +187,7 @@ export class Registry extends DurableObject<Env> {
       if (this.num("SELECT COUNT(*) AS n FROM rooms WHERE owner_node=? AND alias<>?", p.node, alias) >= 4) return {k: "err", e: "cap"};
     }
     if (this.num("SELECT COUNT(*) AS n FROM rooms WHERE alias<>?", alias) >= p.maxRooms) return {k: "err", e: "cap"};
+    if (!this.chargeWrite(p, now)) return {k: "err", e: "closed"};
     if (!reclaim) this.bump(`cc:${p.node}`, 86400, now);
     this.sql.exec(`INSERT INTO rooms(alias, state, owner_node, created, last_active, pub_hash, name, pub_first, state_since)
       VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?)

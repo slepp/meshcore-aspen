@@ -1,7 +1,6 @@
 // Gates that run before any storage is touched: an in-memory token bucket per
-// client key and a write budget for the Registry. Both are per isolate and best
-// effort; the Registry holds the authoritative counters once a signature passes.
-import type {Env} from "./config";
+// client key and a per-minute budget. Both are per isolate and best effort; the
+// Registry holds the authoritative counters, including the daily write budget.
 
 interface Window {start: number; count: number}
 const buckets = new Map<string, Window>();
@@ -19,12 +18,11 @@ export function memoryLimit(key: string, max: number, windowSeconds: number, now
   return 0;
 }
 
-const budget = {day: 0, base: 0, pending: 0, flushedAt: 0, minute: 0, minuteCount: 0};
-export type BudgetFlush = (day: number, count: number) => Promise<number>;
+const budget = {minute: 0, minuteCount: 0};
 /** Test seam: clears every per-isolate counter. */
 export function resetGates(): void {
   buckets.clear();
-  Object.assign(budget, {day: 0, base: 0, pending: 0, flushedAt: 0, minute: 0, minuteCount: 0});
+  Object.assign(budget, {minute: 0, minuteCount: 0});
 }
 export function intSetting(value: string | undefined, fallback: number, min = 1, max = 1_000_000_000): number {
   const n = Number(value);
@@ -35,25 +33,4 @@ export function admitMinute(nowMs = Date.now()): boolean {
   const minute = Math.floor(nowMs / 60000);
   if (budget.minute !== minute) Object.assign(budget, {minute, minuteCount: 0});
   return ++budget.minuteCount <= 600;
-}
-/**
- * Counts one request that passed its signature and will write to the Registry.
- * Over the daily budget the service answers `closed`. The count reaches the
- * Registry at most once a minute per isolate.
- */
-export async function admitRegistryWrite(env: Env, flush: BudgetFlush, nowMs = Date.now()): Promise<boolean> {
-  const now = Math.floor(nowMs / 1000), day = Math.floor(now / 86400);
-  if (budget.day !== day) Object.assign(budget, {day, base: 0, pending: 0, flushedAt: 0});
-  const cap = intSetting(env.REGISTRY_WRITES_PER_DAY, 50000);
-  if (budget.base + budget.pending + 1 > cap) return false;
-  budget.pending++;
-  if (now - budget.flushedAt >= 60) {
-    const n = budget.pending;
-    budget.flushedAt = now;
-    try {
-      budget.base = await flush(day, n);
-      budget.pending -= n;
-    } catch {/* keep counting in memory */}
-  }
-  return true;
 }

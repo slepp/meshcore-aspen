@@ -3,7 +3,7 @@
 // Registry and Room objects over internal RPC. Error text is fixed and nothing
 // from a request body, header or secret is ever logged.
 import {aliases, type Env} from "./config";
-import {admitMinute, admitRegistryWrite, intSetting, memoryLimit} from "./limits";
+import {admitMinute, intSetting, memoryLimit} from "./limits";
 import {NativeCrypto, fromHex, toHex} from "./native-crypto";
 import {NodeError, canonicalCode, codeHash, createSubject, nodeFail, nodeJson, partsResponse, sha256Hex, signedMessage,
   validName, validPassword, type NodeOp} from "./node-protocol";
@@ -122,8 +122,6 @@ export async function redeem(request: Request, env: Env): Promise<Response> {
   const subject = op === "join" ? "-" : op === "create" ? await createSubject(name!) : pub!;
   const message = signedMessage({origin, op, code: open ? "open" : hash.slice(0, 32), node, ts, subject});
   if (!crypto_().verify(fromHex(node), fromHex(sig), message)) nodeFail("bad_sig");
-  // Only a signed request may write: count it against the daily Registry budget.
-  if (!await admitRegistryWrite(env, (day, n) => registry.addWrites(day, n))) nodeFail("closed");
 
   const mode = signupMode(env, kek);
   if (open && mode !== "open") nodeFail(mode === "closed" ? "closed" : "code_invalid");
@@ -153,7 +151,7 @@ export async function redeem(request: Request, env: Env): Promise<Response> {
   const alias = op === "join" ? "" : await newAliasId(kek);
   const claim: ClaimParams = {op, hash, open, node, ts, subject, client, signup: mode,
     maxRooms: intSetting(env.MAX_ROOMS, 2000), maxFrontends: intSetting(env.MAX_FRONTENDS, 16),
-    avoid, alias, pubHash, pubFirst, name};
+    avoid, alias, pubHash, pubFirst, name, writesPerDay: intSetting(env.REGISTRY_WRITES_PER_DAY, 50000)};
   const result: ClaimResult = await registry.claim(claim);
   if (result.k === "err") return nodeFail(result.e, result.retryAfter ? {retryAfter: result.retryAfter} : {});
 

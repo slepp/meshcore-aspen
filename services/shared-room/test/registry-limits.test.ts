@@ -7,7 +7,7 @@ import type {ClaimParams} from "../src/registry";
 
 const claim = (p: Partial<ClaimParams>) => runInDurableObject(registryStub(), (inst: any) => inst.claim({
   op: "join", hash: "ab".repeat(32), open: false, node: nodeA.pub, ts: now(), subject: "-", client: "c1", signup: "code", maxRooms: 2000,
-  maxFrontends: 16, avoid: [], alias: "", ...p}));
+  maxFrontends: 16, avoid: [], alias: "", writesPerDay: 50000, ...p}));
 const expireWindows = (seconds: number) => registrySql("UPDATE limits SET window_start=window_start-?", seconds);
 
 it("writes nothing for unsigned, malformed or stale redeems", async () => {
@@ -114,20 +114,20 @@ it("evicts the oldest limits row when the table is full and still serves a valid
   const room = await createRoom(nodeA, "Fleet");
   const code = await invite(room);
   await registrySql("DELETE FROM limits");
-  await registrySql("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<4094) INSERT INTO limits SELECT 'fill:' || i, ? + i, 1 FROM n", now() - 5000);
+  await registrySql("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<4094) INSERT INTO limits SELECT 'rq60:fill' || i, ? + i, 1 FROM n", now() - 5000);
   expect((await registrySql("SELECT COUNT(*) AS n FROM limits"))[0].n).toBe(4095);
   const r = await redeem(nodeB, "join", {code});
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   // New counters displaced the oldest rows instead of being refused.
   expect((await registrySql("SELECT COUNT(*) AS n FROM limits"))[0].n).toBeLessThanOrEqual(4096);
-  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key LIKE 'rq60:%'"))[0].n).toBe(1);
-  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key='fill:0'"))[0].n).toBe(0);
+  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key LIKE 'rq60:%' AND key NOT LIKE 'rq60:fill%'"))[0].n).toBe(1);
+  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key='rq60:fill0'"))[0].n).toBe(0);
 });
 
 it("trips the daily Registry write budget and the per-minute budget without touching hosted traffic", async () => {
   const room = await createRoom(nodeA, "Fleet");
   const env = {REGISTRY_WRITES_PER_DAY: "3"};
-  // One write was already counted by createRoom's redeem in this isolate; two more fit, then closed.
+  // createRoom's claim used one write; two more fit, then closed.
   const codes = await mintCreate(4);
   const results = [];
   for (let n = 0; n < 4; n++) results.push((await redeem(nodeFrom(0x60 + n), "create", {code: codes[n], name: "R" + n, env})).body.e ?? "ok");
@@ -206,4 +206,24 @@ it("keeps the audit rings bounded", async () => {
   expect((await registrySql("SELECT COUNT(*) AS n FROM audit"))[0].n).toBe(5000);
   expect((await registrySql("SELECT COUNT(*) AS n FROM admin_audit"))[0].n).toBe(1000);
   void fixture; void nodeC;
+});
+
+it("keeps junk joins from other clients out of the daily write budget", async () => {
+  const env = {REGISTRY_WRITES_PER_DAY: "5"};
+  for (let n = 0; n < 30; n++) {
+    const r = await redeem(nodeFrom(0x80 + n), "join", {code: "ABCD-EFGH-JKMN-PQRS", ip: freshIp(), env});
+    expect(r.body.e).toBe("code_invalid");
+  }
+  const [code] = await mintCreate();
+  const r = await redeem(nodeA, "create", {code, name: "Fleet", env});
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+});
+
+it("keeps quota counters when per-client rows fill the table", async () => {
+  const room = await createRoom(nodeA, "Fleet");
+  await registrySql("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<4100) INSERT OR IGNORE INTO limits SELECT 'rq60:junk' || i, ? + i, 1 FROM n", now() + 10);
+  const r = await redeem(nodeB, "join", {code: await invite(room)});
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key LIKE 'cc:%'"))[0].n).toBe(1);
+  expect((await registrySql("SELECT COUNT(*) AS n FROM limits WHERE key LIKE 'global:day:%'"))[0].n).toBe(1);
 });
