@@ -8,6 +8,7 @@
 #include "WifiKissMultiplexer.h"
 #include <Dispatcher.h>
 #include "NativePacketContracts.h"
+#include "RoleStorage.h"
 #include <cmath>
 
 #ifndef MESH_QUEUED_RADIO_API
@@ -35,9 +36,14 @@ class LocalRadio final : public mesh::Radio, public KissLocalSource {
     float rssi, snr;
     bool local, engineOrigin, reflectionOrigin;
   };
-  Reception incoming[8]{};
+  // The receive ring and transmit results live in PSRAM from attach() to
+  // detach(); a role radio keeps only its counters in internal RAM.
+  struct Buffers {
+    Reception incoming[8];
+    mesh::QueuedTransmitResult results[2 * CAPACITY];
+  };
+  Buffers *buffers = nullptr;
   unsigned rxHead = 0, rxCount = 0;
-  mesh::QueuedTransmitResult results[2 * CAPACITY]{};
   unsigned resultHead = 0, resultCount = 0;
   float lastRSSI = 0, lastSNR = 0;
   bool lastLocal = false;
@@ -45,11 +51,17 @@ class LocalRadio final : public mesh::Radio, public KissLocalSource {
   uint32_t rxPackets = 0, txPackets = 0, rxDropped = 0, rxAirtime = 0;
 
 public:
+  LocalRadio() = default;
+  LocalRadio(const LocalRadio &) = delete;
+  LocalRadio &operator=(const LocalRadio &) = delete;
+  ~LocalRadio() { releaseRoleStorage(buffers); }
   bool attach(WifiKissMultiplexer &arbiter) {
     if (mux)
       return false;
+    if (!buffers) buffers = allocateRoleStorage<Buffers>("role radio queues");
+    if (!buffers) return false;
     const int assigned = arbiter.attachLocal(*this);
-    if (assigned < 0) return false;
+    if (assigned < 0) { releaseRoleStorage(buffers); return false; }
     mux = &arbiter;
     slot = assigned;
     return true;
@@ -63,8 +75,7 @@ public:
     lastRSSI = lastSNR = 0;
     lastLocal = false;
     lastOrigin = {};
-    memset(incoming, 0, sizeof(incoming));
-    for (auto &result : results) result = {};
+    releaseRoleStorage(buffers);
   }
   bool supportsQueuedTransmit() const override { return true; }
   int sourceSlot() const { return slot; }
@@ -97,7 +108,7 @@ public:
       return false;
     const uint32_t id = ++nextJob;
     ++outstanding;
-    auto &accepted = results[(resultHead + resultCount++) % (2 * CAPACITY)];
+    auto &accepted = buffers->results[(resultHead + resultCount++) % (2 * CAPACITY)];
     accepted = {};
     accepted.job = id;
     accepted.state = queued_tx::ACCEPTED;
@@ -113,7 +124,8 @@ public:
   void completed(uint32_t job, uint8_t state, uint8_t reason, uint32_t queue,
                  uint32_t rf, uint32_t estimate) override {
     // Each transfer reserves separate admission and terminal result slots.
-    auto &r = results[(resultHead + resultCount++) % (2 * CAPACITY)];
+    if (!buffers) return;
+    auto &r = buffers->results[(resultHead + resultCount++) % (2 * CAPACITY)];
     r.job = job;
     r.state = state;
     r.reason = reason;
@@ -128,7 +140,7 @@ public:
   bool pollQueuedResult(mesh::QueuedTransmitResult &result) override {
     if (!resultCount)
       return false;
-    result = results[resultHead];
+    result = buffers->results[resultHead];
     resultHead = (resultHead + 1) % (2 * CAPACITY);
     --resultCount;
     if (result.state != queued_tx::ACCEPTED)
@@ -143,11 +155,11 @@ public:
                           bool local, bool engineOrigin, bool reflectionOrigin) override {
     if (!local && n > 0 && n <= 255)
       rxAirtime += getEstAirtimeFor(n);
-    if (n > 255 || rxCount == 8) {
+    if (!buffers || n > 255 || rxCount == 8) {
       ++rxDropped;
       return;
     }
-    auto &r = incoming[(rxHead + rxCount++) % 8];
+    auto &r = buffers->incoming[(rxHead + rxCount++) % 8];
     memcpy(r.data, p, n);
     r.length = n;
     r.rssi = local ? NAN : rssi;
@@ -159,7 +171,7 @@ public:
   int recvRaw(uint8_t *p, int capacity) override {
     if (!rxCount)
       return 0;
-    auto &r = incoming[rxHead];
+    auto &r = buffers->incoming[rxHead];
     int n = r.length;
     if (n > capacity) {
       n = 0;

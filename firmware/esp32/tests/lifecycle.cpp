@@ -878,7 +878,7 @@ static void companion_contact_capacity() {
     assert(onchip::requestLifecycle(Role::Companion, LifecycleAction::Reboot));
     f.step(2);
     assert(onchip::rolePhase(Role::Companion) == RolePhase::Failed &&
-           psram_test::attempts == attempts + 1 && psram_test::allocations.size() == 2);
+           psram_test::attempts == attempts + 1 && psram_test::allocations.size() == 4);
     assert(filesystem_test::files.at("/companion/contacts3") == saved);
     psram_test::failAfter = -1;
     f.step(260);
@@ -1067,7 +1067,7 @@ static void identity_imports() {
 
 static void reconstruction() {
   Fixture f;
-  assert(psram_test::allocations.size() == 3);
+  assert(psram_test::allocations.size() == 6);
   assert(psram_test::contains(&onchip::repeaterPackets()));
   assert(psram_test::contains(&onchip::roomPackets()));
   assert(psram_test::contains(&onchip::companionPackets()));
@@ -1091,7 +1091,7 @@ static void reconstruction() {
       assert(onchip::rolePhase(role) == RolePhase::Running);
       assert(radio.getQueuedRadioStats(after));
       assert(previous.generation != after.generation);
-      assert(psram_test::allocations.size() == 3);
+      assert(psram_test::allocations.size() == 6);
       assert(onchip::repeaterPackets().getFreeCount() >= 31);
       assert(onchip::roomPackets().getFreeCount() >= 31);
       assert(onchip::companionPackets().getFreeCount() == 16);
@@ -1125,8 +1125,8 @@ static void role_storage_failures() {
     assert(onchip::requestLifecycle(role, LifecycleAction::Reboot));
     f.step(2);
     assert(onchip::rolePhase(role) == RolePhase::Failed);
-    assert(psram_test::allocations.size() == 2 &&
-           psram_test::released == released + 1 &&
+    assert(psram_test::allocations.size() == 4 &&
+           psram_test::released == released + 2 &&
            psram_test::attempts == attempts + 1);
     RadioDashboard::RoleStatus status;
     onchip::roleStatus(role, status);
@@ -1143,26 +1143,26 @@ static void role_storage_failures() {
     psram_test::failAfter = -1;
     f.step(160);
     assert(onchip::rolePhase(role) == RolePhase::Running &&
-           psram_test::allocations.size() == 3);
+           psram_test::allocations.size() == 6);
     assert(radio.getQueuedRadioStats(current) &&
            current.generation != previous.generation);
 
     const auto &callback = callbacks[unsigned(role)];
     callback.stop();
-    assert(psram_test::allocations.size() == 2);
+    assert(psram_test::allocations.size() == 4);
     onchip::LocalRadio occupied, reserved;
     assert(occupied.attach(f.mux) && reserved.attach(f.mux));
     assert(!callback.start(f.mux)); // Allocation succeeds, mux admission fails.
-    assert(psram_test::allocations.size() == 2 && radio.sourceSlot() == -1);
+    assert(psram_test::allocations.size() == 6 && radio.sourceSlot() == -1);
     occupied.detach();
     reserved.detach();
     identity_test::failRead = true;
     assert(!callback.start(f.mux)); // Native object exists when identity fails.
     identity_test::failRead = false;
-    assert(psram_test::allocations.size() == 2 && radio.sourceSlot() == -1);
+    assert(psram_test::allocations.size() == 4 && radio.sourceSlot() == -1);
     callback.stop(); // Cleanup is safe after partial construction/failure.
     assert(callback.start(f.mux));
-    assert(psram_test::allocations.size() == 3);
+    assert(psram_test::allocations.size() == 6);
     assert(identity_test::durable == identities);
   }
   puts("PASS PSRAM-only native allocations, failed admission/identity cleanup, "
@@ -1183,7 +1183,7 @@ static void missing_psram_boot() {
     assert(!status.ready && !status.has_identity && status.source_slot == -1);
   }
   f.step(160);
-  assert(psram_test::allocations.size() == 3);
+  assert(psram_test::allocations.size() == 6);
   for (unsigned i = 0; i < 3; ++i)
     assert(onchip::rolePhase(Role(i)) == RolePhase::Running);
   assert(identity_test::durable == identities);
@@ -1278,7 +1278,7 @@ static void role_profile_combinations() {
         }
         count += active;
       }
-      assert(psram_test::allocations.size() == count);
+      assert(psram_test::allocations.size() == 2 * count);
       onchip::ClockSnapshot clocks;
       assert(onchip::clockSnapshot(clocks));
       assert(clocks.network_enabled == bool(mask & (RoleProfile::Repeater |
@@ -1807,7 +1807,7 @@ static void management_with_all_roles() {
   Fixture f;
   onchip::Management receiver;
   assert(receiver.begin(f.mux, ""));
-  assert(psram_test::allocations.size() == 4);
+  assert(psram_test::allocations.size() == 8);
   RadioDashboard::RoleStatus status;
   receiver.dashboardStatus(status);
   assert(status.has_identity && status.source_slot == 7 &&

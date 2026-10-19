@@ -242,7 +242,7 @@ arbiter-test: prepare
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-reorder $(TEST_FLAGS) \
 		-ffunction-sections -fdata-sections -Wl,--gc-sections -DKISS_LOCAL_SOURCES=4 \
 		-DKISS_MAX_TCP_CLIENTS=4 -DKISS_STREAM_ENDPOINT=1 \
-		-I$(ROOT)/test_support/phy_parity/seams \
+		-I$(ROOT)/test_support/phy_parity/seams -idirafter tests/seams \
 		-I$(BUILD)/src -I$(UPSTREAM)/examples/kiss_modem -I$(UPSTREAM)/lib/ed25519 \
 		-I$(BUILD)/examples/kiss_modem/onchip \
 		-I$(CRYPTO) -I$(LPP) -I$(ROOT)/firmware/shared -I$(ROOT)/test_support \
