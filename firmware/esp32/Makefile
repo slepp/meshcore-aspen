@@ -175,6 +175,7 @@ cloudroom-lifecycle-test:
 		$(addprefix $(PHY_BUILD)/ed/,$(addsuffix .o,$(LIFECYCLE_ED))) \
 		-o "$(TEST_BUILD)/cloudroom-lifecycle"
 	for mode in identity join create convert errors faults guards malformed owner refusals unlink share probe idle advert widths; do "$(TEST_BUILD)/cloudroom-lifecycle" $$mode || exit 1; done
+	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT) python3 -m unittest -v tools.tests.test_cloudroom_trust
 public-provisioning-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
 		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o

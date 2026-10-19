@@ -23,9 +23,13 @@ struct BotHttpsConfig {
   const char *address, *host, *ca, *token;
   uint16_t port;
   uint8_t operations;
+  // Verify the server against the built-in public roots instead of `ca` (shared-room links).
+  bool systemRoots;
   constexpr BotHttpsConfig(const char *address = "", const char *host = "", const char *ca = "",
-                          const char *token = "", uint16_t port = 443, uint8_t operations = 0)
-      : address(address), host(host), ca(ca), token(token), port(port), operations(operations) {}
+                          const char *token = "", uint16_t port = 443, uint8_t operations = 0,
+                          bool systemRoots = false)
+      : address(address), host(host), ca(ca), token(token), port(port), operations(operations),
+        systemRoots(systemRoots) {}
   bool valid() const;
   bool validPeer() const;
 };

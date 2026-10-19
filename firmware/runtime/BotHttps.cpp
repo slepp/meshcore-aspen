@@ -17,6 +17,14 @@
 #endif
 #ifdef ARDUINO_ARCH_ESP32
 #include "Clock.h"
+// Public roots for shared-room links, only in images that carry the link verbs.
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM && \
+    defined(ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG) && ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG
+#define ONCHIP_TLS_SYSTEM_ROOTS 1
+#include "CloudRoomRoots.h"
+#else
+#define ONCHIP_TLS_SYSTEM_ROOTS 0
+#endif
 #include <WiFiClientSecure.h>
 #include <mbedtls/pem.h>
 #include <mbedtls/ssl_internal.h>
@@ -985,16 +993,20 @@ public:
     if (!address.fromString(config.address)) {
       snprintf(error, capacity, "Invalid configured HTTPS address"); return false;
     }
-    if (!bounded(config.ca, 4096)) {
+    if (config.systemRoots) {
+#if !ONCHIP_TLS_SYSTEM_ROOTS
+      failedAt(BotHttpsFailurePoint::CaParse);
+      snprintf(error, capacity, "TLS public roots are not part of this image"); return false;
+#endif
+    } else if (!bounded(config.ca, 4096)) {
       failedAt(BotHttpsFailurePoint::CaParse);
       snprintf(error, capacity, "TLS configured CA exceeds 4096 bytes"); return false;
-    }
-    if (!anchorWindow(config.ca, error, capacity)) return false;
+    } else if (!anchorWindow(config.ca, error, capacity)) return false;
     certificates_ = true;
     if (!validate(error, capacity)) return false;
     // A cache miss parsed certificates since admission. Recheck after releasing
     // them, before creating the socket/context; this is still not a reservation.
-    if (!diagnostics_.caCached && !admit()) return false;
+    if (!config.systemRoots && !diagnostics_.caCached && !admit()) return false;
     client_ = new (std::nothrow) FixedPeerClient;
     if (!client_) {
       failure_ = Failure::Heap;
@@ -1004,10 +1016,29 @@ public:
     phase("client-created");
     client_->setTimeout(1);
     client_->setHandshakeTimeout(8);
-    client_->setCACert(config.ca);
     // Fixed native address avoids the SDK's potentially 31-second blocking DNS.
     // Supplying host explicitly retains SNI and certificate hostname validation.
-    if (!client_->connect(address, config.port, config.host, config.ca, nullptr, nullptr)) {
+    const auto connect = [&]() {
+#if ONCHIP_TLS_SYSTEM_ROOTS
+      if (config.systemRoots) {
+        // Compact root list (subject + public key) checked by the SDK's bundle verifier.
+        client_->setCACertBundle(cloudRoomRootBundle);
+        const bool ok = client_->connect(address, config.port, config.host, nullptr, nullptr, nullptr) != 0;
+        client_->setCACertBundle(nullptr);   // frees the bundle index straight away
+#ifdef ONCHIP_CLOUD_ROOM_EXTRA_ROOT_PEM
+        // Lab builds may add one root, for a throwaway front end; never a saved setting.
+        if (!ok) {
+          client_->setCACert(ONCHIP_CLOUD_ROOM_EXTRA_ROOT_PEM);
+          return client_->connect(address, config.port, config.host, ONCHIP_CLOUD_ROOM_EXTRA_ROOT_PEM, nullptr, nullptr) != 0;
+        }
+#endif
+        return ok;
+      }
+#endif
+      client_->setCACert(config.ca);
+      return client_->connect(address, config.port, config.host, config.ca, nullptr, nullptr) != 0;
+    };
+    if (!connect()) {
       phase("connect-failed");
       char detail[80]{};
       const int code = client_->lastError(detail, sizeof(detail));
