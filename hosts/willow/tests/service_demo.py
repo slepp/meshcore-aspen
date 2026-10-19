@@ -475,7 +475,7 @@ class ServiceTests(unittest.TestCase):
             self.assertIn(b"123456",observed); self.assertIn(b"abcdef",observed)
             modem.send(2,0,text(2,5,1700000040,"!air"))
             reply=modem.receive(lambda j:j["port"]==2 and parse(j["raw"])[0]==2)
-            self.assertIn(b"Air snapshot ms: credit bot=30 all=120",body(reply["raw"],2,5),service.errors[-12:])
+            self.assertIn(b"Airtime ms: credit bot=30 all=120;",body(reply["raw"],2,5),service.errors[-12:])
             time.sleep(.5)
             # Lose an already accepted job. Reconnect must not replay it or call it successful.
             modem.hold=True

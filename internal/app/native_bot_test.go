@@ -174,7 +174,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 				continue
 			}
 			plain, err := meshcore.MACThenDecrypt(secret, p.Payload[2:])
-			if err == nil && strings.Contains(string(plain), "Snapshot bot=ready") {
+			if err == nil && strings.Contains(string(plain), "Bot ready;") {
 				gotReply = terminals >= 2
 				return gotReply
 			}
@@ -227,7 +227,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 				continue
 			}
 			plain, err := meshcore.MACThenDecrypt(secret, p.Payload[2:])
-			if err == nil && strings.Contains(string(plain), "Air snapshot ms: credit bot=30 all=120") {
+			if err == nil && strings.Contains(string(plain), "Airtime ms: credit bot=30 all=120;") {
 				return true
 			}
 		}
@@ -769,7 +769,7 @@ func TestNativeBotSharesOneMKISSSocketWithoutAnotherScheduler(t *testing.T) {
 				continue
 			}
 			plain, err := meshcore.MACThenDecrypt(secret, p.Payload[2:])
-			if err == nil && strings.Contains(string(plain), "Snapshot bot=ready") && terminals >= 2 {
+			if err == nil && strings.Contains(string(plain), "Bot ready;") && terminals >= 2 {
 				return true
 			}
 		}
