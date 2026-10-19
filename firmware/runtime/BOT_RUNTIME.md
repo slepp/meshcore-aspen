@@ -760,14 +760,12 @@ automatic retries.
 Disabling a monitor target pauses its scheduled polling; an explicit `!find-path`
 diagnostic can still probe it under the command permissions and radio budget.
 Interactive route commands start when no other repeater request is pending
-and take priority over background monitoring. Monitored
-targets keep their saved flood-discovery cooldown across restarts. While
-that cooldown runs, a known route can be tested directly and is labelled
-`cached route confirmed`. An existing login, successful CLI query or fresh
-monitor sample allows tagged telemetry without logging in again. Other
-contacts establish a guest session first. An unknown route reports the
-cooldown without sending. A successful new flood route is labelled `fresh`,
-with commas between repeater hashes.
+and take priority over background monitoring. They always run flood
+discovery; the monitor's flood-discovery cooldown limits only scheduled polls,
+and these commands neither wait for it nor restart it. An existing login,
+successful CLI query or fresh monitor sample allows tagged telemetry without
+logging in again. Other contacts establish a guest session first. A successful
+new flood route is labelled `fresh`, with commas between repeater hashes.
 If an actual transmitted attempt times out, the reply says `no discovery reply`
 or `route confirmation timed out`, and labels any retained route `cached`.
 Silence does not identify the cause. A long route that cannot fit the

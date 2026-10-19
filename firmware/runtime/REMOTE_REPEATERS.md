@@ -231,6 +231,11 @@ result means a matching response arrived; the remote response itself reports
 whether the command succeeded.
 
 Read-only commands can repair the route and retry once after a missing reply.
+The discovery cooldown never holds back an owner command: an unknown or failed
+route starts the MeshCore flood login and PATH exchange straight away. Owner
+commands still run one at a time, and each reply reports its own outcome,
+including a timeout. Their floods do not restart the monitor's cooldown; a
+route learned from a successful repair is shared with monitoring.
 Commands reuse the shared route and admin session. A successful CLI reply
 records admin access for subsequent commands and route discovery.
 Repair exchanges login and return paths, then sends the command. Its reply
@@ -361,10 +366,14 @@ PATH response can repair the outbound route. Status decoding uses the
 Timeout, malformed response or TX failure backs off from twice the owner
 interval, up to the larger of that interval and the discovery cooldown. Three failed direct
 requests permit flood route repair. An unknown route also needs a flood.
-Each target may flood at most once per configured discovery period. Its
-timestamp is kept in memory and saved before queue admission so the cooldown
-survives reboot. If saving fails, the request proceeds and the cooldown remains
-active until restart; the storage error is logged. Restart does not recover
+Scheduled monitor polls flood each target at most once per discovery period,
+so a silent or offline repeater is not flooded every interval. The cooldown
+applies only to these background polls: `!rcmd`, `!rcmd-write`, `!find-path`,
+`!find-best-path` and other owner requests are never delayed by it and do not
+restart it. The poll's flood timestamp is kept in memory and saved before queue
+admission so the cooldown survives reboot. If saving fails, the request
+proceeds and the cooldown remains active until restart; the storage error is
+logged. Restart does not recover
 volatile samples, attempt counters or pending requests, and cannot replay an
 uncertain transmission. Future periodic polls remain eligible under the saved
 cadence/cooldown; they are new samples, not retries of that request.

@@ -1498,7 +1498,6 @@ struct CommandBot::Core : mesh::Mesh {
     if (!capacity(replyAirtime(packet, PeerRoute{}), true, false, packet, contact->id.pub_key)) {
       releasePacket(packet); finishRadio(job, capacityError); return;
     }
-    recordRepeaterFlood(unsigned(job.repeaterIndex), tag);
     if (!repeaterCommandCurrent(job) || !owner.worker_.ioCurrent(job.io.token)) {
       releasePacket(packet); finishRadio(job, "Repeater repair cancelled; command was not retried"); return;
     }
@@ -1627,7 +1626,6 @@ struct CommandBot::Core : mesh::Mesh {
       finishRadio(job); return;
     }
     const int index = repeaterIndex(selected);
-    bool directProbe = false;
     bool knownSession = false;
     if (index >= 0) {
       const auto &target = repeaterPolicy.targets[unsigned(index)];
@@ -1638,14 +1636,8 @@ struct CommandBot::Core : mesh::Mesh {
       if (!targetContact) { finishRadio(job, "Bot contact table full"); return; }
       const auto snapshot = repeaterSnapshot(unsigned(index));
       knownSession = snapshot.fresh || (targetContact->loginKnown && (targetContact->loginPermissions & 3));
-      if (snapshot.nextDiscoverySeconds) {
-        if (targetContact->route.length == 0xff) {
-          char message[96];
-          snprintf(message, sizeof(message), "Discovery available in %us; no cached route", unsigned(snapshot.nextDiscoverySeconds));
-          finishRadio(job, message); return;
-        }
-        directProbe = true;
-      }
+      // An owner request always runs fresh flood discovery; the monitor's
+      // discovery cooldown limits only background polling.
     }
     bool busy = false;
     for (const auto &other : invocations)
@@ -1697,10 +1689,6 @@ struct CommandBot::Core : mesh::Mesh {
         }
       }
       job.deadline = millis() + 30000;
-      if (directProbe) {
-        job.io.revision = 3; job.deadline = job.best.until;
-        startBestPathProbe(job); return;
-      }
     }
     mesh::Packet *packet = nullptr;
     if (knownSession) {
@@ -1711,27 +1699,19 @@ struct CommandBot::Core : mesh::Mesh {
       packet = loginRequest(*contact, tag);
     }
     if (!packet) { finishRadio(job, "Route probe packet capacity exhausted"); return; }
-    job.io.routeType = directProbe ? 1 : 0;
-    if (directProbe) {
-      job.io.routeWidth = uint8_t((contact->route.length >> 6) + 1);
-      job.io.routeSize = uint8_t((contact->route.length & 63) * job.io.routeWidth);
-      memcpy(job.io.route, contact->route.bytes, job.io.routeSize);
-    }
+    job.io.routeType = 0;
     if (!capacity(owner.radio_.getEstAirtimeFor(2 + packet->payload_len + job.io.routeSize), true,
                   false, packet, principal(job.event))) {
       releasePacket(packet); finishRadio(job, capacityError); return;
     }
-    if (index >= 0 && !directProbe) recordRepeaterFlood(unsigned(index), tag);
     if (!owner.worker_.ioCurrent(job.io.token) || int32_t(millis() - job.deadline) >= 0) {
       releasePacket(packet);
       finishRadio(job, "Route probe cancelled or deadline expired before queue admission"); return;
     }
-    // Revision 4 waits for a tagged telemetry PATH from flood discovery;
-    // revision 2 confirms the cached direct route without a second request.
-    job.io.revision = knownSession ? (directProbe ? 2 : 4) : 0;
+    // Revision 4 waits for a tagged telemetry PATH from flood discovery.
+    job.io.revision = knownSession ? 4 : 0;
     job.pathReady = false; job.outbound = packet;
-    if (directProbe) sendDirect(packet, contact->route.bytes, contact->route.length);
-    else routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
+    routing.flood(*this, packet, routing.defaultScope(), policy.pathWidth);
   }
   bool findPathResponse(mesh::Packet *packet, Contact &contact, const uint8_t *data,
                         size_t size, const uint8_t *path = nullptr, uint8_t length = 0xff) {

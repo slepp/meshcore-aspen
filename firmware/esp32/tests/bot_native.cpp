@@ -2760,21 +2760,21 @@ static void native_find_path() {
   assert(replies.size() == 1 && replies[0].find("fresh cc268a,d12600") != std::string::npos);
   BotRepeaterPolicy retained; assert(loadBotRepeaterPolicy(retained));
   const uint32_t floodUtc = retained.targets[0].lastFloodUtc;
-  // During the monitored flood cooldown, test the known route with new direct
-  // traffic and label it as a confirmed cached route rather than a new flood.
+  assert(!floodUtc); // An owner request does not start the monitor's discovery cooldown.
+  // A second request a minute later floods again, reusing the login session.
   ask(); assert(probes() == 1 && f.bot.jobsInUse());
   for (const auto &raw : f.radio.sent) {
     mesh::Packet p; assert(p.readFrom(raw.data(), raw.size()));
-    if (p.getPayloadType() == PAYLOAD_TYPE_REQ) assert(p.isRouteDirect());
+    if (p.getPayloadType() == PAYLOAD_TYPE_REQ) assert(p.isRouteFlood());
     assert(p.getPayloadType() != PAYLOAD_TYPE_ANON_REQ);
   }
   f.deliver(response(peer, 1800000062, true, false, {})); f.step(300);
-  assert(probes() == 1); // Reuse the login; its delayed reply does not start another exchange.
-  // Leave the confirmation unanswered: return explicitly cached output only
-  // after the actual attempt times out, retaining the saved flood cooldown.
+  assert(probes() == 1); // A delayed login reply does not start another exchange.
+  // Leave discovery unanswered: return explicitly cached output only after the
+  // attempt times out.
   timeMs += 10000; f.step(300);
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("route confirmation timed out; cached cc268a,d12600") != std::string::npos);
+  assert(replies.size() == 1 && replies[0].find("cached cc268a,d12600") != std::string::npos);
   assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
   f.deliver(response(peer, tag, false, true, Bytes{0xaa, 0xbb, 0xcc})); f.step();
   f.bot.repeaterCommand("route pilot", reply, sizeof(reply));
@@ -2815,7 +2815,7 @@ static void native_find_path() {
   assert(!strcmp(reply, "pilot route=3:445566 repair=0"));
   // Restore the original monitor authority after this isolated test process.
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
-  puts("PASS find-path: empty guest flood, reciprocal PATH before confirmation, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, cooldown retention, late PATH and prefix ambiguity");
+  puts("PASS find-path: empty guest flood, reciprocal PATH before confirmation, provisional route, tagged direct telemetry, wrong peer/tag/login/reflection rejection, clock admission, cached timeout, repeated owner floods without a monitor cooldown, late PATH and prefix ambiguity");
 }
 static void native_find_path_session() {
   assert(saveBotEnabled(true) && saveBotEventAccess(0) && saveBotRadioPolicy({}) &&
@@ -2917,16 +2917,19 @@ static void native_find_path_session() {
   assert(replies.size() == 1 && replies[0].find("fresh cc268a,d12600") != std::string::npos && !f.bot.jobsInUse());
   BotRepeaterPolicy retained; assert(loadBotRepeaterPolicy(retained));
   const auto floodUtc = retained.targets[0].lastFloodUtc;
-  ask(); packets = requests(); assert(packets.size() == 1 && packets[0].isRouteDirect());
-  tag = requestTag(packets[0], 3); response(tag, false);
+  assert(!floodUtc); // Owner discovery never starts the monitor's cooldown.
+  // Thirty seconds later the owner can flood again; the saved session skips the login.
+  ask(); packets = requests(); assert(packets.size() == 1 && packets[0].isRouteFlood());
+  tag = requestTag(packets[0], 3); response(tag, true);
+  packets = requests(); assert(packets.size() == 2 && packets[1].isRouteDirect());
+  response(requestTag(packets[1], 3), false);
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("cached route confirmed cc268a,d12600") != std::string::npos &&
-         !f.bot.jobsInUse() && requests().size() == 1);
+  assert(replies.size() == 1 && replies[0].find("fresh cc268a,d12600") != std::string::npos && !f.bot.jobsInUse());
   assert(loadBotRepeaterPolicy(retained) && retained.targets[0].lastFloodUtc == floodUtc);
-  ask(); assert(requests().size() == 1);
+  ask(); assert(requests().size() == 1 && requests()[0].isRouteFlood());
   timeMs += 10000; f.step(300);
   replies = caller.replies(f.bot.publicKey(), f.radio);
-  assert(replies.size() == 1 && replies[0].find("route confirmation timed out; cached") != std::string::npos);
+  assert(replies.size() == 1 && replies[0].find("cached cc268a,d12600") != std::string::npos);
   // Missing telemetry discovery still allows best-path comparison of cached
   // candidates after its existing initial response window.
   receiveNetworkTime(1800001000);
@@ -2938,7 +2941,7 @@ static void native_find_path_session() {
   replies = caller.replies(f.bot.publicKey(), f.radio);
   assert(!f.bot.jobsInUse() && replies.size() == 1 && replies[0].find("current=0/2 seed=0/2") != std::string::npos);
   assert(saveBotRepeaterPolicy({}) && saveBotEventAccess(0));
-  puts("PASS find-path existing session: fresh monitor status, tagged telemetry flood, correlated provisional PATH, reciprocal return before confirmation, cached direct confirmation, stage timeouts and best-path discovery timeout");
+  puts("PASS find-path existing session: fresh monitor status, tagged telemetry flood, correlated provisional PATH, reciprocal return before confirmation, repeated owner floods, stage timeouts and best-path discovery timeout");
 }
 static void native_best_path() {
   BotRadioPolicy policy; policy.airtimeMs = 3600;
@@ -3061,13 +3064,6 @@ static void native_best_path() {
   assert(route() == "pilot route=3:cc268ad12600 repair=0");
   assert(answers.size() == 1 && answers[0].find("kept cc268a,d12600") != std::string::npos &&
          answers[0].find("current=2/2 seed=2/2 flood=1/2") != std::string::npos);
-  // A new comparison during the persisted flood cooldown still tests known
-  // alternatives, but cannot emit another anonymous discovery request.
-  timeMs += 61000; f.radio.sent.clear();
-  f.deliver(caller.command(f.bot.publicKey(), command)); f.step(300);
-  answers = run(false, 2);
-  assert(route() == "pilot route=3:cc268ad12600 repair=0" && answers.size() == 1 &&
-         answers[0].find("cached cc268a,d12600") != std::string::npos);
   ask(); answers = run(true, 3);
   assert(route() == "pilot route=3:cc268ad12600 repair=0");
   assert(answers.size() == 1 && answers[0].find("permission") != std::string::npos);
@@ -3094,7 +3090,7 @@ static void native_best_path() {
   assert(route() == "pilot route=3:d72600 repair=0" && answers.size() == 1 &&
          answers[0].find("selected d72600") != std::string::npos && answers[0].find("flood=2/2") != std::string::npos);
   assert(saveBotRepeaterPolicy({}) && saveBotRadioPolicy({}));
-  puts("PASS best path: two tagged trials per route without fixed spacing, shared sessions, measured promotion, seed/current/flood comparison, stale/foreign/reflected rejection, cached fallback, saved cooldown and cancellation/revocation retain routes");
+  puts("PASS best path: two tagged trials per route without fixed spacing, shared sessions, measured promotion, seed/current/flood comparison, stale/foreign/reflected rejection, cached fallback and cancellation/revocation retain routes");
 }
 static void anonymous_channel_routes() {
   BotRadioPolicy policy; policy.pathWidth = 3;
@@ -3560,14 +3556,20 @@ static void native_repeater_monitor() {
       snprintf(command, sizeof(command), "!find-path %s", key);
       restart.radio.sent.clear();
       restart.deliver(caller.command(restart.bot.publicKey(), command)); restart.step();
-      const auto messages = caller.replies(restart.bot.publicKey(), restart.radio);
-      assert(messages.size() == 1);
-      const auto &blocked = messages.front();
-      unsigned seconds = 0;
-      assert(sscanf(blocked.c_str(), "Error: !find-path: Discovery available in %us; no cached route", &seconds) == 1 &&
-             seconds > 0 && seconds <= snapshots[0].nextDiscoverySeconds &&
-             snapshots[0].nextDiscoverySeconds - seconds <= 2);
-      assert(blocked.find("bot repeaters") == std::string::npos);
+      // The owner's request floods at once and leaves the monitor's cooldown as it was.
+      unsigned ownerFloods = 0;
+      for (const auto &raw : restart.radio.sent) {
+        mesh::Packet packet; assert(packet.readFrom(raw.data(), raw.size()));
+        if (packet.getPayloadType() == PAYLOAD_TYPE_ANON_REQ || packet.getPayloadType() == PAYLOAD_TYPE_REQ) {
+          assert(packet.isRouteFlood()); ++ownerFloods;
+        }
+      }
+      assert(ownerFloods == 1 && restart.bot.jobsInUse());
+      restart.bot.cancelJobs(); restart.step(); assert(!restart.bot.jobsInUse());
+      assert(loadBotRepeaterPolicy(persisted) && persisted.targets[0].lastFloodUtc == floodUtc);
+      restart.bot.repeaterCommand("timing pilot", reply, sizeof(reply));
+      assert(strstr(reply, "wait=discovery"));
+      restart.radio.sent.clear();
       timeMs += (snapshots[0].nextDiscoverySeconds - 1) * 1000;
       receiveNetworkTime(floodUtc + 899); restart.step();
       assert(!restart.bot.jobsInUse());
@@ -4841,10 +4843,18 @@ static void native_repeater_delivery(const char *sourcePath) {
 
   f.radio.sent.clear();
   f.deliver(owner.command(f.bot.publicKey(), ("!find-path " + key(peer)).c_str())); f.step(300);
+  // The owner's discovery floods even though the repair above flooded moments ago.
   assert(requests().size() == 1 && count(PAYLOAD_TYPE_REQ) == 1 && count(PAYLOAD_TYPE_ANON_REQ) == 0);
   uint8_t secret[32]{}, plain[8]{};
   peer.self_id.calcSharedSecret(secret, f.bot.publicKey());
   queued_tx::put32(plain, requests().back().tag); plain[4] = TELEM_CHANNEL_SELF; plain[5] = 116;
+  auto *discovered = peer.createPathReturn(mesh::Identity(f.bot.publicKey()), secret, path.data(), 0x81,
+                                           PAYLOAD_TYPE_RESPONSE, plain, sizeof(plain));
+  assert(discovered); discovered->header |= ROUTE_TYPE_FLOOD; discovered->path_len = 0x81;
+  memcpy(discovered->path, reverse.data(), reverse.size());
+  f.deliver(peer.wire(discovered)); f.step(300);
+  assert(requests().size() == 2 && count(PAYLOAD_TYPE_REQ) == 2);
+  queued_tx::put32(plain, requests().back().tag);
   auto *confirmation = peer.createDatagram(PAYLOAD_TYPE_RESPONSE, mesh::Identity(f.bot.publicKey()), secret, plain, sizeof(plain));
   assert(confirmation); confirmation->header |= ROUTE_TYPE_DIRECT; confirmation->path_len = 0x80;
   f.deliver(peer.wire(confirmation)); f.step(300); assert(!f.bot.jobsInUse());
@@ -4901,7 +4911,23 @@ static void native_repeater_delivery(const char *sourcePath) {
   login(3);
   assert(!f.bot.jobsInUse() && count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_REQ) == 0);
   assert(owner.replies(f.bot.publicKey(), f.radio).back().find("changed") != std::string::npos);
-  puts("PASS repeater delivery: shared login/PATH repair, reciprocal ordering, known-route fast path, one safe GPS read retry, no GPS write replay, observed permissions, ACL refresh and repair revocation");
+
+  // Owner commands are never held back by the monitor's discovery cooldown, and
+  // their repair floods leave that cooldown untouched for background polling.
+  assert(f.administer(("trust " + key(owner)).c_str()).find("Saved ") == 0);
+  f.bot.repeaterCommand("discovery 900", reply, sizeof(reply)); assert(!strncmp(reply, "Saved/applied", 13));
+  for (const char *text : {"Repaired", "Repaired again"}) {
+    ask("!rcmd pilot ver"); // The previous repair flooded less than 900 s ago.
+    assert(count(PAYLOAD_TYPE_TXT_MSG) == 1 && count(PAYLOAD_TYPE_ANON_REQ) == 0);
+    timeMs += 16000; f.step(30);
+    assert(count(PAYLOAD_TYPE_ANON_REQ) == 1);
+    login(3); answer(requests().back().text.substr(0, 3) + text);
+    assert(!f.bot.jobsInUse() && owner.replies(f.bot.publicKey(), f.radio).back() == "pilot: " + std::string(text));
+    f.bot.repeaterCommand("timing pilot", reply, sizeof(reply)); assert(strstr(reply, "discovery-in=0s"));
+    f.bot.repeaterCommand(("add pilot " + key(peer) + " 912525000 3:").c_str(), reply, sizeof(reply));
+    assert(!strncmp(reply, "Saved/applied", 13)); // Restore the direct seed so the next read times out first.
+  }
+  puts("PASS repeater delivery: shared login/PATH repair, reciprocal ordering, known-route fast path, one safe GPS read retry, no GPS write replay, observed permissions, ACL refresh, repair revocation and owner repair independent of the monitor cooldown");
 }
 #if ONCHIP_BOT_WASM
 static void native_runtime_admission_isolation(const char *modules) {
