@@ -276,7 +276,7 @@ class Parity(unittest.TestCase):
                     ("!remember "+"k"*32+" value","k"*32,"value"),
                     ("!remember max "+"v"*120,"max","v"*120)]
                 for request,key,value in accepted:
-                    self.assertIn(b" created; committed",command(request))
+                    self.assertEqual(command(request),("Saved note "+key).encode())
                     with Host(role=1) as restored:
                         self.assertEqual(restored.command("load "+str(state)),["true"])
                         result=restored.packet(text(2,stamp+1000,("!recall "+key).encode()))

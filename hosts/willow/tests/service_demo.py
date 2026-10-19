@@ -366,7 +366,7 @@ class ServiceTests(unittest.TestCase):
             self.assertIn(b"Error: !remember requires",command("!remember  value"))
             empty=command("!notes")
             self.assertEqual(empty,b"No notes")
-            self.assertIn(b"created; committed",command("!remember   camp   bring  tea"))
+            self.assertIn(b"Saved note camp",command("!remember   camp   bring  tea"))
             self.assertIn(b"Error: !remember requires",command("!remember camp    "))
             service.stop_process(); service.start_process(False)
             self.assertEqual(command("!recall   camp"),b"bring  tea")

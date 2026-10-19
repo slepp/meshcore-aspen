@@ -187,7 +187,7 @@ static void bundledWorker() {
   };
   local("!ping", "Pong");
   local("!calc 6*7", "= 42");
-  local("!remember location private note", "Note location created; committed");
+  local("!remember location private note", "Saved note location");
   local("!recall location", "private note");
   local("!notes", "Notes (1): [location]");
   local("!reminders", "No personal reminders");
