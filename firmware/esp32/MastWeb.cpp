@@ -12,6 +12,7 @@
 #include "Config.h"
 #include "RadioNetwork.h"
 #include "EspFieldUpdate.h"
+#include "cloudroom/CloudRoomGrammar.h"
 #include <atomic>
 #include <mutex>
 #ifdef ARDUINO_ARCH_ESP32
@@ -172,6 +173,10 @@ esp_err_t execute(httpd_req_t *request) {
   if (verb("cloudroom config begin") || verb("cloudroom config chunk") || verb("cloudroom config commit")) {
     memset(input, 0, sizeof(input));
     return error(request, "403 Forbidden", "Cloud room credential uploads require encrypted Management RF");
+  }
+  if (verb("cloudroom") && cloudroom::needsEncryptedRf(cloudroom::verbOf(input[9] ? input + 10 : ""))) {
+    memset(input, 0, sizeof(input));
+    return error(request, "403 Forbidden", cloudroom::encryptedRfMessage());
   }
   if (verb("role password")) {
     memset(input, 0, sizeof(input));

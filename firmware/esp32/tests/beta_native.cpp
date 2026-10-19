@@ -8,10 +8,14 @@
 #include "ServiceName.h"
 #include "FirmwareIdentity.h"
 #include "EspFieldUpdate.h"
+#include "cloudroom/CloudRoomGrammar.h"
 #include "RadioNetwork.h"
 #include "bot_parser_cases.h"
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <limits>
+#include <thread>
 #include <arpa/inet.h>
 
 #ifdef ONCHIP_SOURCE_SET_JOURNAL_TEST
@@ -177,6 +181,59 @@ struct BetaFixture {
 };
 static std::string encode(const uint8_t *bytes, size_t size);
 #ifdef MESHCORE_MAST_WEB_TEST
+// A link job on the network task asks for a restart; the dispatch task flushes and arms it.
+static void scheduled_restart() {
+  using namespace force_restart_test;
+  reset();
+  BetaFixture f;
+  // The fake clock only moves when asked, so a request is flushed before its delay can expire.
+  const auto pump = [&](const std::function<bool()> &finished, bool advance) {
+    for (unsigned i = 0; i < 20000 && !finished(); ++i) {
+      if (advance) timeMs += 10;
+      f.management.loop();
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    assert(finished());
+  };
+  setScheduledRestartFlushForTest([] { return true; });
+  std::atomic<bool> done{false};
+  bool accepted = false;
+  std::thread first([&] { accepted = cloudRoomScheduleRestart(100); done = true; });
+  pump([&] { return done.load(); }, false);
+  first.join();
+  if (!accepted) std::cerr << "restart not scheduled: " << f.management.admin().outcome() << "\n";
+  assert(accepted);                            // flushed; waiting out the delay
+  assert(!reserved);
+  assert(cloudRoomScheduleRestart(100));       // already scheduled: no second timer
+  pump([&] { return armed; }, true);
+  assert(reserved && armed);
+  assert(std::string(f.management.admin().outcome()) == "Shared-room restart armed");
+  reset();
+  blocked = true;                              // an application transfer owns the restart
+  done = false;
+  accepted = false;
+  std::thread second([&] { accepted = cloudRoomScheduleRestart(10); done = true; });
+  pump([&] { return done.load(); }, false);
+  second.join();
+  assert(accepted);
+  pump([&] { return std::string(f.management.admin().outcome()).find("send reboot") != std::string::npos; }, true);
+  assert(!armed && !reserved);
+  assert(!cloudRoomScheduleRestart(60001));    // a delay over one minute is refused at once
+  // A failed flush reports false and never arms a restart.
+  reset();
+  setScheduledRestartFlushForTest([] { return false; });
+  done = false;
+  accepted = true;
+  std::thread third([&] { accepted = cloudRoomScheduleRestart(10); done = true; });
+  pump([&] { return done.load(); }, false);
+  third.join();
+  assert(!accepted);
+  assert(std::string(f.management.admin().outcome()).find("restart not scheduled") != std::string::npos);
+  for (unsigned i = 0; i < 200; ++i) { timeMs += 10; f.management.loop(); }
+  assert(!armed && !reserved);
+  setScheduledRestartFlushForTest(nullptr);
+  reset();
+}
 static void forced_restart_admission() {
   using namespace force_restart_test;
   reset();
@@ -189,6 +246,15 @@ static void forced_restart_admission() {
                               outsider.self_id.pub_key);
   assert(strstr(reply.text, "authenticated direct") && !reserved);
   assert(f.send(outsider, "reboot force", false).empty() && !reserved);
+  // Shared-room commands need an authenticated sender as well as encrypted RF.
+  for (const char *command : {"cloudroom join ABCD-EFGH-JKMN-PQRS", "cloudroom password", "cloudroom share off",
+                              "cloudroom list", "cloudroom apply"}) {
+    for (const uint8_t *sender : {static_cast<const uint8_t *>(outsider.self_id.pub_key), static_cast<const uint8_t *>(nullptr)}) {
+      f.management.admin().execute(command, reply, 0, MastAdmin::Transport::NativeEncrypted, sender);
+      assert(strstr(reply.text, "direct authenticated") && !strstr(reply.text, "ABCD") && !reserved);
+    }
+    assert(f.send(outsider, command, false).empty());
+  }
   assert(!f.send(owner, "mast-pass-12", true).empty());
   f.management.admin().execute("reboot force", reply, 1, MastAdmin::Transport::NativeEncrypted,
                               owner.self_id.pub_key);
@@ -196,6 +262,12 @@ static void forced_restart_admission() {
   verified = true;
   f.management.admin().execute("reboot", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
   assert(strstr(reply.text, "application update active") && !reserved);
+  // cloudroom apply is the reboot effect over encrypted RF only.
+  f.management.admin().execute("cloudroom apply", reply, 0, MastAdmin::Transport::NativeEncrypted,
+                              owner.self_id.pub_key);
+  assert(strstr(reply.text, "application update active") && !reserved);
+  f.management.admin().execute("cloudroom apply", reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+  assert(std::string(reply.text) == cloudroom::encryptedRfMessage() && !reserved);
   const auto accepted = f.send(owner, "reboot force", false);
   assert(accepted.size() > 5 && std::string(accepted.begin() + 5, accepted.end()).find("Accepted forced device") == 0);
   assert(armed && reserved); // Actual encrypted Management reply TX armed the controller.
@@ -226,6 +298,14 @@ static void forced_restart_admission() {
   assert(request("/admin/restart/force", "yes", token).status == "400 Bad Request" && !reserved);
   blocked = true;
   assert(request("/admin/restart/force", "", token).status == "409 Conflict" && !reserved);
+  // Linking commands never reach the command mailbox over HTTP and the code is not echoed.
+  for (const char *command : {"cloudroom join ABCD-EFGH-JKMN-PQRS@rooms.example.com", "cloudroom create ABCD-EFGH-JKMN-PQRS Fleet",
+                              "cloudroom convert ABCD-EFGH-JKMN-PQRS yes", "cloudroom password 7QX2M9KDAB",
+                              "cloudroom invite", "cloudroom unlink 1 delete", "cloudroom apply"}) {
+    const auto refused = request("/admin/command", command, token);
+    assert(refused.status == "403 Forbidden" && refused.response == cloudroom::encryptedRfMessage());
+    assert(refused.response.find("ABCD") == std::string::npos && refused.response.find("7QX2") == std::string::npos);
+  }
   blocked = false; verified = true;
   assert(request("/admin/command", "reboot", token).status == "409 Conflict");
   request("/admin/restart/force", "", token, "", true);
@@ -772,6 +852,51 @@ static void management_cli_core() {
       f.management.admin().execute("cloudroom advertise TestA", reply, 1, MastAdmin::Transport::AuthenticatedWeb);
       assert(strstr(reply.text, "direct authenticated"));
       assert(identity_test::durable == saved && filesystem_test::files == savedFiles);
+    }
+    {
+      // Shared-room lifecycle verbs: encrypted Management RF reaches the handler; web and bot jobs never do.
+      const auto saved = identity_test::durable;
+      const auto savedFiles = filesystem_test::files;
+      MastAdmin::Reply reply;
+      const std::string secret = "ABCD-EFGH-JKMN-PQRS";
+      const std::vector<std::string> verbs = {
+        "join " + secret + "@rooms.example.com", "create " + secret + " Fleet",
+        "convert " + secret + " yes", "invite", "invite owner", "nodes 2",
+        "revoke ab12cd34", "password", "password 7QX2M9KDAB", "unlink 1 delete",
+        "result", "probe rooms.example.com", "apply"};
+      for (const std::string &verb : verbs) {
+        const std::string command = "cloudroom " + verb;
+        f.management.admin().execute(command.c_str(), reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+        assert(std::string(reply.text) == cloudroom::encryptedRfMessage() && !reply.ticket);
+        f.management.admin().execute(command.c_str(), reply, 1, MastAdmin::Transport::AuthenticatedWeb);
+        assert(strstr(reply.text, "direct authenticated") && !strstr(reply.text, "ABCD") && !strstr(reply.text, "7QX2"));
+        f.management.admin().execute(command.c_str(), reply, 1, MastAdmin::Transport::NativeEncrypted);
+        assert(strstr(reply.text, "direct authenticated") && !strstr(reply.text, "ABCD"));
+        assert(f.action(command.c_str()).find("direct authenticated") != std::string::npos);
+      }
+      for (const char *verb : {"list", "list 2", "share on", "share off force", "status", "error"}) {
+        const std::string command = std::string("cloudroom ") + verb;
+        f.management.admin().execute(command.c_str(), reply, 0, MastAdmin::Transport::AuthenticatedWeb);
+        assert(std::string(reply.text) != cloudroom::encryptedRfMessage());
+        assert(strstr(reply.text, "Cloud room aliases=0") || strstr(reply.text, "disabled in this image"));
+      }
+      assert(identity_test::durable == saved && filesystem_test::files == savedFiles);
+      // Encrypted RF from the authenticated sender reaches the handler (the stub here).
+      for (const std::string &verb : verbs) {
+        if (verb == "apply") continue;
+        const auto answer = rf(tag + "cloudroom " + verb);
+        assert(answer.find("disabled in this image") != std::string::npos);
+        assert(answer.find("ABCD") == std::string::npos && answer.find("7QX2") == std::string::npos);
+      }
+      const auto first = readOnly("help cloudroom");
+      assert(first.find("join CODE[@HOST]") != std::string::npos && first.find("; help cloudroom 2") != std::string::npos);
+      assert(readOnly("help cloudroom 2").find("cloudroom 2/3: list [N]|nodes [N]|revoke ID") == 0);
+      assert(readOnly("help cloudroom 3").find("cloudroom 3/3: status|error|advertise ALIAS|config|enable on|off|apply") == 0);
+      assert(readOnly("help cloudroom 4").find("Error:") == 0);
+      for (const char *page : {"help cloudroom", "help cloudroom 2", "help cloudroom 3"}) {
+        assert(readOnly(page).size() <= 145);
+        assert(rf(tag + page) == tag + readOnly(page));
+      }
     }
     assert(rf(tag + "cloudroom status") == tag + "Cloud room aliases=0 sockets=0 wss-mask=0 advert-pending=0");
     assert(rf(tag + "roles") == tag + readOnly("roles"));
@@ -3642,6 +3767,9 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc == 2 && !strcmp(argv[1], "--admin-cli-core-test")) {
+#ifdef MESHCORE_MAST_WEB_TEST
+    scheduled_restart();  // First: a later test leaves a role profile whose roles the flush expects to run.
+#endif
     network_service_lifecycle();
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     MastReplayStorageTest::run();

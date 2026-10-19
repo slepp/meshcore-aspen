@@ -85,7 +85,7 @@ private:
   uint32_t ticket_ = 0, nextTicket_ = 0, admittedAt_ = 0, readyAt_ = 0;
   uint32_t forceRestartTicket_ = 0;
   uint32_t cancelledTicket_ = 0;
-  bool armed_ = false, temporary_ = false;
+  bool armed_ = false, temporary_ = false, restartWaiting_ = false;
   uint32_t duration_ = 0, restoreAt_ = 0;
   RadioConfig nextRadio_{};
   bool nextCAD_ = true;
@@ -104,6 +104,7 @@ private:
   void statsCommand(const char *topic, Reply &reply);
   void setupCommand(const char *command, Reply &reply);
   void helpCommand(const char *argument, Reply &reply);
+  void serviceScheduledRestart();
   void rolesCommand(const char *argument, Reply &reply);
   static bool validACL(const ACL &acl);
   static bool configurationRecord(const char *key, void *data, size_t size, bool write, bool &present);
@@ -116,6 +117,12 @@ private:
 #endif
   void aclCommand(char *command, Reply &reply);
 };
+// Flushes state, then arms the existing forced restart after delayMs. Blocks the caller
+// (the network task) until the flush finishes; false when no restart was scheduled.
+bool cloudRoomScheduleRestart(uint32_t delayMs);
+#if defined(MESHCORE_MAST_WEB_TEST)
+void setScheduledRestartFlushForTest(bool (*flush)());
+#endif
 } // namespace onchip
 #endif
 #endif

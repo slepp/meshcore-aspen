@@ -19,11 +19,15 @@
 #include "FirmwareIdentity.h"
 #include "EspFieldUpdate.h"
 #include "CloudRoomService.h"
+#include "cloudroom/CloudRoomGrammar.h"
 #include <Utils.h>
 #include <helpers/ClientACL.h>
 #include "TelemetryService.h"
 #include <nvs.h>
 #include <SPIFFS.h>
+#include <chrono>
+#include <mutex>
+#include <thread>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -226,7 +230,9 @@ constexpr Help topics[] = {
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
     {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
-    {"cloudroom", "cloudroom status|error|advertise ALIAS|config|enable on|off; direct authenticated administration; config changes apply after restart"},
+    {"cloudroom", "cloudroom join CODE[@HOST]|create CODE[@HOST] NAME|convert CODE[@HOST]|invite|unlink [ALIAS]; Management RF"},
+    {"cloudroom", "cloudroom 2/3: list [N]|nodes [N]|revoke ID|password [PW|open|new]|share on|off|probe [HOST]|result; help cloudroom 3", 2},
+    {"cloudroom", "cloudroom 3/3: status|error|advertise ALIAS|config|enable on|off|apply; saved settings apply after restart", 3},
     {"setup", "setup status|migrate; save private initial settings for a generic application update; identities and existing SPIFFS/NVS retained"},
     {"role", "role help; role config ROLE; role name ROLE [TEXT]; role advert ROLE zerohop|flood; role key|channel|password ROLE ..."},
     {"roles", "roles; roles list [1|2]: named applied/saved selection; roles MASK=0..15 (repeater=1,room=2,companion=4,observer=8); apply reboots"},
@@ -1579,6 +1585,16 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
       return;
     }
     const char *command = input[9] ? input + 10 : "";
+    const cloudroom::Verb lifecycle = cloudroom::verbOf(command);
+    if (transport != Transport::NativeEncrypted && cloudroom::needsEncryptedRf(lifecycle)) {
+      strcpy(reply.text, cloudroom::encryptedRfMessage());
+      return;
+    }
+    if (lifecycle == cloudroom::Verb::Apply) {
+      // Same effect as reboot: flush state, then restart into the saved profile.
+      execute("reboot", reply, invokingBotJob, transport, nativeSender, replyCapacity);
+      return;
+    }
     if (transport != Transport::NativeEncrypted &&
         (!strncmp(command, "config begin ", 13) || !strncmp(command, "config chunk ", 13) ||
          !strncmp(command, "config commit ", 14))) {
@@ -2267,8 +2283,100 @@ void MastAdmin::acknowledged(uint32_t ticket, bool transmitted) {
   // Let the reply leave TCP before an operation can drop its connection.
   readyAt_ = millis() + ((effect_ == Effect::Wifi || effect_ == Effect::Reboot) ? 500 : 0);
 }
+// A shared-room link job asks for a restart from the network task. The dispatch task
+// flushes state, waits out the delay, then arms the existing forced restart.
+namespace {
+struct ScheduledRestart {
+  enum State : uint8_t { None, Requested, Flushing, Armed, Failed } state = None;
+  uint32_t delayMs = 0, dueAt = 0;
+  std::mutex lock;
+#if defined(MESHCORE_MAST_WEB_TEST)
+  bool (*flush)() = nullptr;  // Host tests have no running roles to flush.
+#endif
+} scheduledRestart;
+}
+#if defined(MESHCORE_MAST_WEB_TEST)
+void setScheduledRestartFlushForTest(bool (*flush)()) { scheduledRestart.flush = flush; }
+#endif
+bool cloudRoomScheduleRestart(uint32_t delayMs) {
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+  if (delayMs > 60000) return false;
+  {
+    std::lock_guard<std::mutex> guard(scheduledRestart.lock);
+    if (scheduledRestart.state == ScheduledRestart::Armed) return true;
+    if (scheduledRestart.state == ScheduledRestart::Requested || scheduledRestart.state == ScheduledRestart::Flushing)
+      return false;
+    scheduledRestart.state = ScheduledRestart::Requested;
+    scheduledRestart.delayMs = delayMs;
+  }
+  // The dispatch task answers within a loop pass; the flush itself can take seconds.
+  const auto started = std::chrono::steady_clock::now();
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> guard(scheduledRestart.lock);
+      if (scheduledRestart.state == ScheduledRestart::Armed) return true;
+      if (scheduledRestart.state == ScheduledRestart::Failed) {
+        scheduledRestart.state = ScheduledRestart::None;
+        return false;
+      }
+      // A request the dispatch task has not started can be withdrawn; one it is flushing cannot.
+      if (scheduledRestart.state == ScheduledRestart::Requested &&
+          std::chrono::steady_clock::now() - started >= std::chrono::seconds(15)) {
+        scheduledRestart.state = ScheduledRestart::None;
+        return false;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+#else
+  (void)delayMs;
+  return false;
+#endif
+}
+void MastAdmin::serviceScheduledRestart() {
+#if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
+  std::unique_lock<std::mutex> guard(scheduledRestart.lock);
+  if (scheduledRestart.state != ScheduledRestart::Requested && !restartWaiting_) return;
+  if (scheduledRestart.state == ScheduledRestart::Requested) {
+    scheduledRestart.state = ScheduledRestart::Flushing;
+    guard.unlock();
+#if defined(MESHCORE_MAST_WEB_TEST)
+    const bool flushed = scheduledRestart.flush ? scheduledRestart.flush() : flushRuntimeState();
+#else
+    const bool flushed = flushRuntimeState();
+#endif
+    guard.lock();
+    if (!flushed) {
+      snprintf(outcome_, sizeof(outcome_), "Error: %s flush failed; restart not scheduled",
+               *runtimeFlushError() ? runtimeFlushError() : "state");
+      scheduledRestart.state = ScheduledRestart::Failed;
+      return;
+    }
+    scheduledRestart.dueAt = millis() + scheduledRestart.delayMs;
+    restartWaiting_ = true;
+    scheduledRestart.state = ScheduledRestart::Armed;
+    strcpy(outcome_, "State saved; shared-room restart scheduled");
+    return;
+  }
+  if (int32_t(millis() - scheduledRestart.dueAt) < 0) return;
+  restartWaiting_ = false;
+  guard.unlock();
+  const char *reason = nullptr;
+  const uint32_t ticket = reserveEspForceRestart(reason);
+  if (!ticket) {
+    snprintf(outcome_, sizeof(outcome_), "Error: %s; send reboot", reason ? reason : "restart unavailable");
+  } else if (!acknowledgeEspForceRestart(ticket, true)) {
+    strcpy(outcome_, "Error: restart timer failed; send reboot");
+  } else {
+    strcpy(outcome_, "Shared-room restart armed");
+  }
+  guard.lock();
+  scheduledRestart.state = ScheduledRestart::None;
+#endif
+}
 void MastAdmin::loop() {
   source_.loop();
+  serviceScheduledRestart();
   const uint32_t now = millis();
   if (temporary_ && int32_t(now - restoreAt_) >= 0) {
     if (mux_->restoreMastConfiguration()) {
