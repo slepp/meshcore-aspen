@@ -80,7 +80,7 @@ struct Service final : NativeNetworkService {
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
   std::atomic<uint32_t> connectedAliases{0};
-  std::atomic<uint32_t> revokedAliases{0};      // upgrade refused with 401 or 403: stop retrying
+  std::atomic<uint32_t> revokedAliases{0};      // upgrade refused with 401 or 403: reported as revoked, retried every 15 minutes
   std::atomic<uint32_t> flaggedAdverts{0};      // aliases whose saved advert-once flag is being served
   std::atomic<uint32_t> stackMinimumBytes{0};
   CloudRoomRegistration registration;
@@ -141,7 +141,6 @@ struct Service final : NativeNetworkService {
         if (result.generation == bridge.generation(result.alias)) driver->receipt(result);
       for (unsigned alias = 0; alias < aliases && work; ++alias, --work) {
         auto &c = connections[alias];
-        if (revokedAliases.load(std::memory_order_relaxed) & (1u << alias)) continue;
         if (!c.connected) {
           if (int32_t(millis() - c.retryAt) < 0) continue;
           char error[96]{};
@@ -155,11 +154,15 @@ struct Service final : NativeNetworkService {
             const unsigned refused = c.socket->upgradeStatus();
             if (refused == 401 || refused == 403) {
               revokedAliases.fetch_or(1u << alias, std::memory_order_relaxed);
-              Serial.printf("Cloud room %s refused by the server (HTTP %u); unlink it\n",driver->peer(alias).alias,refused);
+              Serial.printf("Cloud room %s refused by the server (HTTP %u); retrying in 15 minutes\n",driver->peer(alias).alias,refused);
+              lost(alias);
+              c.retryAt = millis() + 15u * 60u * 1000u;
+              continue;
             }
             lost(alias); continue;
           }
           c.connected = true; c.backoffMs = 2000;
+          revokedAliases.fetch_and(~(1u << alias), std::memory_order_relaxed);
           connectedAliases.fetch_or(1u << alias, std::memory_order_relaxed);
           driver->opened(alias, bridge.generation(alias));
 #if ONCHIP_CLOUD_ROOM_LINK
@@ -386,7 +389,7 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
   if (!strcmp(command, "error")) {
 #if ONCHIP_CLOUD_ROOM_LINK
     if (service.revokedAliases.load(std::memory_order_relaxed)) {
-      snprintf(reply,capacity,"Server revoked this node. Run \"cloudroom unlink ALIAS local\".");return;
+      snprintf(reply,capacity,"Server refused this node (revoked or room disabled); retrying every 15 minutes. To drop it, run \"cloudroom unlink ALIAS local\".");return;
     }
 #endif
     if (!service.active.load()) {
