@@ -73,7 +73,7 @@ public:
 struct BotHttpsFetchRequest {
   uint32_t id = 0;
   uint8_t expectedSha256[32]{};
-  uint32_t maxBytes = BotSourceLimit;
+  uint32_t maxBytes = BotSourceStageLimit;
   BotHttpsBodySink *sink = nullptr;
 };
 struct BotHttpsFetchResult {

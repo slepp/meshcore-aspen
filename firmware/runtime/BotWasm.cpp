@@ -194,7 +194,7 @@ struct BotWasmSession::Impl {
   wasm_module_inst_t instance = nullptr;
   wasm_exec_env_t env = nullptr;
   wasm_function_inst_t init = nullptr, start = nullptr, resume = nullptr;
-  uint8_t bytes[BotSourceLimit]{};
+  uint8_t bytes[BotWasmPackageLimit]{};
   BotManifest manifest{};
   uint32_t ids[BotCommandLimit]{}, events[4]{};
   uint32_t generation = 0, nextHandle = 0;
@@ -693,7 +693,7 @@ bool BotWasmSession::load(const char *source, size_t size, uint32_t generation, 
   clear(); stats = {};
   if (capacity) error[0] = 0;
   const uint8_t *bytes; size_t length;
-  if (!generation || size > BotSourceLimit || !botWasmBytes(source, size, bytes, length) ||
+  if (!generation || size > BotWasmPackageLimit || !botWasmBytes(source, size, bytes, length) ||
       !profile(bytes, length, error, capacity)) {
     if (!error[0]) snprintf(error, capacity, "Expected bounded Wasm package and nonzero generation");
     return false;

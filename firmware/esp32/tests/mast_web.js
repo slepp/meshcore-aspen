@@ -350,6 +350,19 @@ async function tests() {
   const oversized=f.requests.length; await f.element('source-stage').click();
   assert.equal(f.requests.length,oversized,'Enforce UTF-8 bytes, not character count');
   assert.match(f.element('result').textContent,/4096 UTF-8 bytes/);
+  // Current firmware advertises its limit; the editor follows it.
+  f.state.override=text=>text==='source api'?'API named-commands-v1 lua=5.5.1 commands=32 arguments=4 source-bytes=32768 runtime=shared-v1 jobs=4 kv=2':undefined;
+  await f.element('inventory').click();
+  assert.equal(f.element('lua-limit').textContent,32768);
+  f.element('source').value='-- large draft\n'+'x'.repeat(5000);
+  f.state.hook=null; await f.element('source-stage').click();
+  assert(f.requests.some(r=>r.body?.startsWith('source begin ')&&r.body.split(' ')[3]==='5015'),'Accept a draft within the advertised limit');
+  f.element('source').value='x'.repeat(32769);
+  const beyond=f.requests.length; await f.element('source-stage').click();
+  assert.equal(f.requests.length,beyond,'Reject a draft beyond the advertised limit before upload');
+  assert.match(f.element('result').textContent,/32768 UTF-8 bytes/);
+  f.state.override=null; await f.element('inventory').click();
+  assert.equal(f.element('lua-limit').textContent,4096);
   await f.element('help-read').click();
   assert.equal(f.element('helptext').value,'Error: is literal help, not a command error');
   f.element('source').value='KEEP DRAFT';

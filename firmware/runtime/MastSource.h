@@ -38,6 +38,7 @@ private:
   const char *uploadPath() const;
   const char *journalKey() const;
   size_t bundledSize() const;
+  size_t sourceLimit() const { return wasmRuntime_ ? BotWasmPackageLimit : BotLuaSourceLimit; }
   static constexpr uint8_t Bundled = 3;
   struct Deployment {
     uint32_t version = 1, generation = 0;

@@ -27,6 +27,34 @@
 #if ONCHIP_BOT_WASM && !ONCHIP_BOT_SEPARATE_DIAGNOSTICS
 #error "Mixed runtimes require an independent diagnostics session"
 #endif
+// Per-profile source and registry budget. Compact Pine keeps 4096-byte sets
+// and eight commands, modules and entries for its 48 KiB Lua heap. PSRAM builds
+// and the host take 32 KiB sets with 32 commands per runtime and 16 modules and
+// entries; their manifests, staging buffers and Lua heap live in PSRAM.
+// Keep these plain decimal literals: API replies embed them as text.
+#if ONCHIP_BOT_COMPACT_PROFILE
+#ifndef ONCHIP_BOT_SOURCE_LIMIT
+#define ONCHIP_BOT_SOURCE_LIMIT 4096
+#endif
+#ifndef ONCHIP_BOT_COMMAND_LIMIT
+#define ONCHIP_BOT_COMMAND_LIMIT 8
+#endif
+#ifndef ONCHIP_BOT_MODULE_LIMIT
+#define ONCHIP_BOT_MODULE_LIMIT 8
+#endif
+#else
+#ifndef ONCHIP_BOT_SOURCE_LIMIT
+#define ONCHIP_BOT_SOURCE_LIMIT 32768
+#endif
+#ifndef ONCHIP_BOT_COMMAND_LIMIT
+#define ONCHIP_BOT_COMMAND_LIMIT 32
+#endif
+#ifndef ONCHIP_BOT_MODULE_LIMIT
+#define ONCHIP_BOT_MODULE_LIMIT 16
+#endif
+#endif
+#define ONCHIP_BOT_TEXT_(value) #value
+#define ONCHIP_BOT_TEXT(value) ONCHIP_BOT_TEXT_(value)
 #include <MeshCore.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -34,7 +62,26 @@
 #include "RepeaterMetrics.h"
 
 namespace onchip {
-constexpr size_t BotSourceLimit = 4096;
+// Lua set total (header lines included) and Wasm package size.
+constexpr size_t BotLuaSourceLimit = ONCHIP_BOT_SOURCE_LIMIT;
+constexpr size_t BotWasmPackageLimit = ONCHIP_BOT_SOURCE_LIMIT;
+// Staging, journal validation, uploads and package fetches use the larger one.
+constexpr size_t BotSourceStageLimit =
+    BotLuaSourceLimit > BotWasmPackageLimit ? BotLuaSourceLimit : BotWasmPackageLimit;
+static_assert(BotLuaSourceLimit >= 4096 && BotSourceStageLimit <= 32768,
+              "Bot source limit is 4096..32768 bytes; the host filesystem stores 32 KiB files");
+// Custom commands and overrides per runtime, declared modules and source-set
+// entries. Bundled commands have their own catalogue capacity.
+constexpr unsigned BotCommandLimit = ONCHIP_BOT_COMMAND_LIMIT;
+constexpr unsigned BotModuleLimit = ONCHIP_BOT_MODULE_LIMIT;
+constexpr unsigned BotSourcePartLimit = ONCHIP_BOT_MODULE_LIMIT;
+static_assert(BotCommandLimit >= 8 && BotCommandLimit <= 32 && BotModuleLimit >= 8 && BotModuleLimit <= 16,
+              "Bot registry budget is 8..32 commands and 8..16 modules");
+// Per-call input cap for string.sub/lower/find; independent of source size.
+constexpr size_t BotStringOperationLimit = 4096;
+// Globals walked after initialization: bundled helpers (about 55), commands and
+// any other globals a source defines.
+constexpr unsigned BotGlobalInspectionLimit = ONCHIP_BOT_COMPACT_PROFILE ? 64 : 128;
 // Pinned Mesh::createDatagram admission, minus timestamp and text flags.
 constexpr size_t BotTextLimit =
     MAX_PACKET_PAYLOAD - CIPHER_MAC_SIZE - (CIPHER_BLOCK_SIZE - 1) - 5;
@@ -70,7 +117,6 @@ constexpr unsigned BotRepeaterLimit = ONCHIP_BOT_COMPACT_PROFILE ? 4 : 12;
 constexpr unsigned BotRepeaterGroupLimit = 4;
 // Each fleet target needs one request and up to two response chunks.
 constexpr unsigned BotOwnerIoLimit = ONCHIP_BOT_COMPACT_PROFILE ? 16 : 3 * BotRepeaterLimit + 1;
-constexpr unsigned BotSourcePartLimit = 8;
 constexpr unsigned BotThreadRuleLimit = 8;
 struct BotThreadRule {
   char name[BotNameLimit + 1]{};
@@ -290,9 +336,10 @@ struct BotVmLimits {
 #if ONCHIP_BOT_COMPACT_PROFILE
   size_t heapBytes = 48 * 1024;
 #else
-  size_t heapBytes = 96 * 1024;
+  size_t heapBytes = 256 * 1024;
 #endif
-  uint32_t instructions = 10000, parserSteps = 16384;
+  // Bundled sources take about 9.6k steps; the lexer charges one per source byte.
+  uint32_t instructions = 10000, parserSteps = 12288 + BotLuaSourceLimit;
   // Every retained custom source also loads the bundled command environment.
   uint64_t loadWallUs = ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs;
   uint64_t wallUs = ONCHIP_BOT_COMPACT_PROFILE ? 20000 : 100000;

@@ -184,7 +184,9 @@ compete for the same replay state. Keep both files private and out of commits.
    candidate and conditionally commits against the original hash. Other named
    files remain. A concurrent source change or namespace collision rejects
    installation rather than overwriting that change. The complete encoded set
-   shares the 4096-byte limit and eight-command registry.
+   shares the device's source and command limits, which the client reads from
+   `source api sources` (32,768 bytes and 16 files on ESP32, 4,096 bytes and
+   eight files on compact Pine).
 
    Look for `Durable chunk N/TOTAL`, then `source durably saved and active`.
    The client checks the final selected SHA-256. A disabled bot instead reports
@@ -243,7 +245,9 @@ Matching `begin` resumes saved progress after a restart; an identical repeated
 chunk is safe, but a gap or conflicting duplicate fails. The Python upload
 loop makes at most three attempts for an identical chunk on timeout. It polls
 activation up to 20 times with 0.5-second pauses; RF round trips add time.
-At 4096 bytes, 86 chunks plus their replies cost real airtime. Do not paste a
+At one signed request per second, a 4096-byte source is 86 chunks and a
+32 KiB source is 683 chunks, more than 11 minutes plus airtime. Prefer the web
+page or an HTTPS package fetch for large sources. Do not paste a
 whole file into an ordinary DM, compress it or upload Lua bytecode.
 
 The RF transport can additionally retransmit a command twice with the same

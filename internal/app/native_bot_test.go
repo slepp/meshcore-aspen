@@ -24,6 +24,9 @@ import (
 	"meshcore.local/meshcore/internal/state"
 )
 
+// The host worker builds the PSRAM profile's source limit.
+const nativeSourceLimit = 32768
+
 func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	executable := os.Getenv("BOT_NATIVE_WORKER")
 	if executable == "" {
@@ -303,7 +306,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 	}
 	checkDataAfterRestart := nativeBotDataRoundTrip(t, admin, bot.String())
 	var script []byte
-	for index := 0; index < 86; index++ {
+	for index := 0; index < (nativeSourceLimit+47)/48; index++ {
 		reply := admin(fmt.Sprintf("source read %d", index))
 		if reply == "EOF" {
 			break
@@ -317,7 +320,7 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 		}
 		script = append(script, chunk...)
 	}
-	if len(script) == 0 || len(script) > 4096 {
+	if len(script) == 0 || len(script) > nativeSourceLimit {
 		t.Fatalf("invalid bundled native script length %d", len(script))
 	}
 	digest := sha256.Sum256(script)
@@ -427,8 +430,9 @@ func TestNativeBotUsesSharedMastAndPrivateStagedSource(t *testing.T) {
 		t.Fatalf("recovery did not restore the original bundled source: %s", reply)
 	}
 	checkDataAfterRestart()
-	if api := admin("source api"); !strings.Contains(api, "commands=8") {
-		t.Fatalf("native source API lost its legacy commands field: %s", api)
+	if api := admin("source api"); !strings.Contains(api, " commands=32 ") ||
+		!strings.Contains(api, fmt.Sprintf(" source-bytes=%d ", nativeSourceLimit)) {
+		t.Fatalf("native source API does not advertise the host command and source limits: %s", api)
 	}
 	packageAPI := admin("source api package")
 	for _, capability := range []string{"cmdmeta", "mesh-chan", "mesh-dest"} {

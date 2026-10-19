@@ -43,7 +43,7 @@ public:
             BotVmStats &stats, char *error, size_t errorSize,
             BotVmLimits limits = {});
   const BotManifestView &manifest() const;
-  void setHelp(const BotManifest &installed);
+  void setHelp(const BotManifestView &installed);
   void setGeneration(uint32_t generation);
   uint8_t subscriptions() const;
   void setEventEpoch(std::atomic<uint32_t> *epoch);

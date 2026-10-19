@@ -23,7 +23,7 @@ bool splitBotSources(const char *source, size_t size, BotSourcePart *parts,
                      unsigned &count, char *error, size_t capacity) {
   count = 0;
   constexpr char prefix[] = "--@meshcore-sources/1\n";
-  if (!source || !size || size > BotSourceLimit || memchr(source, 0, size))
+  if (!source || !size || size > BotLuaSourceLimit || memchr(source, 0, size))
     return fail(error, capacity, "Lua sources require bounded nonempty text");
   if (size < sizeof(prefix) - 1 || memcmp(source, prefix, sizeof(prefix) - 1)) {
     constexpr char marker[] = "--@meshcore-sources";
@@ -36,7 +36,7 @@ bool splitBotSources(const char *source, size_t size, BotSourcePart *parts,
   size_t at = sizeof(prefix) - 1;
   while (at < size) {
     if (count == BotSourcePartLimit)
-      return fail(error, capacity, "Lua sources exceed eight-source limit");
+      return fail(error, capacity, "Lua sources exceed the " ONCHIP_BOT_TEXT(ONCHIP_BOT_MODULE_LIMIT) "-source limit");
     const char *end = static_cast<const char *>(memchr(source + at, '\n', size - at));
     if (!end || size_t(end - source - at) > 64)
       return fail(error, capacity, "Lua source header missing or too long");
@@ -81,7 +81,7 @@ bool splitBotSources(const char *source, size_t size, BotSourcePart *parts,
     size_t bytes = 0;
     while (cursor < size_t(end - source)) {
       const char c = source[cursor++];
-      if (c < '0' || c > '9' || bytes > BotSourceLimit / 10)
+      if (c < '0' || c > '9' || bytes > BotLuaSourceLimit / 10)
         return fail(error, capacity, "Invalid Lua source byte length");
       bytes = bytes * 10 + unsigned(c - '0');
     }
@@ -467,7 +467,7 @@ command("forget","key:string:32","Delete a private note by key")
 command("notes","prefix?:string:32","List your notes; use PREFIX to shorten the list")
 command("list-memories","prefix?:string:32","Alias of notes","notes")
 )lua";
-static_assert(sizeof(BotDefaultSource) - 1 <= BotSourceLimit, "Bundled source exceeds staging capacity");
+static_assert(sizeof(BotDefaultSource) - 1 <= BotLuaSourceLimit, "Bundled source exceeds the Lua source limit");
 const char BotNetworkSource[] = R"lua(
 local function home(name,args)
   local r=rpc.call("home",name,args)

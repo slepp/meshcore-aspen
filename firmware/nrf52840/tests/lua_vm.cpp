@@ -69,7 +69,7 @@ static void parserStackValidation() {
     assert(session.load(accepted.data(), accepted.size(), 1, stats, error, sizeof(error)));
     assert(session.manifest().count == 1 && session.manifest().find("nesting"));
     const auto nested = nestedBotFunctions(39, global);
-    assert(nested.size() <= BotSourceLimit);
+    assert(nested.size() <= BotLuaSourceLimit);
     assert(!session.load(nested.data(), nested.size(), 2, stats, error, sizeof(error)) &&
            strstr(error, "C stack overflow") && !session.manifest().count);
     assert(session.load(BotDefaultSource, strlen(BotDefaultSource), 3, stats, error, sizeof(error)));
@@ -84,14 +84,26 @@ static void customCapacity() {
   assert(file);
   std::string source((std::istreambuf_iterator<char>(file)), {});
   source += " _station=station function station(index) sleep(1) return _station(index) end";
-  assert(source.size() <= BotSourceLimit);
-  source.append(BotSourceLimit - source.size(), ' ');
+  assert(source.size() <= BotLuaSourceLimit);
+  source.append(BotLuaSourceLimit - source.size(), ' ');
   BotSession session;
   BotVmStats stats;
   char error[128]{};
   const bool denseLoaded = session.load(source.data(), source.size(), 1, stats, error, sizeof(error));
   if (!denseLoaded) fprintf(stderr, "Pine dense catalog rejected: %s\n", error);
   assert(denseLoaded && session.manifest().count == 8 && stats.peakBytes <= BotVmLimits{}.heapBytes);
+  // Compact Pine keeps the 4096-byte set, eight commands and its parser budget.
+  static_assert(BotLuaSourceLimit == 4096 && BotSourceStageLimit == 4096 && BotCommandLimit == 8 &&
+                BotModuleLimit == 8 && BotSourcePartLimit == 8 && BotGlobalInspectionLimit == 64 &&
+                BotVmLimits{}.parserSteps == 16384 && BotVmLimits{}.heapBytes == 48 * 1024);
+  {
+    BotSession oversized;
+    const auto beyond = source + " ";
+    assert(!oversized.load(beyond.data(), beyond.size(), 1, stats, error, sizeof(error)) &&
+           !oversized.manifest().count);
+    assert(!BotVm::validate(beyond.data(), beyond.size(), stats, error, sizeof(error)) &&
+           strstr(error, "1..4096 bytes"));
+  }
   assert(session.start(1, event("!summary"), error, sizeof(error)));
   BotSession::Result catalog;
   BotIoRequest waiting;

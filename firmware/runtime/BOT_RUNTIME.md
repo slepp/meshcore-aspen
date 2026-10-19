@@ -343,7 +343,7 @@ within one second share an ACK.
 | --- | --- | --- |
 | `function hello(name) ... end` | Automatically exports `!hello`; inferred arguments are required bounded string tokens | Eight custom commands; local and `_` helpers are not auto-exported |
 | `command(name, schema, help[, export[, permission[, example]]])` | Declares typed arguments, alias/help/permission metadata; no operation result | Initialization only; four arguments, 96-byte schema; declarations restrict admission, never grant authority |
-| `module(name, loader)` | Declares a package-local loader returning a table | Initialization only; eight modules within the same 4096-byte source |
+| `module(name, loader)` | Declares a package-local loader returning a table | Initialization only; 16 modules within the same source set (8 on compact Pine) |
 | `require(name)` | Cached module table, shared within the source generation | Declared modules only; no filesystem/library search; cycles or loader I/O reject staging |
 | `events.on(kind, function_name)` | Registers one named handler for each supported kind | Initialization; `startup`, `connectivity`, `message`, `node_status`; owner event-mask grant |
 | `events.every(seconds, function_name)` | Registers one channel-independent recurring handler | Initialization; 15..86400 seconds; owner event bit 16; skipped missed ticks |
@@ -460,8 +460,8 @@ reuse `home` instead of allocating a second RPC endpoint.
 | `node.admin(command)` | Yielded bounded backend result text | Authenticated trusted-owner private DM only; limited bot admin operations |
 | `command_help([name[, page]])` | Permission-filtered bounded help text | Name or numeric page text; invalid pages raise |
 | `tostring(number[, places])` | Native numeric text | Signed integers or finite numbers with magnitude ≤1e9; optional 0..6 decimal places, rounded half away from zero; not Lua's general-purpose `tostring` |
-| `string.sub(text, first[, last])`, `string.lower(text)` | Lua substring and case folding | Input ≤4096 bytes; Lua's byte indexing and negative indices |
-| `string.find(text, literal, start, true)` | First and last byte indices, or `nil` | Inputs ≤4096 bytes; literal searches only; the fourth argument must be true |
+| `string.sub(text, first[, last])`, `string.lower(text)` | Lua substring and case folding | Input ≤4096 bytes per call; Lua's byte indexing and negative indices |
+| `string.find(text, literal, start, true)` | First and last byte indices, or `nil` | Inputs ≤4096 bytes per call; literal searches only; the fourth argument must be true |
 | `ping()`, `test()`, `path()`, `mt()`, `help(...)` | Composable bundled diagnostic text | Current invocation context; nested calls share quotas and do not independently reply |
 
 Compact Pine omits `node.packet_report` and `string` (`nil`); these APIs are
@@ -506,22 +506,26 @@ There is **one active cooperative Lua source generation**, not mutually hostile
 plugins. Functions/modules share globals and cached tables intentionally.
 Installation or rollback replaces the whole custom set; quarantine affects
 custom handlers, not one independent package. Native diagnostics and mast
-recovery remain separate. Source is text-only, at most **4096 B including its
-metadata**, with eight custom commands and eight declared modules.
+recovery remain separate. Source is text-only. ESP32 and the Linux host accept
+at most **32,768 B including metadata**, 32 custom commands and 16 declared
+modules or source-set entries; compact Pine keeps 4096 B and eight of each.
+`source api` reports `commands=` and `source-bytes=` for the running build.
 
-Four job slots include one reserved native diagnostic slot. Each invocation
-has at most eight native I/O operations (36 for Lua commands in a trusted owner's
+Four job slots include one reserved native diagnostic slot. Each invocation has
+at most eight native I/O operations (36 for Lua commands in a trusted owner's
 private DM, or 16 on compact profiles), a 10,000-instruction bound and 100 ms
-cumulative active execution budget across resumes. The source generation has a 96 KiB allocator budget
-and a 16,384-step parser bound; installed-source loading is limited to one second
-and initialization to 100 ms. Compact profiles retain 20 ms invocation, 50 ms initialization and a 330 ms installed-source
-load limit; exactly matching bundled Lua bytes have a one-second recovery
-allowance. Explicit nondefault loader limits remain authoritative.
-Suspended storage/radio/network/timer time is separate
-from active execution. Native providers enforce their own deadlines and token
-fences; they do not block radio dispatch or create unlimited Lua tasks.
-There is no `io`, `os`, `debug`, arbitrary socket/filesystem/native module
-loading or unrestricted dynamic code-loading API.
+cumulative active execution budget across resumes. The source generation has a
+256 KiB allocator budget (48 KiB on compact Pine) and a parser bound of 12,288
+steps plus the source limit (45,056 on ESP32 and the host, 16,384 on Pine);
+installed-source loading is limited to one second and initialization to 100 ms.
+Compact profiles retain 20 ms invocation, 50 ms initialization and a 330 ms
+installed-source load limit; exactly matching bundled Lua bytes have a
+one-second recovery allowance. Explicit nondefault loader limits remain
+authoritative. Suspended storage/radio/network/timer time is separate from
+active execution. Native providers enforce their own deadlines and token fences;
+they do not block radio dispatch or create unlimited Lua tasks. There is no
+`io`, `os`, `debug`, arbitrary socket/filesystem/native module loading or
+unrestricted dynamic code-loading API.
 
 Source replacement, bot stop and restart cancel coroutines/waits and discard
 late completions. They retain scoped durable data and consumed claims, not Lua
@@ -1134,28 +1138,28 @@ and more than four inferred command parameters are rejected; at most 64 global e
 Reserved names are rejected even without explicit registration. Inspection
 runs under initialization quotas without exposing Lua's debug library.
 
-`command(name, schema, help[, export[, permission[, example]]])` binds a command to a global Lua
-function (the same name unless `export` is supplied). It is optional: use it
-for typed/optional arguments, narrower bounds, custom help or command aliases.
-Permission defaults to `public`; alternatives are `dm`, `owner`, `channel`,
-`shared` (verified channel plus shared-state grant), `reminder` and `home`.
-The same predicate filters discovery and external dispatch. Declarations
-restrict admission but never grant a capability or make a nickname an owner.
-Optional arguments accept `nil`; examples are printable ASCII, at most 64
-bytes. Ordinary cooperating Lua calls retain the original invocation and
-native-helper grants; these declarations do not add per-function sandboxes.
-Explicitly bound exports are not also registered implicitly under another name.
-Lua export names are lowercase identifiers, up to 24 bytes. Explicit public
-command names may also contain dashes: for example,
+`command(name, schema, help[, export[, permission[, example]]])` binds a command
+to a global Lua function (the same name unless `export` is supplied). It is
+optional: use it for typed/optional arguments, narrower bounds, custom help or
+command aliases. Permission defaults to `public`; alternatives are `dm`,
+`owner`, `channel`, `shared` (verified channel plus shared-state grant),
+`reminder` and `home`. The same predicate filters discovery and external
+dispatch. Declarations restrict admission but never grant a capability or make a
+nickname an owner. Optional arguments accept `nil`; examples are printable
+ASCII, at most 64 bytes. Ordinary cooperating Lua calls retain the original
+invocation and native-helper grants; these declarations do not add per-function
+sandboxes. Explicitly bound exports are not also registered implicitly under
+another name. Lua export names are lowercase identifiers, up to 24 bytes.
+Explicit public command names may also contain dashes: for example,
 `command('read-memories','','Read memories','list_memories')` dispatches
 `!read-memories` to the ordinary Lua function `list_memories()`. No automatic
 dash/underscore conflation occurs; duplicate command names and inferred/
-explicit name collisions reject staging. Each custom set can register eight commands;
-explicit builtin overrides count toward those eight slots. Builtin names
-remain reserved for ordinary declarations; use `override_command` below.
-Manifest help is up to 64 printable ASCII bytes. Duplicate names, missing
-exports, invalid schemas and initialization side effects reject installation.
-Only initialization can register commands.
+explicit name collisions reject staging. Each custom set can register 32
+commands (eight on compact Pine); explicit builtin overrides count toward those
+slots. Builtin names remain reserved for ordinary declarations; use
+`override_command` below. Manifest help is up to 64 printable ASCII bytes.
+Duplicate names, missing exports, invalid schemas and initialization side
+effects reject installation. Only initialization can register commands.
 
 Schemas are comma-separated, at most 96 bytes and four positional arguments:
 `name:string:N` is one nonempty token; `name:hex:N` is a nonempty hex token
@@ -1280,7 +1284,7 @@ handler** button starts a custom set without copying native diagnostics.
 ### Compact package metadata and compatible schema changes
 
 The developer CLI wraps ordinary Lua source in a first-line comment held inside
-the same 4,096-byte source envelope:
+the same source envelope:
 
 ```text
 --@meshcore-bot/1;name=example;version=1.0.0;runtime=lua-5.5.1;api=named-commands-v1;caps=kv;schema=none;rollback=none
@@ -1365,9 +1369,12 @@ uses immutable copied userdata views. Native helper/diagnostic bindings are
 protected through an empty environment proxy, while ordinary bot globals
 remain mutable.
 
-Limits cover editable source (4,096 bytes), allocator live memory (96 KiB, PSRAM-only
-on ESP32, per state), executed VM instructions (10,000 per initialization or
-invocation), lexer steps (16,384), and C-call depth (40).
+Limits cover editable source (32,768 bytes; 4,096 on compact Pine), allocator
+live memory (256 KiB, PSRAM-only on ESP32, per state; 48 KiB on Pine), executed
+VM instructions (10,000 per initialization or invocation), lexer steps (12,288
+plus the source limit), and C-call depth (40). After initialization the loader
+walks at most 128 globals (64 on Pine); the bundled environment uses about 55,
+so keep helpers in module tables or locals rather than globals.
 Retained startup failures distinguish load/init deadlines from the Lua heap
 limit and allocator failure. The existing source/fault response reports the
 deadline's elapsed/limit microseconds and peak Lua allocation, or the failed
@@ -1398,13 +1405,14 @@ expiry rules. Source compilation is a separate, explicitly requested maintenance
 operation with the loader bounds below. Packet hooks retain their separate
 fuel and microsecond limits and execute on the radio dispatch path.
 
-The aggregate load allowance covers the bundled source plus up to 4,096
-editable bytes; it does not relax invocation execution. `bot-vm-test` includes
+The aggregate load allowance covers the bundled source plus a full editable
+set; it does not relax invocation execution. `bot-vm-test` includes
 a 20-us synthetic-clock regression for the bundle plus a maximum-size editable
 fixture. Its timings model budget consumption, not physical ESP32 execution.
 The source byte count and peak allocations depend on the selected bundle.
 Load has a one-second limit (330 ms on compact profiles), independent of the active execution,
-96 KiB heap and 16,384 parser-step limits.
+heap and parser-step limits. ESP32 load time for a 32 KiB set is unmeasured;
+check the reported load time after installing a large set.
 
 `BotVmLimits.initWallUs` selects initialization headroom independently of
 `wallUs`, which bounds active invocation and one-shot cleanup. `bot limits`
@@ -1552,8 +1560,9 @@ after reboot. `source api events` reports the contract.
 
 ### Declared package-local modules
 
-Declare up to eight named module loaders inside the existing 4,096-byte source
-envelope. `require(name)` resolves **only** these native registered declarations:
+Declare up to 16 named module loaders (eight on compact Pine) inside the
+source-set envelope. `require(name)` resolves **only** these native registered
+declarations:
 
 ```lua
 module('greeting', function()
@@ -1579,10 +1588,11 @@ new VM or privacy boundary. Native helper names and reserved commands remain
 protected. There is no filesystem search, native library loading, binary chunk
 loading, package path, runtime declaration or host-side concatenation.
 
-Source export, install, restore, rollback and reboot carry these declarations
-as ordinary source bytes in the existing checked source journal. Reload starts
-a new module cache; durable KV remains unchanged. The command registry still
-allows eight exported custom commands. `source api modules` reports the bounds.
+Source export, install, restore, rollback and reboot carry these declarations as
+ordinary source bytes in the existing checked source journal. Reload starts a
+new module cache; durable KV remains unchanged. The command registry allows 32
+exported custom commands (eight on compact Pine). `source api modules` reports
+the bounds.
 
 ### Atomic KV and owner data snapshots
 
@@ -1767,12 +1777,12 @@ installed export in numbered pages, rather than dropping names after one RF
 message. Individual command descriptions and examples are paginated too.
 
 **Source/migration:** these four names and `utility` are newly protected.
-Rename conflicting installed definitions before upgrading; eight custom
-exports remain available. Firmware loads a separate **633-byte** trusted
+Rename conflicting installed definitions before upgrading; the custom command
+slots remain available. Firmware loads a separate **633-byte** trusted
 Lua utility chunk alongside the **3,955-byte** core chunk before
 inspecting native declarations. Both share one environment and cumulative
-compile/init budgets; only firmware supplies this extra chunk. The editable
-source/upload limit remains 4,096 bytes, with full-size source tests.
+compile/init budgets; only firmware supplies this extra chunk. It does not
+reduce the editable source/upload limit.
 That utility slice added four entries; the current registry has 30 built-ins,
 including the network and board commands below. Source/role/KV/management journals and
 signed framing are unchanged. `source api utility` reports the capabilities.
@@ -1887,8 +1897,8 @@ functions or aliases before upgrading. The older raw-storage comparison
 fixture is now `shared_board`. Firmware loads an independently bounded
 **2,243-byte** board chunk alongside the core/utility/network chunks under
 the same cumulative parser, compile/init, heap and invocation budgets.
-The registry has 21 built-ins and still eight custom exports; editable source
-remains 4,096 bytes. KV/role/source journals and signed status/receipt vectors
+The registry has 21 built-ins; the board chunk does not use custom command
+slots or editable source bytes. KV/role/source journals and signed status/receipt vectors
 are unchanged. `source api board` reports the grant, DM denial, prefix and limits.
 
 ### Working retained-state and timer APIs
@@ -2732,8 +2742,8 @@ failed/late TX is not retried as another caller.
 conflicting custom handlers before upgrade (the older raw-RPC example above
 is now `forecast`). Firmware supplies a separate **1,501-byte** trusted Lua
 chunk alongside core/utility definitions, under the same cumulative parser,
-compile/init, heap and invocation limits. There are 21 built-ins and still
-eight custom exports; editable uploads remain at most 4,096 bytes. No journal,
+compile/init, heap and invocation limits. There are 21 built-ins; the chunk
+does not use custom command slots or editable source bytes. No journal,
 identity, socket/task count, HTTPS timeout or grant is changed.
 `source api services` reports the commands, private scope and argument bounds.
 
@@ -2826,19 +2836,19 @@ Approved `http.get`, `http.post`, `rpc.call` and bounded `json` are available in
 the ESP32 and production native-host Lua runtime. See [configured network API](NETWORK_API.md)
 for a runnable setup, numeric limits and streamed package fetch commands.
 
-Native administration can enqueue one approved JSON GET on the same HTTPS
-worker with `commandBotService().requestOwnerFetch(name)` **after authenticating
-the owner**. `pollOwnerFetch(result)` returns a single bounded JSON response
-(at most 2048 bytes), HTTP status and explicit error code; `cancelOwnerFetch()`
-ends the caller's wait and discards any late completion. It never accepts a
-URL or adds a connection task. The authenticated `source fetch package SHA256`
-command instead streams 1..4096 raw source bytes through the shared owner slot,
-checks the expected hash and runs normal metadata/schema/runtime/Lua readback
-validation before the existing source journal and activation path.
+Native administration can enqueue one approved JSON GET on the same HTTPS worker
+with `commandBotService().requestOwnerFetch(name)` **after authenticating the
+owner**. `pollOwnerFetch(result)` returns a single bounded JSON response (at
+most 2048 bytes), HTTP status and explicit error code; `cancelOwnerFetch()` ends
+the caller's wait and discards any late completion. It never accepts a URL or
+adds a connection task. The authenticated `source fetch package SHA256` command
+instead streams raw source bytes, up to the source limit, through the shared
+owner slot, checks the expected hash and runs normal metadata/schema/runtime/Lua
+readback validation before the existing source journal and activation path.
 Missing aliases, HTTP failures, cancellation, hash/schema mismatch or
 configuration revocation leave the active source unchanged. Source/package
-import remains behind authenticated owner administration; a successful GET
-alone does not install or trust remote source.
+import remains behind authenticated owner administration; a successful GET alone
+does not install or trust remote source.
 
 This deliberately uses a configured address **with an independently verified
 TLS hostname**, rather than the SDK's blocking `hostByName()` path (which can

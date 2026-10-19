@@ -432,7 +432,7 @@ struct PackageSink : BotHttpsBodySink {
   std::string bytes;
   bool committed = false, aborted = false;
   unsigned begins = 0;
-  bool begin(uint32_t size) override { ++begins; return size == BotSourceLimit; }
+  bool begin(uint32_t size) override { ++begins; return size == BotSourceStageLimit; }
   bool write(const uint8_t *data, size_t size) override {
     bytes.append(reinterpret_cast<const char *>(data), size); return true;
   }
@@ -442,7 +442,7 @@ struct PackageSink : BotHttpsBodySink {
   void abort(const char *) override { aborted = true; bytes.clear(); }
 };
 static void packageWorker() {
-  const std::string source(BotSourceLimit, 'x');
+  const std::string source(BotSourceStageLimit, 'x');
   SHA256 hash;
   uint8_t digest[32]{};
   hash.update(source.data(), source.size());
@@ -490,7 +490,7 @@ static void packageWorker() {
   Transport transport;
   transport.blocked = false;
   transport.response = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
-      "Content-Length: 4096\r\n\r\n" + source;
+      "Content-Length: " + std::to_string(source.size()) + "\r\n\r\n" + source;
   BotWorker fresh;
   assert(fresh.begin(identity, &transport));
   fresh.setHomeAccess(true);
@@ -506,7 +506,7 @@ static void packageWorker() {
     return complete;
   });
   assert(fetched.id == 42 && fetched.state == BotHttpsFetchResult::Complete &&
-         fetched.bytes == BotSourceLimit && fetched.httpStatus == 200 &&
+         fetched.bytes == BotSourceStageLimit && fetched.httpStatus == 200 &&
          fetched.networkSubmitted && !memcmp(fetched.sha256, digest, 32) &&
          sink.committed && !sink.aborted && sink.bytes == source &&
          transport.opens == 1 && transport.closes >= 1);
@@ -557,7 +557,8 @@ static void packageWorker() {
          cancelled.aborted && cancelledTransport.opens == 1);
   assert(!interrupted.pollPackageFetch(fetched));
   interrupted.stop();
-  puts("PASS 4096-byte package GET on owner slot: shared-socket RPC/edit, verified stream, post-commit unknown cleanup, cancel/late-result isolation and local progress");
+  printf("PASS %zu-byte package GET on owner slot: shared-socket RPC/edit, verified stream, post-commit unknown cleanup, cancel/late-result isolation and local progress\n",
+         BotSourceStageLimit);
 }
 #endif
 static void queuedDeadlines() {

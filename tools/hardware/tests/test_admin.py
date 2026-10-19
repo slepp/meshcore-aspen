@@ -184,6 +184,8 @@ class MastClientTests(unittest.TestCase):
                 def command(text):
                     if text == prefix + "hash":
                         return "SHA256 " + hashlib.sha256(source).hexdigest() + " gen=7"
+                    if text == prefix + "api":
+                        return "API named-commands-v1 lua=5.5.1 commands=32 source-bytes=32768"
                     self.assertTrue(text.startswith(prefix + "read "))
                     offset = int(text.split()[-1]) * 48
                     return "DATA " + source[offset:offset + 48].hex() if offset < len(source) else "EOF"
@@ -683,15 +685,37 @@ class MastClientTests(unittest.TestCase):
         manifest = "SHA256 " + hashlib.sha256(source).hexdigest() + " gen=3"
         replies = [manifest, "DATA " + source[:48].hex(), "DATA " + source[48:].hex(),
                    "EOF", manifest]
-        with patch.object(mast_cli, "checked", side_effect=replies):
+        with patch.object(mast_cli, "checked", side_effect=["API named-commands-v1 source-bytes=32768"] + replies) as checked:
             self.assertEqual(mast_cli.download(None), source)
+        self.assertEqual(checked.call_args_list[0].args[1], "source api")
         for last in (manifest.replace("gen=3", "gen=4"), "SHA256 " + "0" * 64 + " gen=3"):
             with patch.object(mast_cli, "checked", side_effect=replies[:-1] + [last]):
                 with self.assertRaisesRegex(ValueError, "changed or failed"):
-                    mast_cli.download(None)
+                    mast_cli.download(None, 4096)
         with patch.object(mast_cli, "checked", side_effect=[manifest, "DATA zz"]):
             with self.assertRaisesRegex(ValueError, "source read"):
-                mast_cli.download(None)
+                mast_cli.download(None, 4096)
+        # A 4096-byte device never sees read index 86; the loop ends at its limit.
+        full = bytes(range(256)) * 16
+        reads = ["DATA " + full[i:i + 48].hex() for i in range(0, 4096, 48)]
+        exact = "SHA256 " + hashlib.sha256(full).hexdigest() + " gen=1"
+        with patch.object(mast_cli, "checked", side_effect=["API named-commands-v1 lua=5.5.1"] +
+                          [exact] + reads + [exact]) as checked:
+            self.assertEqual(mast_cli.download(None), full)
+        self.assertNotIn("source read 86", [call.args[1] for call in checked.call_args_list])
+
+    def test_advertised_source_limit(self):
+        self.assertEqual(mast_cli.advertised_source_limit(
+            "API named-commands-v1 lua=5.5.1 commands=32 arguments=4 source-bytes=32768 runtime=shared-v1"), 32768)
+        self.assertEqual(mast_cli.advertised_source_limit("API named-commands-v1 lua=5.5.1 commands=8"), 4096)
+        for api, size in (("Owner GET JSON=2048; Package GET alias=package raw=1..32768 "
+                           "type=text/plain|application/octet-stream|application/x-lua SHA256=source", "32768"),
+                          ("Owner GET JSON=2048; Package GET alias=package raw=1..4096 "
+                           "type=text/plain|application/octet-stream|application/x-lua SHA256=source", "4096")):
+            self.assertEqual(mast_cli.PACKAGE_FETCH_API.fullmatch(api)[1], size)
+        self.assertEqual(mast_cli.WASM_FETCH_API.fullmatch(
+            "Package GET runtime=wamr-2.4.1 alias=package raw=1..32768 "
+            "type=application/wasm|application/octet-stream SHA256=source")[1], "32768")
 
     def test_scheduler_data_requires_explicit_non_rearming_policy(self):
         for kind in ("timers", "reminders"):
@@ -1119,12 +1143,15 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
                 mast_cli.reciprocal_path(secret, sender, target, corrupted, path)
 
     def test_resumable_bounded_installer(self):
-        source = b"function hello(name) reply('Hello '..name) end command('hello','name:string:32','Greet')" + b" " * 4000
+        source = b"function hello(name) reply('Hello '..name) end command('hello','name:string:32','Greet')" + b" " * 24000
         identifier = hashlib.sha256(source).hexdigest()[:16]
         commands = []
+        api = "API named-commands-v1 lua=5.5.1 commands=32 arguments=4 source-bytes=32768 runtime=shared-v1"
 
         class Client:
             def command(self, text):
+                if text == "source api":
+                    return api
                 commands.append(text)
                 self_test.assertLessEqual(len(text) + 17, 162)
                 if text.startswith("source begin "):
@@ -1144,9 +1171,17 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
         with patch("tools.hardware.admin.time.sleep"):
             mast_cli.install(Client(), source, lambda _: None)
         self.assertTrue(commands[1].startswith(f"source chunk {identifier} 2 "))
-        for invalid in (b"", b" " * 4097, b"\x1bLua", b"return\0"):
+        last = f"source chunk {identifier} {(len(source) + 47) // 48 - 1} "
+        self.assertTrue(any(command.startswith(last) for command in commands))
+        for invalid in (b"", b" " * 32769, b"\x1bLua", b"return\0"):
             with self.assertRaises(ValueError):
                 mast_cli.install(Client(), invalid)
+        commands.clear()
+        for api in ("API named-commands-v1 lua=5.5.1 commands=8 source-bytes=4096",
+                    "API named-commands-v1 lua=5.5.1 commands=8"):
+            with self.assertRaisesRegex(ValueError, f"{len(source)} bytes; this device accepts at most 4096"):
+                mast_cli.install(Client(), source)
+        self.assertEqual(commands, [])
 
     def test_installer_never_treats_error_as_activation(self):
         class Client:
@@ -1169,6 +1204,8 @@ WIFI_PASSWORD="fixture-password" # synthetic unit-test value
 
         class Client:
             def command(self, text):
+                if text == "source api":
+                    return "API named-commands-v1 lua=5.5.1 source-bytes=32768"
                 commands.append(text)
                 if text.startswith("source begin "):
                     return f"ACK {digest[:16]} next=0"

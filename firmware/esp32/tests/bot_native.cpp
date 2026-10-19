@@ -1366,7 +1366,7 @@ static void spiffs_source_loading() {
     assert(f.bot.pollSourceResult(result) &&
            result.operation == BotWorker::Operation::StageFile && result.ok == success);
     assert(filesystem_test::largestRead <= 256 &&
-           filesystem_test::bytesRead <= BotSourceLimit + 1);
+           filesystem_test::bytesRead <= BotSourceStageLimit + 1);
     if (error) assert(strstr(result.error, error));
     return result;
   };
@@ -1377,7 +1377,7 @@ static void spiffs_source_loading() {
   };
   hash(source);
   assert(!f.bot.stageSourceFile(0, digest));
-  assert(!f.bot.stageSourceFile(BotSourceLimit + 1, digest));
+  assert(!f.bot.stageSourceFile(BotSourceStageLimit + 1, digest));
   assert(!f.bot.stageSourceFile(source.size(), nullptr));
   stage(source.size(), false, "unavailable");
   activate(false);
@@ -1408,8 +1408,8 @@ static void spiffs_source_loading() {
   filesystem_test::readDelayMs = 0;
   assert(late.sourceReadMs >= BotSourceReadBudgetMs);
   activate(false);
-  write(std::string(BotSourceLimit + 1, ' '));
-  stage(BotSourceLimit, false, "length");
+  write(std::string(BotSourceStageLimit + 1, ' '));
+  stage(BotSourceStageLimit, false, "length");
   assert(filesystem_test::readCalls == 0);
   activate(false);
   const std::string binary("\x04\x22\x4d\x18\0\0", 6); // A codec frame is not source.
@@ -1420,10 +1420,12 @@ static void spiffs_source_loading() {
   stage(17, false, "budget");
   activate(false);
   auto full = source;
-  full.resize(BotSourceLimit, ' ');
+  full.resize(BotSourceStageLimit, ' ');
   write(full);
   stage(full.size(), true);
-  assert(filesystem_test::bytesRead == BotSourceLimit && filesystem_test::readCalls == 17);
+  // 256-byte reads, then one probe for growth.
+  assert(filesystem_test::bytesRead == BotSourceStageLimit &&
+         filesystem_test::readCalls == BotSourceStageLimit / 256 + 1);
   activate(true);
   assert(f.command(peer, "!custom bounded") == "SPIFFS:bounded");
   assert(SPIFFS.exists(BotStagedSourcePath)); // The core never edits installer storage.
@@ -2436,7 +2438,8 @@ static void native_source_api_capacities() {
   }
   const std::string api = f.administer("source api");
   const std::string expected =
-      "API named-commands-v1 lua=5.5.1 commands=8 arguments=4 source-bytes=4096 runtime=shared-v1 jobs=" +
+      "API named-commands-v1 lua=5.5.1 commands=" + std::to_string(BotCommandLimit) +
+      " arguments=4 source-bytes=" + std::to_string(BotLuaSourceLimit) + " runtime=shared-v1 jobs=" +
       std::to_string(BotJobLimit) + " kv=2 sleep=1 mesh=dm,wait,trace,advert rpc=1";
   assert(api == expected && api.size() < 146);
   const std::string atomic = f.administer("source api atomic");
@@ -2444,7 +2447,8 @@ static void native_source_api_capacities() {
       " keys=distinct scope=single outcome=committed,conflict,unknown,rejected recovery=redo");
   assert(atomic.size() < 146);
   const std::string overrides = f.administer("source api overrides");
-  assert(overrides == "Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=8");
+  assert(overrides == "Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=" +
+                   std::to_string(BotCommandLimit));
   assert(overrides.size() < 146);
   for (const char *query : {"source api sources", "source api repeaters", "source api bundled",
                            "source api events", "source api find-path", "source api find-best-path", "source api repeater-cli"}) {
@@ -2457,8 +2461,20 @@ static void native_source_api_capacities() {
   char hash[65]{}, upload[160]{};
   mesh::Utils::sha256(digest, sizeof(digest), reinterpret_cast<const uint8_t *>(candidate), strlen(candidate));
   for (unsigned i = 0; i < 32; ++i) snprintf(hash + i * 2, 3, "%02x", digest[i]);
+  // Chunk and read indexes follow the source limit: 48-byte pieces, 0..last.
+  const unsigned last = unsigned((BotLuaSourceLimit + 47) / 48 - 1);
+  assert(f.administer(("source read " + std::to_string(last + 1)).c_str()) ==
+         "Error: read index must be 0.." + std::to_string(last));
+  assert(f.administer(("source read " + std::to_string(last)).c_str()) == "EOF");
+  snprintf(upload, sizeof(upload), "source begin %.16s %u %s", hash, unsigned(BotLuaSourceLimit + 1), hash);
+  assert(f.administer(upload) ==
+         "Error: begin requires ID16, 1.." + std::to_string(BotLuaSourceLimit) + " bytes and SHA256");
   snprintf(upload, sizeof(upload), "source begin %.16s %u %s", hash, unsigned(strlen(candidate)), hash);
   assert(f.administer(upload).find("ACK ") == 0);
+  assert(f.administer(("source chunk " + std::string(hash, 16) + " " + std::to_string(last + 1) + " 00").c_str()) ==
+         "Error: invalid upload/chunk");
+  assert(f.administer(("source chunk " + std::string(hash, 16) + " " + std::to_string(last) + " 00").c_str()) ==
+         "Error: expected chunk 0");
   std::string encoded;
   for (const char *p = candidate; *p; ++p) {
     char byte[3]; snprintf(byte, sizeof(byte), "%02x", unsigned(uint8_t(*p)));
@@ -4325,8 +4341,8 @@ static bool sourceResult(Fixture &fixture, BotWorker::Result &result) {
 static std::string hostSourceSha256(const std::string &source);
 static bool stageHostSource(Fixture &fixture, const std::string &source,
                             bool activate, std::string &error) {
-  if (source.empty() || source.size() > BotSourceLimit) {
-    error = "source must be 1..4096 bytes"; return false;
+  if (source.empty() || source.size() > BotSourceStageLimit) {
+    error = "source must be 1.." + std::to_string(BotSourceStageLimit) + " bytes"; return false;
   }
   if (activate) {
     const auto hash = hostSourceSha256(source), id = hash.substr(0, 16);
@@ -4670,7 +4686,7 @@ static void native_repeater_cli(const char *sourcePath) {
     const std::string bytes{std::istreambuf_iterator<char>(file), {}};
     combined += "--@source " + std::string(part.first) + " " + std::to_string(bytes.size()) + "\n" + bytes + "\n";
   }
-  assert(combined.size() <= BotSourceLimit);
+  assert(combined.size() <= BotSourceStageLimit);
   if (!stageHostSource(f, combined, true, error)) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
@@ -4879,7 +4895,7 @@ static void native_runtime_admission_isolation(const char *modules) {
     assert(nvs_get_blob(handle, journal, record.data(), &size) == ESP_OK &&
            queued_tx::get32(record.data()) == 1 && record[8] < 3);
     const unsigned slot = record[8];
-    assert(broken.size() <= BotSourceLimit);
+    assert(broken.size() <= BotSourceStageLimit);
     queued_tx::put32(record.data() + 12 + slot * 4, uint32_t(broken.size()));
     mesh::Utils::sha256(record.data() + 24 + slot * 32, 32,
                        reinterpret_cast<const uint8_t *>(broken.data()), broken.size());
@@ -5067,8 +5083,8 @@ static bool readHostSource(const std::string &path, std::string &source, std::st
   }
   file.seekg(0, std::ios::end);
   const auto end = file.tellg();
-  if (end <= 0 || uint64_t(end) > BotSourceLimit) {
-    error = "package source must be 1..4096 bytes"; return false;
+  if (end <= 0 || uint64_t(end) > BotSourceStageLimit) {
+    error = "package source must be 1.." + std::to_string(BotSourceStageLimit) + " bytes"; return false;
   }
   source.resize(size_t(end));
   file.seekg(0, std::ios::beg);

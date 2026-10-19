@@ -396,7 +396,7 @@ interval setters; native validation errors and units remain authoritative.
 | Running repeater/room name and repeat policy | Guided native owner controls; name preserves identity and both settings persist | Native app/role CLI |
 | Repeater/room path-hash mode and advert intervals | Scoped role console using existing owner helpers; `get`/`stats`/help read back settings and telemetry | Native app/role CLI for other supported settings |
 | Native bot name, shared/home/reminder/channel-wait/discovery grants | Guided controls; durable native helpers | Native owner CLI |
-| Lua source up to 4096 UTF-8 bytes | Explicit resumable upload, then verify/install exact snapshot; editor edits stay separate | Owner CLI for verified source download, larger supported packages and recovery |
+| Lua source up to the host's advertised limit (32,768 UTF-8 bytes) | Explicit resumable upload, then verify/install exact snapshot; editor edits stay separate | Owner CLI for verified source download, larger supported packages and recovery |
 | Scoped KV/timer/reminder transfer | Allowlisted native `data` console; errors and scopes preserved | `admin.py` scoped file export/stage/restore for verified backups and no-rearm |
 | Whole-host identities, configuration, credentials, programs and data | Encrypted **Node backup** download, independent of the native bot | [Paced encrypted RF retrieval](NODE_BACKUP.md) through a running repeater/room's administrator |
 | Host role placement, listener/MQTT configuration and PHY authority | Monitoring only; no configuration overwrite or restart button | Operator host configuration and explicit restart |

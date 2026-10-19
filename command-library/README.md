@@ -12,7 +12,8 @@ choose a command and download its ZIP. Extract it and follow the included
 Use `source install NAME FILE` from the included instructions. It preserves
 other named sources; do not use whole-set `install` or `source replace` for
 these additive files. Existing custom globals or commands can conflict, and
-the entire Lua set must still fit eight entries and 4096 bytes. A bundled main
+the entire Lua set must fit the device's limits: 16 entries and 32,768 bytes
+on ESP32 and the host, eight entries and 4,096 bytes on compact Pine. A bundled main
 reference uses one entry. Export a named file before updating it and read back
 status after an uncertain installation. Saved notes are scoped to the verified
 DM caller; code rollback does not undo stored data.

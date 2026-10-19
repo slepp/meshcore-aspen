@@ -341,9 +341,10 @@ use `source status` there, since its command set is bot-scoped.
 ### Install, update, roll back or recover
 
 Use the [local Lua workflow](../runtime/BOT_DEVELOPMENT.md) first, then
-[source installation](#source-and-help-installation). Source is at most 4096 B,
-including package metadata. One install replaces the whole custom generation,
-not one independently sandboxed plugin; a previous generation is retained for
+[source installation](#source-and-help-installation). Source is at most
+32,768 B on ESP32 (4096 B on compact Pine), including package metadata. One
+install replaces the whole custom generation, not one independently sandboxed
+plugin; a previous generation is retained for
 schema-compatible rollback. Native diagnostics remain reserved.
 
 | Decision | Command / expected outcome |
@@ -413,21 +414,21 @@ can report status, diagnose faults, reboot, roll back or restore bundled
 commands.
 
 Current sources use **`named-commands-v1`**, reported by `source api`: define
-`function hello(name) reply('Hello '..name) end` as the entire source.
-Native declaration inspection generates registration and a bounded string
-schema; optional `command('hello','name:string:32','Greet a person')` supplies
-narrower bounds/help. `!hello slepp` receives
-`Hello slepp`; `!help hello [PAGE]` describes its arguments. `!help PAGE` lists
-all currently permitted commands rather than truncating discovery. Optional
-declaration arguments add an export, permission and example:
+`function hello(name) reply('Hello '..name) end` as the entire source. Native
+declaration inspection generates registration and a bounded string schema;
+optional `command('hello','name:string:32','Greet a person')` supplies narrower
+bounds/help. `!hello slepp` receives `Hello slepp`; `!help hello [PAGE]`
+describes its arguments. `!help PAGE` lists all currently permitted commands
+rather than truncating discovery. Optional declaration arguments add an export,
+permission and example:
 `command('hello','name:string:32','Greet','hello','dm','!hello Sam')`.
-Permissions restrict dispatch/help; they never grant native authority. One durable source set
-can map eight custom command exports. Native diagnostics remain available
-and cannot be replaced. Local functions and `_`-prefixed global helpers are
-not automatically exposed as commands, but can cooperate in the shared VM.
-The web editor's **New hello handler** button creates
-this template. Legacy `return function(e)` sources require explicit migration;
-the installer, identity and role-journal wire formats are unchanged.
+Permissions restrict dispatch/help; they never grant native authority. One
+durable source set can map 32 custom command exports (eight on compact Pine).
+Native diagnostics remain available and cannot be replaced. Local functions and
+`_`-prefixed global helpers are not automatically exposed as commands, but can
+cooperate in the shared VM. The web editor's **New hello handler** button
+creates this template. Legacy `return function(e)` sources require explicit
+migration; the installer, identity and role-journal wire formats are unchanged.
 
 Declarations also accept optional export, permission and example strings:
 `command(name, schema, help[, export[, permission[, example]]])`. Permission
@@ -768,7 +769,7 @@ revive them. Switching source or rebooting preserves the board.
 `Board put,get,list,delete channel=verified grant=bot-shared dm=denied prefix=board: key-bytes=26 text=120 quota=shared-8`.
 `board` is newly reserved: rename conflicting custom functions/aliases before
 upgrade. The 2,243-byte firmware-owned chunk keeps existing cumulative VM
-budgets, 4,096-byte editable uploads and eight custom exports. `kv.list` now
+budgets and leaves editable uploads and custom command slots unchanged. `kv.list` now
 additionally exposes immutable `suffixes`, each matching key minus the exact
 requested prefix; existing `keys`/count/truncation/RF-safety fields are unchanged.
 Long board listings preserve whole names and say `truncated; narrow prefix`;
@@ -798,7 +799,7 @@ bound and the normal active-time budget.
 All four command names and `utility` are newly protected; rename conflicting
 custom source before upgrade. A separate firmware-owned 633-byte Lua chunk
 extends the bundled functions under the same cumulative VM budgets, without
-expanding the 4096-byte editable upload limit or eight custom exports.
+using the editable upload limit or custom command slots.
 `!help` prioritizes installed names and explicitly marks list truncation.
 See [BOT_RUNTIME.md](../runtime/BOT_RUNTIME.md#bundled-utility-commands) for
 grammar, all units, rounding, randomness constraints and native helper limits.
@@ -824,8 +825,8 @@ truncation, keeping full formatted replies within 162 printable bytes.
 `Services weather,service home=health,echo,weather private-dm=1 grant=bot-home place=required place-bytes=80 echo-bytes=120`.
 Both names are newly reserved: rename conflicting source before upgrade.
 A 1,501-byte firmware-owned Lua chunk adds the commands under existing
-cumulative budgets, leaving 4,096-byte editable uploads and eight custom
-exports intact. The older test probe export is now `probe_weather`.
+cumulative budgets, leaving editable uploads and custom command slots
+unchanged. The older test probe export is now `probe_weather`.
 
 The yielding `timer.set/get/cancel/wait` primitives persist bounded named
 deadlines in a separate checked journal, using the same scope authority. They
@@ -1651,19 +1652,20 @@ owner connection and inspect connection status after applying a change.
 
 ## Source and help installation
 
-The device installs **one source set containing up to eight named handlers**
-in the shared bot environment. A source package is plain Lua plus a compact
-Lua-comment header for package name/version, runtime/API, required native
-capabilities and data-schema compatibility. Package metadata and the Lua
-candidate are checked before the source generation changes. All cooperating
-functions remain in one source set; there is no per-function VM or second
-upload protocol. To replace or wrap a builtin, declare
-[`override_command(name, export)`](../runtime/BOT_RUNTIME.md#explicit-builtin-overrides-and-original-dispatch)
+The device installs **one source set of up to 16 named files and 32 custom
+commands** (eight of each on compact Pine) in the shared bot environment. A
+source package is plain Lua plus a compact Lua-comment header for package
+name/version, runtime/API, required native capabilities and data-schema
+compatibility. Package metadata and the Lua candidate are checked before the
+source generation changes. All cooperating functions remain in one source set;
+there is no per-function VM or second upload protocol. To replace or wrap a
+builtin, declare [`override_command(name,
+export)`](../runtime/BOT_RUNTIME.md#explicit-builtin-overrides-and-original-dispatch)
 in that source. The builtin's schema and authorization stay in force;
 `call_original` invokes its bundled handler without re-entering the override.
-`source api overrides` reports this contract. Native management is never delegated to Lua. A
-source-recovery fault quarantines custom handlers, not initialized native
-diagnostics.
+`source api overrides` reports this contract. Native management is never
+delegated to Lua. A source-recovery fault quarantines custom handlers, not
+initialized native diagnostics.
 
 ```sh
 make -C firmware/esp32 bot-plugin-install PACKAGE=handlers.bot.lua \
@@ -1678,7 +1680,7 @@ The browser provides source read/edit/install, source help read/change,
 rollback and removal. Both transports use the same bounded numbered source
 chunks and durable activation journal. Direct source uploads remain available
 for recovery and editing; package metadata is a comment in the uploaded Lua
-source and consumes part of the 4,096-byte source envelope. The CLI's
+source and consumes part of the source envelope. The CLI's
 `package install` checks the device API/capability report and current schema
 before beginning transfer. Firmware repeats the metadata/schema check before
 activation and enforces the declared previous-schema compatibility on
@@ -1689,7 +1691,7 @@ Both transports use these bounded commands:
 
 | Command after `source` | Result |
 | --- | --- |
-| `begin ID16 SIZE SHA256` | Admit/resume an upload with a 16-hex identifier, 1..4096 uncompressed bytes and full SHA-256 |
+| `begin ID16 SIZE SHA256` | Admit/resume an upload with a 16-hex identifier, 1..`source-bytes` uncompressed bytes (32768 on ESP32) and full SHA-256 |
 | `chunk ID16 INDEX HEX` | Persist the next numbered chunk, at most 48 bytes; return `ACK ID16 next=N` only after readback and progress commit |
 | `commit ID16` | Start asynchronous source verification and durable activation; poll `status` for the final result |
 | `status`, `hash` | Deployment generation, selected/previous slots, upload progress, live outcome and full source hash |
@@ -1700,13 +1702,15 @@ Both transports use these bounded commands:
 | `retry` | Retry the verified durable selection; inspect terminal status/live outcome |
 | `cancel` | Cancel a staged upload without changing the active source |
 
-There is one admitted upload. Indexes are sequential; gaps are rejected with
-the required next index. Identical duplicate chunks are acknowledged without
+There is one admitted upload. Indexes are sequential; gaps are rejected with the
+required next index. Identical duplicate chunks are acknowledged without
 rewriting; conflicting duplicates fail. Repeating `begin` with the same
-identifier/size/hash resumes after disconnect or reboot. The client retries
-only the same numbered chunk on a timeout, not arbitrary administrative
-mutations. At the 4 KiB limit there are 86 chunks; hex and native framing have
-real airtime costs. No bytecode or compression is accepted.
+identifier/size/hash resumes after disconnect or reboot. The client retries only
+the same numbered chunk on a timeout, not arbitrary administrative mutations. A
+32 KiB source is 683 chunks (a 4 KiB source is 86); over RF, at one signed
+request per second, that is more than 11 minutes plus airtime. Use the web page
+or an HTTPS package fetch for large sources. No bytecode or compression is
+accepted.
 
 Upload data, fixed staging source and three bounded source slots reside in
 SPIFFS. A single NVS journal atomically records the deployment, previous slot,

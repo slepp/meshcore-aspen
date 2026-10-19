@@ -494,7 +494,7 @@ void BotHttps::perform(const BotIoRequest &request, BotIoResult &result,
        request.kind != BotIoRequest::HttpPost && !package) ||
       (package && (!route || route->post || strcmp(request.key, "package") ||
                    !fetch || !fetchResult || !fetch->id || !fetch->sink ||
-                   !fetch->maxBytes || fetch->maxBytes > BotSourceLimit)) ||
+                   !fetch->maxBytes || fetch->maxBytes > BotSourceStageLimit)) ||
       !request.token.job || !request.token.operation ||
       !memchr(request.key, 0, sizeof(request.key)) ||
       !memchr(request.value, 0, sizeof(request.value)) ||

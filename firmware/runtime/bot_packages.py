@@ -9,7 +9,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidSignature
 
-SOURCE_LIMIT = 4096
+# Largest firmware profile. Compact Pine accepts 4096 bytes; devices advertise
+# their limit as `source-bytes=` in `source api` and reject larger uploads.
+SOURCE_LIMIT = 32768
 PREFIX = b"--@meshcore-bot/1;"
 RUNTIME = "lua-5.5.1"
 API = "named-commands-v1"
@@ -63,9 +65,9 @@ def _validate_metadata(name, version, runtime, api, capabilities, schema, rollba
         raise ValueError("Unsupported required capabilities: " + ", ".join(sorted(unsupported)))
 
 
-def inspect(source):
-    if not isinstance(source, bytes) or not 1 <= len(source) <= SOURCE_LIMIT:
-        raise ValueError("Package must contain 1..4096 source bytes")
+def inspect(source, limit=SOURCE_LIMIT):
+    if not isinstance(source, bytes) or not 1 <= len(source) <= limit:
+        raise ValueError(f"Package must contain 1..{limit} source bytes")
     if not source.startswith(PREFIX):
         raise ValueError("Bot package has no meshcore-bot metadata header")
     line, separator, body = source.partition(b"\n")
@@ -96,8 +98,8 @@ def inspect(source):
                    caps, values["schema"], values["rollback"], source)
 
 
-def create(source, name, version, capabilities=(), schema="none", rollback="none"):
-    if not isinstance(source, bytes) or not source or len(source) > SOURCE_LIMIT:
+def create(source, name, version, capabilities=(), schema="none", rollback="none", limit=SOURCE_LIMIT):
+    if not isinstance(source, bytes) or not source or len(source) > limit:
         raise ValueError("Input must contain non-empty Lua source or portable Wasm")
     wasm = source.startswith(b"\0asm\1\0\0\0")
     if not wasm and (source.startswith(b"\x1b") or b"\0" in source):
@@ -110,9 +112,9 @@ def create(source, name, version, capabilities=(), schema="none", rollback="none
     metadata = (f"--@meshcore-bot/1;name={name};version={version};runtime={runtime};api={api};"
                 f"caps={','.join(caps) if caps else 'none'};schema={schema};rollback={rollback}\n").encode("ascii")
     package = metadata + source
-    if len(package) > SOURCE_LIMIT:
-        raise ValueError(f"Package is {len(package)} bytes; the source envelope limit is {SOURCE_LIMIT}")
-    return inspect(package)
+    if len(package) > limit:
+        raise ValueError(f"Package is {len(package)} bytes; the source envelope limit is {limit}")
+    return inspect(package, limit)
 
 
 def validate_transition(active, candidate):

@@ -169,10 +169,11 @@ void freeze(lua_State *state) {
 int boundedStringOperation(lua_State *s) {
   size_t size = 0;
   luaL_checklstring(s, 1, &size);
-  if (size > onchip::BotSourceLimit) return luaL_error(s, "String operation exceeds 4096 bytes");
+  if (size > onchip::BotStringOperationLimit)
+    return luaL_error(s, "String operation exceeds %d bytes", int(onchip::BotStringOperationLimit));
   if (lua_toboolean(s, lua_upvalueindex(2))) {
     luaL_checklstring(s, 2, &size);
-    if (size > onchip::BotSourceLimit || lua_gettop(s) != 4 || !lua_toboolean(s, 4))
+    if (size > onchip::BotStringOperationLimit || lua_gettop(s) != 4 || !lua_toboolean(s, 4))
       return luaL_error(s, "Use string.find(text, literal, start, true)");
   }
   const int args = lua_gettop(s);
@@ -1224,7 +1225,7 @@ int declareModule(lua_State *s) {
     return luaL_error(s, "Module loader must be a source-defined Lua function");
   lua_getfield(s, lua_upvalueindex(1), name);
   if (!lua_isnil(s, -1) || call.manifest->moduleCount >= onchip::BotModuleLimit)
-    return luaL_error(s, "Module duplicate or eight-module limit exceeded");
+    return luaL_error(s, "Module duplicate or %d-module limit exceeded", int(onchip::BotModuleLimit));
   lua_pop(s, 1);
   lua_createtable(s, 3, 0);
   lua_pushvalue(s, 2); lua_rawseti(s, -2, 1);
@@ -2285,7 +2286,9 @@ int commandHelp(lua_State *s) {
       }
     }
   } else {
-    const onchip::BotCommand *commands[onchip::BotBuiltinCommandLimit + 2 * onchip::BotCommandLimit]{};
+    // Installed help holds up to BotHelpCommandLimit; the session manifest is a BotManifest.
+    constexpr unsigned listed = onchip::BotHelpCommandLimit + onchip::BotBuiltinCommandLimit;
+    const onchip::BotCommand *commands[listed]{};
     unsigned count = 0;
     const onchip::BotManifestView *manifests[] = {call.installed, call.manifest};
     for (const auto *manifest : manifests)
@@ -2293,12 +2296,13 @@ int commandHelp(lua_State *s) {
         const auto &entry = manifest->commands[i];
         if (!available(entry)) continue;
         if (manifest == call.manifest && call.installed && call.installed->find(entry.name)) continue;
+        if (count == listed) return luaL_error(s, "Help listing exceeds command capacity");
         commands[count++] = &entry;
       }
     std::sort(commands, commands + count, [](const onchip::BotCommand *a, const onchip::BotCommand *b) {
       return strcmp(a->name, b->name) < 0;
     });
-    unsigned starts[onchip::BotBuiltinCommandLimit + 2 * onchip::BotCommandLimit + 1]{}, pages = 1;
+    unsigned starts[listed + 1]{}, pages = 1;
     size_t used = 0;
     for (unsigned i = 0; i < count; ++i) {
       const size_t size = strlen(commands[i]->name) + 2;
@@ -2565,7 +2569,7 @@ void inspectDeclarations(lua_State *s, Call &call) {
   lua_pushnil(s);
   unsigned globals = 0;
   while (lua_next(s, -2)) {
-    if (++globals > 64 || budget(s).expired())
+    if (++globals > onchip::BotGlobalInspectionLimit || budget(s).expired())
       luaL_error(s, "command declaration inspection limit exceeded");
     if (lua_isfunction(s, -1) && !lua_iscfunction(s, -1)) {
       size_t size;
@@ -2745,9 +2749,9 @@ bool run(const char *source, size_t size, const onchip::BotEvent *event,
     snprintf(error, errorSize, "Invalid bounded command event");
     return false;
   }
-  if (!source || !size || size > onchip::BotSourceLimit ||
+  if (!source || !size || size > onchip::BotLuaSourceLimit ||
       memchr(source, 0, size) || static_cast<unsigned char>(source[0]) == 27) {
-    snprintf(error, errorSize, "Expected 1..4096 bytes of Lua source text");
+    snprintf(error, errorSize, "Expected 1..%u bytes of Lua source text", unsigned(onchip::BotLuaSourceLimit));
     return false;
   }
   Budget b{luaSourceLimits(source, size, limits)};
@@ -2908,7 +2912,7 @@ struct BotSession::Impl {
   BotManifest program{};
 #endif
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-  BotManifest help{};
+  BotHelpManifest help{};
   bool helpSet = false;
 #endif
   Job *preparing = nullptr;
@@ -3226,7 +3230,7 @@ bool BotSession::load(const char *source, size_t size, uint32_t generation,
     return true;
   }
 #endif
-  if (!generation || !source || !size || size > BotSourceLimit || memchr(source, 0, size) ||
+  if (!generation || !source || !size || size > BotLuaSourceLimit || memchr(source, 0, size) ||
       static_cast<unsigned char>(source[0]) == 27) {
     snprintf(error, errorSize, "Expected bounded Lua source text and nonzero generation");
     return false;
@@ -3306,7 +3310,7 @@ const BotManifestView &BotSession::manifest() const {
   static const BotManifestView empty{nullptr, 0};
   return impl_ ? *impl_->loader.manifest : empty;
 }
-void BotSession::setHelp(const BotManifest &installed) {
+void BotSession::setHelp(const BotManifestView &installed) {
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
   if (impl_) { impl_->help = installed; impl_->helpSet = true; }
 #else

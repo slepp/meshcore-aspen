@@ -332,7 +332,8 @@ class WorkerProcessTest(unittest.TestCase):
         source = (b"--@meshcore-bot/1;name=network;version=1.0.0;runtime=lua-5.5.1;"
                   b"api=named-commands-v1;caps=none;schema=none;rollback=none\n"
                   b"function fetched() return 'Fetched' end\n")
-        source += b"--" + b"x" * (4096 - len(source) - 3) + b"\n"
+        # A package at the host source limit, which is also the SPIFFS file limit.
+        source += b"--" + b"x" * (32768 - len(source) - 3) + b"\n"
         source = getattr(self, "package_fixture", source)
         digest = hashlib.sha256(source).hexdigest()
         state = {"body": source, "requests": 0, "hold": False, "response_errors": []}

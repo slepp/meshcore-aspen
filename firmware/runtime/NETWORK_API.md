@@ -25,8 +25,8 @@ connection; HTTPS uses the existing network worker, not another radio scheduler.
 On Linux, a plausible wall-clock date is insufficient: the kernel clock must
 also report synchronization (`adjtimex` without `STA_UNSYNC`). The native `home`
 status command reports `clock=0` until that condition is satisfied.
-Native private SPIFFS has 128 KiB aggregate capacity, at most 32 files and a
-32 KiB per-file ceiling for configuration records; Lua source remains 4096 bytes.
+Native private SPIFFS holds at most 32 files of up to 32 KiB each (1 MiB in
+total); a Lua source set or Wasm package is at most 32,768 bytes.
 
 Use authenticated mast administration for ESP32, or the private native owner
 socket (`admin.py --unix-socket /absolute/state/bot/native/admin.sock command ...`).
@@ -149,8 +149,9 @@ make -C firmware/esp32 bot-plugin-fetch PACKAGE_SHA256=LOWERCASE_SHA256 \
 ```
 
 Use the ordinary authenticated radio/web CLI connection options for ESP32.
-The CLI accepts no URL. The endpoint must return HTTP 200, Content-Length
-1..4096, and `application/x-lua`, `application/octet-stream` or `text/plain`.
+The CLI accepts no URL. The endpoint must return HTTP 200, a Content-Length
+within `raw=1..N` from `source api fetch` (32768 on ESP32 and the host, 4096 on
+compact Pine), and `application/x-lua`, `application/octet-stream` or `text/plain`.
 It streams 128-byte chunks into staging and checks the expected SHA-256 before
 closing staging. The source manager then checks readback, metadata, runtime/API,
 schema rollback compatibility and Lua compilation/initialization through the

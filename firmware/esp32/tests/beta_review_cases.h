@@ -356,7 +356,7 @@ static void selected_source_boot_health() {
     assert(path);
     std::ifstream module(path, std::ios::binary);
     const std::string wasm{std::istreambuf_iterator<char>(module), std::istreambuf_iterator<char>()};
-    assert(wasm.size() > 8 && wasm.size() <= BotSourceLimit);
+    assert(wasm.size() > 8 && wasm.size() <= BotWasmPackageLimit);
     upload(f, wasm, true, true, [&](const char *text) {
       return f.action((std::string("source wasm ") + (text + 7)).c_str());
     });

@@ -80,7 +80,7 @@ struct BotWorker::Storage {
   size_t retainedSize = 0;
   const char *retainedText() const { return retained ? retained.get() : BotDefaultSource; }
 #else
-  char staged[BotSourceLimit + 1]{};
+  char staged[BotSourceStageLimit + 1]{};
 #endif
   char *stagedText() {
 #if ONCHIP_BOT_SINGLE_SESSION
@@ -134,7 +134,7 @@ struct BotWorker::Storage {
   }
   bool eventWasmFirst = false;
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
-  BotManifest combinedHelp{};
+  BotHelpManifest combinedHelp{};
 #endif
   uint32_t nextGeneration = 1, candidateGeneration = 0;
   uint32_t lastEventEpoch = 1;
@@ -789,7 +789,7 @@ uint32_t BotWorker::reserveSourcePublication(const BotWorker *validator, bool wa
   return token;
 }
 bool BotWorker::stage(const char *source, size_t size, uint32_t publication) {
-  if (!storage_ || !source || !size || size > BotSourceLimit ||
+  if (!storage_ || !source || !size || size > BotSourceStageLimit ||
       !claimSourceMutation(publication)) return false;
   storage_->result = {};
   storage_->result.operation = Operation::Stage;
@@ -810,7 +810,7 @@ bool BotWorker::stage(const char *source, size_t size, uint32_t publication) {
 }
 bool BotWorker::stageFile(size_t expectedSize, const uint8_t expectedSha256[32], uint32_t publication) {
   if (!storage_ || !expectedSha256 || !expectedSize ||
-      expectedSize > BotSourceLimit || !claimSourceMutation(publication))
+      expectedSize > BotSourceStageLimit || !claimSourceMutation(publication))
     return false;
   storage_->fileSize = expectedSize;
   memcpy(storage_->fileSha256, expectedSha256, sizeof(storage_->fileSha256));
@@ -847,7 +847,7 @@ bool BotWorker::copyFile(const char *from, const char *to, size_t expectedSize, 
     return false;
   };
   if (!storage_ || busy() || !to || !allowed(to) || (from && !allowed(from)) ||
-      !expectedSize || expectedSize > BotSourceLimit ||
+      !expectedSize || expectedSize > BotSourceStageLimit ||
       (!from && expectedSize != strlen(BotDefaultSource)) || !claimSourceMutation(publication)) return false;
   strcpy(storage_->copyFrom, from ? from : "");
   strcpy(storage_->copyTo, to);
@@ -1042,7 +1042,7 @@ bool BotWorker::fetchPackage(const BotHttpsFetchRequest &request) {
   if (!storage_ || !storage_->hasIdentity || !control_->homeAccess.load() ||
       control_->stopping.load() || control_->ownerFetch.load() != Idle ||
       storage_->ownerFetchSequence == UINT32_MAX || !request.id || !request.sink ||
-      !request.maxBytes || request.maxBytes > BotSourceLimit) return false;
+      !request.maxBytes || request.maxBytes > BotSourceStageLimit) return false;
   auto &io = storage_->ownerFetch;
   io.request = {}; io.result = {};
   io.request.kind = BotIoRequest::PackageGet;
@@ -1579,7 +1579,7 @@ void BotWorker::pumpJobs() {
       s.combinedHelp = s.active.manifest();
 #if ONCHIP_BOT_WASM
       if (s.wasmActive.manifest().count && s.combinedHelp.isBundled()) s.combinedHelp.clear();
-      for (unsigned i = 0; i < s.wasmActive.manifest().count && s.combinedHelp.count < BotBuiltinCommandLimit; ++i)
+      for (unsigned i = 0; i < s.wasmActive.manifest().count && s.combinedHelp.count < BotHelpCommandLimit; ++i)
         s.combinedHelp.writable()[s.combinedHelp.count++] = s.wasmActive.manifest().commands[i];
 #endif
       s.diagnostics.setHelp(s.combinedHelp);
@@ -1804,8 +1804,9 @@ bool BotWorker::copySourceFile() {
   } else memcpy(s.stagedText(), BotDefaultSource, s.fileSize);
   auto output = SPIFFS.open(s.copyTo, "w");
   if (!output) return fail("Source copy destination unavailable");
+  // Yield after each KiB written: 32 pauses for a 32 KiB source.
   for (size_t offset = 0; offset < s.fileSize;) {
-    const size_t n = std::min(size_t(256), s.fileSize - offset);
+    const size_t n = std::min(size_t(1024), s.fileSize - offset);
     if (control_->stopping || uint32_t(millis() - started) >= BotSourceCopyBudgetMs)
       return fail("Source copy deadline/cancellation");
     if (output.write(reinterpret_cast<const uint8_t *>(s.stagedText() + offset), n) != n)

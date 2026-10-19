@@ -69,8 +69,8 @@ Choose a legal frequency and power, and keep WiFi or USB access available.</p>
 <label>Runtime<select id="program-runtime"><option value="lua">Lua</option><option id="wasm-option" value="wasm" disabled>Wasm</option></select></label>
 <p class="muted">Installing replaces the selected runtime's custom commands. Lua and Wasm are managed separately.
 Message the bot with <code>!plugins</code> or <code>!help</code> to list its commands.</p>
-<label id="lua-editor">Lua source (4096 UTF-8 bytes maximum)<textarea id="source" spellcheck="false" placeholder="function hello(name) reply('Hello '..name) end"></textarea></label>
-<div id="wasm-editor" hidden><label>Wasm module or package (4096 bytes maximum)<input id="wasm-file" type="file" accept=".wasm,.mcbot,application/wasm,application/octet-stream"></label>
+<label id="lua-editor">Lua source (<span id="lua-limit">4096</span> UTF-8 bytes maximum)<textarea id="source" spellcheck="false" placeholder="function hello(name) reply('Hello '..name) end"></textarea></label>
+<div id="wasm-editor" hidden><label>Wasm module or package (<span id="wasm-limit">4096</span> bytes maximum)<input id="wasm-file" type="file" accept=".wasm,.mcbot,application/wasm,application/octet-stream"></label>
 <p id="wasm-info" class="muted">Choose a Wasm file to upload.</p></div>
 <div class="actions"><button id="hello">Use hello example</button><button id="source-read">Load installed source</button><button id="source-draft">Download draft</button>
 <button id="source-hash">Show draft hash</button></div>
@@ -173,6 +173,8 @@ let inFlight=null, lastMutation=null;
 let uploadAttempt=null;
 let firmwareStatus=null, expectedFirmware=null, forceRestartAttempt=false;
 const supported={source:false,wasm:false,data:false,telemetry:false}, seen={};
+// Firmware advertises its limit in `source api`; older firmware accepts 4096 bytes.
+let sourceLimit=4096;
 function programRuntime() { return $('program-runtime').value==='wasm'?'wasm':'lua'; }
 function sourceCommand(text) { return text.replace(/^source /,programRuntime()==='wasm'?'source wasm ':'source '); }
 function sourceCmd(text,literal=false) { return cmd(sourceCommand(text),literal); }
@@ -336,6 +338,12 @@ async function refresh() {
   $('radio-status').textContent=(Number(frequency)/1000000).toFixed(3)+' MHz | '+Number(bandwidth)/1000+' kHz | SF'+sf+' | CR 4/'+cr+' | '+power+' dBm\n'+(status.temp==='1'?'Temporary channel':'Current channel');
   return 'Role and radio status updated.';
 }
+function applySourceLimit(api) {
+  const limit=/\bsource-bytes=(\d+)\b/.exec(api);
+  sourceLimit=limit?+limit[1]:4096;
+  $('lua-limit').textContent=$('wasm-limit').textContent=sourceLimit;
+  draftInfo();
+}
 async function inventory() {
   supported.source=false;
   const runtimes=await cmd('source api runtimes');
@@ -343,6 +351,7 @@ async function inventory() {
   await readGroup(['source status','source hash','source metadata'].map(sourceCommand).concat('bot status'),'program-status');
   await readGroup(['source api','source api package','source api modules','source api fetch'].map(sourceCommand),'capabilities');
   const api=seen[sourceCommand('source api')]||'';
+  applySourceLimit(api);
   supported.source=programRuntime()==='wasm'?supported.wasm && /^API meshcore-v1 runtime=wamr-2\.4\.1 /.test(api):/^API named-commands-v1 lua=5\.5\.1 /.test(api);
   $('runtime-note').textContent=supported.source?(programRuntime()==='wasm'?'Wasm is available. Choose a module or package to upload.':'Lua is available. Edit or load a program below.'):'This firmware does not support the selected runtime.';
   return 'Program status updated.';
@@ -353,10 +362,10 @@ function sourceBytes() {
     return wasmBytes.slice();
   }
   const bytes=new TextEncoder().encode($('source').value);
-  if(!bytes.length || bytes.length>4096 || bytes.includes(0) || bytes[0]===27) throw Error('Source must be 1..4096 UTF-8 bytes, without NUL or binary bytecode.');
+  if(!bytes.length || bytes.length>sourceLimit || bytes.includes(0) || bytes[0]===27) throw Error('Source must be 1..'+sourceLimit+' UTF-8 bytes, without NUL or binary bytecode.');
   return bytes;
 }
-function draftInfo() { const b=new TextEncoder().encode($('source').value); $('draft-info').textContent=b.length+' / 4096 bytes. Download unsaved edits before closing this tab.'; }
+function draftInfo() { const b=new TextEncoder().encode($('source').value); $('draft-info').textContent=b.length+' / '+sourceLimit+' bytes. Download unsaved edits before closing this tab.'; }
 async function uploadSource() {
   if(!supported.source) throw Error('Refresh capabilities before uploading source.');
   const bytes=sourceBytes(), hash=sha256(bytes), id=hash.slice(0,16), count=Math.ceil(bytes.length/48);
@@ -408,9 +417,10 @@ async function installSource() {
 async function readSource() {
   const old=$('source').value;
   if(programRuntime()==='lua' && old && !window.confirm('Replace this editor draft with verified durable source? Download unsaved edits first.')) return 'Cancelled; editor unchanged.';
+  if(!supported.source) applySourceLimit(await sourceCmd('source api'));
   const before=manifest(await sourceCmd('source hash')), status=await sourceCmd('source status');
   const m=/\bsize=(\d+) /.exec(status), size=m?+m[1]:0;
-  if(!size || size>4096) throw Error('Durable source exceeds the editable/download envelope or has no valid size. Bundled handlers may be larger; use metadata and live !plugins.');
+  if(!size || size>sourceLimit) throw Error('Durable source exceeds the editable/download envelope or has no valid size. Bundled handlers may be larger; use metadata and live !plugins.');
   const bytes=new Uint8Array(size);
   for(let n=0;n<Math.ceil(size/48);n++) {
     const result=await sourceCmd('source read '+n);
@@ -775,7 +785,7 @@ $('program-runtime').onchange=()=>{uploaded=null; supported.source=false; return
 $('wasm-file').onchange=()=>action('Reading Wasm binary file',async()=>{
   wasmBytes=null; uploaded=null;
   const file=$('wasm-file').files[0];
-  if(!file || !file.size || file.size>4096) throw Error('Wasm file must contain 1..4096 bytes.');
+  if(!file || !file.size || file.size>sourceLimit) throw Error('Wasm file must contain 1..'+sourceLimit+' bytes.');
   const bytes=new Uint8Array(await file.arrayBuffer());
   let offset=0;
   const magic=[0,97,115,109,1,0,0,0];

@@ -88,7 +88,7 @@ Neither operation removes the bot identity, notes or other durable scoped data.
 `override_command(name, export)` keeps the builtin's argument schema,
 help/example and authorization. The export receives the normal parsed,
 typed positional arguments. It must be a non-native global Lua function;
-it consumes one of the eight command slots. Unknown originals, duplicate
+it consumes one of the custom command slots. Unknown originals, duplicate
 names and missing exports reject installation. Directly redefining `ping`
 or using `command("ping",...)` still rejects installation.
 
@@ -325,7 +325,7 @@ global or library. Use typed command arguments and the supplied APIs.
 
 | API | Return/error semantics |
 | --- | --- |
-| `command(name, schema, help[, export[, permission[, example]]])` | Register at initialization. Up to eight custom exports; help/example <=64 ASCII bytes. Permission names are `public`, `dm`, `owner`, `channel`, `shared`, `reminder`, `home`. Declaration never grants access. |
+| `command(name, schema, help[, export[, permission[, example]]])` | Register at initialization. Up to 32 custom exports (eight on compact Pine); help/example <=64 ASCII bytes. Permission names are `public`, `dm`, `owner`, `channel`, `shared`, `reminder`, `home`. Declaration never grants access. |
 | `return TEXT` / `reply(TEXT)` | One bounded printable reply to this invocation's authenticated route. A returned string is simplest; do not also call `reply` for that response. |
 | `command_help(name[, page])` | Bounded permission-aware help text; `!help NAME PAGE` follows long help. Native commands cannot be replaced by a custom export. |
 | `ctx.sender`, `ctx.channel`, `ctx.grants`, `ctx.packet`, `ctx.radio`, `ctx.limits` | Immutable invocation metadata. A channel has no authenticated individual full key; a local reflection is not RF reception. |
@@ -373,9 +373,12 @@ rejects the commit. Validation rejects conflicting definitions before
 activation. Successful activation rebuilds the shared Lua environment and
 cancels its current Lua jobs; durable data and the separate Wasm runtime remain.
 
-The source-set limit is **eight entries and 4,096 bytes total**, including
-names, lengths and separators. A bundled-command reference consumes one entry,
-leaving seven custom files; it does not copy the bundled program into the
+The source-set limit on ESP32 and the Linux host is **16 entries and 32,768
+bytes total**, including names, lengths and separators; compact Pine accepts
+eight entries and 4,096 bytes. `source api sources` reports `count=` and
+`envelope=` for the running build, and the installer checks them before
+uploading. A bundled-command reference consumes one entry, leaving the rest for
+custom files; it does not copy the bundled program into the
 envelope. Lua configuration tables can live in a named file, but JSON and
 arbitrary filesystem imports are not Lua sources. The entry order controls
 initialization, so install shared configuration before its consumers.
@@ -500,8 +503,10 @@ make -s -C firmware/esp32 bot-local SOURCE=.tmp/hello.bot.lua \
 ```
 
 The last command compiles and initializes the package in the actual embedded
-runtime. Package creation fails if metadata plus Lua source exceeds 4,096
-bytes. No archive, decompressor or per-handler VM is introduced.
+runtime. Package creation fails if metadata plus Lua source exceeds 32,768
+bytes; installation fails before upload if the package exceeds the device's
+advertised `source-bytes=` (4,096 on compact Pine). No archive, decompressor
+or per-handler VM is introduced.
 
 ## Test-only native replay
 
@@ -581,14 +586,14 @@ or a network.
 
 A package is one complete custom source generation, not an independently
 installed plugin. Its `name` is descriptive metadata; there is one active
-manifest with up to eight command exports and one shared Lua environment.
-Install and update replace that complete generation, rollback restores the
-previous generation, and remove restores the bundled source. Per-plugin
-isolation, removal, and crash-loop quarantine are not provided.
+manifest with up to 32 command exports (eight on compact Pine) and one shared
+Lua environment. Install and update replace that complete generation, rollback
+restores the previous generation, and remove restores the bundled source.
+Per-plugin isolation, removal, and crash-loop quarantine are not provided.
 
-The metadata header consumes bytes inside the existing 4,096-byte source
-envelope and adds no package/schema NVS record. Source activation continues to
-use the existing deployment journal and source slots.
+The metadata header consumes bytes inside the source envelope and adds no
+package/schema NVS record. Source activation continues to use the existing
+deployment journal and source slots.
 
 ## Optional signatures
 
@@ -640,17 +645,17 @@ schema is unknown. Restore bundled handlers with `bot-plugin-remove` before
 installing a metadata-bearing package; the source manager retains stored data
 and refuses to guess that an unknown schema is compatible.
 
-When the owner has enabled `bot home on` and committed the fixed named HTTPS
-GET endpoint `package`, an authenticated owner can fetch a package by its
-expected full source hash. The endpoint returns raw Lua source as
-`text/plain` or `application/octet-stream` with an explicit Content-Length from
-1 through 4,096 bytes. Redirects and chunked/encoded responses are rejected.
-The existing native HTTPS worker streams the body into the source staging
-file while checking its SHA256; after completion the source manager performs
-the normal readback, package metadata, schema and Lua validation before
-durable activation. Network completion never activates a package. The CLI
-accepts no URL, host, path or credentials from the caller and adds no network
-client:
+When the owner has enabled `bot home on` and committed the fixed named HTTPS GET
+endpoint `package`, an authenticated owner can fetch a package by its expected
+full source hash. The endpoint returns raw Lua source as `text/plain` or
+`application/octet-stream` with an explicit Content-Length from 1 through the
+advertised source limit (`raw=1..N` in `source api fetch`). Redirects and
+chunked/encoded responses are rejected. The existing native HTTPS worker streams
+the body into the source staging file while checking its SHA256; after
+completion the source manager performs the normal readback, package metadata,
+schema and Lua validation before durable activation. Network completion never
+activates a package. The CLI accepts no URL, host, path or credentials from the
+caller and adds no network client:
 
 ```sh
 make -C firmware/esp32 bot-plugin-fetch PACKAGE_SHA256=FULL_LOWERCASE_SHA256 \

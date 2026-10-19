@@ -246,8 +246,9 @@ All sources share a single environment, so they can call each other's exported
 procedures and registered modules. They are separately initialized chunks,
 not separate VMs. Local variables remain local to their chunk.
 
-The combined source-set envelope is limited to **4,096 bytes and eight names**,
-not 4,096 bytes per file. If the current source exactly matches the firmware's
+The whole source set, counting every file, is limited to **32,768 bytes and
+16 names** on ESP32 and the Linux host (4,096 bytes and eight names on compact
+Pine). If the current source exactly matches the firmware's
 bundled command program, the installer retains it as a symbolic builtin entry
 rather than copying its text into that budget. Other existing source text is
 retained byte-for-byte. Removing the monitor does not remove the existing

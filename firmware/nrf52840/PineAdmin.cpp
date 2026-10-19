@@ -167,7 +167,7 @@ void MastAdmin::execute(const char *text, Reply &reply, uint32_t invokingJob,
   } else if (!strcmp(text, "bot limits")) {
     const BotVmLimits limits;
     snprintf(reply.text, sizeof(reply.text), "Lua5.5.1 source=%u heap=%u jobs=%u exports=%u modules=%u KV=16+8/128B tx=%u; load/init/active=%u/%u/%ums; HTTPS/WiFi unsupported; cooldown=0",
-             unsigned(BotSourceLimit), unsigned(limits.heapBytes), BotJobLimit, BotCommandLimit, BotModuleLimit,
+             unsigned(BotLuaSourceLimit), unsigned(limits.heapBytes), BotJobLimit, BotCommandLimit, BotModuleLimit,
              BotTransactionLimit, unsigned(limits.loadWallUs / 1000), unsigned(limits.initWallUs / 1000),
              unsigned(limits.wallUs / 1000));
   } else if (!strcmp(text, "bot memory")) {

@@ -24,15 +24,22 @@ import bot_packages
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from tools.hardware.rf import _shared_secret, kiss, target_key
 
-SOURCE_LIMIT = 4096
+# Firmware advertises its source limit in `source api`; firmware without the
+# field accepts 4096 bytes. Local files are read up to the largest profile.
+DEFAULT_SOURCE_LIMIT = 4096
+SOURCE_LIMIT = 32768
 PACKET_SOURCE_LIMIT = 16384
 CHUNK = 48
 DATA_LIMIT = 2422
 DATA_MAGIC = {"kv": b"BKD\x01", "timers": b"BTD\x01", "reminders": b"BRD\x01"}
 IDENTITY_ROLES = ("repeater", "room", "companion", "bot", "command-bot", "management")
-PACKAGE_FETCH_API = (
-    "Owner GET JSON=2048; Package GET alias=package raw=1..4096 "
-    "type=text/plain|application/octet-stream|application/x-lua SHA256=source"
+PACKAGE_FETCH_API = re.compile(
+    r"Owner GET JSON=2048; Package GET alias=package raw=1\.\.([1-9][0-9]*) "
+    r"type=text/plain\|application/octet-stream\|application/x-lua SHA256=source"
+)
+WASM_FETCH_API = re.compile(
+    r"Package GET runtime=wamr-2\.4\.1 alias=package raw=1\.\.([1-9][0-9]*) "
+    r"type=application/wasm\|application/octet-stream SHA256=source"
 )
 
 
@@ -496,19 +503,29 @@ def runtime_client(client, runtime):
     return client.client if isinstance(client, RuntimeClient) else client
 
 
-def download(client):
+def advertised_source_limit(api):
+    match = re.search(r"\bsource-bytes=([1-9][0-9]*)\b", api)
+    return int(match[1]) if match else DEFAULT_SOURCE_LIMIT
+
+
+def source_limit(client):
+    return advertised_source_limit(checked(client, "source api"))
+
+
+def download(client, limit=None):
+    limit = source_limit(client) if limit is None else limit
     manifest = checked(client, "source hash")
     if not re.fullmatch(r"SHA256 [0-9a-f]{64} gen=\d+", manifest):
         raise ValueError("Invalid source manifest")
     source = bytearray()
-    for index in range((SOURCE_LIMIT + CHUNK - 1) // CHUNK):
+    for index in range((limit + CHUNK - 1) // CHUNK):
         response = checked(client, f"source read {index}")
         if response == "EOF":
             break
         if not response.startswith("DATA ") or not re.fullmatch("[0-9a-f]{2,96}", response[5:]):
             raise ValueError("Invalid source read response")
         source.extend(bytes.fromhex(response[5:]))
-        if len(source) > SOURCE_LIMIT:
+        if len(source) > limit:
             raise ValueError("Source read limit exceeded")
     if hashlib.sha256(source).hexdigest() != manifest.split()[1] or checked(client, "source hash") != manifest:
         raise ValueError("Source changed or failed its hash while downloading")
@@ -521,17 +538,20 @@ def install(client, source, progress=print, expected_base_hash=None):
     wasm = source.startswith(b"\0asm\1\0\0\0")
     if wasm:
         client = runtime_client(client, bot_packages.WASM_RUNTIME)
-        api = checked(client, "source api")
-        if not api.startswith("API meshcore-v1 runtime=wamr-2.4.1 "):
-            raise ValueError("Device does not support portable Wasm installation")
     if source.startswith(bot_packages.PREFIX):
         package = bot_packages.inspect(source)
         wasm = package.runtime == bot_packages.WASM_RUNTIME
         client = runtime_client(client, package.runtime)
-    if not source or len(source) > SOURCE_LIMIT or source.startswith(b"\x1b") or (b"\0" in source and not wasm):
-        raise ValueError("Expected 1..4096 bytes of Lua source or a packaged portable Wasm module")
     if not wasm and isinstance(client, RuntimeClient) and client.runtime == bot_packages.WASM_RUNTIME:
         raise ValueError("Selected Wasm runtime requires a portable binary module or package")
+    api = checked(client, "source api")
+    if wasm and not api.startswith("API meshcore-v1 runtime=wamr-2.4.1 "):
+        raise ValueError("Device does not support portable Wasm installation")
+    limit = advertised_source_limit(api)
+    if not source or source.startswith(b"\x1b") or (b"\0" in source and not wasm):
+        raise ValueError("Expected Lua source text or a packaged portable Wasm module")
+    if len(source) > limit:
+        raise ValueError(f"Source is {len(source)} bytes; this device accepts at most {limit}")
     digest = hashlib.sha256(source).hexdigest()
     identifier = digest[:16]
     response = checked(client, f"source begin {identifier} {len(source)} {digest}")
@@ -786,9 +806,8 @@ def fetch_package(client, endpoint_alias, expected_hash, timeout=120):
     if not re.fullmatch("[0-9a-f]{64}", expected_hash):
         raise ValueError("Streaming package fetch requires a full lowercase expected SHA256")
     fetch_api = checked(client, "source api fetch")
-    wasm_api = "Package GET runtime=wamr-2.4.1 alias=package raw=1..4096 type=application/wasm|application/octet-stream SHA256=source"
-    expected_api = wasm_api if isinstance(client, RuntimeClient) and client.runtime == bot_packages.WASM_RUNTIME else PACKAGE_FETCH_API
-    if fetch_api != expected_api:
+    wasm = isinstance(client, RuntimeClient) and client.runtime == bot_packages.WASM_RUNTIME
+    if not (WASM_FETCH_API if wasm else PACKAGE_FETCH_API).fullmatch(fetch_api):
         raise ValueError("Device does not advertise native streaming package fetch")
     before = checked(client, "source hash")
     match = re.fullmatch(r"SHA256 [0-9a-f]{64} gen=(\d+)", before)
@@ -1180,9 +1199,10 @@ def main():
             capability = checked(client, "source api sources")
             if "format=meshcore-sources/1" not in capability or "commit-base=sha256" not in capability:
                 raise ValueError("Device firmware does not support atomic named Lua sources")
-            current = download(client)
+            limits = lua_sources.advertised_limits(capability)
+            current = download(client, limits["limit"])
             base_hash = hashlib.sha256(current).hexdigest()
-            parts = lua_sources.decode(current)
+            parts = lua_sources.decode(current, **limits)
             if args.action == "source-install" and tuple(parts) == ("main",):
                 bundled = checked(client, "source api bundled")
                 if bundled == "SHA256 " + base_hash:
@@ -1203,14 +1223,14 @@ def main():
                     return
                 if args.action == "source-install":
                     parts[args.name] = read_file(args.source, SOURCE_LIMIT)
-                    source = lua_sources.encode(parts)
+                    source = lua_sources.encode(parts, **limits)
                 else:
                     if args.name not in parts:
                         raise ValueError("Lua source name is not installed")
                     del parts[args.name]
                     if not parts:
                         raise ValueError("Cannot remove the last source; use remove to restore bundled commands")
-                    source = parts["main"] if tuple(parts) == ("main",) and parts["main"] is not None else lua_sources.encode(parts)
+                    source = parts["main"] if tuple(parts) == ("main",) and parts["main"] is not None else lua_sources.encode(parts, **limits)
                 install(client, source, expected_base_hash=base_hash)
         elif args.action == "package-install":
             source = read_file(args.source, SOURCE_LIMIT)

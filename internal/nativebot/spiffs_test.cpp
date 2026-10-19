@@ -212,21 +212,21 @@ void rename_remove_and_corruption() {
 void capacity_and_read_faults() {
   Fixture f(6);
   f.init();
-  const std::string full(4096, 'x');
+  const std::string full(32 * 1024, 'x');
   for (unsigned i = 0; i < 32; ++i)
     write(("/command-bot/file" + std::to_string(i)).c_str(), full);
   assert(SPIFFS.usedBytes() == SPIFFS.totalBytes());
   assert(!SPIFFS.open("/command-bot/file32", "w"));
   assert(!native_spiffs_faulted());
   auto append = SPIFFS.open("/command-bot/file0", "r+");
-  assert(append && append.seek(4096));
+  assert(append && append.seek(full.size()));
   assert(append.write(uint8_t('!')) == 0 && native_spiffs_faulted());
   append.close();
   native_spiffs_shutdown();
   f.init();
   assert(read("/command-bot/file0") == full);
   auto reader = SPIFFS.open("/command-bot/file0", "r");
-  assert(reader && reader.size() == 4096);
+  assert(reader && reader.size() == full.size());
   int fd = open(f.disk("/command-bot/file0").c_str(), O_RDWR | O_NOFOLLOW);
   assert(fd >= 0 && ftruncate(fd, 16) == 0 && close(fd) == 0);
   uint8_t bytes[8]{};

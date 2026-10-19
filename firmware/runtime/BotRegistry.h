@@ -6,9 +6,12 @@
 
 namespace onchip {
 bool botSourceIsWasm(const char *source, size_t size);
-constexpr unsigned BotCommandLimit = 8, BotParameterLimit = 4;
-constexpr unsigned BotModuleLimit = 8;
+constexpr unsigned BotParameterLimit = 4;
 constexpr unsigned BotBuiltinCommandLimit = ONCHIP_BOT_COMPACT_PROFILE ? 31 : 32;
+// The diagnostics session lists custom Lua and Wasm commands together.
+constexpr unsigned BotRuntimeCommandLimit = (ONCHIP_BOT_WASM ? 2 : 1) * BotCommandLimit;
+constexpr unsigned BotHelpCommandLimit =
+    BotBuiltinCommandLimit > BotRuntimeCommandLimit ? BotBuiltinCommandLimit : BotRuntimeCommandLimit;
 struct BotCommand {
   enum Permission : uint8_t { Public, Private, Owner, Channel, Shared, Reminder, Home } permission = Public;
   char name[BotNameLimit + 1]{}, function[BotNameLimit + 1]{};
@@ -60,6 +63,10 @@ template <unsigned Capacity> struct BotManifestStorage : BotManifestView {
 };
 using BotManifest = BotManifestStorage<BotBuiltinCommandLimit>;
 using BotProgramManifest = BotManifestStorage<BotCommandLimit>;
+using BotHelpManifest = BotManifestStorage<BotHelpCommandLimit>;
+// Noncompact sessions and Wasm store custom commands in a BotManifest.
+static_assert(ONCHIP_BOT_COMPACT_PROFILE || BotBuiltinCommandLimit >= BotCommandLimit,
+              "Bundled manifest capacity must hold a custom program");
 struct BotValue {
   enum Type : uint8_t { String, Integer, Boolean, Missing } type = Missing;
   char text[BotArgumentsLimit + 1]{};

@@ -252,8 +252,8 @@ metered `mc_init` initializes a package.
 
 | Bound | Value |
 | --- | --- |
-| Package, metadata plus module | 4096 bytes |
-| Command registry | 8 Wasm commands alongside 8 custom Lua commands |
+| Package, metadata plus module | 32768 bytes |
+| Command registry | 32 Wasm commands alongside 32 custom Lua commands |
 | Native job capacity | 4 total; one reserved for native diagnostics |
 | Linear memory | at most 65536 bytes; growth past one page returns `-1` |
 | Interpreter operand/call stack | 8192 bytes per execution environment |
@@ -532,7 +532,7 @@ restart/no-replay checks in both build variants.
 
 The build/test commands above do not change radio or service configuration.
 
-Each runtime has one active package/VM. A package can register eight commands;
+Each runtime has one active package/VM. A package can register 32 commands;
 Lua can declare its existing internal source modules. Wasm module linking is
 unavailable and `modules` is rejected as a required capability.
 

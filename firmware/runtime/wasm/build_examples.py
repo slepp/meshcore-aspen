@@ -43,8 +43,9 @@ def build():
     (OUT / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
     for path in sorted(OUT.glob("*.wasm")):
         print(f"{path.name}: {path.stat().st_size} bytes")
-        if path.stat().st_size > 3800:
-            raise ValueError(f"{path.name} exceeds the 4096-byte package envelope after metadata")
+        # Leave room for package metadata within the 32768-byte Wasm package limit.
+        if path.stat().st_size > 32768 - 296:
+            raise ValueError(f"{path.name} exceeds the 32768-byte package envelope after metadata")
 
 
 if __name__ == "__main__":

@@ -198,11 +198,13 @@ or its hexadecimal command in outcomes.
 
 ## Source envelope, progress and receipts
 
-Source is 1..4096 uncompressed bytes, source-only Lua 5.5.1: no NUL, binary
-bytecode or compression. The same source commands run over authenticated RF
-and web. ID is 16 lowercase hex characters; using SHA-256's first 16
-characters is recommended, not required. HASH is full 64-lowercase-hex
-SHA-256 of the exact source bytes.
+Source is 1..L uncompressed bytes, source-only Lua 5.5.1: no NUL, binary
+bytecode or compression. `source api` reports L as `source-bytes=L`: 32768 on
+ESP32 and the Linux host, 4096 on compact Pine and on firmware that omits the
+field. The last chunk and read index is `ceil(L/48)-1` (682 or 85). The same
+source commands run over authenticated RF and web. ID is 16 lowercase hex
+characters; using SHA-256's first 16 characters is recommended, not required.
+HASH is full 64-lowercase-hex SHA-256 of the exact source bytes.
 
 The raw-KISS reference completes the native reciprocal PATH exchange after
 flood login. It can retransmit a command twice within its bounded deadline,
@@ -214,11 +216,11 @@ success. Stock companions already own their native route handling.
 | Command | Stable result/meaning |
 | --- | --- |
 | `source begin ID SIZE HASH` | `ACK ID next=N`; resume only an identical ID/size/hash manifest; another upload requires explicit cancel |
-| `source chunk ID INDEX HEX` | `ACK ID next=N`; zero-based sequential index, exactly 48 decoded bytes except the final remainder; at most 86 chunks |
+| `source chunk ID INDEX HEX` | `ACK ID next=N`; zero-based sequential index, exactly 48 decoded bytes except the final remainder; at most `ceil(L/48)` chunks |
 | `source commit ID` | `Accepted verification; source status reports durable activation outcome` |
 | `source status` | `gen=G active=A prev=P size=S upload=ID_OR_none next=N/T; OUTCOME` |
 | `source hash` | `SHA256 HASH gen=G` for the durable selected source; not proof of live activation |
-| `source read INDEX` | `DATA HEX`, up to 48 source bytes, or `EOF`; legal indexes 0..85 |
+| `source read INDEX` | `DATA HEX`, up to 48 source bytes, or `EOF`; legal indexes 0..`ceil(L/48)-1` |
 | `source help TEXT`, `source help -` | Save/change or clear help, at most 96 printable ASCII bytes |
 | `source helptext` | Raw help text, or `(no source help)`; not structured status |
 | `source rollback`, `source remove` | Asynchronously validate/select previous source+help or bundled handlers; inspect status |
@@ -251,7 +253,7 @@ Normal bundled idle status has outcome `bundled source`.
 
 For download, read declared `size` and exactly `ceil(size/48)` chunks; verify
 length, full hash and unchanged generation/hash before and after reading.
-Do not request index 86 to find EOF at the 4096-byte maximum.
+Do not request an index past `ceil(L/48)-1` to find EOF at the maximum size.
 Help is raw content and can itself start with `Error:`; do not treat it as a
 machine-readable deployment result.
 

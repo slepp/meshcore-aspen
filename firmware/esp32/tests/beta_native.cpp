@@ -988,20 +988,20 @@ static void source_copy_limits() {
     return result;
   };
   const char *from = "/command-bot/upload.lua";
-  filesystem_test::files[from] = Bytes(BotSourceLimit, ' ');
+  filesystem_test::files[from] = Bytes(BotSourceStageLimit, ' ');
   assert(!worker.copyFile("/unapproved", BotStagedSourcePath, 1));
   assert(!worker.copyFile(from, "/unapproved", 1));
-  assert(!worker.copyFile(from, BotStagedSourcePath, BotSourceLimit + 1));
-  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceLimit));
+  assert(!worker.copyFile(from, BotStagedSourcePath, BotSourceStageLimit + 1));
+  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceStageLimit));
   assert(poll().ok);
   assert(filesystem_test::files[from] == filesystem_test::files[BotStagedSourcePath]);
   filesystem_test::writeLimit = 1;
-  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceLimit));
+  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceStageLimit));
   auto result = poll();
   assert(!result.ok && strstr(result.error, "write incomplete"));
   filesystem_test::writeLimit = SIZE_MAX;
   filesystem_test::readDelayMs = BotSourceCopyBudgetMs;
-  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceLimit));
+  assert(worker.copyFile(from, BotStagedSourcePath, BotSourceStageLimit));
   result = poll();
   filesystem_test::readDelayMs = 0;
   assert(!result.ok && strstr(result.error, "deadline"));
@@ -1051,16 +1051,20 @@ static void sourceSetJournalLifecycle() {
        "command('installed','','Installed') "
        "function keep() kv.put('kept','durable') return 'kept' end command('keep','','Keep') "
        "function pending() sleep(30000) return 'old pending' end command('pending','','Pending')\n"},
-      {"spare0", "-- spare\n"}, {"spare1", "-- spare\n"},
-      {"spare2", "-- spare\n"}, {"spare3", "-- spare\n"}};
-    for (size_t padding = 0; padding < BotSourceLimit; ++padding) {
+    };
+    // The bundled reference and three files above, then spares up to the entry limit.
+    for (unsigned i = 4; i < BotSourcePartLimit; ++i)
+      files.push_back({"spare" + std::to_string(i - 4), "-- spare\n"});
+    for (size_t padding = 0; padding < BotSourceStageLimit; ++padding) {
       files.back().second = "--" + std::string(padding, 'x') + "\n";
       std::string source = "--@meshcore-sources/1\n--@builtin main\n";
       for (const auto &file : files)
         source += "--@source " + file.first + " " + std::to_string(file.second.size()) +
                   "\n" + file.second + "\n";
-      if (source.size() == BotSourceLimit) return source;
-      assert(source.size() < BotSourceLimit);
+      if (source.size() == BotSourceStageLimit) return source;
+      assert(source.size() < BotSourceStageLimit);
+      // Jump close to the limit; the header's length digits can still grow.
+      if (source.size() + 8 < BotSourceStageLimit) padding += BotSourceStageLimit - source.size() - 8;
     }
     assert(false); return std::string{};
   };
@@ -1072,7 +1076,7 @@ static void sourceSetJournalLifecycle() {
   };
   const auto readback = [](BetaFixture &f) {
     std::string source;
-    for (unsigned i = 0; i <= 85; ++i) {
+    for (unsigned i = 0; i < (BotLuaSourceLimit + 47) / 48; ++i) {
       const auto reply = f.action(("source read " + std::to_string(i)).c_str());
       if (reply == "EOF") break;
       assert(reply.find("DATA ") == 0);
@@ -1111,7 +1115,7 @@ static void sourceSetJournalLifecycle() {
     assert(path);
     std::ifstream module(path, std::ios::binary);
     const std::string wasm{std::istreambuf_iterator<char>(module), std::istreambuf_iterator<char>()};
-    assert(wasm.size() > 8 && wasm.size() <= BotSourceLimit);
+    assert(wasm.size() > 8 && wasm.size() <= BotWasmPackageLimit);
     upload(f, wasm, true, true, [&](const char *command) {
       return f.action((std::string("source wasm ") + (command + 7)).c_str());
     });
@@ -1202,7 +1206,8 @@ static void sourceSetJournalLifecycle() {
     assert(pending.find("live retry pending") != std::string::npos &&
            pending.find("use source remove") == std::string::npos);
     const auto metadata = f.action("source metadata");
-    assert(metadata.find("expected=4096 actual=4095") != std::string::npos &&
+    assert(metadata.find("expected=" + std::to_string(BotSourceStageLimit) + " actual=" +
+                         std::to_string(BotSourceStageLimit - 1)) != std::string::npos &&
            metadata.find("wait for retries") != std::string::npos);
     f.step(1200);
     const auto blocked = f.action("source status");
@@ -1239,8 +1244,8 @@ static void sourceSetJournalLifecycle() {
   assert(psram_test::requestedLive.load() == 0);
   identity_test::durable = baseline;
   filesystem_test::files = baselineFiles;
-  printf("PASS source-set journal: eight entries/4096B, config/module rebuild, exact readback, CAS conflict, activation-only Lua cancellation, durable KV, manual rollback, two restart boundaries, corrupt-file fail-closed and encrypted native recovery; wasm=%u source_file_peak=%zu journal_blob_peak=%zu workspace_request_peak=%zu lua_allocator_peak=%zu (host proxies)\n",
-         ONCHIP_BOT_WASM, flashPeak, journalPeak, psram_test::requestedPeak.load(), sourceSetLuaPeak.load());
+  printf("PASS source-set journal: %u entries/%zuB, config/module rebuild, exact readback, CAS conflict, activation-only Lua cancellation, durable KV, manual rollback, two restart boundaries, corrupt-file fail-closed and encrypted native recovery; wasm=%u source_file_peak=%zu journal_blob_peak=%zu workspace_request_peak=%zu lua_allocator_peak=%zu (host proxies)\n",
+         BotSourcePartLimit, BotLuaSourceLimit, ONCHIP_BOT_WASM, flashPeak, journalPeak, psram_test::requestedPeak.load(), sourceSetLuaPeak.load());
 }
 #endif
 static std::string packageSource(const char *version, const char *schema, const char *rollback,
@@ -1349,7 +1354,8 @@ static void interrupted_upload() {
   };
   {
     BetaFixture f;
-    assert(f.action("source api") == "API named-commands-v1 lua=5.5.1 commands=8 arguments=4 source-bytes=4096 runtime=shared-v1 jobs=" +
+    assert(f.action("source api") == "API named-commands-v1 lua=5.5.1 commands=" + std::to_string(BotCommandLimit) +
+        " arguments=4 source-bytes=" + std::to_string(BotLuaSourceLimit) + " runtime=shared-v1 jobs=" +
         std::to_string(BotJobLimit) + " kv=2 sleep=1 mesh=dm,wait,trace,advert rpc=1");
     assert(f.action("source api package").find(
         "Package api=named-commands-v1 caps=cmdmeta,events,") == 0);
@@ -1398,7 +1404,7 @@ static void interrupted_upload() {
     assert(f.action("source hash") == sourceBeforeFetch);
 #else
     assert(f.action("source api fetch") ==
-        "Owner GET JSON=2048; Package GET alias=package raw=1..4096 "
+        "Owner GET JSON=2048; Package GET alias=package raw=1.." + std::to_string(BotSourceStageLimit) + " "
         "type=text/plain|application/octet-stream|application/x-lua SHA256=source");
     const auto sourceBeforeFetch = f.action("source hash");
     assert(f.action(("source fetch packages " + std::string(64, 'a')).c_str()).find("Error:") == 0);
@@ -3367,7 +3373,7 @@ static void cross_runtime_source_credentials() {
     assert(path && "Use the lifecycle-test Make target to build the Wasm credential fixture");
     std::ifstream module(path, std::ios::binary);
     const std::string wasm{std::istreambuf_iterator<char>(module), std::istreambuf_iterator<char>()};
-    assert(wasm.size() > 8 && wasm.size() <= BotSourceLimit);
+    assert(wasm.size() > 8 && wasm.size() <= BotWasmPackageLimit);
     assert(f.bot.stageSource(wasm.data(), wasm.size())); f.step();
     assert(f.bot.pollSourceResult(result) && result.ok && f.bot.activateStaged()); f.step();
     assert(f.bot.pollSourceResult(result) && result.ok);

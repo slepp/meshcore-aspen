@@ -56,8 +56,14 @@ class PackageTests(unittest.TestCase):
                 bot_packages.inspect(invalid)
 
     def test_package_size_and_source_boundaries(self):
-        with self.assertRaisesRegex(ValueError, "envelope limit"):
-            bot_packages.create(b"--" + b"x" * 4088, "large", "1.0.0")
+        with self.assertRaisesRegex(ValueError, "envelope limit is 4096"):
+            bot_packages.create(b"--" + b"x" * 4088, "large", "1.0.0", limit=4096)
+        large = bot_packages.create(b"--" + b"x" * 24000, "large", "1.0.0")
+        self.assertEqual(bot_packages.inspect(large.source).source, large.source)
+        with self.assertRaisesRegex(ValueError, "1..4096 source bytes"):
+            bot_packages.inspect(large.source, 4096)
+        with self.assertRaisesRegex(ValueError, "envelope limit is 32768"):
+            bot_packages.create(b"--" + b"x" * 32700, "large", "1.0.0")
         with self.assertRaisesRegex(ValueError, "already a packaged"):
             bot_packages.create(self.package().source, "nested", "1.0.0")
         with self.assertRaisesRegex(ValueError, "NUL"):
@@ -198,7 +204,8 @@ class PackageTests(unittest.TestCase):
             def command(self, command):
                 calls.append(command)
                 if command == "source api fetch":
-                    return mast_cli.PACKAGE_FETCH_API
+                    return ("Owner GET JSON=2048; Package GET alias=package raw=1..32768 "
+                            "type=text/plain|application/octet-stream|application/x-lua SHA256=source")
                 if command == "source hash":
                     return f"SHA256 {expected} gen=2" if fetch_command in calls else "SHA256 " + "00" * 32 + " gen=1"
                 if command.startswith("source fetch "):

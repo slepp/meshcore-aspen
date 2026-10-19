@@ -36,7 +36,7 @@ def readme(entry, version, source):
               "Read source list first. If updating an installed file with the same name,",
               "export it to a new private file with source export NAME FILE before replacing it.",
               "source install retains other named files and the bundled main commands;",
-              "duplicate exports or a source set exceeding eight entries/4096 bytes reject activation.",
+              "duplicate exports or a source set beyond the device's entry/byte limits reject activation.",
               "An existing custom main source is retained too; inspect its namespace before installing.", ""]
     lua = next(item["name"] for item in entry["files"] if item["runtime"] == "lua")
     connections = [("Aspen", "--web http://DEVICE --password-file /private/node-password")]

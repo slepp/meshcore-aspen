@@ -104,7 +104,9 @@ signature verification remains in the [package tooling](../runtime/BOT_DEVELOPME
 not the browser.
 
 Readback uses the declared byte count, exact chunk lengths, SHA256 and unchanged
-generation/hash; it never requests index 86 at the 4096-byte limit. Invalid,
+generation/hash; it never requests an index past the advertised
+`source-bytes` limit. The editor and Wasm file picker take that limit from
+`source api` (4096 when the field is absent). Invalid,
 changed or oversized readback leaves the editor untouched. Bundled source can
 exceed the editable/download envelope. The browser does not truncate it or
 pretend it can reinstall that truncated source.
@@ -216,20 +218,20 @@ make -C firmware/esp32 beta-build
 ```
 
 The JS fixtures execute the shipped page script against native command/result
-shapes, including expiry, exact 4 KiB reads, resumed uploads, draft preservation,
-scoped data validation, stage/commit separation and uncertain outcomes.
-The browser target uses Node 22+ and system Chrome (`CHROME=/path/to/chrome`
-overrides the executable), a loopback fixture, and project-local scratch
-files. It checks real forms, disabled controls, DOM escaping and the existing
-content-security policy. It does not contact hardware.
+shapes, including expiry, exact 4 KiB reads, the advertised source limit,
+resumed uploads, draft preservation, scoped data validation, stage/commit
+separation and uncertain outcomes. The browser target uses Node 22+ and system
+Chrome (`CHROME=/path/to/chrome` overrides the executable), a loopback fixture,
+and project-local scratch files. It checks real forms, disabled controls, DOM
+escaping and the existing content-security policy. It does not contact hardware.
 The browser fixtures also check command-level/malformed readback errors,
-Wasm-targeted inspection, mixed restore scopes and signed firmware
-upload/reboot outcomes. The host fixture checks token authentication,
-capability-disabled controls, restricted secret transfer, source snapshots
-and retained drafts. It also checks scoped relay/room control independently
-of the native bot, different-role reads after a lost write and exact setting
-readback before unlocking. The host HTTP adapter tests use local owner-socket
-fixtures and real native role engines with durable restart readbacks:
+Wasm-targeted inspection, mixed restore scopes and signed firmware upload/reboot
+outcomes. The host fixture checks token authentication, capability-disabled
+controls, restricted secret transfer, source snapshots and retained drafts. It
+also checks scoped relay/room control independently of the native bot,
+different-role reads after a lost write and exact setting readback before
+unlocking. The host HTTP adapter tests use local owner-socket fixtures and real
+native role engines with durable restart readbacks:
 
 ```sh
 mkdir -p .tmp/admin-http-go

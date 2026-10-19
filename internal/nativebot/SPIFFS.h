@@ -9,7 +9,7 @@
 // The state directory must already exist at an absolute, symlink-free path,
 // owned by the effective user with mode 0700. No directory is formatted or
 // created. Only /command-bot/<bounded-name> is addressable. At most 32
-// files of 4096 bytes each are stored, in private checksummed records.
+// files of up to 32 KiB each are stored, in private checksummed records.
 // A leftover temporary file or corrupt record blocks initialization.
 bool native_spiffs_init(const char *absolute_private_directory);
 void native_spiffs_shutdown();

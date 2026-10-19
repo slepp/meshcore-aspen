@@ -248,7 +248,7 @@ when a runtime role is off.
 | Command bot core | 55,256 while enabled; released by stop | Bot-off startup skips this core and its ordinary workers |
 | Bot worker copied state | 80,392 Lua / 80,408 bot-only Wasm / 126,368 HTTPS / 126,384 HTTPS+Wasm per worker | Control 108 for bot-only / 140 for HTTPS; task synchronization stays internal |
 | Retained Lua session native metadata | **98,808 per state**, separate from Lua allocator | No internal fallback for this aggregate |
-| Lua allocator | Up to **98,304 per state**, allocated as needed, freed by `lua_close`; not a preallocated 96-KiB pool | No internal fallback |
+| Lua allocator | Up to **262,144 per state**, allocated as needed, freed by `lua_close`; not a preallocated 256-KiB pool | No internal fallback |
 | Wasm native session | **52,136 per loaded session**, outside WAMR pool; freed by clear | Small C++ session handle/locking is separate |
 | Wasm linear memory | **65,536 per instance**, mapped separately in PSRAM outside the pool; mapping requests eight additional alignment/header bytes; released on deinstantiate | No internal fallback |
 | WAMR runtime pool | **1,048,576**, lazy at first valid Wasm load, retained after module removal/worker stop | Small global pool pointer/lock; pool is not internal SRAM |
@@ -269,7 +269,24 @@ heap. Four job records, copied events/I/O/results and duplicated manifests
 are embedded in that aggregate; their slots are not extra allocations per
 invocation. A `BotManifest` is 8,643 bytes; copies are already included.
 Working jobs add Lua coroutine/value allocations **within the state's
-96-KiB cap**, not four independent 96-KiB heaps.
+256-KiB cap**, not four independent heaps.
+
+The worker, session and Wasm rows above were measured with 4,096-byte
+sources, eight custom commands and eight modules. The 32 KiB source limit,
+32 commands per runtime and 16 modules add, per a 32-bit host model of the
+same structures:
+
+| Item | Added PSRAM request |
+| --- | --- |
+| Staged source buffer, per worker (command bot and two source validators) | 28,672 |
+| Combined help manifest, per worker with Wasm (64 instead of 32 entries) | about 9,100 |
+| Retained Lua session aggregate (64-entry help manifest, 16 modules per manifest) | 9,816 |
+| `BotManifest` (16 module names) | 200 |
+| Wasm session package bytes, per loaded Wasm session | 28,672 |
+
+The Lua heap cap is a ceiling, not a reservation: a 32 KiB code-heavy set
+retains roughly 90 KB, and a table-heavy one up to about 200 KB. Check free
+PSRAM with `stats psram` before installing a large set.
 
 Source replacement can retain the old active and diagnostic states while a
 candidate is initialized. Mast source validation creates another worker with

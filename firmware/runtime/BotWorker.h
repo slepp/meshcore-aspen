@@ -19,7 +19,8 @@
 
 namespace onchip {
 constexpr char BotStagedSourcePath[] = "/command-bot/staged.lua";
-constexpr uint32_t BotSourceReadBudgetMs = 100;
+// Covers the staged-file read and its SHA-256.
+constexpr uint32_t BotSourceReadBudgetMs = ONCHIP_BOT_COMPACT_PROFILE ? 100 : 500;
 constexpr uint32_t BotSourceCopyBudgetMs = 2000;
 
 class BotWorker {

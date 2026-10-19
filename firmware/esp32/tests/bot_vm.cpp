@@ -124,6 +124,9 @@ static void commandOverrides() {
   std::string full = "function patched() return 'ok' end ";
   for (const char *name : {"ping", "path", "test", "mt", "trace", "calc", "convert", "roll"})
     full += "override_command('" + std::string(name) + "','patched') ";
+  // Overrides and custom commands share the per-runtime command capacity.
+  for (unsigned i = 8; i < BotCommandLimit; ++i)
+    full += "function c" + std::to_string(i) + "() end command('c" + std::to_string(i) + "','','') ";
   load(full);
   assert(vm.manifest().count == BotCommandLimit);
   load(full + "override_command('choose','patched')", false);
@@ -310,7 +313,8 @@ static void registry() {
   validate("function reply(text) end function hello(name) end", false);
   validate("function hello(name) end _ENV[1]=function() end", false);
   validate("function hello(name) end _ENV['bad\\0name']=function() end", false);
-  validate("function hello(name) end for i=1,65 do _ENV[i]=i end", false);
+  validate("function hello(name) end for i=1," + std::to_string(BotGlobalInspectionLimit + 1) +
+           " do _ENV[i]=i end", false);
   validate("function hello() end function other() end command('hello','','','other')", false);
   validate("function long(aaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbb,"
            "cccccccccccccccccccccccc,dddddddddddddddddddddddd) end", false);
@@ -491,8 +495,10 @@ static void initializationBudgets() {
   static_assert(BotVmLimits{}.loadWallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 330000 : BotBundledLoadWallUs) &&
                 BotVmLimits{}.initWallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 50000 : 100000) &&
                 BotVmLimits{}.wallUs == (ONCHIP_BOT_COMPACT_PROFILE ? 20000 : 100000));
-  static_assert(BotVmLimits{}.instructions == 10000 && BotVmLimits{}.parserSteps == 16384);
-  static_assert(BotVmLimits{}.heapBytes == (ONCHIP_BOT_COMPACT_PROFILE ? 48 : 96) * 1024);
+  static_assert(BotVmLimits{}.instructions == 10000 &&
+                BotVmLimits{}.parserSteps == 12288 + BotLuaSourceLimit);
+  static_assert(BotLuaSourceLimit == (ONCHIP_BOT_COMPACT_PROFILE ? 4096 : 32768));
+  static_assert(BotVmLimits{}.heapBytes == (ONCHIP_BOT_COMPACT_PROFILE ? 48 : 256) * 1024);
   BotSession vm;
   BotVmStats stats;
   BotVmLimits limits;
@@ -1175,7 +1181,7 @@ static void utilityCommands() {
   const char *init = "utility.roll() function custom() end";
   assert(!vm.load(init, strlen(init), 3, stats, error, sizeof(error)));
   auto full = std::string("function custom() return 'maximum source' end --");
-  full.resize(BotSourceLimit, 'x');
+  full.resize(BotLuaSourceLimit, 'x');
   assert(vm.load(full.data(), full.size(), 4, stats, error, sizeof(error)) &&
          vm.start(6, event("!custom"), error, sizeof(error)) && vm.poll(result) && result.ok);
   full += 'x'; assert(!vm.load(full.data(), full.size(), 5, stats, error, sizeof(error)));
@@ -1487,8 +1493,10 @@ static void packageModules() {
     assert(!vm.load(complete.data(), complete.size(), 4, stats, error, sizeof(error)));
   }
   std::string excessive;
-  for (unsigned i = 0; i < 9; ++i)
+  for (unsigned i = 0; i < BotModuleLimit; ++i)
     excessive += "module('m" + std::to_string(i) + "',function() return {} end) ";
+  validate(excessive + "function hello() return 'yes' end");
+  excessive += "module('m" + std::to_string(BotModuleLimit) + "',function() return {} end) ";
   validate(excessive + "function hello() return 'no' end", false);
   const std::string late = "function late() module('late',function() return {} end) end";
   assert(vm.load(late.data(), late.size(), 5, stats, error, sizeof(error)));
@@ -1512,12 +1520,14 @@ static void namedSourceCapacity() {
   files[0] = "settings={value='configured'}\n" + files[0];
   const auto last = files[BotSourcePartLimit - 1];
   std::string source;
-  for (size_t padding = 0; padding < BotSourceLimit; ++padding) {
+  for (size_t padding = 0; padding < BotLuaSourceLimit; ++padding) {
     files[BotSourcePartLimit - 1] = last + "--" + std::string(padding, 'x') + "\n";
     source = envelope();
-    if (source.size() >= BotSourceLimit) break;
+    if (source.size() >= BotLuaSourceLimit) break;
+    // Jump close to the limit; the header's length digits can still grow.
+    if (source.size() + 8 < BotLuaSourceLimit) padding += BotLuaSourceLimit - source.size() - 8;
   }
-  assert(source.size() == BotSourceLimit);
+  assert(source.size() == BotLuaSourceLimit);
   BotSourcePart parts[BotSourcePartLimit]{};
   unsigned count = 0; char error[128]{};
   assert(splitBotSources(source.data(), source.size(), parts, count, error, sizeof(error)) &&
@@ -1539,9 +1549,87 @@ static void namedSourceCapacity() {
   files[BotSourcePartLimit - 1] = last;
   excessive = envelope() + "--@source extra 3\n--x\n";
   assert(!splitBotSources(excessive.data(), excessive.size(), parts, count, error, sizeof(error)) &&
-         strstr(error, "eight-source"));
-  printf("PASS named source capacity: files=%u envelope=%zu heap_limit=%zu load_peak=%zu jobs=%u; shared config/eight handlers, 4097-byte and ninth-file rejection\n",
-         BotSourcePartLimit, BotSourceLimit, limits.heapBytes, peak, BotJobLimit);
+         strstr(error, "-source limit"));
+  printf("PASS named source capacity: files=%u envelope=%zu heap_limit=%zu load_peak=%zu jobs=%u; shared config/one handler per file, oversized set and extra-file rejection\n",
+         BotSourcePartLimit, BotLuaSourceLimit, limits.heapBytes, peak, BotJobLimit);
+}
+// A code-heavy set near 24 KiB: helper modules plus a full command registry.
+static void largeCodeSet() {
+  if (ONCHIP_BOT_COMPACT_PROFILE) return;
+  std::string source;
+  unsigned modules = 0;
+  for (; source.size() < 22 * 1024 && modules < BotModuleLimit; ++modules) {
+    const unsigned m = modules;
+    const auto id = std::to_string(m);
+    source += "module('lib" + id + "',function() local t={rows={}} ";
+    for (unsigned f = 0; f < 12; ++f) {
+      const auto n = std::to_string(f);
+      source += "function t.f" + n + "(x) local y=x*" + n + "+" + id +
+                " if y>1000 then y=y%997 end return y end ";
+    }
+    for (unsigned r = 0; r < 12; ++r) {
+      const auto n = std::to_string(r);
+      source += "t.rows[" + std::to_string(r + 1) + "]={id=" + n + ",name='row" + n + "',v=" +
+                std::to_string(r * 3) + "} ";
+    }
+    source += "return t end)\n";
+  }
+  for (unsigned c = 0; c < BotCommandLimit; ++c) {
+    const auto id = std::to_string(c);
+    source += "function cmd" + id + "(x) local l=require('lib" + std::to_string(c % 8) +
+              "') return tostring(l.f" + std::to_string(c % 12) + "(x)+#l.rows) end "
+              "command('cmd" + id + "','x:int:1:100','Large set command " + id + "')\n";
+  }
+  assert(modules >= 8);
+  assert(source.size() >= 20 * 1024 && source.size() <= 26 * 1024 && source.size() <= BotLuaSourceLimit);
+  BotSession vm; BotVmStats stats; BotVmLimits limits; char error[128]{};
+  const bool loaded = vm.load(source.data(), source.size(), 1, stats, error, sizeof(error), limits);
+  if (!loaded) fprintf(stderr, "large code set (%zu bytes): %s parser=%u peak=%zu\n",
+                       source.size(), error, stats.parserSteps, stats.peakBytes);
+  assert(loaded && vm.manifest().count == BotCommandLimit);
+  assert(stats.parserSteps <= limits.parserSteps && stats.peakBytes <= limits.heapBytes);
+  BotSession::Result result;
+  const auto last = "!cmd" + std::to_string(BotCommandLimit - 1) + " 7";
+  // cmd31 uses lib7.f7: 7*7+7 = 56, plus 12 rows.
+  assert(vm.start(1, event(last.c_str()), error, sizeof(error)) && vm.poll(result) && result.ok);
+  assert(!strcmp(result.action.text, "68"));
+  const auto overflow = source + "function extra() end command('extra','','')";
+  validate(overflow, false);
+  printf("PASS large code set: bytes=%zu commands=%u modules=%u parser=%u/%u peak=%zu/%zu\n",
+         source.size(), BotCommandLimit, modules, stats.parserSteps,
+         limits.parserSteps, stats.peakBytes, limits.heapBytes);
+}
+// Diagnostics lists custom Lua and Wasm commands together: 2 x BotCommandLimit.
+static void combinedHelpCapacity() {
+#if ONCHIP_BOT_SEPARATE_DIAGNOSTICS && !ONCHIP_BOT_COMPACT_PROFILE
+  BotSession diagnostics; BotVmStats stats; char error[128]{};
+  assert(diagnostics.load(BotDefaultSource, strlen(BotDefaultSource), 1, stats, error, sizeof(error)));
+  BotHelpManifest help;
+  static_assert(BotHelpCommandLimit >= BotRuntimeCommandLimit);
+  for (unsigned i = 0; i < BotRuntimeCommandLimit; ++i) {
+    auto &entry = help.writable()[i];
+    snprintf(entry.name, sizeof(entry.name), "c%02u", i);
+    strcpy(entry.function, entry.name);
+  }
+  help.count = BotRuntimeCommandLimit;
+  diagnostics.setHelp(help);
+  std::string listed;
+  unsigned pages = 0;
+  for (unsigned page = 1; page < 40; ++page) {
+    const auto text = "!help " + std::to_string(page);
+    BotSession::Result result;
+    assert(diagnostics.start(page, event(text.c_str()), error, sizeof(error)) && diagnostics.poll(result) && result.ok);
+    listed += result.action.text;
+    ++pages;
+    if (!strstr(result.action.text, "; !help NAME [PAGE]")) continue;
+    break;
+  }
+  for (unsigned i = 0; i < BotRuntimeCommandLimit; ++i) {
+    char name[8]; snprintf(name, sizeof(name), " !c%02u", i);
+    assert(listed.find(name) != std::string::npos);
+  }
+  printf("PASS combined help: %u custom commands across %u pages\n", BotRuntimeCommandLimit, pages);
+#endif
 }
 static void namedSourcesAndRepeaterVm() {
   const auto set = [](const std::string &a, const std::string &b) {
@@ -1590,7 +1678,7 @@ static void namedSourcesAndRepeaterVm() {
   }
   source = set(BotDefaultSource,
       "function fleet_poll() local p=repeater.next() if p then repeater.status(p) end end events.every(15,'fleet_poll')");
-  assert(source.size() <= BotSourceLimit);
+  assert(source.size() <= BotLuaSourceLimit);
   assert(vm.load(source.data(), source.size(), 19, stats, error, sizeof(error)));
   assert(vm.start(3, event("!ping"), error, sizeof(error)) && vm.poll(result) &&
          result.ok && !strcmp(result.action.text, "Pong"));
@@ -1936,9 +2024,12 @@ static void networkVm() {
 int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--source-capacity-test")) {
     namedSourceCapacity();
+    largeCodeSet();
     return 0;
   }
   namedSourceCapacity();
+  largeCodeSet();
+  combinedHelpCapacity();
   namedSourcesAndRepeaterVm();
   commandOverrides();
   commandDiscoveryAndMeshGrants();
@@ -1994,16 +2085,16 @@ int main(int argc, char **argv) {
   std::ifstream file("tests/bot_large.lua");
   assert(file);
   const std::string large((std::istreambuf_iterator<char>(file)), {});
-  assert(large.size() >= 3500 && large.size() <= BotSourceLimit);
-  assert(validate(large).count == BotCommandLimit);
+  assert(large.size() >= 3500 && large.size() <= BotLuaSourceLimit);
+  assert(validate(large).count == 8);
   assert(!strcmp(run(large, event("!station 32")).text,
                  "Fixture East 32 [AD07ah] elevation=432"));
   assert(!strcmp(run(large, event("!hello slepp")).text, "Hello slepp"));
   assert(!strcmp(run(large, event("!difference 1 32")).text, "Fixture elevation gap: 331"));
-  assert(!strcmp(run(large + std::string(BotSourceLimit - large.size(), ' '),
+  assert(!strcmp(run(large + std::string(BotLuaSourceLimit - large.size(), ' '),
                      event("!product -100 100")).text, "-10000"));
   {
-    const auto full = large + std::string(BotSourceLimit - large.size(), ' ');
+    const auto full = large + std::string(BotLuaSourceLimit - large.size(), ' ');
     BotVmStats phases;
     BotAction action;
     BotVmLimits limits;
@@ -2044,9 +2135,9 @@ int main(int argc, char **argv) {
     assert(phases.loadUs >= limits.loadWallUs && phases.peakBytes < limits.heapBytes);
     limits = {};
     assert(limits.loadWallUs == BotBundledLoadWallUs && limits.initWallUs == 100000 &&
-           limits.wallUs == 100000 && limits.heapBytes == 96 * 1024 &&
-           limits.instructions == 10000 && limits.parserSteps == 16384);
-    const auto full = large + std::string(BotSourceLimit - large.size(), ' ');
+           limits.wallUs == 100000 && limits.heapBytes == 256 * 1024 &&
+           limits.instructions == 10000 && limits.parserSteps == 12288 + BotLuaSourceLimit);
+    const auto full = large + std::string(BotLuaSourceLimit - large.size(), ' ');
     for (const std::string &source : {std::string(BotDefaultSource), full}) {
       fakeTime = 1000;
       const bool loaded = retained.load(source.data(), source.size(), 1, phases, error, sizeof(error), limits);
@@ -2072,7 +2163,7 @@ int main(int argc, char **argv) {
       BotIoResult saved; saved.token = request.token; saved.ok = true;
       assert(retained.complete(saved));
       assert(retained.poll(result) && result.ok && !strcmp(result.action.text, "Saved note task"));
-      if (source.size() == BotSourceLimit) {
+      if (source.size() == BotLuaSourceLimit) {
         assert(retained.start(4, event("!hello slepp"), error, sizeof(error)));
         assert(retained.nextIo(request) && request.kind == BotIoRequest::Send &&
                request.reply && !strcmp(request.value, "Hello slepp"));
@@ -2264,14 +2355,14 @@ int main(int argc, char **argv) {
   limits = {}; limits.wallUs = 0; run(BotDefaultSource, ping, false, limits);
   limits = {}; limits.loadWallUs = 0; run(BotDefaultSource, ping, false, limits);
   run("\x1bLua", event("!custom"), false);
-  run(std::string(BotSourceLimit + 1, ' '), event("!custom"), false);
+  run(std::string(BotLuaSourceLimit + 1, ' '), event("!custom"), false);
   const auto nested = "return " + std::string(100, '(') +
                       "function() end" + std::string(100, ')');
   assert(!BotVm::invoke(nested.c_str(), nested.size(), event("!custom"), measuredAction,
                        measured, measuredError, sizeof(measuredError)));
   assert(strstr(measuredError, "C stack overflow") && measuredAction.kind == BotAction::None);
   std::string exactSource = program("reply('ok')");
-  exactSource.resize(BotSourceLimit, ' ');
+  exactSource.resize(BotLuaSourceLimit, ' ');
   assert(!strcmp(run(exactSource, event("!custom")).text, "ok"));
   char error[128];
   BotEvent tooLong;

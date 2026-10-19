@@ -21,7 +21,8 @@ constexpr char DiskPrefix[] = "spiffs.";
 constexpr char TempPrefix[] = ".spiffs-tmp.";
 constexpr uint8_t Magic[8] = {'M', 'C', 'F', 'S', '\r', '\n', 0, 1};
 constexpr size_t HeaderSize = 16, MaxFile = 32 * 1024, MaxFiles = 32;
-constexpr size_t Capacity = 128 * 1024;
+// Every file can reach the per-file limit; bot sources use up to 32 KiB each.
+constexpr size_t Capacity = MaxFiles * MaxFile;
 
 std::mutex guard;
 int directory = -1;

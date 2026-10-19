@@ -216,7 +216,7 @@ int main() {
   assert(get.sent.find("Authorization: Bearer " + std::string(token) + "\r\n") != std::string::npos);
   assert(get.sent.find("\r\n\r\n") == get.sent.size() - 4);
   assert(get.opens == 1 && get.closes == 1);
-  std::string source(4095, 'a');
+  std::string source(BotSourceStageLimit - 1, 'a');
   source.push_back('\n');
   SHA256 digest;
   uint8_t expected[32]{};
@@ -238,8 +238,8 @@ int main() {
   result = perform(package, packageRequest, &fetch, &fetched);
   assert(result.ok && result.httpStatus == 200 && result.networkSubmitted &&
          sink.committed && !sink.aborted && sink.begins == 1 &&
-         sink.announced == BotSourceLimit && sink.bytes == source &&
-         fetched.bytes == BotSourceLimit && !memcmp(fetched.sha256, expected, 32));
+         sink.announced == BotSourceStageLimit && sink.bytes == source &&
+         fetched.bytes == BotSourceStageLimit && !memcmp(fetched.sha256, expected, 32));
   assert(package.sent.find("GET /v1/package HTTP/1.1\r\n") == 0);
   assert(package.sent.find("Accept: application/octet-stream\r\n") != std::string::npos);
   assert(package.sent.find("\r\n\r\n") == package.sent.size() - 4);

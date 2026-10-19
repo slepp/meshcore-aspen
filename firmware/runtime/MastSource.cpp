@@ -30,7 +30,7 @@ class PackageSourceSink final : public BotHttpsBodySink {
 public:
   void select(const char *path) { path_ = path; }
   bool begin(uint32_t length) override {
-    if (active_ || length < 1 || length > BotSourceLimit) return false;
+    if (active_ || length < 1 || length > BotSourceStageLimit) return false;
     committed_ = false;
     expected_ = written_ = 0;
     cleanupOk_ = true;
@@ -353,11 +353,11 @@ const char *MastSource::journalError(const Journal &journal) {
   const auto &deployment = journal.deployment;
   const auto &upload = journal.upload;
   if (deployment.version != 1 || deployment.active > Bundled || deployment.previous > Bundled ||
-      upload.version != 1 || upload.size > BotSourceLimit ||
+      upload.version != 1 || upload.size > BotSourceStageLimit ||
       upload.received > upload.size || upload.id[16])
     return "source journal invalid";
   for (unsigned i = 0; i < 4; ++i)
-    if ((i < 3 && deployment.sizes[i] > BotSourceLimit) ||
+    if ((i < 3 && deployment.sizes[i] > BotSourceStageLimit) ||
         !memchr(deployment.help[i], 0, sizeof(deployment.help[i])))
       return "source size/help invalid";
   return nullptr;
@@ -588,7 +588,7 @@ bool MastSource::compatible(const MastPackageMetadata &active, const MastPackage
 bool MastSource::acceptPackageFetch(const BotHttpsFetchResult &result) {
 #if ONCHIP_BOT_HTTPS
   if (result.state != BotHttpsFetchResult::Complete || !result.bytes ||
-      result.bytes > BotSourceLimit ||
+      result.bytes > sourceLimit() ||
       memcmp(result.sha256, packageFetch.hash, sizeof(packageFetch.hash)) ||
       !packageSourceSink.committed(result.bytes, result.sha256)) {
     if (!abortPackageSource("package sink completion mismatch"))
@@ -734,11 +734,11 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   if (!strcmp(input, "api")) {
     if (wasmRuntime_) {
       snprintf(reply, capacity,
-               "API meshcore-v1 runtime=wamr-2.4.1 commands=8 arguments=4 source-bytes=4096 jobs=%u memory=65536 stack=8192 fuel=10000",
+               "API meshcore-v1 runtime=wamr-2.4.1 commands=" ONCHIP_BOT_TEXT(ONCHIP_BOT_COMMAND_LIMIT) " arguments=4 source-bytes=" ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " jobs=%u memory=65536 stack=8192 fuel=10000",
                BotJobLimit);
       return;
     }
-    static constexpr char api[] = "API named-commands-v1 lua=5.5.1 commands=8 arguments=4 source-bytes=4096 runtime=shared-v1 jobs=%u kv=2 sleep=1 mesh=dm,wait,trace,advert rpc=1";
+    static constexpr char api[] = "API named-commands-v1 lua=5.5.1 commands=" ONCHIP_BOT_TEXT(ONCHIP_BOT_COMMAND_LIMIT) " arguments=4 source-bytes=" ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " runtime=shared-v1 jobs=%u kv=2 sleep=1 mesh=dm,wait,trace,advert rpc=1";
     static_assert(sizeof(api) <= 146, "Source API must fit a nonce-tagged native reply");
     snprintf(reply, capacity, api, BotJobLimit);
     return;
@@ -766,9 +766,9 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   if (!strcmp(input, "api fetch")) {
 #if ONCHIP_BOT_HTTPS
     if (wasmRuntime_) {
-      respond("Package GET runtime=wamr-2.4.1 alias=package raw=1..4096 type=application/wasm|application/octet-stream SHA256=source"); return;
+      respond("Package GET runtime=wamr-2.4.1 alias=package raw=1.." ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " type=application/wasm|application/octet-stream SHA256=source"); return;
     }
-    respond("Owner GET JSON=2048; Package GET alias=package raw=1..4096 type=text/plain|application/octet-stream|application/x-lua SHA256=source");
+    respond("Owner GET JSON=2048; Package GET alias=package raw=1.." ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " type=text/plain|application/octet-stream|application/x-lua SHA256=source");
 #else
     respond("Owner fetch unavailable");
 #endif
@@ -809,12 +809,12 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strcmp(input, "api modules")) {
     if (wasmRuntime_) { respond("Error: Wasm module linking is unavailable in ABI v1"); return; }
-    respond("Modules declare=module require=declared-only count=8 name-bytes=24 envelope=4096 init=bounded source-only=1 shared-vm=1");
+    respond("Modules declare=module require=declared-only count=" ONCHIP_BOT_TEXT(ONCHIP_BOT_MODULE_LIMIT) " name-bytes=24 envelope=" ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " init=bounded source-only=1 shared-vm=1");
     return;
   }
   if (!strcmp(input, "api overrides")) {
     if (wasmRuntime_) { respond("Error: Builtin overrides require Lua"); return; }
-    respond("Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=8");
+    respond("Overrides override_command(name,export) call_original(name[,text]) builtin-schema/policy=retained ctx=current-command slots=" ONCHIP_BOT_TEXT(ONCHIP_BOT_COMMAND_LIMIT));
     return;
   }
   if (!strcmp(input, "api events")) {
@@ -825,7 +825,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strcmp(input, "api sources")) {
     if (wasmRuntime_) { respond("Error: Named Lua sources require the Lua runtime"); return; }
-    respond("Sources format=meshcore-sources/1 count=8 envelope=4096 namespace=shared collisions=reject commit-base=sha256 atomic=1");
+    respond("Sources format=meshcore-sources/1 count=" ONCHIP_BOT_TEXT(ONCHIP_BOT_MODULE_LIMIT) " envelope=" ONCHIP_BOT_TEXT(ONCHIP_BOT_SOURCE_LIMIT) " namespace=shared collisions=reject commit-base=sha256 atomic=1");
     return;
   }
   if (!strcmp(input, "api bundled")) {
@@ -952,7 +952,7 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
     BotHttpsFetchRequest request{};
     request.id = ++packageFetch.nextId;
     memcpy(request.expectedSha256, hash, sizeof(hash));
-    request.maxBytes = BotSourceLimit;
+    request.maxBytes = sourceLimit();
     request.sink = &packageSourceSink;
     packageSourceSink.select(uploadPath());
     if (!commandBotService().fetchPackage(request)) {
@@ -973,8 +973,9 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   if (!strncmp(input, "begin ", 6)) {
     uint8_t hash[32], idBytes[8];
     if (sscanf(input, "begin %16s %u %64s %c", id, &size, digest, &extra) != 3 ||
-        !size || size > BotSourceLimit || !decode(digest, hash, 32) || !decode(id, idBytes, 8)) {
-      respond("Error: begin requires ID16, 1..4096 bytes and SHA256"); return;
+        !size || size > sourceLimit() || !decode(digest, hash, 32) || !decode(id, idBytes, 8)) {
+      snprintf(reply, capacity, "Error: begin requires ID16, 1..%u bytes and SHA256", unsigned(sourceLimit()));
+      return;
     }
     if (upload_.size) {
       if (strcmp(id, upload_.id) || size != upload_.size || memcmp(hash, upload_.hash, 32)) {
@@ -1007,9 +1008,10 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strncmp(input, "chunk ", 6)) {
     unsigned index;
+    const unsigned lastChunk = unsigned((sourceLimit() + 47) / 48 - 1);
     char encoded[97];
     if (sscanf(input, "chunk %16s %u %96s %c", id, &index, encoded, &extra) != 3 ||
-        !upload_.size || strcmp(id, upload_.id) || index > 85) {
+        !upload_.size || strcmp(id, upload_.id) || index > lastChunk) {
       respond("Error: invalid upload/chunk"); return;
     }
     const size_t offset = size_t(index) * 48;
@@ -1044,8 +1046,9 @@ void MastSource::execute(const char *input, char *reply, size_t capacity) {
   }
   if (!strncmp(input, "read ", 5)) {
     unsigned index;
-    if (sscanf(input, "read %u %c", &index, &extra) != 1 || index > 85) {
-      respond("Error: read index must be 0..85"); return;
+    const unsigned lastChunk = unsigned((sourceLimit() + 47) / 48 - 1);
+    if (sscanf(input, "read %u %c", &index, &extra) != 1 || index > lastChunk) {
+      snprintf(reply, capacity, "Error: read index must be 0..%u", lastChunk); return;
     }
     const size_t offset = size_t(index) * 48;
     uint8_t bytes[48];
