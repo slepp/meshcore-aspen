@@ -221,7 +221,7 @@ export class Room extends DurableObject<Env> {
       if (this.hostedName && match[2] === "operations") {
         const admitted = await this.hostedAdmit(undefined, connection.credential, Number(request.headers.get("content-length")) || 0);
         if (admitted === "limit") fail(429, "Too many operations; slow down");
-        if (admitted === "disabled") fail(403, "Room is disabled");
+        if (!await this.hostedBudget()) fail(403, "Room is disabled");
       }
       const alias = this.aliasMap()[connection.alias];
       if (!alias || !this.ctx.id.equals(this.env.ROOMS.idFromName(alias.backend))) fail(403, "Alias does not belong to this backend");
@@ -296,6 +296,8 @@ export class Room extends DurableObject<Env> {
       const envelope = this.parse(frame) as unknown as {id: string; operation: Operation};
       id = string(envelope.id, "request id", 32);
       if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) fail(400, "Invalid request id");
+      // Only a frame that names an operation counts against the daily room budget.
+      if (this.hostedName && !await this.hostedBudget(ws)) return;
       const connection = ws.deserializeAttachment() as Connection;
       // Recheck configuration after hibernation, including revoked tokens/aliases.
       const frontend = this.grants()[connection.frontend];
@@ -1062,6 +1064,7 @@ export class Room extends DurableObject<Env> {
       if (memoryLimit("bad:" + client, 20, 60)) fail(429, "Too many failed frontend attempts; wait one minute");
       fail(401, "Unknown frontend token");
     }
+    await this.hostedBudgetReset();
     if (this.hostedRow!.state === "disabled") fail(403, "Room is disabled");
     if (memoryLimit("conn:" + credentialHash, 12, 60)) fail(429, "Too many frontend connections; wait one minute");
     const now = sec();
@@ -1074,19 +1077,21 @@ export class Room extends DurableObject<Env> {
     return {alias, frontend: row.node.slice(0, 16), credential: credentialHash!};
   }
 
-  /** Counts one inbound operation against the per-token and daily room limits. False closes the socket. */
-  private async hostedAdmit(ws: WebSocket | undefined, credentialHash: string, bytes: number): Promise<"ok" | "limit" | "disabled"> {
+  /** Applies the per-token frame and byte limits to one inbound frame. "limit" closes the socket. */
+  private async hostedAdmit(ws: WebSocket | undefined, credentialHash: string, bytes: number): Promise<"ok" | "limit"> {
     if (memoryLimit("fr:" + credentialHash, 20, 1) || memoryLimit("by:" + credentialHash, 65536, 60, Date.now() / 1000, bytes)) {
       ws?.close(1008, "Frame limit exceeded");
       return "limit";
     }
-    return await this.hostedBudget(ws) ? "ok" : "disabled";
+    return "ok";
   }
+  /** Counts one operation against the daily room budget. Spending it disables the room until the next UTC day. */
   private async hostedBudget(ws?: WebSocket): Promise<boolean> {
     const now = sec(), day = Math.floor(now / 86400), limit = intSetting(this.env.ROOM_WRITES_PER_DAY, 20000);
     if (this.budgetDay !== day) {this.budgetDay = day; this.budgetCount = 0;}
     if (++this.budgetCount > limit) {
       await this.hostedSetState("disabled", "write-budget");
+      if (this.hostedRow?.state === "disabled") this.setMeta("wbdis", day);
       ws?.close(1008, "Room write limit reached");
       return false;
     }
@@ -1099,6 +1104,7 @@ export class Room extends DurableObject<Env> {
   private async hostedSetState(state: "active" | "disabled", reason?: string): Promise<void> {
     if (!this.hostedRow || this.hostedRow.state === "deleted" || this.hostedRow.state === state) return;
     this.sql.exec("UPDATE hosted_room SET state=? WHERE id=1", state);
+    this.sql.exec("DELETE FROM hosted_meta WHERE k='wbdis'");
     this.hostedRow.state = state;
     if (reason) {
       try {
@@ -1108,10 +1114,17 @@ export class Room extends DurableObject<Env> {
     }
     await this.pump();
   }
+  /** Re-enables a room that spent its daily write budget once the UTC day has changed. */
+  private async hostedBudgetReset(): Promise<void> {
+    if (this.hostedRow?.state !== "disabled") return;
+    const spent = this.meta("wbdis");
+    if (spent !== undefined && spent < Math.floor(sec() / 86400)) await this.hostedSetState("active", "write-budget-reset");
+  }
   private dailyAt(): number {return this.meta("daily_at") ?? 0;}
 
   private async hostedHousekeeping(): Promise<void> {
     if (!this.hostedRow || this.hostedRow.state === "deleted") return;
+    await this.hostedBudgetReset();
     const row = this.hostedRow = this.rows<HostedRow>("SELECT * FROM hosted_room WHERE id=1")[0] ?? this.hostedRow;
     const now = sec();
     if (now < this.dailyAt()) return;
@@ -1259,6 +1272,7 @@ export class Room extends DurableObject<Env> {
     const room = this.hostedRow;
     if (room.state === "deleted") nodeFail("gone");
     if (this.hostedFailed) nodeFail("closed");
+    await this.hostedBudgetReset();
     const hash = await tokenHash(bearer);
     const me = this.rows<HostedFrontendRow>("SELECT * FROM hosted_frontend WHERE token_hash=? AND revoked=0", hash)[0];
     if (!me) {

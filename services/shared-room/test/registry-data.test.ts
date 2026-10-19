@@ -107,6 +107,23 @@ it("disables a room that exhausts its daily write budget and records an audit ro
   expect((await registrySql("SELECT action, target, result FROM audit WHERE action='write-budget'"))[0]).toEqual({action: "write-budget", target: room.alias, result: "disabled"});
 });
 
+it("counts only frames that name an operation and re-enables a spent room on the next UTC day", async () => {
+  const room = await convertFixture(nodeA);
+  const day = Math.floor(now() / 86400);
+  await runInDurableObject(hostedStub(room.alias), (inst: any) => {inst.budgetDay = day; inst.budgetCount = 59;});
+  const s = await socket(room.alias, room.token); await s.next();
+  for (let n = 0; n < 5; n++) s.ws.send("{}");
+  await new Promise(r => setTimeout(r, 50));
+  expect((await registrySql("SELECT state FROM rooms"))[0].state).toBe("active");
+  expect((await rf(room.alias, room.token, fixture.readerLogin)).status).toBe(200);
+  expect((await rf(room.alias, room.token, fixture.path)).status).toBe(403);
+  expect((await control(room.alias, room.token, {op: "nodes"})).body.e).toBe("disabled");
+  await hostedSql(room.alias, "UPDATE hosted_meta SET v=? WHERE k='wbdis'", day - 1);
+  expect((await control(room.alias, room.token, {op: "nodes"})).status).toBe(200);
+  expect((await registrySql("SELECT state FROM rooms"))[0].state).toBe("active");
+  expect((await registrySql("SELECT result FROM audit WHERE action='write-budget-reset'"))[0].result).toBe("active");
+});
+
 it("applies housekeeping thresholds: history, sessions, old rows, idle disable and purge", async () => {
   const room = await convertFixture(nodeA);
   const alias = room.alias, day = Math.floor(now() / 86400);
