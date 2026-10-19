@@ -99,7 +99,10 @@ struct Harness {
     unsigned idle = 0;
     for (unsigned i = 0; i < 1000; ++i) {
       programs.service();
-      if (!loader.busy()) { if (++idle == 3) return; } else idle = 0;
+      if (!loader.busy()) {
+        assert(!loader.taskActive() && "loader task must exit once the load is reclaimed");
+        if (++idle == 3) return;
+      } else idle = 0;
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     assert(false && "packet loader did not settle");

@@ -16,5 +16,7 @@ public:
   bool poll(Result &) override;
   bool busy() const override;
   void release(PacketProgram *) override;
+  // True while the loader task owns a stack; it exits after each reclaim.
+  bool taskActive() const;
 };
 } // namespace onchip

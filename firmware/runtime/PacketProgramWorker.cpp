@@ -37,7 +37,10 @@ uint64_t clockUs() {
 struct PacketProgramWorker::Impl {
   enum State { Idle, Pending, Running, Ready, Held, Reclaim };
   std::atomic<State> state{Idle};
-  std::atomic<bool> stopping{false}, stopped{false};
+  // The loader task runs for one load and its reclaim, then exits so its stack
+  // is not held while packet programs are idle. `live` is cleared before the
+  // final Idle publication, so submit() can start the next task.
+  std::atomic<bool> stopping{false}, live{false};
   PacketProgramStore &store;
   Factory factory;
   Request request;
@@ -115,10 +118,16 @@ struct PacketProgramWorker::Impl {
         state.store(Ready, std::memory_order_release);
       } else if (current == Reclaim) {
         delete retired; retired = nullptr;
+        live.store(false, std::memory_order_release);
         state.store(Idle, std::memory_order_release);
+        leave();
+        return;
       } else pause();
     }
-    stopped.store(true, std::memory_order_release);
+    live.store(false, std::memory_order_release);
+    leave();
+  }
+  static void leave() {
 #ifdef ARDUINO_ARCH_ESP32
     vTaskDelete(nullptr);
 #endif
@@ -129,7 +138,7 @@ PacketProgramWorker::~PacketProgramWorker() {
   if (!impl_) return;
   impl_->stopping.store(true, std::memory_order_release);
 #ifdef ARDUINO_ARCH_ESP32
-  while (!impl_->stopped.load(std::memory_order_acquire)) pause();
+  while (impl_->live.load(std::memory_order_acquire)) pause();
 #else
   if (impl_->task.joinable()) impl_->task.join();
 #endif
@@ -139,17 +148,23 @@ bool PacketProgramWorker::submit(const Request &request) {
   if (!impl_) {
     impl_ = new (std::nothrow) Impl(store_, factory_);
     if (!impl_) return false;
-#ifdef ARDUINO_ARCH_ESP32
-    if (xTaskCreate(Impl::entry, "mesh-packet-load", 16384, impl_, 1, &impl_->task) != pdPASS) {
-      delete impl_; impl_ = nullptr; return false;
-    }
-#else
-    impl_->task = std::thread(Impl::entry, impl_);
-#endif
   }
   if (busy()) return false;
+  // Idle: any earlier task has already cleared `live` and made its last
+  // access to the shared state.
   impl_->request = request;
+  impl_->live.store(true, std::memory_order_release);
   impl_->state.store(Impl::Pending, std::memory_order_release);
+#ifdef ARDUINO_ARCH_ESP32
+  if (xTaskCreate(Impl::entry, "mesh-packet-load", 16384, impl_, 1, &impl_->task) != pdPASS) {
+    impl_->live.store(false, std::memory_order_release);
+    impl_->state.store(Impl::Idle, std::memory_order_release);
+    return false;
+  }
+#else
+  if (impl_->task.joinable()) impl_->task.join();
+  impl_->task = std::thread(Impl::entry, impl_);
+#endif
   return true;
 }
 bool PacketProgramWorker::poll(Result &result) {
@@ -158,6 +173,9 @@ bool PacketProgramWorker::poll(Result &result) {
   impl_->result.program = nullptr;
   impl_->state.store(Impl::Held, std::memory_order_release);
   return true;
+}
+bool PacketProgramWorker::taskActive() const {
+  return impl_ && impl_->live.load(std::memory_order_acquire);
 }
 bool PacketProgramWorker::busy() const {
   return impl_ && impl_->state.load(std::memory_order_acquire) != Impl::Idle;
