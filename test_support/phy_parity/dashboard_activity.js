@@ -232,7 +232,7 @@ assert.ok(compact.length < 130, 'four-hop screenshot packet stays compact');
 assert.doesNotMatch(compact, /incomplete|candidate|prefix match|preview|Repeater/);
 const page = fs.readFileSync(process.argv[2], 'utf8');
 assert.match(page, /#events td \{ vertical-align: top; padding: 6px 8px;/);
-assert.equal((page.match(/Names match public-key prefixes/g) || []).length, 1);
+assert.equal((page.match(/Names are unverified contact matches based on public-key prefixes/g) || []).length, 1);
 const ranges = (hex, length = hex.length / 2) => {
   const fields = [];
   assert.equal(typeof call('decodePacket', {preview_hex: hex, length}, identities, fields), 'string');
