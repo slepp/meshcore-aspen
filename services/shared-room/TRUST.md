@@ -16,6 +16,52 @@ preserves those protocol limits rather than claiming stronger authentication.
 TLS protects the frontend connection. Revoke a lost frontend token; replace the
 advertised identity if its Worker room key is compromised.
 
+## Hosted rooms
+
+A room made with `cloudroom create` or `cloudroom convert` keeps its key on the
+Worker that created it; `ROOM_KEYS` lists only static rooms. The Worker seals each key with
+AES-256-GCM under a per-room key derived from the `ROOM_KEK` secret and keeps
+it in that room's Durable Object. Copying the storage yields nothing without
+`ROOM_KEK`, and `ROOM_KEK` alone opens nothing. **Whoever operates the Worker
+can read each hosted room and send as it.** The hosted service at
+`rooms.ve6slp.ca` and any Worker you deploy work the same way; choose the
+server accordingly. Members keep their room password and contact. Operator
+reach goes no further than the rooms on that Worker.
+
+- **Key transfer.** `cloudroom convert` sends the room key once, from the
+  node over its own TLS connection, after a second explicit command. The node
+  holds it in a buffer it wipes on every exit path. No reply, log or later
+  command returns it, and the server never returns it or a token again.
+- **Codes.** A code has 80 bits, works once, and is stored as a SHA-256 hash.
+  Join codes last 10 minutes by default (up to 24 hours); owner codes last 120
+  seconds and cap at 15 minutes. Five wrong tries delete a code, and
+  per-address limits make guessing impractical. Someone who learns an
+  unexpired join code can register a node until an owner runs `cloudroom nodes`
+  and `cloudroom revoke`. A leaked owner code cannot delete the room or revoke
+  another owner for 24 hours.
+- **Node identity.** A node signs each request with its Management identity.
+  The signature covers the server origin, operation, code, node, time and
+  subject, so a captured request does nothing on another server or later.
+  Rotating the Management identity changes the node id.
+- **Tokens.** Each node gets its own `ar1_` token per room. The Worker stores
+  only its SHA-256. Revoking a node closes its connections at once; a lost
+  node is removed with `cloudroom revoke`. A backup restored onto new hardware
+  carries the node key, so retire the old node first.
+- **Logging.** The Worker logs no request body, code, token, key, password or
+  address, and error text is fixed. Keep Workers Logs off; `npm run doctor`
+  warns when they are on. Rate-limit counters use a keyed hash of the client
+  network prefix and expire within 48 hours. Audit rows record node ids,
+  never addresses.
+- **Abuse limits.** Signup defaults to codes the operator mints. Quotas cap
+  rooms, nodes per room, live codes and writes, and a room idle for 180 days is
+  disabled. Operators can disable or delete a room, revoke a code or ban a node
+  key ([self-hosting](SELF_HOSTING.md#operate-the-service)).
+- **Conversion losses.** The local administrator logins, read-only guest
+  logins, in-room command line and the last 32 posts held in RAM stay on the
+  node and do not move to the Worker.
+
+Hosted rooms have no browser or terminal interface.
+
 ## Browser access
 
 The same Worker serves Aspen Rooms over HTTPS. Browser login checks the

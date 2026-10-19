@@ -14,6 +14,22 @@ Browser and terminal device keys identify message authors within the room.
 They do not advertise companion identities or provide private radio DMs.
 See [web accounts and delivery](WEB.md) for access and message status.
 
+## Choose how to run a room
+
+| You want to | Start here |
+|---|---|
+| Join a room another operator runs | [`cloudroom join`](NATIVE.md#join-a-room) on your Aspen node |
+| Create a room that several of your nodes share, on the hosted service | [`cloudroom create`](NATIVE.md#create-a-room) with a create code |
+| Share a room your node already serves | [`cloudroom convert`](NATIVE.md#convert-a-local-room) |
+| Run the service yourself | [Host your own shared rooms](SELF_HOSTING.md): `npm run setup` deploys a Worker |
+| Serve fixed rooms with static keys and a browser interface | Configure `ALIASES`, `FRONTENDS` and `ROOM_KEYS` as below |
+
+Rooms created through `cloudroom` commands are radio rooms: the Worker holds
+their keys, nodes forward packets, and the browser and terminal clients do not
+list them. Statically configured rooms keep every behaviour described here.
+The server holding a room's key can read the room and send as it
+([TRUST.md](TRUST.md)).
+
 ## Run the room service
 
 Deploy one Cloudflare Worker with one SQLite Durable Object per backend room.
@@ -25,7 +41,7 @@ let a radio run the frontend alongside its other roles.
 ```sh
 cd services/shared-room
 npm ci
-cp .dev.vars.example .dev.vars
+cp .dev.vars.fixture .dev.vars
 npm run dev
 ```
 
@@ -42,6 +58,10 @@ variables. Keep those three names out of Wrangler's public `vars`.
 | `ROOM_KEYS[id] = "<128 lowercase hex characters>"` | Expanded native 64-byte private key, held only in the Worker |
 | `FRONTENDS[id] = {token, aliases:[...], region?:"ab"}` | Restricted frontend credential, aliases and optional public flood region |
 | `WEB_USERS[username] = {name,salt,hash,iterations,aliases}` | Operator-created desktop accounts and per-channel grants; upload as a secret with [the account tool](WEB.md#operator-created-accounts) |
+| `ROOM_KEK` | Secret that seals hosted room keys; set by `npm run setup` ([self-hosting](SELF_HOSTING.md)) |
+| `ADMIN_TOKEN_HASH` | SHA-256 of the operator token; enables the `/v1/admin` API |
+| `SIGNUP_MODE="code"` | `code` (create needs an operator code), `closed` or `open` |
+| `MAX_ROOMS`, `MAX_FRONTENDS`, `HOSTED_HISTORY_LIMIT`, `ROOM_WRITES_PER_DAY` | Hosted-room limits: 2000 rooms, 16 nodes per room, 2000 stored messages, 20000 writes per day |
 | `WEB_AUTH_MODE="passkey"` | Disable password sign-in and enable the account authority |
 | `PASSKEY_ORIGIN`, `PASSKEY_RP_ID` | Exact sign-in origin and WebAuthn relying-party ID; this deployment uses `https://aspen.ve6slp.ca` and `ve6slp.ca` |
 | `WEB_ENROLLMENTS[tokenHash] = {username,grant,expires}` | One-use first-passkey enrollment hashes; upload as a secret with [the enrollment tool](WEB.md#operator-created-accounts) |
@@ -90,13 +110,16 @@ tables and optional message display-name field are added without replacing
 history, radio membership or pending deliveries. The assets deploy with the
 Worker, and existing radio frontends need no firmware update.
 The `v2` migration adds `Accounts` without changing the existing room namespace.
+The `v3` migration adds the `Registry` namespace for hosted rooms; it stays idle
+until `ROOM_KEK` is set, and hosted routes answer 503 without it.
 See [WEB.md](WEB.md#operator-created-accounts) to enable passkey mode and issue
 private enrollment links.
 See [WEB.md](WEB.md) for browser access, storage and API details.
 
 ## Small opaque API
 
-Every request uses `Authorization: Bearer <frontend token>`. Tokens go in
+A hosted room's alias is a 30-character id and its token starts with `ar1_`;
+the protocol below is the same. Every request uses `Authorization: Bearer <frontend token>`. Tokens go in
 headers, including the WSS upgrade. Connect once per served alias:
 
 ```text

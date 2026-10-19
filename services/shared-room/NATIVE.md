@@ -1,16 +1,183 @@
-# Direct native Aspen frontend
+# Shared rooms on an Aspen node
 
-Aspen's generic `public_aspen` application bridges its shared MeshCore radio
-directly to the Worker over WiFi/WSS. It includes native roles, Lua/Wasm, HTTPS
-and the room frontend in one image. Install the
-[private initial setup](../../firmware/esp32/PUBLIC_SETUP.md), then save one or
-two room aliases through authenticated Management. Unconfigured frontends stay
-disabled. Both aliases use one physical radio source and its TX scheduler;
-the Worker holds their private room keys.
+Any Aspen node with WiFi can serve a shared room: a MeshCore room whose key
+lives on a shared-room Worker, reachable from every node that joins it. The
+node forwards radio traffic to the Worker over WSS; companion apps see an
+ordinary room. You set it up from the companion app's Management console
+with `cloudroom` commands, and the node restarts ten seconds after each
+change. A node serves up to two rooms, and both share its one radio and TX
+scheduler. The generic `public_aspen` image includes the frontend; its
+[private initial setup](../../firmware/esp32/PUBLIC_SETUP.md) needs no room
+settings. Shared rooms stay off until you join, create or convert one.
+
+## Join, create or convert a room
+
+| You want to | Send on the node | Result |
+|---|---|---|
+| Join a room another operator hosts | `cloudroom join CODE[@HOST]` | The node serves that room. The owner gives you the code. |
+| Create a room that several nodes share | `cloudroom create CODE[@HOST] NAME` | A new room whose key the server generates. This node is an owner. |
+| Turn the node's own Room role into a shared room | `cloudroom convert CODE[@HOST]`, then `yes` | The room keeps its identity; the server now holds its key. |
+| Add a node to your room | `cloudroom invite` on an owner node | A code to read to the new operator. |
+| Stop serving a room | `cloudroom unlink [ALIAS]` | The node leaves; a converted node's local Room role runs again. |
+
+`CODE` is a one-time code of 16 letters and digits, written
+`ABCD-EFGH-JKMN-PQRS`. `HOST` is the server the code belongs to, such as
+`aspen-rooms.example.workers.dev`. Leave `@HOST` off for the default hosted
+service, `rooms.ve6slp.ca`. A server you run yourself is covered in
+[Host your own shared rooms](SELF_HOSTING.md). The node needs a trusted
+clock (`get sntp.server`) and sends each command over encrypted Management RF:
+use the companion app's Management console, or `admin.py` with the native
+transport. Web administration and `!admin` refuse these commands.
+
+Each command replies at once and works in the background. Read the outcome
+with `cloudroom result`; a successful link restarts the node 10 seconds later.
+
+### Join a room
+
+The owner sends `cloudroom invite` on an owner node and reads out the reply:
+
+```text
+Code ABCD-EFGH-JKMN-PQRS (10 min, once). Run: cloudroom join ABCD-EFGH-JKMN-PQRS@aspen-rooms.example.workers.dev
+```
+
+On your node:
+
+```text
+cloudroom join ABCD-EFGH-JKMN-PQRS@aspen-rooms.example.workers.dev
+cloudroom result
+```
+
+```text
+Linked. Restarts in 10 s. Ask the room owner for the password. If the room is not in your app, run "cloudroom advertise 1".
+```
+
+The code works once and expires after 10 minutes. `cloudroom invite owner`
+issues an owner code that lasts 120 seconds. Anyone holding an unexpired code
+can register a node, so share it privately; `cloudroom nodes` lists the nodes
+and `cloudroom revoke ID` removes one.
+
+### Create a room
+
+```text
+cloudroom create ABCD-EFGH-JKMN-PQRS@aspen-rooms.example.workers.dev Backyard Room
+cloudroom result
+```
+
+The server generates the room key and the node becomes an owner. After the
+restart it sends one room advert. Add the room in your companion app, then
+read the password:
+
+```text
+cloudroom password
+```
+
+`cloudroom password open` removes the password, `cloudroom password new`
+generates one, and `cloudroom password PW` sets one (up to 15 printable
+characters). Invite your other nodes with `cloudroom invite`, and have each
+operator send `cloudroom join`.
+
+On the hosted service, request a create code through the "Hosted room
+request" form described in [Host your own shared rooms](SELF_HOSTING.md).
+
+### Convert a local room
+
+Conversion moves the room served by this node's Room role to a server so more
+nodes can serve it. Members keep the room password and their existing
+contact. `cloudroom convert` without `yes` prints what happens and changes
+nothing:
+
+```text
+cloudroom convert ABCD-EFGH-JKMN-PQRS@aspen-rooms.example.workers.dev
+```
+
+```text
+Key goes to aspen-rooms.example.workers.dev; it can speak as the room. Admin logins stay. Add "yes aspen-rooms.example.workers.dev".
+```
+
+```text
+cloudroom convert ABCD-EFGH-JKMN-PQRS@aspen-rooms.example.workers.dev yes aspen-rooms.example.workers.dev
+cloudroom result
+```
+
+For the default hosted service, add just `yes`; for any other host, retype the
+host after `yes`. The node then sends the room's private key, name and
+password over its own TLS connection to that host. The key never appears in a
+reply or a log, and no command reads it back.
+
+The server holds the key sealed in its storage, so its operator can read the
+room and send as it. Conversion does not carry over the local administrator
+logins, read-only guest logins, the in-room command line or the last 32 posts
+held in RAM. Administer the room with `cloudroom` commands afterwards. The
+node's Room role stays off while the room is shared.
+
+### Add nodes, leave and recover
+
+- `cloudroom nodes [N]` lists nodes five at a time with their role and last
+  contact. `cloudroom revoke ID` removes a node by the 8-character id shown there.
+  A node cannot revoke itself, and an owner added in the last 24 hours cannot
+  revoke another owner.
+- `cloudroom unlink [ALIAS]` leaves a room. The last owner cannot leave while
+  other nodes remain: invite another owner first, or add `delete` to remove the
+  room. `unlink ALIAS local` removes the room on this node without contacting
+  the server, for an unreachable server; ask an owner to revoke the node.
+- A converted node runs its local Room role again after the restart that
+  follows `unlink` or `share off`. The local room has the password it had
+  before converting, or the server's current password when `unlink ALIAS
+  delete` removed the server copy. Other nodes keep using the server copy, so
+  `share off` and `unlink ALIAS local` need `force`, and plain `unlink`
+  refuses until you delete the room or add `force`.
+- `cloudroom share off` stops serving every room and keeps their settings;
+  `cloudroom share on` resumes. Both restart the node after 10 seconds.
+- `cloudroom list` shows each room with its state: `live`, `down`, `off` or
+  `revoked`. A revoked node stops reconnecting; run
+  `cloudroom unlink ALIAS local`.
+- If the only owner node is lost, the server operator mints an owner code
+  ([recovery](SELF_HOSTING.md#recover-from-loss)).
+
+### Commands
+
+| Command | Use |
+|---|---|
+| `cloudroom list [N]` | Room N (default 1): id, name, role, state and host |
+| `cloudroom probe [HOST]` | Check that a server answers: version, signup mode, clock difference |
+| `cloudroom join CODE[@HOST]` | Join a room |
+| `cloudroom create CODE[@HOST] NAME` | Create a room named NAME |
+| `cloudroom convert CODE[@HOST] [yes [HOST]]` | Preview, then convert the local room |
+| `cloudroom invite [owner]` | Owner nodes: issue a join code |
+| `cloudroom nodes [N]` | Owner nodes: list page N of the room's nodes |
+| `cloudroom revoke ID` | Owner nodes: remove a node |
+| `cloudroom password [PW\|open\|new]` | Owner nodes: show, set, remove or generate the room password |
+| `cloudroom unlink [ALIAS] [delete\|local] [force]` | Leave a room |
+| `cloudroom share on\|off [force]` | Turn all shared rooms on or off and restart |
+| `cloudroom result` | Outcome of the last background command |
+| `cloudroom apply` | Save state and restart |
+
+`ALIAS` is a room id or its position in `cloudroom list` (1 or 2); it can be
+left off when one room is linked. `cloudroom status` appends
+`link=idle|working|ok|failed room=local|cloud|off node=ab12cd34` to its
+existing fields: `room=cloud` means the shared room replaces the local Room
+role, and `node` is the id an owner passes to `revoke`.
+
+One command runs at a time (`Error: link busy; send "cloudroom result"`).
+After five failed attempts in one boot the node refuses further link commands
+until it restarts. Arguments never reach the logs; a code or password in the
+`result` text clears from memory after five minutes.
+
+### Return to a previous firmware version
+
+Rooms linked with `cloudroom` commands, and a node left with nothing linked,
+save a settings record that firmware 0.1.19 cannot read; 0.1.19 then leaves
+the shared room service off. To go back, send `cloudroom unlink` for each
+room, upload your earlier schema 1 profile with `admin.py configure`, then
+install the older firmware.
 
 ## Configure the generic image
 
-Create the frontend token and room aliases using [private service setup](TRUST.md).
+Upload a profile to configure rooms without a code: a server behind a private
+certificate authority, a fixed server address, or a Worker configured with
+static frontend tokens ([private service setup](TRUST.md)). Rooms from a
+profile and rooms from `cloudroom join` share the node's two slots.
+
 Keep an owner-only JSON file outside the repository:
 
 ```json
@@ -30,7 +197,13 @@ Keep an owner-only JSON file outside the repository:
 ```
 
 Replace the placeholders, including the complete PEM CA. Every field is
-required. Add a second object for another alias; use a distinct public key
+required. Schema 2 also accepts, per alias, `"role"` (`"frontend"` or
+`"owner"`; default `"frontend"`), `"ca_mode"` (`"pem"`, the default, pins the
+`ca` PEM; `"system"` verifies against the built-in public roots and needs
+`"ca": ""`), `"advert_once"` and `"converted"` (both `false` by default;
+`converted` needs `"owner"`). `admin.py configure` sends schema 2 to a node that
+supports it and schema 1 otherwise; a record that schema 1 can express stays in
+the earlier format. Add a second object for another alias; use a distinct public key
 and endpoint/alias pair. Limits: hostname 127 bytes, optional IPv4 address
 15, PEM CA 4096, token 256, alias ID 64, room name 32. IDs contain letters,
 digits, `_` or `-`. Public keys are lowercase 64-digit hex. The hostname
@@ -73,7 +246,7 @@ use `cloudroom configure`; do not replace its filesystem.
 | `cloudroom config status` | Saved/enable/alias state, live alias count and upload state |
 | `cloudroom config hash` | SHA256 of the saved record's content, or `none` |
 | `cloudroom enable on\|off` | Saves the enable state; restart applies it |
-| `cloudroom config api` | Upload ABI, record size, chunk size and application timing |
+| `cloudroom config api [2]` | Upload ABI, record size, chunk size and application timing; `2` reports the schema 2 record |
 | `cloudroom config begin SHA256` | Full 64-digit lowercase content hash; same hash resumes this boot's upload |
 | `cloudroom config chunk ID16 INDEX HEX` | Hash prefix, zero-based index, exactly 48 bytes except the final chunk; identical repeats accepted |
 | `cloudroom config commit ID16` | Validates the complete record/CA, writes the spare file and publishes its selector |

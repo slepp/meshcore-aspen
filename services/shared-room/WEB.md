@@ -232,6 +232,9 @@ Requests and responses are JSON; responses are not cached. Mutating requests
 use `Content-Type: application/json` and an `Origin` matching the Worker.
 Login and sockets require HTTPS, except for local development on localhost.
 The browser API does not accept radio operations or expose room private keys.
+It lists only rooms configured through `ALIASES`. A room created or converted
+with `cloudroom` commands is radio-only: it has no channel, sign-in or history
+view in the browser or terminal client.
 
 | Route | Request / result |
 | --- | --- |
