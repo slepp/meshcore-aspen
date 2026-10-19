@@ -2,8 +2,10 @@
 #include "CloudRoomPreferences.h"
 #if (defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM) || \
     (defined(ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG) && ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG)
+#include "CloudRoomLifecycle.h"
 #include "CloudRoomService.h"
 #include "CloudRoomSettings.h"
+#include "RoleIdentity.h"
 #include "RoleStorage.h"
 #include "MastSource.h"
 #include <Arduino.h>
@@ -23,9 +25,15 @@ struct Journal {
 };
 static_assert(sizeof(Journal) == 72, "Cloud room journal layout changed");
 enum class Saved { None, Valid, Invalid };
+using Settings = CloudRoomSettingsV2;
+constexpr size_t V1Size = sizeof(CloudRoomSettings), V2Size = sizeof(Settings);
+constexpr size_t ChunkBytes = 48, LastChunk = V1Size / ChunkBytes;
+static_assert(V1Size % ChunkBytes == 32 && V2Size % ChunkBytes == 40 &&
+                  V2Size / ChunkBytes == LastChunk, "Cloud room upload chunking changed");
 #if ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG
-CloudRoomSettings *bootSettings;
+Settings *bootSettings;
 CloudRoomConfiguration bootConfig;
+const CloudRoomConfiguration *bootActive;
 bool bootRead;
 #endif
 uint8_t uploadDigest[32]{};
@@ -35,7 +43,7 @@ void wipe(void *data, size_t size) {
   while (size--) *bytes++ = 0;
 }
 struct SettingsBuffer {
-  CloudRoomSettings *value = allocateRoleStorage<CloudRoomSettings>("cloud-room settings");
+  Settings *value = allocateRoleStorage<Settings>("cloud-room settings");
   ~SettingsBuffer() {
     if (value) wipe(value, sizeof(*value));
     releaseRoleStorage(value);
@@ -47,18 +55,45 @@ void digest(const void *data, size_t size, uint8_t hash[32]) {
 void filename(uint8_t index, char (&path)[24]) {
   snprintf(path, sizeof(path), "/cloudroom-%u.bin", index);
 }
-bool valid(const CloudRoomSettings &settings) {
-  uint8_t hash[32];
-  digest(&settings, offsetof(CloudRoomSettings, digest), hash);
-  return !memcmp(hash, settings.digest, 32) && cloudRoomSettingsFields(settings);
-}
-bool read(const char *path, CloudRoomSettings &settings) {
+// Reads a version 1 or 2 file. The result is always version 2 in memory; its digest
+// field holds the digest of the bytes on disk. `version` reports the file's version.
+bool read(const char *path, Settings &settings, uint8_t &version) {
   auto file = SPIFFS.open(path, "r");
-  return file && file.size() == sizeof(settings) &&
-      file.read(reinterpret_cast<uint8_t *>(&settings), sizeof(settings)) == sizeof(settings) &&
-      file.size() == sizeof(settings) && valid(settings);
+  if (!file) return false;
+  const size_t size = file.size();
+  if ((size != V1Size && size != V2Size) ||
+      file.read(reinterpret_cast<uint8_t *>(&settings), size) != size || file.size() != size) return false;
+  uint8_t hash[32];
+  if (size == V1Size) {
+    auto &old = reinterpret_cast<CloudRoomSettings &>(settings);
+    digest(&old, offsetof(CloudRoomSettings, digest), hash);
+    if (memcmp(hash, old.digest, 32) || !cloudRoomSettingsFields(old)) return false;
+    cloudRoomWiden(settings);
+    version = 1;
+    return true;
+  }
+  digest(&settings, offsetof(Settings, digest), hash);
+  version = 2;
+  return !memcmp(hash, settings.digest, 32) && cloudRoomSettingsFieldsV2(settings);
 }
-Saved saved(CloudRoomSettings &settings, Journal &journal) {
+// Encodes `settings` as the lowest record version that can hold it into `scratch`.
+// The returned digest points into `scratch`.
+bool encode(const Settings &settings, Settings &scratch, size_t &size, const uint8_t *&hash) {
+  if (cloudRoomFitsV1(settings)) {
+    memset(&scratch, 0, V2Size);
+    auto &old = reinterpret_cast<CloudRoomSettings &>(scratch);
+    cloudRoomNarrow(settings, old);
+    digest(&old, offsetof(CloudRoomSettings, digest), old.digest);
+    size = V1Size; hash = old.digest;
+    return cloudRoomSettingsFields(old);
+  }
+  memcpy(&scratch, &settings, V2Size);
+  memcpy(scratch.magic, "CRC\2", 4);
+  digest(&scratch, offsetof(Settings, digest), scratch.digest);
+  size = V2Size; hash = scratch.digest;
+  return cloudRoomSettingsFieldsV2(scratch);
+}
+Saved saved(Settings &settings, Journal &journal, uint8_t &version) {
   bool present = false;
   if (!mastRecord("cloud-room", &journal, sizeof(journal), false, present)) return Saved::Invalid;
   if (present) {
@@ -72,34 +107,41 @@ Saved saved(CloudRoomSettings &settings, Journal &journal) {
     if (!SPIFFS.exists("/cloudroom-0.bin")) return Saved::None;
   }
   char path[24]; filename(journal.file, path);
-  if (!read(path, settings)) return Saved::Invalid;
+  if (!read(path, settings, version)) return Saved::Invalid;
   if (present && memcmp(journal.digest, settings.digest, 32)) return Saved::Invalid;
   memcpy(journal.digest, settings.digest, 32);
   return Saved::Valid;
 }
-bool certificates(const CloudRoomSettings &settings) {
+bool certificates(const Settings &settings) {
   for (unsigned i = 0; i < settings.count; ++i) {
+    if (settings.aliases[i].caMode == CloudCaSystem) continue;
     mbedtls_x509_crt chain;
     mbedtls_x509_crt_init(&chain);
     const int result = mbedtls_x509_crt_parse(&chain,
-        reinterpret_cast<const uint8_t *>(settings.aliases[i].ca),
-        strlen(settings.aliases[i].ca) + 1);
+        reinterpret_cast<const uint8_t *>(settings.aliases[i].base.ca),
+        strlen(settings.aliases[i].base.ca) + 1);
     mbedtls_x509_crt_free(&chain);
     if (result != 0) return false;
   }
   return true;
 }
-bool publish(CloudRoomSettings &settings, char *reply, size_t capacity) {
-  SettingsBuffer previous;
-  if (!previous.value) {
+bool publish(const Settings &settings, char *reply, size_t capacity) {
+  SettingsBuffer previous, encoded;
+  if (!previous.value || !encoded.value) {
     snprintf(reply, capacity, "Error: cloud room settings allocation failed"); return false;
   }
+  size_t size = 0;
+  const uint8_t *newDigest = nullptr;
+  if (!encode(settings, *encoded.value, size, newDigest)) {
+    snprintf(reply, capacity, "Error: cloud room settings fields invalid; saved selection unchanged"); return false;
+  }
   Journal journal;
-  const Saved state = saved(*previous.value, journal);
+  uint8_t version = 0;
+  const Saved state = saved(*previous.value, journal, version);
   if (state == Saved::Invalid) {
     snprintf(reply, capacity, "Error: saved cloud room settings invalid; restore the private node backup"); return false;
   }
-  if (state == Saved::Valid && !memcmp(previous.value, &settings, sizeof(settings))) {
+  if (state == Saved::Valid && !memcmp(journal.digest, newDigest, 32)) {
     snprintf(reply, capacity, "Cloud room settings saved; restart to apply"); return true;
   }
   const uint8_t next = state == Saved::None ? 1 : journal.file ^ 1;
@@ -108,13 +150,13 @@ bool publish(CloudRoomSettings &settings, char *reply, size_t capacity) {
   if (!file) {
     snprintf(reply, capacity, "Error: cloud room settings file unavailable; saved selection unchanged"); return false;
   }
-  const bool written = file.write(reinterpret_cast<const uint8_t *>(&settings), sizeof(settings)) == sizeof(settings);
+  const bool written = file.write(reinterpret_cast<const uint8_t *>(encoded.value), size) == size;
   file.flush(); file.close();
-  if (!written || !read(path, *previous.value) || memcmp(previous.value, &settings, sizeof(settings))) {
+  if (!written || !read(path, *previous.value, version) || memcmp(previous.value->digest, newDigest, 32)) {
     snprintf(reply, capacity, "Error: cloud room settings write/readback failed; saved selection unchanged"); return false;
   }
   journal = {}; journal.file = next;
-  memcpy(journal.digest, settings.digest, 32);
+  memcpy(journal.digest, newDigest, 32);
   digest(&journal, offsetof(Journal, checksum), journal.checksum);
   bool present = false;
   Journal actual;
@@ -126,6 +168,79 @@ bool publish(CloudRoomSettings &settings, char *reply, size_t capacity) {
   snprintf(reply, capacity, "Cloud room settings saved; restart to apply");
   return true;
 }
+// Copies a running configuration (saved earlier or compiled in) into version 2 settings
+// with role frontend and a pinned CA. False when a field does not fit the record.
+bool fromRunning(const CloudRoomConfiguration &configuration, Settings &settings) {
+  if (!configuration.count || configuration.count > 2) return false;
+  memset(&settings, 0, sizeof(settings));
+  memcpy(settings.magic, "CRC\2", 4);
+  settings.enabled = 1; settings.count = uint8_t(configuration.count);
+  const auto copy = [](char *out, size_t size, const char *text, bool required = true) {
+    if (!text) return !required;
+    const size_t length = strnlen(text, size);
+    if (length >= size) return false;
+    memcpy(out, text, length + 1); return true;
+  };
+  for (unsigned i = 0; i < settings.count; ++i) {
+    auto &alias = settings.aliases[i];
+    const auto &peer = configuration.peers[i];
+    const auto &metadata = configuration.aliases[i];
+    alias.caMode = peer.systemRoots ? CloudCaSystem : CloudCaPinned;
+    if (!copy(alias.base.host, sizeof(alias.base.host), peer.host) ||
+        !copy(alias.base.address, sizeof(alias.base.address), peer.address, false) ||
+        !copy(alias.base.ca, sizeof(alias.base.ca), peer.ca, !peer.systemRoots) ||
+        !copy(alias.base.token, sizeof(alias.base.token), peer.token) ||
+        !copy(alias.base.id, sizeof(alias.base.id), metadata.id) ||
+        !copy(alias.base.name, sizeof(alias.base.name), metadata.name) ||
+        !peer.alias || strcmp(peer.alias, alias.base.id)) return false;
+    memcpy(alias.base.publicKey, metadata.publicKey, 32);
+  }
+  return true;
+}
+#if ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG
+bool sameText(const char *a, const char *b) { return !strcmp(a ? a : "", b ? b : ""); }
+// True when every saved alias equals the compiled provider's, field for field.
+bool matchesProvider(const Settings &settings, const CloudRoomConfiguration &provider) {
+  if (settings.count != provider.count) return false;
+  for (unsigned i = 0; i < settings.count; ++i) {
+    const auto &alias = settings.aliases[i];
+    const auto &peer = provider.peers[i];
+    const auto &metadata = provider.aliases[i];
+    if (alias.role != CloudRoleFrontend || alias.flags ||
+        (alias.caMode == CloudCaSystem) != peer.systemRoots ||
+        !sameText(alias.base.host, peer.host) || !sameText(alias.base.address, peer.address) ||
+        !sameText(alias.base.ca, peer.ca) || !sameText(alias.base.token, peer.token) ||
+        !sameText(alias.base.id, metadata.id) || !sameText(alias.base.name, metadata.name) ||
+        memcmp(alias.base.publicKey, metadata.publicKey, 32)) return false;
+  }
+  return true;
+}
+enum class Source { Off, Saved, Provider, Adopt };
+// The saved record wins unless a version 1 record disagrees with the provider in
+// the image (a rebuilt private image); a lifecycle write is always version 2.
+Source choose(Saved state, uint8_t version, const Settings &settings,
+              const CloudRoomConfiguration *provider, const char *&warning) {
+  warning = nullptr;
+  switch (state) {
+  case Saved::Valid:
+    if (provider && version == 1 && !matchesProvider(settings, *provider)) {
+      warning = "Cloud room saved settings differ from the compiled provider; using the provider for this boot";
+      return Source::Provider;
+    }
+    return Source::Saved;
+  case Saved::Invalid:
+    if (provider) {
+      warning = "Cloud room saved settings invalid; using the compiled provider for this boot";
+      return Source::Provider;
+    }
+    warning = "Cloud room saved settings invalid; restore the private node backup";
+    return Source::Off;
+  case Saved::None:
+    return provider ? Source::Adopt : Source::Off;
+  }
+  return Source::Off;
+}
+#endif
 int hex(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -149,36 +264,126 @@ void hashText(const uint8_t hash[32], char (&text)[65]) {
 }
 }
 #if ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG
-const CloudRoomConfiguration *cloudRoomConfiguration() {
-  if (bootRead) return bootSettings && bootSettings->enabled ? &bootConfig : nullptr;
-  bootRead = true;
-  SettingsBuffer buffer;
-  if (!buffer.value) { Serial.println("Cloud room settings allocation failed; service disabled"); return nullptr; }
-  Journal journal;
-  const Saved state = saved(*buffer.value, journal);
-  if (state == Saved::Invalid) {
-    Serial.println("Cloud room saved settings invalid; restore the private node backup"); return nullptr;
+__attribute__((weak)) const CloudRoomConfiguration *cloudRoomCompiledConfiguration() { return nullptr; }
+namespace {
+void publishBootConfiguration(const Settings &settings) {
+  bootConfig = {};
+  bootConfig.count = settings.count;
+  for (unsigned i = 0; i < bootConfig.count; ++i) {
+    const auto &alias = settings.aliases[i];
+    bootConfig.peers[i] = {alias.base.host, alias.base.address, alias.base.ca, alias.base.token,
+                           alias.base.id, alias.caMode == CloudCaSystem};
+    bootConfig.aliases[i].id = alias.base.id; bootConfig.aliases[i].name = alias.base.name;
+    memcpy(bootConfig.aliases[i].publicKey, alias.base.publicKey, 32);
   }
-  if (state != Saved::Valid || !buffer.value->enabled) return nullptr;
+}
+}
+const CloudRoomConfiguration *cloudRoomConfiguration() {
+  if (bootRead) return bootActive;
+  bootRead = true;
+  const auto *provider = cloudRoomCompiledConfiguration();
+  SettingsBuffer buffer;
+  if (!buffer.value) {
+    Serial.println("Cloud room settings allocation failed; service disabled");
+    return nullptr;
+  }
+  Journal journal;
+  uint8_t version = 0;
+  const Saved state = saved(*buffer.value, journal, version);
+  const char *warning = nullptr;
+  const Source source = choose(state, version, *buffer.value, provider, warning);
+  if (warning) Serial.println(warning);
+  switch (source) {
+  case Source::Off: return nullptr;
+  case Source::Provider: bootActive = provider; return provider;
+  case Source::Adopt: {
+    // First boot of an image with a compiled provider: save its aliases so the
+    // lifecycle verbs can edit them. The provider serves this boot either way.
+    char reason[96];
+    if (!fromRunning(*provider, *buffer.value) || !certificates(*buffer.value))
+      Serial.println("Cloud room compiled provider exceeds the saved settings limits; running it unsaved");
+    else if (!publish(*buffer.value, reason, sizeof(reason)))
+      Serial.printf("Cloud room adoption not saved (%s); retrying next boot\n", reason);
+    bootActive = provider;
+    return provider;
+  }
+  case Source::Saved: break;
+  }
+  if (!buffer.value->enabled || !buffer.value->count) return nullptr;
   if (!certificates(*buffer.value)) {
     Serial.println("Cloud room CA certificate invalid; replace saved configuration"); return nullptr;
   }
   bootSettings = buffer.value; buffer.value = nullptr;
-  bootConfig.count = bootSettings->count;
-  for (unsigned i = 0; i < bootConfig.count; ++i) {
-    const auto &alias = bootSettings->aliases[i];
-    bootConfig.peers[i] = {alias.host, alias.address, alias.ca, alias.token, alias.id};
-    bootConfig.aliases[i].id = alias.id; bootConfig.aliases[i].name = alias.name;
-    memcpy(bootConfig.aliases[i].publicKey, alias.publicKey, 32);
-  }
-  return &bootConfig;
+  publishBootConfiguration(*bootSettings);
+  bootActive = &bootConfig;
+  return bootActive;
 }
+#ifdef ONCHIP_CLOUD_ROOM_TEST_HOOKS
+// Native tests simulate a restart: the next cloudRoomConfiguration() resolves again.
+void cloudRoomBootResetForTest() {
+  if (bootSettings) wipe(bootSettings, sizeof(*bootSettings));
+  releaseRoleStorage(bootSettings);
+  bootSettings = nullptr; bootActive = nullptr; bootRead = false; bootConfig = {};
+}
+#endif
+bool cloudRoomOwnsLocalRoom() {
+  SettingsBuffer buffer;
+  if (!buffer.value) return false;
+  Journal journal;
+  uint8_t version = 0;
+  const Saved state = saved(*buffer.value, journal, version);
+  const char *warning = nullptr;
+  if (state != Saved::Valid || !buffer.value->enabled ||
+      choose(state, version, *buffer.value, cloudRoomCompiledConfiguration(), warning) != Source::Saved)
+    return false;
+  for (unsigned i = 0; i < buffer.value->count; ++i) {
+    const auto &alias = buffer.value->aliases[i];
+    uint8_t room[32];
+    if (alias.role == CloudRoleOwner && (alias.flags & CloudFlagConverted) &&
+        identityPublicKey("room", room) && !memcmp(room, alias.base.publicKey, 32)) return true;
+  }
+  return false;
+}
+bool cloudRoomAliasInfo(unsigned alias, CloudRoomAliasInfo &info) {
+  info = {};
+  if (!bootActive || alias >= bootActive->count) return false;
+  if (bootSettings && bootActive == &bootConfig) {
+    const auto &entry = bootSettings->aliases[alias];
+    info.role = entry.role; info.flags = entry.flags; info.systemRoots = entry.caMode == CloudCaSystem;
+  }
+  return true;
+}
+CloudRoomLoad cloudRoomLoadSettings(CloudRoomSettingsV2 &out) {
+  Journal journal;
+  uint8_t version = 0;
+  const Saved state = saved(out, journal, version);
+  if (state == Saved::Invalid) return CloudRoomLoad::Invalid;
+  if (state == Saved::Valid) return CloudRoomLoad::Ready;
+  const auto *provider = cloudRoomCompiledConfiguration();
+  if (provider) return fromRunning(*provider, out) ? CloudRoomLoad::Ready : CloudRoomLoad::Unavailable;
+  memset(&out, 0, sizeof(out));
+  memcpy(out.magic, "CRC\2", 4);
+  out.enabled = 1;
+  return CloudRoomLoad::Ready;
+}
+bool cloudRoomPublishSettings(CloudRoomSettingsV2 &settings, char *reply, size_t capacity) {
+  if (!certificates(settings)) {
+    snprintf(reply, capacity, "Error: cloud room CA certificate invalid; saved selection unchanged");
+    return false;
+  }
+  return publish(settings, reply, capacity);
+}
+bool cloudRoomUploadStaged() { return uploading; }
 #endif
 bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capacity) {
   const auto error = [&](const char *message) { snprintf(reply, capacity, "Error: %s", message); return true; };
-  if (!strcmp(command, "config api")) {
+  if (!strcmp(command, "config api") || !strcmp(command, "config api 2")) {
 #if ONCHIP_CLOUD_ROOM_RUNTIME_CONFIG
-    snprintf(reply, capacity, "Cloud room config ABI=1 bytes=9296 chunk=48 aliases=2 apply=restart"); return true;
+    if (!strcmp(command, "config api 2"))
+      snprintf(reply, capacity, "Cloud room config ABI=2 bytes=9304 chunk=48 aliases=2 apply=restart");
+    else
+      snprintf(reply, capacity, "Cloud room config ABI=1 bytes=9296 chunk=48 aliases=2 apply=restart");
+    return true;
 #else
     return error("this image uses compiled cloud room settings; config retain before a generic application update");
 #endif
@@ -187,7 +392,8 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
     SettingsBuffer buffer;
     if (!buffer.value) return error("cloud room settings allocation failed");
     Journal journal;
-    const Saved state = saved(*buffer.value, journal);
+    uint8_t version = 0;
+    const Saved state = saved(*buffer.value, journal, version);
     if (state == Saved::Invalid) return error("saved cloud room settings invalid; restore the private node backup");
     if (!strcmp(command, "config hash")) {
       if (state == Saved::None) snprintf(reply, capacity, "none");
@@ -207,37 +413,23 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
   }
   if (!strcmp(command, "config retain")) {
     if (uploading) return error("cloud room upload in progress; commit or abort it first");
+    {
+      SettingsBuffer existing;
+      if (!existing.value) return error("cloud room settings allocation failed");
+      Journal journal;
+      uint8_t version = 0;
+      const Saved state = saved(*existing.value, journal, version);
+      if (state == Saved::Invalid) return error("saved cloud room settings invalid; restore the private node backup");
+      if (state == Saved::Valid) return error("already saved; nothing to retain");
+    }
     const auto *configuration = cloudRoomConfiguration();
     if (!configuration || !configuration->count || configuration->count > 2)
       return error("running cloud room configuration unavailable");
     SettingsBuffer buffer;
     if (!buffer.value) return error("cloud room settings allocation failed");
-    auto &settings = *buffer.value;
-    memcpy(settings.magic, "CRC\1", 4);
-    settings.enabled = 1; settings.count = configuration->count;
-    const auto copy = [](char *out, size_t size, const char *text, bool required = true) {
-      if (!text) return !required;
-      const size_t length = strnlen(text, size);
-      if (length >= size) return false;
-      memcpy(out, text, length + 1); return true;
-    };
-    for (unsigned i = 0; i < settings.count; ++i) {
-      auto &alias = settings.aliases[i];
-      const auto &peer = configuration->peers[i];
-      const auto &metadata = configuration->aliases[i];
-      if (!copy(alias.host, sizeof(alias.host), peer.host) ||
-          !copy(alias.address, sizeof(alias.address), peer.address, false) ||
-          !copy(alias.ca, sizeof(alias.ca), peer.ca) ||
-          !copy(alias.token, sizeof(alias.token), peer.token) ||
-          !copy(alias.id, sizeof(alias.id), metadata.id) ||
-          !copy(alias.name, sizeof(alias.name), metadata.name) ||
-          !peer.alias || strcmp(peer.alias, alias.id))
-        return error("running cloud room fields exceed saved settings limits");
-      memcpy(alias.publicKey, metadata.publicKey, 32);
-    }
-    digest(&settings, offsetof(CloudRoomSettings, digest), settings.digest);
-    if (!valid(settings) || !certificates(settings)) return error("running cloud room fields or CA invalid");
-    if (publish(settings, reply, capacity))
+    if (!fromRunning(*configuration, *buffer.value)) return error("running cloud room fields exceed saved settings limits");
+    if (!certificates(*buffer.value)) return error("running cloud room fields or CA invalid");
+    if (publish(*buffer.value, reply, capacity))
       snprintf(reply, capacity, "Cloud room settings retained; generic application will load them after update");
     return true;
   }
@@ -251,10 +443,10 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
     SettingsBuffer buffer;
     if (!buffer.value) return error("cloud room settings allocation failed");
     Journal journal;
-    const Saved state = saved(*buffer.value, journal);
+    uint8_t version = 0;
+    const Saved state = saved(*buffer.value, journal, version);
     if (state != Saved::Valid) return error("cloud room configuration unavailable; install a private profile");
     buffer.value->enabled = !strcmp(command + 7, "on");
-    digest(buffer.value, offsetof(CloudRoomSettings, digest), buffer.value->digest);
     publish(*buffer.value, reply, capacity); return true;
   }
   if (!strcmp(command, "config abort")) {
@@ -267,7 +459,7 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
     if (!unhex(command + 13, hash, 32)) return error("cloudroom config begin SHA256 requires 64 lowercase hex digits");
     if (uploading && !memcmp(hash, uploadDigest, 32)) {
       auto file = SPIFFS.open(Stage, "r");
-      if (!file || file.size() > sizeof(CloudRoomSettings)) return error("cloud room staging file invalid; abort upload");
+      if (!file || file.size() > V2Size) return error("cloud room staging file invalid; abort upload");
       snprintf(reply, capacity, "Cloud room upload ready received=%u", unsigned(file.size())); return true;
     }
     if (uploading) return error("cloud room upload in progress; abort it before replacing");
@@ -287,16 +479,20 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
     if (*number < '0' || *number > '9') return error("cloudroom config chunk ID16 INDEX HEX");
     char *end;
     const unsigned long index = strtoul(number, &end, 10);
-    if (*end != ' ' || index > (sizeof(CloudRoomSettings) - 1) / 48) return error("cloud room chunk index invalid");
-    const size_t offset = index * 48, count = std::min(size_t(48), sizeof(CloudRoomSettings) - offset);
+    if (*end != ' ' || index > LastChunk) return error("cloud room chunk index invalid");
+    // Every chunk carries 48 bytes except the last, whose length selects the record version.
+    const size_t offset = index * ChunkBytes, count = strlen(end + 1) / 2;
+    if (!(count == ChunkBytes && offset + count <= V2Size) &&
+        !(index == LastChunk && (count == V1Size - offset || count == V2Size - offset)))
+      return error("cloud room chunk size or hex invalid");
     struct Chunk {
-      uint8_t bytes[48]{}, actual[48]{};
+      uint8_t bytes[ChunkBytes]{}, actual[ChunkBytes]{};
       ~Chunk() { wipe(this, sizeof(*this)); }
     } chunk;
     auto &bytes = chunk.bytes;
     if (!unhex(end + 1, bytes, count)) return error("cloud room chunk size or hex invalid");
     auto file = SPIFFS.open(Stage, "r");
-    if (!file || file.size() > sizeof(CloudRoomSettings)) return error("cloud room staging file invalid; abort upload");
+    if (!file || file.size() > V2Size) return error("cloud room staging file invalid; abort upload");
     const size_t received = file.size();
     if (offset < received) {
       if (count > received - offset || !file.seek(offset) || file.read(chunk.actual, count) != count ||
@@ -319,7 +515,8 @@ bool cloudRoomPreferencesCommand(const char *command, char *reply, size_t capaci
       return error("cloud room upload ID differs; inspect config status");
     SettingsBuffer buffer;
     if (!buffer.value) return error("cloud room settings allocation failed");
-    if (!read(Stage, *buffer.value) || memcmp(buffer.value->digest, uploadDigest, 32))
+    uint8_t version = 0;
+    if (!read(Stage, *buffer.value, version) || memcmp(buffer.value->digest, uploadDigest, 32))
       return error("cloud room upload fields, size or SHA256 invalid; saved selection unchanged");
     if (!certificates(*buffer.value)) return error("cloud room CA certificate invalid; saved selection unchanged");
     if (publish(*buffer.value, reply, capacity)) {

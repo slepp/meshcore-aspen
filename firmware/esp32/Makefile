@@ -118,6 +118,38 @@ cloudroom-preferences-test:
 		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o \
 		-o "$(TEST_BUILD)/cloudroom-preferences-legacy"
 	"$(TEST_BUILD)/cloudroom-preferences-legacy" legacy
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_MAST_ADMIN=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 -DONCHIP_CLOUD_ROOM_TEST_HOOKS=1 \
+		-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/cloudroom_records.cpp CloudRoomPreferences.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
+		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
+		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o \
+		-o "$(TEST_BUILD)/cloudroom-records"
+	for mode in records validator corrupt upload powerloss owner; do "$(TEST_BUILD)/cloudroom-records" $$mode || exit 1; done
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-DMESHCORE_MAST_ADMIN=1 -DMESHCORE_CLOUD_ROOM=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 \
+		-DONCHIP_CLOUD_ROOM_TEST_HOOKS=1 -DCLOUDROOM_RUNTIME_PROVIDER_TEST=1 \
+		-Itests/cloudroom_preferences -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
+		-I$(UPSTREAM)/src -I$(UPSTREAM)/lib/ed25519 -I$(CRYPTO) \
+		tests/cloudroom_records.cpp CloudRoomPreferences.cpp \
+		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \
+		$(PHY_BUILD)/crypto/Hash.o $(PHY_BUILD)/crypto/Crypto.o \
+		$(PHY_BUILD)/crypto/AES128.o $(PHY_BUILD)/crypto/AESCommon.o $(PHY_BUILD)/crypto/BlockCipher.o \
+		-o "$(TEST_BUILD)/cloudroom-records-provider"
+	for mode in adopt adopt-unlink adopt-fail saved-wins stale corrupt-provider retain-system; do "$(TEST_BUILD)/cloudroom-records-provider" $$mode || exit 1; done
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) -Itests/cloudroom_preferences -Itests/seams -I. \
+		-DMESHCORE_CLOUD_ROOM=1 -DONCHIP_CLOUD_ROOM_RUNTIME_CONFIG=1 -DEXPECT_RENAMED \
+		-DONCHIP_CLOUD_ROOM_CONFIG_HEADER='"provider_fixture.h"' \
+		tests/cloudroom_wrapper.cpp CloudRoomConfig.cpp -o "$(TEST_BUILD)/cloudroom-wrapper"
+	"$(TEST_BUILD)/cloudroom-wrapper"
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra $(TEST_FLAGS) -Itests/cloudroom_preferences -Itests/seams -I. \
+		-DMESHCORE_CLOUD_ROOM=1 -DONCHIP_CLOUD_ROOM_CONFIG_HEADER='"provider_fixture.h"' \
+		tests/cloudroom_wrapper.cpp CloudRoomConfig.cpp -o "$(TEST_BUILD)/cloudroom-wrapper-header-only"
+	"$(TEST_BUILD)/cloudroom-wrapper-header-only"
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v tools.hardware.tests.test_cloudroom_config
 public-provisioning-test:
 	$(PHY_MAKE) prepare $(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/SHA256.o \

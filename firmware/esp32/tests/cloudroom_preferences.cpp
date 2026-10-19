@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CloudRoomPreferences.h"
 #include "CloudRoomService.h"
+#include "RoleIdentity.h"
 #include "CloudRoomSettings.h"
 #include <SPIFFS.h>
 #include <Utils.h>
@@ -68,6 +69,7 @@ std::string commit(const onchip::CloudRoomSettings &settings) {
 }
 namespace onchip {
 unsigned cloudRoomAliases() { return 0; }
+bool identityPublicKey(const char *, uint8_t[32], bool) { return false; }
 bool mastRecord(const char *key, void *data, size_t size, bool write, bool &present) {
   assert(!strcmp(key, "cloud-room") && size == 72);
   if (write) {
@@ -140,7 +142,8 @@ int main(int argc, char **argv) {
     assert(onchip::cloudRoomConfiguration() == config && config->count == 1);
     assert(command("config hash") != hex(settings.digest, 32));
     assert(psram_test::allocations.size() == 1);
-    assert(command("config retain").find("settings retained") != std::string::npos);
+    assert(command("config retain") == "Error: already saved; nothing to retain");
+    assert(command("enable on") == "Cloud room settings saved; restart to apply");
     assert(command("config hash") == hex(settings.digest, 32));
     return 0;
   }

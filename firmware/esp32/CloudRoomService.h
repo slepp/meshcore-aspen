@@ -36,6 +36,9 @@ struct CloudRoomConfiguration {
 // The generic image loads a private saved profile at boot. Custom applications
 // may supply their own immutable provider. nullptr disables the service.
 const CloudRoomConfiguration *cloudRoomConfiguration();
+// A provider linked into the image (ONCHIP_CLOUD_ROOM_CONFIG_HEADER) beside saved
+// settings. The saved record is adopted from it on first boot; nullptr without one.
+const CloudRoomConfiguration *cloudRoomCompiledConfiguration();
 bool beginCloudRoom(WifiKissMultiplexer &,NativeNetworkHost &);
 void loopCloudRoom(); // Dispatch task only, like LocalRadio.
 unsigned cloudRoomAliases();

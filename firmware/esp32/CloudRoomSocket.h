@@ -6,6 +6,8 @@ namespace onchip {
 struct CloudRoomPeer {
   const char *host = nullptr, *address = nullptr, *ca = nullptr;
   const char *token = nullptr, *alias = nullptr;
+  // Verify the server against the built-in public root set; `ca` is then empty.
+  bool systemRoots = false;
 };
 // Network task only. Owns one WSS connection; no application pings, automatic
 // operation replay, periodic requests or radio access. Caller owns frame buffers.
