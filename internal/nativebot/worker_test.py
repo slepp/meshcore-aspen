@@ -7,6 +7,7 @@ import select
 import shutil
 import struct
 import subprocess
+import sys
 import time
 import unittest
 import zlib
@@ -16,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 WORKER = Path(os.environ["BOT_NATIVE_WORKER"])
 STATE = ROOT / ".tmp" / "native-worker-integration-state"
 
@@ -483,9 +485,14 @@ class WorkerProcessTest(unittest.TestCase):
         self.assertIn("Saved/applied", self.admin(process, "shared on"))
         self.assertIn("Saved/applied", self.admin(process, "events 1"))
         client = SimpleNamespace(command=lambda text: self.admin(process, text), close=lambda: None)
-        mast_cli.install(client, (ROOT / ".tmp/wasm-examples/c-arithmetic.wasm").read_bytes(),
-                         progress=lambda text: None)
-        wasm_hash = self.admin(process, "source wasm hash")
+        # A build without Wasm still replaces and restores Lua; it reports Wasm unavailable.
+        if "wamr-" in self.admin(process, "source api runtimes"):
+            mast_cli.install(client, (ROOT / ".tmp/wasm-examples/c-arithmetic.wasm").read_bytes(),
+                             progress=lambda text: None)
+            wasm_hash = self.admin(process, "source wasm hash")
+            self.assertTrue(wasm_hash.startswith("SHA256 "), wasm_hash)
+        else:
+            wasm_hash = "Error: Wasm runtime unavailable in this build"
         config = STATE / "config.lua"
         config.write_bytes(b"_setting='unchanged'\n")
         original = (
