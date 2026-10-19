@@ -21,6 +21,9 @@ struct ObserverTest {
     assert(psram_test::contains(observer.storage));
     assert(psram_test::contains(&observer.storage->settings));
     assert(psram_test::contains(observer.storage->json));
+    assert(psram_test::contains(observer.storage->pending));
+    assert(psram_test::contains(observer.storage->latest));
+    assert(psram_test::contains(observer.storage->published));
     assert(!psram_test::contains(&observer.connected));
   }
   static void service(Observer &observer) { observer.service(); }
@@ -50,7 +53,7 @@ struct ObserverTest {
   static uint32_t issued(const Observer &observer) { return observer.tokenIssued; }
   static void sourced(Observer &observer, const uint8_t *raw, uint16_t length,
                       const RadioDashboard::RoleStatus &source) {
-    auto &entry = observer.pending[0];
+    auto &entry = observer.storage->pending[0];
     assert(!entry.used);
     entry.used = true;
     entry.slot = 250;

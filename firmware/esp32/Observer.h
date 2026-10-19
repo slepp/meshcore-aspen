@@ -30,15 +30,17 @@ class Observer final : public KissPacketObserver {
     Roles roles{};
     char radio[64]{};
   };
-  Pending pending[KISS_REQUEST_QUEUE_DEPTH + 1]{};
-  Roles latest{}, published{};
   WifiKissMultiplexer *modem = nullptr;
   char radio[64] = "unknown";
   bool haveRoles = false, rolesPublished = false;
   RadioDashboard::RoleStatus identity{};
+  // Everything that is only used while the observer runs lives in PSRAM;
+  // a disabled observer needs none of it.
   struct Storage {
     ObserverConfig settings{};
     char json[3072]{};
+    Pending pending[KISS_REQUEST_QUEUE_DEPTH + 1]{};
+    Roles latest{}, published{};
   };
   Storage* storage = nullptr;
   RadioDashboard::RoleStatus botSource{};

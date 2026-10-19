@@ -389,7 +389,7 @@ void Observer::transmitted(const uint8_t *raw, uint16_t length, uint8_t state,
   if (!queue || storage->settings.format)
     return;
   Pending *entry = nullptr, *free = nullptr;
-  for (auto &item : pending) {
+  for (auto &item : storage->pending) {
     if (item.used && item.slot == slot && item.generation == generation &&
         item.job == job)
       entry = &item;
@@ -475,12 +475,14 @@ bool Observer::mintToken(const char *audience, char *output, size_t capacity,
 void Observer::service() {
   const auto &settings = storage->settings;
   auto &json = storage->json;
+  auto &latest = storage->latest;
+  auto &published = storage->published;
   Event e;
   const bool received = xQueueReceive(queue, &e, pdMS_TO_TICKS(100)) == pdTRUE;
   Snapshot snapshot;
   bool radioChanged = false;
   if (xQueueReceive(statusQueue, &snapshot, 0) == pdTRUE) {
-    memcpy(latest, snapshot.roles, sizeof(latest));
+    memcpy(storage->latest, snapshot.roles, sizeof(storage->latest));
     radioChanged = strcmp(radio, snapshot.radio) != 0;
     memcpy(radio, snapshot.radio, sizeof(radio));
     haveRoles = true;
