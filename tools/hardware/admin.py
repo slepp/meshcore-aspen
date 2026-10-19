@@ -671,13 +671,151 @@ def download_packet(client, slot):
     return bytes(source)
 
 
+CLOUDROOM_ABI1 = "Cloud room config ABI=1 bytes=9296 chunk=48 aliases=2 apply=restart"
+CLOUDROOM_ABI2 = "Cloud room config ABI=2 bytes=9304 chunk=48 aliases=2 apply=restart"
+CLOUDROOM_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+CLOUDROOM_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
+CLOUDROOM_ID = re.compile(r"[0-9A-Fa-f]{8,16}")
+CLOUDROOM_REQUEST_LIMIT = 145
+CLOUDROOM_POLL_SECONDS = 2
+CLOUDROOM_POLL_LIMIT = 40
+# Replies that end a verb unsuccessfully (fixed wording in the lifecycle contract).
+CLOUDROOM_FAILURES = (
+    "Link failed", "Usage:", "Server limit reached", "Server is not accepting", "That room is already hosted",
+    "Server refused this node", "Server and node versions differ", "This node already serves",
+    "Too many failed attempts", "Only an owner node", "Other nodes still use", "Use \"cloudroom unlink\"",
+    "Owner added less than", "Room stays live", "Management identity unavailable", "Clock not set",
+    "TLS verify failed", "Low memory", "Nothing linked", "The Room role is off", "Room role has no key",
+    "Room key change pending", "Room key was reset", "All 2 room slots", "Server revoked this node",
+    "Linking needs encrypted", "Command too long", "Code not valid", "Host not valid", "Room name not valid",
+)
+
+
+def cloudroom_host(host):
+    host = host.lower()
+    if not 1 <= len(host) <= 36 or not CLOUDROOM_HOST.fullmatch(host) or host.rsplit(".", 1)[-1].isdigit():
+        raise ValueError("Room host must be a DNS name of up to 36 bytes without scheme, port or path")
+    return host
+
+
+def cloudroom_code(token, allow_open=False):
+    """Return CODE[@HOST] in the device grammar. Errors never repeat the code."""
+    code, at, host = token.strip().partition("@")
+    if allow_open and code.lower() == "open":
+        canonical = "OPEN"
+    else:
+        if not 16 <= len(code) <= 19:
+            raise ValueError("Room code needs 16 letters and digits, with optional dashes")
+        canonical = code.upper().replace("-", "").replace("O", "0").replace("I", "1").replace("L", "1")
+        if len(canonical) != 16 or any(c not in CLOUDROOM_ALPHABET for c in canonical):
+            raise ValueError("Room code has a character outside its alphabet")
+    return canonical + ("@" + cloudroom_host(host) if at else "")
+
+
+def cloudroom_secret(value, stdin, what):
+    """A value of '-' is read from standard input so it stays out of shell history."""
+    if value != "-":
+        return value
+    line = stdin.readline(128)
+    if not line.endswith("\n") and len(line) >= 128:
+        raise ValueError(f"{what} on standard input is too long")
+    return line.rstrip("\r\n")
+
+
+def cloudroom_name(name):
+    if not 1 <= len(name) <= 31 or any(not 32 <= ord(c) <= 126 or c in ":[]\\,?*" for c in name):
+        raise ValueError("Room name needs 1..31 printable ASCII characters, none of : [ ] \\ , ? *")
+    return name
+
+
+def cloudroom_command(args, stdin=None):
+    """Build the one Management command for a lifecycle subcommand."""
+    stdin = stdin or sys.stdin
+    action = args.cloudroom_action
+    if action == "join":
+        text = "cloudroom join " + cloudroom_code(cloudroom_secret(args.code, stdin, "Room code"))
+    elif action == "create":
+        text = "cloudroom create " + cloudroom_code(cloudroom_secret(args.code, stdin, "Room code"), True) + \
+            " " + cloudroom_name(args.name)
+    elif action == "convert":
+        token = cloudroom_code(cloudroom_secret(args.code, stdin, "Room code"))
+        text = "cloudroom convert " + token
+        if args.yes:
+            text += " yes" + (" " + token.partition("@")[2] if "@" in token else "")
+    elif action == "invite":
+        text = "cloudroom invite" + (" owner" if args.owner else "")
+    elif action in ("list", "nodes"):
+        if args.number is not None and not 1 <= args.number <= 999:
+            raise ValueError("Page or slot must be 1..999")
+        text = f"cloudroom {action}" + ("" if args.number is None else f" {args.number}")
+    elif action == "revoke":
+        if not CLOUDROOM_ID.fullmatch(args.id):
+            raise ValueError("Node id needs 8..16 hex digits from cloudroom nodes")
+        text = "cloudroom revoke " + args.id.lower()
+    elif action in ("result", "apply"):
+        text = "cloudroom " + action
+    elif action == "probe":
+        text = "cloudroom probe" + (" " + cloudroom_host(args.host) if args.host else "")
+    elif action == "password":
+        if args.open:
+            text = "cloudroom password open"
+        elif args.new:
+            text = "cloudroom password new"
+        elif args.password is None:
+            text = "cloudroom password"
+        else:
+            password = cloudroom_secret(args.password, stdin, "Password")
+            if not 1 <= len(password) <= 15 or any(not 32 <= ord(c) <= 126 for c in password):
+                raise ValueError("Room password needs 1..15 printable ASCII characters")
+            text = "cloudroom password " + password
+    elif action == "unlink":
+        text = "cloudroom unlink" + (" " + args.alias if args.alias else "")
+        text += " delete" if args.delete else " local" if args.local else ""
+        text += " force" if args.force else ""
+    elif action == "share":
+        text = f"cloudroom share {args.state}" + (" force" if args.force else "")
+    else:
+        raise ValueError("Unknown shared-room command")
+    if len(text) > CLOUDROOM_REQUEST_LIMIT or any(not 32 <= ord(c) <= 126 for c in text):
+        raise ValueError("Shared-room command exceeds 145 printable ASCII bytes")
+    return text
+
+
+def cloudroom_lifecycle(client, args, stdin=None, sleep=time.sleep, clock=time.monotonic):
+    """Run one lifecycle verb; return (final text, succeeded). Queued jobs are polled."""
+    text = checked(client, cloudroom_command(args, stdin))
+    if text.startswith("Contacting "):
+        deadline = clock() + CLOUDROOM_POLL_LIMIT
+        while True:
+            sleep(CLOUDROOM_POLL_SECONDS)
+            try:
+                text = checked(client, "cloudroom result")
+            except (TimeoutError, socket.timeout):
+                if clock() >= deadline:
+                    raise
+                continue
+            if text != "Link working.":
+                break
+            if clock() >= deadline:
+                raise TimeoutError(f"Link job still working after {CLOUDROOM_POLL_LIMIT} s; "
+                                   "send cloudroom result later")
+    return text, not text.startswith(CLOUDROOM_FAILURES)
+
+
 def configure_cloudroom(client, content, progress=print):
     from tools.hardware.cloudroom_config import encode
     connection = client.client if isinstance(client, RuntimeClient) else client
     if isinstance(connection, (WebClient, UnixClient)):
         raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
     record = encode(content)
-    if checked(client, "cloudroom config api") != "Cloud room config ABI=1 bytes=9296 chunk=48 aliases=2 apply=restart":
+    if len(record) == 9304:
+        # Only a record that needs the owner or system-roots fields asks for ABI 2; any
+        # profile a 0.1.19 node can hold keeps the ABI 1 exchange below.
+        if client.command("cloudroom config api 2") != CLOUDROOM_ABI2:
+            raise ValueError("Endpoint does not support the schema 2 cloud room profile; update the node firmware first")
+    elif len(record) != 9296:
+        raise ValueError("Cloud room profile encoded to an unexpected size")
+    elif checked(client, "cloudroom config api") != CLOUDROOM_ABI1:
         raise ValueError("Endpoint does not support saved CloudRoom configuration ABI v1")
     digest = record[-32:].hex()
     identifier = digest[:16]
@@ -1000,6 +1138,38 @@ def main():
     for operation in ("status", "hash"):
         room_sub.add_parser(operation)
     room_sub.add_parser("enable").add_argument("state", choices=("on", "off"))
+    code_help = "code as ABCD-EFGH-JKMN-PQRS or CODE@HOST; '-' reads it from standard input"
+    leaf = room_sub.add_parser("join", help="link this node to a room with a one-time code")
+    leaf.add_argument("code", metavar="CODE[@HOST]", help=code_help)
+    leaf = room_sub.add_parser("create", help="create a hosted room with a create code")
+    leaf.add_argument("code", metavar="CODE[@HOST]", help=code_help + "; 'open' on a server with open sign-up")
+    leaf.add_argument("name", help="room name, 1..31 characters")
+    leaf = room_sub.add_parser("convert", help="move this node's local Room to a hosted room; without --yes shows what changes")
+    leaf.add_argument("code", metavar="CODE[@HOST]", help=code_help)
+    leaf.add_argument("--yes", action="store_true", help="send the room key to the server")
+    leaf = room_sub.add_parser("invite", help="print a one-time code for another node (owner nodes)")
+    leaf.add_argument("--owner", action="store_true", help="code for another owner node (valid 2 minutes)")
+    for name in ("list", "nodes"):
+        leaf = room_sub.add_parser(name, help="show linked rooms" if name == "list" else "show nodes in the room (owner nodes)")
+        leaf.add_argument("number", nargs="?", type=int, help="slot (list) or page of 5 (nodes), from 1")
+    room_sub.add_parser("revoke", help="remove a node from the room (owner nodes)").add_argument("id", help="8..16 hex digits from nodes")
+    room_sub.add_parser("result", help="read the outcome of the last link job")
+    room_sub.add_parser("apply", help="save state and restart this node")
+    room_sub.add_parser("probe", help="check a room server").add_argument("host", nargs="?")
+    leaf = room_sub.add_parser("password", help="show, set or generate the room password (owner nodes)")
+    group = leaf.add_mutually_exclusive_group()
+    group.add_argument("password", nargs="?", help="new password, 1..15 characters; '-' reads standard input")
+    group.add_argument("--open", action="store_true", help="remove the password")
+    group.add_argument("--new", action="store_true", help="generate a new password")
+    leaf = room_sub.add_parser("unlink", help="leave a shared room; a converted node resumes its local Room")
+    leaf.add_argument("alias", nargs="?", help="alias id or slot number; optional with one room")
+    group = leaf.add_mutually_exclusive_group()
+    group.add_argument("--delete", action="store_true", help="delete the room on the server")
+    group.add_argument("--local", action="store_true", help="remove the alias here without contacting the server")
+    leaf.add_argument("--force", action="store_true", help="allow a converted room to resume locally while the server copy stays live")
+    leaf = room_sub.add_parser("share", help="switch this node's shared rooms on or off; restarts the node")
+    leaf.add_argument("state", choices=("on", "off"))
+    leaf.add_argument("--force", action="store_true", help="needed to switch off a converted room")
     data_group = sub.add_parser("data", help="export or restore scoped KV, timers or personal reminders")
     data_sub = data_group.add_subparsers(dest="data_action", required=True)
     for name, action, help_text in (("export", "data-export", "read scoped records to a new private file"),
@@ -1110,6 +1280,9 @@ def main():
             telemetry_commands = commands(args)
         if args.action == "cloudroom" and args.cloudroom_action == "configure" and (args.web or args.unix_socket or args.willow_socket):
             raise ValueError("Cloud room credential uploads require encrypted Management RF; use a private first-boot image or config retain for migration")
+        if (args.action == "cloudroom" and args.cloudroom_action not in ("configure", "status", "hash", "enable") and
+                (args.web or args.unix_socket or args.willow_socket)):
+            raise ValueError("Shared-room commands require encrypted Management RF; web, Unix and Willow transports refuse them")
         if args.action == "role-password":
             if args.web or args.unix_socket or args.willow_socket:
                 raise ValueError("Role administrator password changes require authenticated encrypted Management RF; web/Unix denied")
@@ -1190,6 +1363,11 @@ def main():
                 configure_cloudroom(client, private_file(args.profile, LIMIT))
             elif args.cloudroom_action == "enable":
                 print(checked(client, f"cloudroom enable {args.state}"))
+            elif args.cloudroom_action not in ("status", "hash"):
+                text, succeeded = cloudroom_lifecycle(client, args)
+                print(text)
+                if not succeeded:
+                    raise SystemExit(1)
             else:
                 print(checked(client, f"cloudroom config {args.cloudroom_action}"))
         elif args.action in ("source-install", "source-remove", "source-list", "source-export"):
