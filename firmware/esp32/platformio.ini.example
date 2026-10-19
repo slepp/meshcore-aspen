@@ -12,8 +12,10 @@ lib_deps =
 build_src_filter = ${Xiao_S3_WIO.build_src_filter}
   +<../examples/kiss_modem/*.cpp>
   +<../examples/kiss_modem/onchip/*.cpp>
+build_unflags = -std=gnu++11
 build_flags =
   ${Xiao_S3_WIO.build_flags}
+  -std=gnu++17
   -I examples/kiss_modem
   -I examples/kiss_modem/onchip
   -D MESHCORE_ONCHIP=1

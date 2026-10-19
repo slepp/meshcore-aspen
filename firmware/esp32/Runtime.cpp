@@ -547,7 +547,7 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
     Serial.println("On-chip observer unavailable; native roles remain active");
   }
   roleMux = &mux;
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT && MESHCORE_MAST_ADMIN
   if (!beginPacketPrograms(mux))
     Serial.println("Packet program controller unavailable; inspect boot diagnostics");
   commandBot.setPacketReportReader(packetProgramReport);
@@ -616,7 +616,7 @@ void dashboardStatus(RadioDashboard::RadioStatus &status, bool kiss_listening) {
   tcp.connected = companionStats.connectedClients;
   tcp.capacity = CompanionSessions::MaxClients;
   tcp.rejected = companionStats.rejectedClients;
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT && MESHCORE_MAST_ADMIN
   for (unsigned i = 0; i < packet_engine::EngineLimit; ++i)
     status.packet_report_available[i] = packetProgramReport(i, status.packet_reports[i]);
 #endif
@@ -691,7 +691,7 @@ bool flushRuntimeState() {
 }
 void loop() {
   loopClocks();
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT && MESHCORE_MAST_ADMIN
   servicePacketPrograms();
 #endif
 #ifdef ARDUINO_ARCH_ESP32
@@ -741,7 +741,7 @@ bool setNativeRolePathWidth(uint8_t width) {
 }
 #ifdef COMPANION_SESSIONS_HOST
 void stopManagementForTest() {
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT && MESHCORE_MAST_ADMIN
   stopPacketPrograms();
 #endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT
+#if defined(ARDUINO_ARCH_ESP32) && MESHCORE_ONCHIP_BOT && MESHCORE_MAST_ADMIN
 #include "EspPacketPrograms.h"
 #include "NativePacketHost.h"
 #include "PacketProgramWorker.h"
