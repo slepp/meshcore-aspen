@@ -1,0 +1,24 @@
+{
+  "seedHex": "0101010101010101010101010101010101010101010101010101010101010101",
+  "nodeHex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+  "origin": "https://rooms.example.workers.dev",
+  "code": "ABCDEFGHJKMNPQRS",
+  "codeHash": "375c09ce57a687a702bf9c4115b93cd0a0e86597a0feed49facca786589e50be",
+  "ts": 1790000000,
+  "cases": [
+    {
+      "op": "join",
+      "name": "",
+      "subject": "-",
+      "message": "aspen-node.v1\nhttps://rooms.example.workers.dev\njoin\n375c09ce57a687a702bf9c4115b93cd0\n8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\n1790000000\n-",
+      "sig": "ccdfb5be2047595999ec3a80c81c47475e7ad28f4ad33ecce160a8c18e570b0adda433994dadefa1f15717d19fe2843a27edb17a075831cb8c13606505a03f08"
+    },
+    {
+      "op": "create",
+      "name": "Fleet",
+      "subject": "2bb4f92ced331c66",
+      "message": "aspen-node.v1\nhttps://rooms.example.workers.dev\ncreate\n375c09ce57a687a702bf9c4115b93cd0\n8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c\n1790000000\n2bb4f92ced331c66",
+      "sig": "f3c17a27e16ca34f2d994dca31d3ce4772ebb396e66294a2f067dddf2c7918598b73b9202794faf50d39ed4ffb8c4231aa25a6d64c5b46f410e7ff23859cab09"
+    }
+  ]
+}
