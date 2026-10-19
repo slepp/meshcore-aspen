@@ -267,6 +267,16 @@ class MaintenanceTests(unittest.TestCase):
                                password_file=self.args.password_file, receipt=self.args.receipt,
                                wait=1, poll_interval=.1, expected_current_sha256=self.radio.current)
 
+    def test_radio_state_accepts_disabled_roles_only(self):
+        key = "ab" * 32
+        roles = [{"role": "repeater", "name": "r", "public_key": key, "ready": True, "state": "running"},
+                 {"role": "observer", "name": "o", "public_key": None, "ready": False, "state": "disabled"}]
+        state = maintenance.radio_state(None, {"roles": roles, "profile": {"generation": 1}})
+        self.assertFalse(state["identities"]["observer"]["ready"])
+        roles[1]["state"] = "starting"
+        with self.assertRaisesRegex(ValueError, "not all ready"):
+            maintenance.radio_state(None, {"roles": roles, "profile": {}})
+
     def test_force_restart_refuses_unsupported_radio_before_restart_post(self):
         self.radio.force_supported = False
         with self.assertRaisesRegex(ValueError, "does not support"):

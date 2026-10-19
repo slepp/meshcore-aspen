@@ -109,16 +109,23 @@ def running(status, sha256, size=None):
             not status.get("running_hash_error"))
 
 
+def roles_ready(roles):
+    # A role disabled by its saved profile stays disabled; every other role must be ready.
+    return bool(roles) and all(role.get("ready") or role.get("state") == "disabled" for role in roles)
+
+
 def radio_state(client, state=None):
     if state is None:
         state = json_request(client, "/api/status")
     roles = state.get("roles", [])
-    if not roles or not all(role.get("ready") for role in roles):
+    if not roles_ready(roles):
         raise ValueError("Radio roles are not all ready; inspect /api/status")
-    identities = {role["role"]: {"name": role["name"], "public_key": role["public_key"]}
+    identities = {role["role"]: {"name": role["name"], "public_key": role["public_key"],
+                                 "ready": bool(role.get("ready"))}
                   for role in roles}
-    if len(identities) != len(roles) or any(not re.fullmatch(r"[0-9a-fA-F]{64}", role["public_key"])
-                                          for role in identities.values()):
+    if len(identities) != len(roles) or any(
+            not re.fullmatch(r"[0-9a-fA-F]{64}", role["public_key"] or "")
+            for role in identities.values() if role["ready"]):
         raise ValueError("Radio public identities are missing or duplicated")
     profile = {key: value for key, value in state["profile"].items() if key != "generation"}
     return {"identities": identities, "profile": profile}
@@ -251,7 +258,7 @@ def finish(client, record, receipt, connect, deadline, interval):
                 if (running(status, signed["sha256"], signed["size"]) and
                         status.get("state") == "idle" and status.get("boot_health") == "healthy"):
                     dashboard = json_request(candidate, "/api/status")
-                    if dashboard.get("roles") and all(role.get("ready") for role in dashboard["roles"]):
+                    if roles_ready(dashboard.get("roles")):
                         after = radio_state(candidate, dashboard)
                         restore_sampler(candidate, record, receipt)
                         actual = retained(candidate, record["commands"])
@@ -296,7 +303,7 @@ def finish_restart(client, record, receipt, connect, deadline, interval):
                 record.update(last_update=status, last_uptime_ms=uptime)
                 if (restarted and running(status, target["sha256"], target["size"]) and
                         status.get("state") == "idle" and status.get("boot_health") == "healthy" and
-                        dashboard.get("roles") and all(role.get("ready") for role in dashboard["roles"])):
+                        roles_ready(dashboard.get("roles"))):
                     record.update(complete=True, after_update=status, after_uptime_ms=uptime)
                     save_receipt(receipt, record)
                     return True
