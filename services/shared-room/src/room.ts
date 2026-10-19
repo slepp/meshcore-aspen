@@ -1211,10 +1211,15 @@ export class Room extends DurableObject<Env> {
       return {ok: true, grant: await this.issue(p.node, 1, true)};
     });
   }
-  async addFrontend(p: {alias: string; node: string; role: number}): Promise<GrantReply> {
+  /**
+   * Seats a node. A replay of an already-redeemed request only reissues the token of a node that is
+   * still a live member: a node that was revoked, left or was banned needs a fresh code.
+   */
+  async addFrontend(p: {alias: string; node: string; role: number; replay?: boolean}): Promise<GrantReply> {
     this.requireHosted(p.alias);
     if (!this.hostedRow || this.hostedRow.state !== "active") return {ok: false, e: "not_found"};
     if (this.hostedFailed) return {ok: false, e: "closed"};
+    if (p.replay && !this.rows("SELECT 1 FROM hosted_frontend WHERE node=? AND revoked=0", p.node).length) return {ok: false, e: "revoked"};
     return {ok: true, grant: await this.issue(p.node, p.role)};
   }
   async setState(alias: string, state: "active" | "disabled"): Promise<void> {

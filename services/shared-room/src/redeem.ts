@@ -160,8 +160,11 @@ export async function redeem(request: Request, env: Env): Promise<Response> {
   const stub = (a: string) => env.ROOMS.getByName("rt-" + a);
   let grant: HostedGrant | undefined;
   if (result.k === "replay" || result.k === "recover") {
-    const reply = await stub(result.alias).addFrontend({alias: result.alias, node, role: result.k === "replay" ? result.role : 1});
-    if (!reply.ok || !reply.grant) return nodeFail(reply.e === "not_found" ? "code_invalid" : "closed");
+    const reply = await stub(result.alias).addFrontend({alias: result.alias, node, role: result.k === "replay" ? result.role : 1, replay: true});
+    if (!reply.ok || !reply.grant) {
+      if (reply.e === "revoked") return nodeFail(result.k === "replay" ? "code_used" : "exists");
+      return nodeFail(reply.e === "not_found" ? "code_invalid" : "closed");
+    }
     grant = reply.grant;
     return nodeJson({ok: 1, alias: grant.alias, name: grant.name, pub: grant.pub, token: grant.token,
       role: grant.role === 1 ? "owner" : "frontend"});

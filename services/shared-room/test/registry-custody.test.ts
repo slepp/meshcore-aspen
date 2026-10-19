@@ -2,7 +2,7 @@ import {expect, it, vi} from "vitest";
 import {evictDurableObject} from "cloudflare:test";
 import {admin, bindings, call, control, convertFixture, createRoom, fixture, hostedSql, hostedStub, json, mintCreate, nodeA, nodeB, now, redeem,
   registryDump, registrySql, signedBody, socket} from "./registry-helpers";
-import {b32, newAliasId, openRoom, parseKek, sealRoom, validAliasId} from "../src/seal";
+import {b32, clientKey, ipv6Prefix, newAliasId, openRoom, parseKek, sealRoom, validAliasId} from "../src/seal";
 import {fromHex, toHex} from "../src/native-crypto";
 
 const kek = parseKek({ROOM_KEK: JSON.stringify({current: "k1", keys: {k1: "42".repeat(32)}})})!;
@@ -86,4 +86,20 @@ it("never logs or audits request secrets, including malformed conversions", asyn
   expect((await registrySql("PRAGMA table_info(audit)")).map(c => c.name)).toEqual(["id", "ts", "actor", "action", "target", "result"]);
   expect((await registrySql("SELECT action FROM audit")).map(r => r.action)).toEqual(["redeem-owner"]);
   void bindings; void admin; void nodeB; void now; void createRoom; void signedBody; void socket;
+});
+
+it("derives one client key per IPv6 /64 and per IPv4 address", async () => {
+  expect(ipv6Prefix("2001:db8::1")).toBe("2001:db8:0:0");
+  expect(ipv6Prefix("2001:0db8:0000:0000:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:0:0");
+  expect(ipv6Prefix("::1")).toBe("0:0:0:0");
+  expect(ipv6Prefix("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1:2");
+  const day = 20000 * 86400;
+  const key = (ip: string) => clientKey(kek, ip, day);
+  expect(await key("2001:db8::1")).toBe(await key("2001:db8::2"));
+  expect(await key("2001:db8::1")).toBe(await key("2001:0db8:0:0:ffff:ffff:ffff:ffff"));
+  expect(await key("2001:db8::1")).not.toBe(await key("2001:db8:0:1::1"));
+  expect(await key("::ffff:192.0.2.1")).toBe(await key("192.0.2.1"));
+  expect(await key("192.0.2.1")).not.toBe(await key("192.0.2.2"));
+  expect(await clientKey(kek, "192.0.2.1", day + 86400)).not.toBe(await key("192.0.2.1"));
+  expect(await key("192.0.2.1")).toMatch(/^[a-f0-9]{32}$/);
 });

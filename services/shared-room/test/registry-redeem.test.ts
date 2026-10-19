@@ -1,7 +1,7 @@
 import {expect, it} from "vitest";
 import {runDurableObjectAlarm} from "cloudflare:test";
 import {admin, call, control, convertFixture, createRoom, fixture, hostedSql, invite, joinRoom, json, mintCreate,
-  nodeA, nodeB, nodeC, now, redeem, registryDump, registrySql, registryStub, signedBody} from "./registry-helpers";
+  nodeA, nodeB, nodeC, nodeFrom, now, redeem, registryDump, registrySql, registryStub, signedBody} from "./registry-helpers";
 import {createSubject} from "../src/node-protocol";
 
 it("serves a static info document and tracks the signup mode", async () => {
@@ -280,4 +280,43 @@ it("releases the claim, pending room and quota when the Room object call fails",
   expect((await redeem(nodeB, "join", {code: inviteCode, env: {ROOMS: down as any}})).status).toBe(500);
   expect((await registrySql("SELECT state FROM codes WHERE kind='join'"))[0].state).toBe("new");
   expect((await redeem(nodeB, "join", {code: inviteCode})).status).toBe(200);
+});
+
+it("does not let a revoked, departed or banned node back in by replaying its redeem", async () => {
+  const room = await createRoom(nodeA, "Fleet");
+  const replay = async (node: any, code: string, ts: number) => (await redeem(node, "join", {code, ts})).body.e;
+  // Revoked by an owner.
+  const codeB = await invite(room);
+  const first = await redeem(nodeB, "join", {code: codeB, ts: now()});
+  expect(first.status).toBe(200);
+  await control(room.alias, room.token, {op: "revoke", id: nodeB.pub.slice(0, 8)});
+  expect(await replay(nodeB, codeB, now() + 5)).toBe("code_used");
+  // Left on its own.
+  const codeC = await invite(room);
+  const second = await redeem(nodeC, "join", {code: codeC, ts: now()});
+  expect((await control(room.alias, second.body.token, {op: "leave"})).body).toMatchObject({deleted: 0});
+  expect(await replay(nodeC, codeC, now() + 5)).toBe("code_used");
+  // Banned, then unbanned: the old code is still spent.
+  const codeD = await invite(room);
+  const nodeD = nodeFrom(0x44);
+  expect((await redeem(nodeD, "join", {code: codeD, ts: now()})).status).toBe(200);
+  await admin("node", {node: nodeD.pub, action: "ban"});
+  await admin("node", {node: nodeD.pub, action: "unban"});
+  expect(await replay(nodeD, codeD, now() + 5)).toBe("code_used");
+  expect((await control(room.alias, room.token, {op: "nodes"})).body.total).toBe(1);
+  // A fresh invite is the deliberate way back, and it is a member again.
+  const again = await redeem(nodeB, "join", {code: await invite(room)});
+  expect(again.status).toBe(200);
+  expect((await registrySql("SELECT node FROM members WHERE node=?", nodeB.pub))).toHaveLength(1);
+});
+
+it("does not return owner rights to a converter that another owner revoked", async () => {
+  const room = await convertFixture(nodeA);
+  const owner = await joinRoom(room, nodeB, "owner");
+  await hostedSql(room.alias, "UPDATE hosted_frontend SET owner_since=? WHERE node=?", now() - 90000, nodeB.pub);
+  expect((await control(room.alias, owner.token, {op: "revoke", id: nodeA.pub.slice(0, 8)})).status).toBe(200);
+  const [code] = await mintCreate();
+  const retry = await redeem(nodeA, "convert", {code, name: "Converted", pub: fixture.room.publicKey, key: fixture.room.key, pw: "room"});
+  expect(retry.body.e).toBe("exists");
+  expect((await control(room.alias, room.token, {op: "nodes"})).body.e).toBe("auth");
 });

@@ -101,11 +101,19 @@ export async function validAliasId(kek: Kek, id: string): Promise<boolean> {
   return ok;
 }
 
+/** First four groups of an IPv6 address (its /64), with `::` expanded so every host in a prefix shares one key. */
+export function ipv6Prefix(ip: string): string {
+  const [head, tail] = ip.toLowerCase().split("::");
+  const front = head ? head.split(":") : [], back = tail === undefined ? [] : tail ? tail.split(":") : [];
+  const groups = tail === undefined ? front : [...front, ...Array(Math.max(0, 8 - front.length - back.length)).fill("0"), ...back];
+  return groups.slice(0, 4).map(g => (parseInt(g || "0", 16) || 0).toString(16)).join(":");
+}
 /** Keyed IP counter key: /64 for IPv6, /32 for IPv4, rotating each UTC day. */
 export async function clientKey(kek: Kek | undefined, ip: string, now: number): Promise<string> {
-  const v6 = ip.includes(":");
   let prefix = ip;
-  if (v6) prefix = ip.toLowerCase().split(":").slice(0, 4).join(":");
+  const mapped = ip.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped) prefix = mapped[1];
+  else if (ip.includes(":")) prefix = ipv6Prefix(ip);
   const day = String(Math.floor(now / 86400));
   if (!kek) return "plain|" + prefix + "|" + day;
   const key = await hkdf(kek.keys[kek.current], new Uint8Array(0), "aspen-room.ipkey.v1", 32);
