@@ -152,6 +152,7 @@ esp-field-update-test:
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-recovery
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" running-hash
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" running-hash-error
+	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" transfer-buffer
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" rollback-error
 	"$(ROOT)/.tmp/onchip-esp-field-update-tests/esp-update" automatic-rollback-error
 	PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$(ROOT):.:tests python3 -m unittest -v test_esp_field_update tools.hardware.tests.test_esp32_slot

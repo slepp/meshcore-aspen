@@ -86,6 +86,25 @@ int main(int argc, char **argv) {
     }
     std::cout << "ESP post-reboot raw running-image digest readback passed\n"; return 0;
   }
+  if (argc > 1 && !strcmp(argv[1], "transfer-buffer")) {
+    // The 4 KiB scratch buffer exists only while a digest or upload runs.
+    httpd_req_t status;
+    failTransferAllocation = true;
+    onchip::statusEspUpdate(&status);
+    assert(status.response.find("\"running_sha256\":\"\"") != std::string::npos);
+    assert(status.response.find("Running application SHA256 needs 4 KiB of free internal memory") != std::string::npos);
+    auto refused = candidate(); const unsigned before = begins;
+    assert(onchip::uploadEspUpdate(&refused) == ESP_OK);
+    assert(refused.status == "503 Service Unavailable" && begins == before && switches == 0);
+    assert(!onchip::espUpdateBusy() && transferAllocations == 0);
+    failTransferAllocation = false;
+    onchip::statusEspUpdate(&status);
+    assert(status.response.find("\"running_sha256\":\"" + runningCandidate.headers.at("X-Mast-SHA256") + "\"") != std::string::npos);
+    auto accepted = candidate(); onchip::uploadEspUpdate(&accepted);
+    assert(accepted.status == "200 OK" && switches == 1 && onchip::espUpdateBusy());
+    assert(transferAllocations == transferReleases && transferAllocations >= 2);
+    std::cout << "ESP update scratch buffer: allocation failure, retry and release passed\n"; return 0;
+  }
   if (argc > 1 && !strcmp(argv[1], "force-restart")) {
     const char *error = nullptr;
     failTimerCreate = true;

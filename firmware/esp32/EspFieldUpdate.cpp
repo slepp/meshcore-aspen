@@ -6,6 +6,7 @@
 #ifndef MESHCORE_ESP_UPDATE_TEST
 #include <Arduino.h>
 #include <Identity.h>
+#include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_app_format.h>
 #include <esp_image_format.h>
@@ -63,7 +64,17 @@ uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0;
 bool automaticRollbackAttempted = false;
 std::atomic<const char *> recovery{""};
 const char imageTarget[] = "meshcore-esp-target-v1:" ONCHIP_UPDATE_TARGET ":";
-uint8_t transferBuffer[4096];
+// Scratch for application hashing and upload chunks. It is allocated for the
+// duration of one operation instead of reserving 4 KiB of internal RAM.
+constexpr size_t TransferBytes = 4096;
+struct TransferBuffer {
+  uint8_t *data = static_cast<uint8_t *>(
+      heap_caps_malloc(TransferBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  TransferBuffer() = default;
+  TransferBuffer(const TransferBuffer &) = delete;
+  TransferBuffer &operator=(const TransferBuffer &) = delete;
+  ~TransferBuffer() { heap_caps_free(data); }
+};
 char updateDigest[65]{}, runningDigest[65]{};
 uint32_t runningSize = 0;
 const char *runningHashError = "";
@@ -84,14 +95,19 @@ void cacheRunningDigest() {
     runningHashError = "Running application image verification failed";
     return;
   }
+  TransferBuffer buffer;
+  if (!buffer.data) {
+    runningHashError = "Running application SHA256 needs 4 KiB of free internal memory; retry status";
+    return;
+  }
   mbedtls_sha256_context hash;
   mbedtls_sha256_init(&hash);
   bool ok = !mbedtls_sha256_starts_ret(&hash, 0);
   for (size_t offset = 0; ok && offset < metadata.image_len;) {
     const size_t remaining = metadata.image_len - offset;
-    const size_t size = remaining < sizeof(transferBuffer) ? remaining : sizeof(transferBuffer);
-    ok = esp_partition_read(partition, offset, transferBuffer, size) == ESP_OK &&
-         !mbedtls_sha256_update_ret(&hash, transferBuffer, size);
+    const size_t size = remaining < TransferBytes ? remaining : TransferBytes;
+    ok = esp_partition_read(partition, offset, buffer.data, size) == ESP_OK &&
+         !mbedtls_sha256_update_ret(&hash, buffer.data, size);
     offset += size;
     delay(1);
   }
@@ -305,6 +321,11 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
     }
   }
   allowUnsavedState = authorized && unsaved[0];
+  TransferBuffer buffer;
+  if (authorized && !buffer.data) {
+    busy = false;
+    return response(request, "503 Service Unavailable", "{\"error\":\"Update needs 4 KiB of free internal memory; retry\"}");
+  }
   if (authorized) memcpy(updateDigest, digest, sizeof(updateDigest));
   if (authorized && !flushForUpdate()) {
     busy = false;
@@ -323,12 +344,12 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
       update.fail("Application transfer timed out"); break;
     }
     const size_t remaining = update.size() - update.received();
-    const int got = httpd_req_recv(request, reinterpret_cast<char *>(transferBuffer),
-                                 remaining < sizeof(transferBuffer) ? remaining : sizeof(transferBuffer));
+    const int got = httpd_req_recv(request, reinterpret_cast<char *>(buffer.data),
+                                 remaining < TransferBytes ? remaining : TransferBytes);
     if (got == HTTPD_SOCK_ERR_TIMEOUT) { delay(1); continue; }
     if (got <= 0) { update.fail("Application transfer incomplete"); break; }
     lastData = millis();
-    if (!update.write(transferBuffer, got)) break;
+    if (!update.write(buffer.data, got)) break;
     delay(1);
   }
   if (update.state() == EspUpdate::Receiving) update.finish();

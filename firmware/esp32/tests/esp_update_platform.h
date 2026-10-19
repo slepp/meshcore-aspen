@@ -35,6 +35,19 @@ inline int httpd_req_recv(httpd_req_t *r, char *out, size_t size) {
   size = size < end - r->offset ? size : end - r->offset;
   memcpy(out, r->data.data() + r->offset, size); r->offset += size; return size;
 }
+constexpr unsigned MALLOC_CAP_INTERNAL = 1 << 11, MALLOC_CAP_8BIT = 1 << 2;
+inline bool failTransferAllocation = false;
+inline size_t transferAllocations = 0, transferReleases = 0;
+inline void *heap_caps_malloc(size_t size, unsigned capabilities) {
+  if (capabilities != (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) abort();
+  if (failTransferAllocation) return nullptr;
+  ++transferAllocations;
+  return malloc(size);
+}
+inline void heap_caps_free(void *memory) {
+  if (memory) ++transferReleases;
+  free(memory);
+}
 inline uint32_t testMillis = 1;
 inline uint32_t millis() { return testMillis; }
 inline void (*onDelay)() = nullptr;
