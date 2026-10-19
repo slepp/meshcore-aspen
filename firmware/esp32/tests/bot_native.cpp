@@ -1963,7 +1963,7 @@ static void filtered_packet_continuations() {
   assert(first.replies(f.bot.publicKey(), f.radio).empty());
   f.deliver(traceReply(sent[1])); f.step();
   assert(first.replies(f.bot.publicKey(), f.radio) ==
-         std::vector<std::string>{"Pong; 1: Trace 1 hops; SNR dB: -1| 2: Trace 1 hops; SNR dB: -1"});
+         std::vector<std::string>{"Pong; 1: Trace 1 hops; SNR dB: -1 | 2: Trace 1 hops; SNR dB: -1"});
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!split")); f.step(15);
   sent = traces(); assert(sent.size() == 1); f.step(100);
@@ -1980,7 +1980,7 @@ static void filtered_packet_continuations() {
   const auto cancelled = first.replies(f.bot.publicKey(), f.radio);
   f.deliver(traceReply(sent[0])); f.step();
   assert(cancelled.size() == 1 &&
-         cancelled[0] == "Error: !split: Source changed; pending operation outcome may be unknown" &&
+         cancelled[0] == "Error: !split: Runtime code changed; pending operation outcome may be unknown" &&
          first.replies(f.bot.publicKey(), f.radio) == cancelled);
   timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = 100; f.radio.holdTx = true;
   f.deliver(first.command(f.bot.publicKey(), "!sendonly")); f.step(20);
@@ -2139,11 +2139,11 @@ static void native_hashtag_commands() {
   assert(peer.groupReplies(f.radio).empty());
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(peer.targetedGroup(f.bot.publicKey(), "visitor: !path", "#example1", 3, {0x12, 0x34, 0x56})); f.step();
-  assert(peer.groupReplies(f.radio) == std::vector<std::string>{"3:123456"});
+  assert(peer.groupReplies(f.radio) == std::vector<std::string>{"123456"});
   for (uint8_t width : {1, 2}) {
     timeMs += 61000; f.radio.sent.clear();
     f.deliver(peer.targetedGroup(f.bot.publicKey(), "visitor: !path", "#example1", width, Bytes(width, 0x12))); f.step();
-    const std::string expected = width == 1 ? "1:12" : "2:1212";
+    const std::string expected = width == 1 ? "12" : "1212";
     assert(peer.groupReplies(f.radio, 3) == std::vector<std::string>{expected});
   }
   assert(invoke("visitor: !trace").find("TRACE requires") != std::string::npos);
@@ -3833,7 +3833,7 @@ static void channel_wait_collector_and_source_fences() {
   f.bot.nodeSnapshot(after);
   assert(after.sourceGeneration != before.sourceGeneration);
   const auto cancelled = caller.groupReplies(f.radio);
-  assert(cancelled.size() == 1 && cancelled[0].find("Source changed") != std::string::npos);
+  assert(cancelled.size() == 1 && cancelled[0].find("Runtime code changed") != std::string::npos);
   f.deliver(ambient.group("ambient: old-answer")); f.step();
   assert(caller.groupReplies(f.radio) == cancelled);
   f.bot.meshPolicyStatus(admission, sizeof(admission));
@@ -4282,7 +4282,8 @@ static void native_utilities() {
     const auto received = first.groupReplies(f.radio, 3, "#example1");
     assert(received.size() == 1 &&
            (targeted ? received[0] == "= 42" :
-                       received[0].size() == 17 && received[0].substr(13) == "= 42"));
+                       received[0].size() == 11 && !received[0].compare(0, 3, "[q:") &&
+                       !received[0].compare(5, 6, "] = 42")));
     reflect(); f.deliver(request); f.step();
     assert(first.groupReplies(f.radio, 3, "#example1").size() == 1);
   }
