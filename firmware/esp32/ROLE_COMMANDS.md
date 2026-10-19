@@ -128,6 +128,10 @@ alias.
 | `get allow.read.only`, `set allow.read.only on\|off` | Explicit selection | Allows/denies read-only admission when the supplied guest password does not match |
 | `setperm KEY64 3` | Full administrator key | Authorizes that key as this Room's administrator |
 
+To serve this Room from a shared-room server instead, send `cloudroom convert CODE[@HOST]` from
+the Management console ([Shared rooms](MAST_ADMIN.md#shared-rooms)). The Room's administrator ACL,
+read-only guest logins and in-room CLI stay behind; members keep their password.
+
 Set a nonempty guest password and `allow.read.only off` for password-protected
 guest history and posting. Management `room access` reports the role's
 password-free/password-protected guest setting without exposing the credential.

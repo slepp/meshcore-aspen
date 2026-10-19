@@ -36,7 +36,7 @@ backend authentication and transport restrictions still apply.
 | Roles | Compare saved and running selections; save enable/disable for each role; rename roles/services; queue a zero-hop advert | Refresh roles; apply/reboot only when you want saved selections to run. Names preserve keys. Queued adverts do not confirm reception |
 | Radio | Load the current channel into an editable form; save and retune; use a timed temporary channel | `job` and current radio settings. Every role and KISS client shares the change; queued old-channel packets can fail `STALE` |
 | Bot programs | Read bot state, selected package metadata, hash and runtime/module capabilities; edit, upload/resume, install, roll back, restore bundled commands or retry loading | `source status` plus `source hash`. Durable selection can differ from retained live code during recovery |
-| Services | Read telemetry/TLS, configured RPC, bot grants and companion TCP/WiFi diagnostics; configure telemetry publishing/interval or bot grants | Native saved/applied state and backend errors, not just admission |
+| Services | Read telemetry/TLS, configured RPC, bot grants and companion TCP/WiFi diagnostics; configure telemetry publishing/interval or bot grants; read the shared room and switch it on or off | Native saved/applied state and backend errors, not just admission. A shared-room switch restarts the node 10 seconds later |
 | Bot data backups | Export a selected family/scope; validate a backup; restore it separately | `data status`; export/read back the affected scope after an uncertain restore |
 | Firmware | Upload an application-only image and signed operator manifest to the inactive application slot; restart separately | Verified image hash, then running image hash and healthy boot after reconnect/login; [WiFi update workflow](MAST_ADMIN.md#wifi-application-updates) |
 | Command console | Send supported commands that do not have a guided control | Command help and the affected state. Read-only commands run directly; writes require confirmation |
@@ -188,6 +188,7 @@ Read-only refreshes never change source or radio form text.
 | Task | Interface |
 | --- | --- |
 | List command exports and modules | Send `!plugins [PAGE]` or `!help [PAGE]` to the bot |
+| Join, create, convert or leave a shared room | Encrypted Management RF only; see [Shared rooms](MAST_ADMIN.md#shared-rooms) |
 | Provision WiFi, HTTPS credentials or private keys | Encrypted Management RF; see [administrator workflow](MAST_ADMIN.md#administrator-workflow) |
 | Verify a command-package signature before upload | [Package tooling](../runtime/BOT_DEVELOPMENT.md) |
 | Chat and manage companion contacts | MeshCore companion application |

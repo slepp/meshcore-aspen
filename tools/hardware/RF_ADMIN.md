@@ -274,6 +274,7 @@ use the same connection options followed by `command 'COMMAND'`.
 | Management authority | `get acl`, `password`, `key management pending` | `setperm FULL_KEY64 3/0` grants/removes a saved admin entry; `trust FULL_KEY/none` controls additional singleton trust; staged key rotation needs restart and changes identity |
 | WiFi | `wifi status`, `get wifi.enabled`, `get wifi.ip` | Save credentials over encrypted RF only; `wifi apply` reconnects; disabling WiFi retains RF Management |
 | Native services | `bot https status`, `telemetry endpoint status`, `mqtt status`, `cloudroom status` | Availability varies by build; use each service guide for destinations, grants and protected credential uploads |
+| Shared room | `cloudroom list`, `cloudroom result` | `admin.py cloudroom join\|create\|convert\|invite\|unlink\|share` link or leave a room and restart the node; codes and passwords come from standard input with `-`; see [Shared rooms](../../firmware/esp32/MAST_ADMIN.md#shared-rooms) |
 | Restart | `status`, `job` | `apply` or `reboot` restarts the device; inspect running state before retrying an uncertain restart |
 
 See the [Management command catalog](../../COMMANDS.md#management-manual),

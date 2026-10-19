@@ -157,6 +157,7 @@ needs a trusted LAN because plain HTTP exposes its password/session.
 | Install a packet program | `packet api`; Python `packet install SLOT FILE`, `packet budget SLOT STAGES FUEL US CAPS`, `packet enable SLOT on` | [Two slots, budgets, fault/rollback behavior](firmware/runtime/PACKET_ENGINES.md#install-and-configure-a-program) |
 | Configure HTTPS or metrics | `bot https status`, `telemetry endpoint status` | [HTTPS destination/grants](firmware/runtime/NETWORK_API.md), [telemetry](firmware/esp32/TELEMETRY.md) |
 | Configure MQTT or shared rooms | `mqtt status`, `cloudroom config status`, `cloudroom status` | [MQTT](firmware/esp32/OBSERVER.md), [frontend settings and commands](services/shared-room/NATIVE.md#configure-the-generic-image) |
+| Join, create, convert or leave a shared room | `cloudroom join\|create\|convert\|invite\|unlink`, `cloudroom list\|result` over encrypted Management RF | [Shared rooms](firmware/esp32/MAST_ADMIN.md#shared-rooms) |
 | Save state or inspect storage | `state save`, then `job`; `storage status` | [State save and filesystem recovery](firmware/esp32/MAST_ADMIN.md#common-control-commands) |
 | Back up or update a node | Preserve a private encrypted backup; use application-only update | [Node backup](NODE_BACKUP.md), [signed application updates](firmware/esp32/ESP_FIELD_UPDATES.md) |
 

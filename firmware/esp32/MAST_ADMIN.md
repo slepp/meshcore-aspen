@@ -19,7 +19,7 @@ SLOT FILE` installs into slot `0` or `1`. A new slot stays disabled until
 `packet SLOT enable on`; its source, enable state and execution budget are
 saved independently of bot command sources and role identities.
 
-For a native shared-room frontend, use the
+For a native shared-room frontend, see [Shared rooms](#shared-rooms) below and the
 [configuration and command table](../../services/shared-room/NATIVE.md#configure-the-generic-image).
 `cloudroom config status` shows the saved selection; `cloudroom status` shows
 running WSS connections. Credential uploads require encrypted Management RF;
@@ -65,6 +65,67 @@ it cannot add a recovery command to an older application that is still running.
 The native HTTPS image also supports [optional device metrics](TELEMETRY.md)
 through `telemetry help`. It is disabled until explicitly provisioned through
 this same RF/web management backend; role administrator ACLs are unchanged.
+
+### Shared rooms
+
+A shared room keeps its key on a shared-room server, and any Aspen node with WiFi
+can forward its RF traffic. Send these commands from the companion app's
+Management console; they need encrypted Management RF from an authenticated
+sender. A request or reply stays within 145 bytes, so a server name is at most 36
+bytes. Longer names go in a profile uploaded with `admin.py cloudroom configure`.
+
+| Goal | Send | Result |
+| --- | --- | --- |
+| Join an existing room | `cloudroom join CODE[@HOST]` | The node redeems the code, saves the room and restarts 10 seconds later |
+| Create a room | `cloudroom create CODE[@HOST] NAME` | The server generates the key; this node becomes an owner |
+| Convert the local Room | `cloudroom convert CODE[@HOST]`, then the same line plus `yes` | The node sends the Room key to the server and its Room role stays off while the alias is enabled |
+| Add another node | `cloudroom invite` (`owner` for another owner node) | A one-time code; the other node sends `cloudroom join CODE@HOST` |
+| Leave | `cloudroom unlink [ALIAS] [delete\|local] [force]` | The server revokes this node; `delete` removes the room; `local` skips the server |
+| Switch off or on | `cloudroom share on\|off [force]` | Keeps or drops the saved room and restarts; a converted room needs `force` |
+
+`CODE` is 16 letters and digits, with dashes optional. `HOST` is a lowercase
+DNS name; without it the node uses the default hosted service. Codes are
+single-use. A frontend code lasts 10 minutes by default and an owner code 2
+minutes, so read it out and use it at once. `create open` replaces the code on a
+server that allows open sign-up.
+
+Owner nodes also have `cloudroom nodes [N]` (five per page), `revoke ID` (an id from
+`nodes`), `password [PW|open|new]` and `invite`. Every node has `cloudroom list [N]`
+(slot N of two), `probe [HOST]` (checks the server and clock), `result` (the outcome
+of the last link job) and `apply` (save state and restart, as `reboot` does).
+`join`, `create`, `convert`, `invite`, `nodes`, `revoke`, `password`, `unlink` and
+`probe` reply at once with "Contacting HOST (up to 20 s)"; send `cloudroom result`
+for the outcome. `admin.py` waits for it:
+
+```sh
+python3 tools/admin.py --gateway COMPANION_KISS_HOST --target MANAGEMENT_PUBLIC_KEY64 \
+  --seed-file /absolute/private/companion.seed \
+  cloudroom join -
+```
+
+Paste the code, optionally with `@HOST`, and press Enter. A `-` argument reads the
+code or password from standard input so it stays out of shell history and the
+process list. `admin.py` polls `cloudroom result` every 2
+seconds for up to 40 seconds and exits non-zero on a failure such as
+`Link failed: code expired`. The `create`, `convert`, `invite`, `list`, `nodes`,
+`revoke`, `result`, `apply`, `probe`, `password`, `unlink` and `share` subcommands take
+the same arguments as the DM commands, with `--yes`, `--owner`, `--open`, `--new`,
+`--delete`, `--local` and `--force` for the keywords. They work over encrypted RF
+only.
+
+Conversion sends the Room key, name and guest password to the server over this
+node's own TLS session. The server holds the key and can read and speak as the
+room. The local administrator ACL, read-only guest logins, in-room CLI and the
+last 32 posts stay behind; members keep their room password and contact. The
+convert preview names the server and says so before you add `yes`.
+
+The web page and the `!admin` bot command never carry codes, passwords or
+membership changes. The `/admin` Services section shows `cloudroom list` and
+`status`, and its Share switch runs `cloudroom share on|off`. Every change
+restarts the node, so a link or unlink takes effect after the restart.
+To roll back to 0.1.19 after an unlink, upload your v1 profile with
+`admin.py cloudroom configure` first; 0.1.19 treats the empty record as invalid and
+leaves the service off.
 
 ### Remote logs and memory checks
 
