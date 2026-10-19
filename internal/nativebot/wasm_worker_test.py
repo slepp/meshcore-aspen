@@ -126,7 +126,7 @@ class WasmLifecycleTests(unittest.TestCase):
             self.assertTrue(separator, status)
             self.assertIn(" active=0 ", metadata)
             self.assertTrue(outcome.startswith("Error: durable package runtime does not match source selector; "), status)
-            if outcome == "Error: durable package runtime does not match source selector; use source wasm retry; startup blocked":
+            if outcome == "Error: durable package runtime does not match source selector; use source wasm retry or source wasm remove; startup blocked":
                 break
             self.assertEqual(outcome, "Error: durable package runtime does not match source selector; live retry pending")
             self.assertLess(time.monotonic(), deadline, "corrupt-Wasm retries did not terminate")
