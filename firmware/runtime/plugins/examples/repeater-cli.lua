@@ -62,7 +62,8 @@ local function fleet(targets, text, write)
   for i = 1, #peers do
     local peer = peers[i]
     local result = repeater.command(peer, text, read)
-    local answer = result.ok and result.reply or result.error
+    local answer = (result.ok and result.reply or result.error) or ""
+    if answer == "" then answer = "no reply text" end
     if result.truncated then answer = answer .. " (truncated)" end
     local width = ctx.limits.reply_bytes - #peer - 2
     for offset = 1, #answer, width do

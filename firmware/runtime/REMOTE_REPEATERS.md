@@ -169,8 +169,9 @@ In an authenticated private DM from a trusted owner:
 
 Select configured aliases or group names, separated by commas; case does not
 matter, and a repeater named twice runs once. You can select every configured
-repeater whose aliases fit in the command message. Existing command and
-radio-action permissions still apply.
+repeater whose aliases fit in the command message. An unknown name refuses the
+whole command before anything is sent; the reply lists the configured aliases
+and groups. Existing command and radio-action permissions still apply.
 
 `!rcmd` sends only read-only commands: `ver`, `board`, `clock`, `neighbors`,
 `get ...`, `stats-core`, `stats-radio`, `stats-packets`, `gps`, `gps diag`,
@@ -245,8 +246,8 @@ not belong in the installed Lua source.
 
 `repeater.targets(text)` expands a comma-separated list of aliases and group
 names for the current trusted-owner DM. It yields a Lua array of distinct
-aliases, or `nil, message` when the list is empty or too long. Names that are
-not groups pass through unchanged, so `repeater.command` reports unknown aliases.
+aliases, or `nil, message` when the list is empty, too long or names something
+that is neither a configured alias nor a group.
 
 For another Lua command, `repeater.command(alias, text[, read_only])` yields
 `{ok, text, reply, error, queued, transmitted, truncated}`. `text` retains line

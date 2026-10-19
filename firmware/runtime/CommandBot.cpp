@@ -912,6 +912,11 @@ struct CommandBot::Core : mesh::Mesh {
         return int(i);
     return -1;
   }
+  int repeaterIndexByAlias(const char *alias) const {
+    for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+      if (repeaterPolicy.targets[i].used && !strcmp(alias, repeaterPolicy.targets[i].alias)) return int(i);
+    return -1;
+  }
   void recordRepeaterFlood(unsigned index, uint32_t tag) {
     repeaterPolicy.targets[index].lastFloodUtc = tag;
     repeaters[index].flooded = true; repeaters[index].floodAt = millis();
@@ -1041,8 +1046,21 @@ struct CommandBot::Core : mesh::Mesh {
     }
     return slot;
   }
-  // Expands owner-defined groups in a comma-separated target list to distinct aliases.
-  // Other names pass through so the command reports its own unknown-alias error.
+  // Refuses the whole selection and lists what the owner can choose from.
+  void unknownRepeaterTarget(Invocation &job, const char *name) {
+    std::string aliases, groups;
+    for (const auto &target : repeaterPolicy.targets)
+      if (target.used) aliases += (aliases.empty() ? "" : ",") + std::string(target.alias);
+    for (const auto &group : repeaterPolicy.groups)
+      if (group.name[0]) groups += (groups.empty() ? "" : ",") + std::string(group.name);
+    std::string text = "Unknown repeater " + std::string(name).substr(0, 16) + "; configured: " +
+        (aliases.empty() ? "none" : aliases);
+    if (!groups.empty()) text += "; groups: " + groups;
+    if (text.size() >= sizeof(job.result.error)) text = text.substr(0, sizeof(job.result.error) - 4) + "...";
+    finishRadio(job, text.c_str());
+  }
+  // Expands owner-defined groups in a comma-separated target list to distinct
+  // configured aliases. An unknown name refuses the selection before any RF.
   void resolveRepeaterTargets(Invocation &job) {
     char input[BotIoTextLimit + 1]{};
     snprintf(input, sizeof(input), "%s", job.io.value);
@@ -1066,7 +1084,10 @@ struct CommandBot::Core : mesh::Mesh {
       for (char *c = token; *c; ++c) if (*c >= 'A' && *c <= 'Z') *c = char(*c + 32);
       const BotRepeaterPolicy::Group *group = nullptr;
       for (const auto &entry : repeaterPolicy.groups) if (entry.name[0] && !strcmp(entry.name, token)) group = &entry;
-      if (!group) { add(token); continue; }
+      if (!group) {
+        if (repeaterIndexByAlias(token) < 0) { unknownRepeaterTarget(job, token); return; }
+        add(token); continue;
+      }
       for (unsigned i = 0; i < BotRepeaterLimit && !failure; ++i)
         if (group->members & (1u << i)) add(repeaterPolicy.targets[i].alias);
     }

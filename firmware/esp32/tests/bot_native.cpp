@@ -4524,6 +4524,11 @@ static void native_repeater_cli(const char *sourcePath) {
     }
     assert(!f.bot.jobsInUse());
   }
+  // An unknown name refuses the whole selection before any request and lists the choices.
+  assert(f.command(owner, "!rcmd nosuch ver") == "Unknown repeater nosuch; configured: p1,p2,p3,p4,p5,p6");
+  assert(requests(first).empty());
+  assert(f.command(owner, "!rcmd NoSuch,p1 ver") == "Unknown repeater nosuch; configured: p1,p2,p3,p4,p5,p6");
+  assert(requests(first).empty() && !f.bot.jobsInUse());
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(owner.command(f.bot.publicKey(), "!rcmd P1,p2,p3,p4,p5,p6 ver")); f.step(300);
   const auto fleetStarted = timeMs.load();
@@ -4544,6 +4549,9 @@ static void native_repeater_cli(const char *sourcePath) {
   assert(repeaterReply("group bad 0000").find("Error:") == 0);
   assert(repeaterReply("add pair " + key(first) + " 912525000 3:").find("Error:") == 0);
   assert(repeaterReply("groups") == "Repeater groups pair=p1,p2 lead=p3");
+  assert(f.command(owner, "!rcmd pair,nosuch ver") ==
+         "Unknown repeater nosuch; configured: p1,p2,p3,p4,p5,p6; groups: pair,lead");
+  assert(requests(first).empty() && !f.bot.jobsInUse());
   {
     BotRepeaterPolicy saved; assert(loadBotRepeaterPolicy(saved));
     unsigned named = 0; for (const auto &group : saved.groups) named += group.name[0] != 0;
@@ -4729,7 +4737,7 @@ static void native_repeater_cli(const char *sourcePath) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
   assert(f.command(owner, "!snr").find("No repeater signal samples") == 0);
-  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, allow-listed group writes, read-only !rcmd, explicit writes, uncertain write not retried and live revocation");
+  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, allow-listed group writes, read-only !rcmd, unknown names refused with choices, explicit writes, uncertain write not retried and live revocation");
 }
 static void native_repeater_delivery(const char *sourcePath) {
   assert(prepareHostRunner() && saveBotRepeaterPolicy({}));
