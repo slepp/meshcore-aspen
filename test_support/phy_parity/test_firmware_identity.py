@@ -51,6 +51,7 @@ class FirmwareIdentityTests(unittest.TestCase):
                     "-DARDUINO_ARCH_ESP32", *flags,
                     "-I", str(ROOT / "test_support/phy_parity/seams/http"),
                     "-I", str(ROOT / "test_support/phy_parity/seams"),
+                    "-I", str(ROOT / "firmware/esp32/tests/seams"),
                     "-I", str(ROOT / "firmware/runtime"),
                     "-I", str(ROOT / "firmware/shared"), "-I", str(ROOT / "firmware/esp32"), "-Wl,--wrap=send",
                     str(ROOT / "test_support/phy_parity/dashboard_http.cpp"),
