@@ -4488,6 +4488,42 @@ static void native_repeater_cli(const char *sourcePath) {
   assert(f.command(owner, "!rcmd p1 set flood.max 4").find("Use !rcmd-write") == 0);
   assert(requests(first).empty());
   assert(f.command(owner, "!rcmd-write p1,p2 setperm 00 3").find("one repeater") != std::string::npos);
+  // A group write must be on the allow-list; case and spacing do not bypass it.
+  for (const char *text : {"shutdown", "clkreboot", "start ota", "ota rollback", "ota direct 1",
+                           "tempradio 915 250 7 5 0", "set tx 22", "set radio 915,250,7,5", "set freq 915",
+                           "set prv.key 00", "set guest.password x", "set allow.read.only on", "set repeat off",
+                           "set path.hash.mode 1", "setperm 00 3", "password x", "erase", "reboot",
+                           "neighbor.remove 00", "SET NAME x", "  Reboot", "Set Radio 915,250,7,5",
+                           "set flood.max", "set flood.maximum 4", "SHUTDOWN"}) {
+    const auto refused = f.command(owner, ("!rcmd-write p1,p2 " + std::string(text)).c_str());
+    if (refused.find("one repeater at a time") == std::string::npos) {
+      fprintf(stderr, "group write accepted: %s -> %s\n", text, refused.c_str()); assert(false);
+    }
+    assert(requests(first).empty() && requests(second).empty());
+  }
+  // !rcmd sends only read-only commands; anything else needs !rcmd-write.
+  for (const char *text : {"shutdown", "set flood.max 4", "clock sync", "log start", "region put x", "gps on"})
+    assert(f.command(owner, ("!rcmd p1 " + std::string(text)).c_str()).find("Use !rcmd-write") == 0);
+  assert(!f.command(owner, "!rcmd p1    ").empty() && requests(first).empty()); // Usage, never an empty CLI request.
+  // Reads and allow-listed writes reach every member with the operator's own spelling, trimmed.
+  for (const auto &pair : {std::make_pair("!rcmd p1,p2 STATS-RADIO", "STATS-RADIO"),
+                           std::make_pair("!rcmd p1,p2  clock ", "clock"), std::make_pair("!rcmd p1,p2 board", "board"),
+                           std::make_pair("!rcmd p1,p2 Get Radio", "Get Radio"),
+                           std::make_pair("!rcmd p1,p2 stats-packets", "stats-packets"),
+                           std::make_pair("!rcmd p1,p2 sensor get temp", "sensor get temp"),
+                           std::make_pair("!rcmd-write p1,p2 Set Flood.Max 4", "Set Flood.Max 4"),
+                           std::make_pair("!rcmd-write p1,p2 set direct.txdelay 0.2", "set direct.txdelay 0.2"),
+                           std::make_pair("!rcmd-write p1,p2 clock sync", "clock sync"),
+                           std::make_pair("!rcmd-write p1,p2 advert.zerohop", "advert.zerohop")}) {
+    timeMs += 61000; f.radio.sent.clear();
+    f.deliver(owner.command(f.bot.publicKey(), pair.first)); f.step(300);
+    for (auto *peer : {&first, &second}) {
+      const auto sent = requests(*peer);
+      assert(sent.size() == 1 && sent[0].substr(3) == pair.second);
+      response(*peer, sent[0].substr(0, 3) + "OK"); f.step(300);
+    }
+    assert(!f.bot.jobsInUse());
+  }
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(owner.command(f.bot.publicKey(), "!rcmd P1,p2,p3,p4,p5,p6 ver")); f.step(300);
   const auto fleetStarted = timeMs.load();
@@ -4693,7 +4729,7 @@ static void native_repeater_cli(const char *sourcePath) {
     fprintf(stderr, "Combined signal, monitor and fleet source: %s\n", error.c_str()); assert(false);
   }
   assert(f.command(owner, "!snr").find("No repeater signal samples") == 0);
-  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, explicit writes, uncertain write not retried and live revocation");
+  puts("PASS repeater CLI: owner-only fleet, unpaced batches through all configured targets with split replies, first tagged reply, delayed TX completion, stale/foreign/reflected rejection, allow-listed group writes, read-only !rcmd, explicit writes, uncertain write not retried and live revocation");
 }
 static void native_repeater_delivery(const char *sourcePath) {
   assert(prepareHostRunner() && saveBotRepeaterPolicy({}));

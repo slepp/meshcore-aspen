@@ -169,9 +169,29 @@ In an authenticated private DM from a trusted owner:
 
 Select configured aliases or group names, separated by commas; case does not
 matter, and a repeater named twice runs once. You can select every configured
-repeater whose aliases fit in the command message. Reads use `!rcmd`. Use `!rcmd-write` explicitly for changes.
-Identity, access, radio and restart commands run on one target at a time.
-Existing command and radio-action permissions still apply.
+repeater whose aliases fit in the command message. Existing command and
+radio-action permissions still apply.
+
+`!rcmd` sends only read-only commands: `ver`, `board`, `clock`, `neighbors`,
+`get ...`, `stats-core`, `stats-radio`, `stats-packets`, `gps`, `gps diag`,
+`sensor list`, `sensor get ...`, `region`, `powersaving`, `ota status`, `log`
+and `help`. Use `!rcmd-write` for everything else. Commands are matched without
+regard to case or surrounding spaces and sent as typed.
+
+A change sent to more than one repeater must be one of these, because a wrong
+value can be corrected over the air afterwards:
+
+- `set flood.max`, `set flood.max.advert`, `set flood.max.unscoped`
+- `set txdelay`, `set direct.txdelay`, `set rxdelay`, `set af`
+- `set advert.interval`, `set flood.advert.interval`
+- `advert`, `advert.zerohop`, `clock sync`, `clear stats`, `discover.neighbors`
+
+Every other change runs on one repeater at a time. That includes radio, power
+and routing settings (`set radio`, `set freq`, `set tx`, `tempradio`,
+`set repeat`, `set path.hash.mode`), identity and access (`set name`,
+`set prv.key`, `setperm`, `password`, `set guest.password`), and restart,
+shutdown, erase and OTA commands. One bad radio or power value sent to a whole
+group can leave every member unreachable.
 
 ### Repeater groups
 
@@ -197,8 +217,7 @@ cannot match an alias; an alias cannot be added with a group's name.
 `!rcmd all ver` and `!rcmd-write sherwood set flood.max 4` expand the group when
 the command starts. Removing a target removes it from every group, and a group
 left with no members is deleted. A new target never inherits memberships.
-Groups that include identity, access, radio or restart commands still run one
-repeater at a time, so those commands refuse a group of more than one member.
+A change outside the group list above refuses a group of more than one member.
 
 Requests run sequentially. The next target starts as soon as the previous
 request completes and the radio can accept it. Background monitoring yields
