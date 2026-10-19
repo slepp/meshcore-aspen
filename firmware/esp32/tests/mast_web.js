@@ -325,6 +325,42 @@ async function tests() {
   for(const command of ['wifi apply','role channel bot 0 off','key bot cancel',
     'bot https endpoint probe 192.0.2.1 api.example.invalid 443 /probe get','bot https commit','bot https discard'])
     f.evaluate(`validateCommand(${JSON.stringify(command)})`);
+  // Shared-room linking carries codes and passwords: encrypted Management RF only.
+  const linkSecret='ABCD-EFGH-JKMN-PQRS', linkPassword='7QX2M9KDAB';
+  for(const command of ['cloudroom join '+linkSecret+'@rooms.example.com','cloudroom create '+linkSecret+' Fleet',
+    'cloudroom convert '+linkSecret+' yes','cloudroom invite','cloudroom invite owner','cloudroom nodes','cloudroom revoke ab12cd34',
+    'cloudroom password','cloudroom password '+linkPassword,'cloudroom unlink 1 delete','cloudroom result','cloudroom probe rooms.example.com',
+    'cloudroom apply','CLOUDROOM  JOIN '+linkSecret,'  cloudroom   create   '+linkSecret+' Fleet']) {
+    const sent=f.requests.length, prompted=f.confirms.length;
+    await f.run(`nativeWrite(${JSON.stringify(command)})`);
+    assert.equal(f.requests.length,sent,'Linking must be rejected before HTTP: '+command.split(' ').slice(0,2).join(' '));
+    assert.equal(f.confirms.length,prompted,'Never render a code or password in a confirmation');
+    assert.match(f.element('result').textContent,/encrypted Management RF/);
+    assert(!f.element('result').textContent.includes(linkSecret) && !f.element('result').textContent.includes(linkPassword));
+    assert.throws(()=>f.evaluate(`validateCommand(${JSON.stringify(command)})`),/companion app's Management console/);
+  }
+  for(const command of ['cloudroom status','cloudroom error','cloudroom list','cloudroom list 2','cloudroom  list  1'])
+    assert.equal(f.evaluate(`nativeRead(${JSON.stringify(command)})`),true,'Shared-room read: '+command);
+  for(const command of ['cloudroom list 3','cloudroom list x','cloudroom share on','cloudroom share off force','cloudroom advertise TestA','cloudroom enable off']) {
+    assert.equal(f.evaluate(`nativeRead(${JSON.stringify(command)})`),false,'Shared-room write: '+command);
+    f.evaluate(`validateCommand(${JSON.stringify(command)})`);
+  }
+  f.state.override=text=>text==='cloudroom status'?'Cloud room aliases=1 sockets=1 wss-mask=1 advert-pending=0 link=idle room=cloud node=ab12cd34':
+    text==='cloudroom list'?'1/2 r2k2mw4q.. "Fleet" owner live rooms.example.com':undefined;
+  await f.element('room-read').click();
+  assert.match(f.element('room-status').textContent,/room=cloud/);
+  assert.match(f.element('room-status').textContent,/"Fleet" owner live/);
+  f.element('room-share').value='off';
+  const prompts=f.confirms.length;
+  f.state.override=text=>text==='cloudroom share off'?'Sharing off. Restarting in 10 s; send "cloudroom share on" to resume.':undefined;
+  await f.element('room-share-save').click();
+  assert.equal(f.confirms.length,prompts+1);
+  assert(f.requests.some(r=>r.body==='cloudroom share off'),'The switch sends the native share command');
+  f.element('room-share').value='on';
+  f.state.override=text=>text==='cloudroom share on'?'Nothing linked. Use cloudroom join or create.':undefined;
+  await f.element('room-share-save').click();
+  assert(f.requests.some(r=>r.body==='cloudroom share on'));
+  f.state.override=null;
   await f.element('inventory').click();
   assert.equal(f.element('source-stage').disabled,false);
   f.state.api=false; await f.element('inventory').click();

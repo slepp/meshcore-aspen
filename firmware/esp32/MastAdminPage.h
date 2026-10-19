@@ -103,7 +103,13 @@ Message the bot with <code>!plugins</code> or <code>!help</code> to list its com
 <label>Permission<select id="grant-on"><option value="off">Off</option><option value="on">On</option></select></label>
 <div class="actions"><button id="grant-read">Load permission</button><button id="grant-save">Save permission</button>
 <button data-write="bot cancel" data-warning="Stop running bot commands and message collectors? Actions already sent cannot be undone. Scheduled reminders will stay unchanged.">Stop bot work</button></div>
-<p class="muted">Discovery shares Base telemetry with signed contacts. HTTPS access is limited to the configured service.</p></div></div></section>
+<p class="muted">Discovery shares Base telemetry with signed contacts. HTTPS access is limited to the configured service.</p></div>
+<div><h3>Shared room</h3><div class="actions">
+<button id="room-read">Load shared room status</button><button data-read="cloudroom list 2" data-target="room-status">Second room</button>
+<button data-read="cloudroom error" data-target="room-status">Last error</button></div><pre id="room-status"></pre>
+<label>Sharing<select id="room-share"><option value="on">On</option><option value="off">Off</option></select></label>
+<div class="actions"><button id="room-share-save">Save sharing</button></div>
+<p class="muted">To join, create or convert, send <code>cloudroom join CODE</code> from the companion app's Management console.</p></div></div></section>
 <section id="storage"><h2>Node backup</h2>
 <p>Download this node's identities, settings, programs and saved data, compressed and encrypted to your operator key. Retain the matching private seed to inspect or extract the archive with <code>tools/admin.py backup</code>.</p>
 <label>Recipient public key<input id="node-backup-key" maxlength="64" placeholder="64 lowercase hex characters"></label>
@@ -252,6 +258,8 @@ function validateCommand(text) {
      (words[0]==='get' && words[1]==='wifi.pwd') ||
      (words[0]==='set' && words[1]?.startsWith('wifi.')))
     throw Error('WiFi secrets and setters require encrypted Management RF; this HTTP page cannot provision them.');
+  if(words[0]==='cloudroom' && ['join','create','convert','invite','nodes','revoke','password','unlink','result','probe','apply'].includes(words[1]))
+    throw Error("Linking needs encrypted Management RF; send this from the companion app's Management console.");
   if(words[0]==='role' && words[1]==='channel' && words.length>4 && !(words.length===5 && words[4]==='off'))
     throw Error('Channel keys are unavailable over HTTP. Use the owner CLI over encrypted Management RF.');
 }
@@ -532,7 +540,7 @@ async function restoreData() {
 }
 const readonly=/^(?:status|ver|board|job|help(?: \S+)?|get (?:name|owner\.info|radio|freq|tx|cad|wifi\.(?:enabled|ssid|ip|status))|password(?: help)?|roles|role-path|room access|companion (?:stats|errors|help)|wifi (?:status|help)|auth (?:status(?: [0-9a-f]{64})?|peer [1-4])|bot (?:status|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|name|destination(?: [1-4])?|channel-wait|shared|home|https(?: status)?|reminders|events|discovery(?: status)?|forward(?: from|to)?|help)|role (?:help|config \S+|name \S+|key \S+(?: pending)?|channel \S+ \d+)|key (?:help|\S+(?: pending)?)|source (?:status|hash|metadata|help|helptext|api(?: [a-z]+)?|read \d+)|data (?:status|help|read [0-9a-f]{16} \d+)|telemetry(?: (?:status|counts|times|tls|tls-heap|tls-blocks|help|endpoint (?:status|host|address|path|port)))?)$/;
 const readonlyStats=/^(?:get stats|stats(?: (?:help|radio|signal|tx|airtime|admission|sensors|memory|psram|bot|vm|observer|companion))?)$/;
-const readonlyMonitor=/^(?:bot repeaters(?: (?:status(?: [a-z][a-z0-9_-]{0,15})?|(?:config|route|timing) [a-z][a-z0-9_-]{0,15}|storage|help))?|cloudroom (?:status|error))$/;
+const readonlyMonitor=/^(?:bot repeaters(?: (?:status(?: [a-z][a-z0-9_-]{0,15})?|(?:config|route|timing) [a-z][a-z0-9_-]{0,15}|storage|help))?|cloudroom (?:status|error|list(?: [12])?))$/;
 function nativeRead(text) {
   const normalized=text.trim().replace(/ +/g,' ').replace(/^source wasm /,'source ');
   return readonly.test(normalized) || readonlyStats.test(normalized) || readonlyMonitor.test(normalized) || /^backup (?:help|status|read [0-9a-f]{16} \d+)$/.test(normalized);
@@ -837,6 +845,11 @@ bind('telemetry-read','Reading telemetry readiness',async()=>{
 bind('telemetry-save','Saving telemetry publishing',()=>nativeWrite('telemetry '+$('telemetry-on').value,'Persist and apply telemetry publishing state? Enabled publishing sends device metrics to the configured endpoint; inspect readiness/errors.'));
 bind('interval-save','Saving telemetry interval',()=>nativeWrite('telemetry interval '+integer('interval',30,86400),'Persist and apply the metrics publishing interval?'));
 bind('service-read','Reading services',()=>readGroup(['bot home','bot shared','bot reminders','bot discovery','bot mesh','companion stats','companion errors','wifi status'],'service-status'));
+bind('room-read','Reading shared room',()=>readGroup(['cloudroom status','cloudroom list'],'room-status'));
+bind('room-share-save','Saving shared room switch',()=>{
+  const on=$('room-share').value==='on';
+  return nativeWrite('cloudroom share '+(on?'on':'off'),on?'Turn sharing on? The node restarts in 10 seconds and reconnects to the shared room.':'Turn sharing off? The node restarts in 10 seconds. A converted room needs "cloudroom share off force" from the Management console.');
+});
 bind('grant-read','Reading bot grant',()=>readGroup(['bot '+$('grant').value],'service-status'));
 bind('grant-save','Saving bot permission',()=>{
   const grant=$('grant').value,on=$('grant-on').value==='on';
