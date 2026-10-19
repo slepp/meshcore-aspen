@@ -12,10 +12,10 @@ export default defineConfig({
     miniflare: {compatibilityDate: "2026-08-15", bindings: {
       MODE: "decoded",
       ALIASES: JSON.stringify({
-        A: {backend: "native", publicKey: fixture.room.publicKey, name: "A", password: "room"},
+        S: {backend: "static", publicKey: fixture.otherRoom.publicKey, name: "Static", password: "room"},
       }),
-      ROOM_KEYS: JSON.stringify({A: fixture.room.key}),
-      FRONTENDS: JSON.stringify({one: {token: "one", aliases: ["A"]}}),
+      ROOM_KEYS: JSON.stringify({S: fixture.otherRoom.key}),
+      FRONTENDS: JSON.stringify({one: {token: "one", aliases: ["S"]}}),
       ROOM_KEK: JSON.stringify(FIXTURE_KEK),
       ADMIN_TOKEN_HASH: createHash("sha256").update(FIXTURE_ADMIN).digest("hex"),
       HOSTED_HISTORY_LIMIT: "20",
