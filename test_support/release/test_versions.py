@@ -400,6 +400,20 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "initial-install offsets mismatch"):
             candidate.verify(self.directory)
 
+    def test_refuse_application_image_without_slot_margin(self):
+        body = (self.directory / "firmware.bin").read_bytes()
+        for extra, accepted in ((0x330000 - candidate.APP_SLOT_MARGIN - len(body), True),
+                                (0x330000 - candidate.APP_SLOT_MARGIN - len(body) + 1, False)):
+            (self.directory / "firmware.bin").write_bytes(body + bytes(extra))
+            self.manifest["files"] = [candidate.record(self.directory / item["name"], item["role"])
+                                      for item in self.manifest["files"]]
+            self.save()
+            if accepted:
+                candidate.verify(self.directory)
+            else:
+                with self.assertRaisesRegex(ValueError, "does not fit the application layout with margin"):
+                    candidate.verify(self.directory)
+
     def test_refuse_overlapping_or_invalid_partitions(self):
         cases = (
             [(0, 0x10, 0x10000, 0x330000, b"app0"), (1, 0x82, 0x10000, 0x330000, b"spiffs")],

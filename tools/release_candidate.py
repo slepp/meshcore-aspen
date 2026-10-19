@@ -26,6 +26,8 @@ PROFILES = {
     "birch": ("public_birch", "release/platformio.birch.ini"),
 }
 IMAGES = {"firmware.bin", "bootloader.bin", "partitions.bin", "boot_app0.bin"}
+# Every application slot keeps at least this much room beyond the image, for the next update.
+APP_SLOT_MARGIN = 0x10000
 HOST_FILES = {"meshcore-host", "meshcore-check", "meshcore-rf-check", "bot-native-worker"}
 HOST_PROFILE = ("public_birch_host", "release/birch-host.ini")
 HOST_MATERIAL = {"install-birch.py": "tools/install_birch.py",
@@ -130,6 +132,12 @@ def partitions(path):
         names.add(item["name"])
         end = item["offset"] + item["bytes"]
     return rows
+
+
+def fits_application_layout(rows, size):
+    apps = [item for item in rows if item["type"] == 0]
+    return bool(apps) and any(item["offset"] == 0x10000 for item in apps) and \
+        all(item["bytes"] >= size + APP_SLOT_MARGIN for item in apps)
 
 
 def native_libraries(binary, env):
@@ -480,10 +488,9 @@ def verify(directory):
                         "boot_app0.bin": 0xe000, "firmware.bin": 0x10000}
     if not host_only and manifest["layout"]["initial_install_offsets"] != expected_offsets:
         raise ValueError("Candidate initial-install offsets mismatch")
-    apps = [] if host_only else [item for item in manifest["layout"]["partitions"] if item["type"] == 0]
-    if not host_only and (not apps or not any(item["offset"] == 0x10000 for item in apps) or any(
-            item["bytes"] < (directory / "firmware.bin").stat().st_size for item in apps)):
-        raise ValueError("Candidate image does not fit the application layout")
+    if not host_only and not fits_application_layout(manifest["layout"]["partitions"],
+                                                     (directory / "firmware.bin").stat().st_size):
+        raise ValueError("Candidate image does not fit the application layout with margin")
     with tarfile.open(directory / "source.tar.gz") as archive:
         if archive.pax_headers.get("comment") != source["commit"]:
             raise ValueError("Source archive does not identify the candidate commit")
