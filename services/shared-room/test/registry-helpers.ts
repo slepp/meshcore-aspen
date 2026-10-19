@@ -29,14 +29,15 @@ export async function call(path: string, init: RequestInit & {ip?: string; env?:
   const {ip, env: override, ...rest} = init;
   const headers = new Headers(rest.headers);
   headers.set("CF-Connecting-IP", ip ?? freshIp());
-  const request = new Request(ORIGIN + path, {...rest, headers});
+  const request = new Request(ORIGIN + path, {...rest, headers, body: rest.method === "GET" || rest.method === "HEAD" ? undefined : rest.body});
   return worker.fetch(request, {...bindings, ...override} as Env);
 }
 export interface Reply {status: number; body: any; headers: Headers}
 export async function json(path: string, body: unknown, init: {ip?: string; env?: Partial<Env>; token?: string; method?: string} = {}): Promise<Reply> {
   const headers: Record<string, string> = {"Content-Type": "application/json"};
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
-  const r = await call(path, {method: init.method ?? "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body), ip: init.ip, env: init.env});
+  const method = init.method ?? "POST";
+  const r = await call(path, {method, headers, body: typeof body === "string" ? body : JSON.stringify(body), ip: init.ip, env: init.env});
   const text = await r.text();
   let parsed: any; try {parsed = JSON.parse(text);} catch {parsed = text;}
   return {status: r.status, body: parsed, headers: r.headers};

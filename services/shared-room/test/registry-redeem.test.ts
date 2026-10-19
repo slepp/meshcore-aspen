@@ -263,3 +263,21 @@ it("re-claims a stale claim for the same node and releases stale claims in the a
   expect(await registrySql("SELECT * FROM rooms WHERE alias=?", dead)).toEqual([]);
   expect((await registrySql("SELECT state FROM codes WHERE hash=?", fresh))[0].state).toBe("new");
 });
+
+it("releases the claim, pending room and quota when the Room object call fails", async () => {
+  const down = {getByName: () => ({provision: async () => {throw new Error("down")}, addFrontend: async () => {throw new Error("down")}})};
+  const [code] = await mintCreate();
+  const failed = await redeem(nodeA, "create", {code, name: "Fleet", env: {ROOMS: down as any}});
+  expect(failed.status).toBe(500);
+  expect(failed.body.e).toBe("internal");
+  expect(await registrySql("SELECT * FROM rooms")).toEqual([]);
+  expect((await registrySql("SELECT state, claimed_by FROM codes"))[0]).toEqual({state: "new", claimed_by: null});
+  expect((await registrySql("SELECT count FROM limits WHERE key LIKE 'cc:%'"))[0].count).toBe(0);
+  // The same code works once the Room object is back, and a failed join keeps its invite.
+  const created = await redeem(nodeA, "create", {code, name: "Fleet"});
+  expect(created.status).toBe(200);
+  const inviteCode = await invite(created.body);
+  expect((await redeem(nodeB, "join", {code: inviteCode, env: {ROOMS: down as any}})).status).toBe(500);
+  expect((await registrySql("SELECT state FROM codes WHERE kind='join'"))[0].state).toBe("new");
+  expect((await redeem(nodeB, "join", {code: inviteCode})).status).toBe(200);
+});

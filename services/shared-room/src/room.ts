@@ -1046,8 +1046,10 @@ export class Room extends DurableObject<Env> {
   private hostedGate(request: Request, browser: unknown): void {
     const match = new URL(request.url).pathname.match(/^\/v1\/aliases\/([a-z2-7]{30})\/(socket|operations)$/);
     if (browser || !match || !HOSTED_ALIAS.test(match[1]) || request.headers.get("x-aspen-hosted-alias") !== match[1] ||
-        this.ctx.id.name !== "rt-" + match[1] || !this.hostedRow || this.hostedRow.state === "deleted")
+        this.ctx.id.name !== "rt-" + match[1] || !this.hostedRow)
       fail(404, "Unknown room alias");
+    // A deleted room answers 403 so a frontend that still holds a token marks the alias revoked.
+    if (this.hostedRow.state === "deleted") fail(403, "Room was deleted");
     if (this.hostedFailed) fail(503, "Hosted room is not available");
   }
   private async hostedAuthorize(request: Request, alias: string): Promise<Connection> {

@@ -222,7 +222,8 @@ export class Registry extends DurableObject<Env> {
   }
 
   // Codes -----------------------------------------------------------------
-  mintCreate(hashes: string[], expires: number): void {
+  async mintCreate(hashes: string[], expires: number): Promise<void> {
+    await this.ensureAlarm();
     this.ctx.storage.transactionSync(() => {
       for (const hash of hashes)
         this.sql.exec("INSERT INTO codes(hash, kind, role, issuer, expires) VALUES (?, 'create', 1, 'admin', ?)", hash, expires);
@@ -230,8 +231,9 @@ export class Registry extends DurableObject<Env> {
     });
   }
   /** Invite code for a room. Returns an error name or "ok". */
-  mintJoin(p: {alias: string; hash: string; role: number; expires: number; issuer: string}): string {
+  async mintJoin(p: {alias: string; hash: string; role: number; expires: number; issuer: string}): Promise<string> {
     const now = sec();
+    await this.ensureAlarm();
     return this.ctx.storage.transactionSync(() => {
       const room = this.one<{state: string}>("SELECT state FROM rooms WHERE alias=?", p.alias);
       if (!room || room.state !== "active") return "not_found";

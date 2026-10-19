@@ -151,12 +151,15 @@ it("answers rate once 600 anonymous redeems arrive in a minute", async () => {
 it("creates no Durable Object storage for random or never-provisioned hosted ids", async () => {
   const kek = parseKek(bindings)!;
   const token = "ar1_" + "a".repeat(64);
+  const randomId = () => "r" + Array.from({length: 29}, () => "abcdefghijklmnopqrstuvwxyz234567"[Math.floor(Math.random() * 32)]).join("");
+  for (let n = 0; n < 1000; n++)
+    expect((await call(`/v1/aliases/${randomId()}/socket`, {headers: {Authorization: `Bearer ${token}`, Upgrade: "websocket"}})).status).toBe(404);
   for (let n = 0; n < 50; n++) {
-    const random = "r" + Array.from({length: 29}, () => "abcdefghijklmnopqrstuvwxyz234567"[Math.floor(Math.random() * 32)]).join("");
-    expect((await call(`/v1/aliases/${random}/socket`, {headers: {Authorization: `Bearer ${token}`, Upgrade: "websocket"}})).status).toBe(404);
+    const random = randomId();
     expect((await control(random, token, {op: "nodes"})).status).toBe(404);
     expect((await call(`/v1/aliases/${random}/operations`, {method: "POST", headers: {Authorization: `Bearer ${token}`}, body: "{}"})).status).toBe(404);
   }
+  expect(await registrySql("SELECT * FROM rooms")).toEqual([]);
   // A valid tag on a room that was never provisioned reaches the object, which answers 404 and writes nothing.
   for (let n = 0; n < 5; n++) {
     const alias = await newAliasId(kek);

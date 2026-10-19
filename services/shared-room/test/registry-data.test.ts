@@ -72,7 +72,7 @@ it("closes sockets immediately on revoke, leave, disable and delete, and refuses
   // delete (admin) closes everything and leaves a marker
   expect((await admin("room", {alias: room.alias, action: "delete"})).body).toEqual({ok: 1});
   expect(await again.closed).toBe(1008);
-  await socket(room.alias, room.token, 404);
+  await socket(room.alias, room.token, 403);
   expect((await control(room.alias, room.token, {op: "nodes"})).status).toBe(410);
   expect(await registrySql("SELECT * FROM rooms")).toEqual([]);
   expect((await hostedSql(room.alias, "SELECT state, name, public_key FROM hosted_room"))[0]).toEqual({state: "deleted", name: "", public_key: ""});
