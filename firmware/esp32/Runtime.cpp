@@ -15,6 +15,7 @@
 #include "EspPacketPrograms.h"
 #endif
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+#include "CloudRoomLifecycle.h"
 #include "CloudRoomService.h"
 #endif
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
@@ -475,6 +476,21 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
         "On-chip roles require an administrator password of 1-15 bytes");
     return false;
   }
+#if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
+  // A converted room is served by the shared-room service, so the local Room role stays
+  // stopped for this boot. Only the running copy of the profile changes; the saved profile
+  // keeps its Room bit and the room returns after an unlink.
+  bool roomShared = false;
+#if ONCHIP_CLOUD_ROOM_LINK
+  if (bootProfile.has(Role::Room) && cloudRoomOwnsLocalRoom()) {
+    bootProfile.enabled = uint8_t(bootProfile.enabled & ~RoleProfile::Room);
+    roomShared = true;
+    Serial.println("Room role is served by the shared-room service; local Room role stays off");
+  }
+#endif
+  cloudRoomReportRoom(roomShared ? CloudRoomRoomMode::Cloud
+                      : bootProfile.has(Role::Room) ? CloudRoomRoomMode::Local : CloudRoomRoomMode::Off);
+#endif
   if (!management.begin(mux, operatorPublicKey()))
     return false;
   bool needDiagnostics = bootProfile.has(Role::Companion);
@@ -554,8 +570,14 @@ bool begin(WifiKissMultiplexer &mux, const mesh::Identity &bot_identity) {
 #endif
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
   static_assert(KISS_LOCAL_SOURCES >= 6, "Cloud room needs one source beside the five native services");
+#if ONCHIP_CLOUD_ROOM_LINK
+  // The service starts without an alias too, so the lifecycle verbs can link the first one.
+  if (!beginCloudRoom(mux,commandBot))
+    Serial.println("Cloud-room driver or HTTPS worker unavailable; service disabled");
+#else
   if (cloudRoomConfiguration() && !beginCloudRoom(mux,commandBot))
     Serial.println("Cloud-room driver or HTTPS worker unavailable; service disabled");
+#endif
 #endif
   if (!refreshRolePresence()) {
     Serial.println("On-chip role presence reporting unavailable");

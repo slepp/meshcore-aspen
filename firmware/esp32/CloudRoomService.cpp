@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CloudRoomService.h"
+#include "CloudRoomLifecycle.h"
 #include "CloudRoomPreferences.h"
+#include "CloudRoomRegistration.h"
 #include <stdio.h>
 #include <string.h>
 #if defined(MESHCORE_CLOUD_ROOM) && MESHCORE_CLOUD_ROOM
 #include "LocalRadio.h"
+#if ONCHIP_CLOUD_ROOM_LINK
+#include "BotHttps.h"
+#include "Clock.h"
+#include "CloudRoomLink.h"
+#include "Runtime.h"
+#include <WiFi.h>
+#include <esp_heap_caps.h>
+#endif
 #include "RoleStorage.h"
 #include "Capacity.h"
 #include <freertos/FreeRTOS.h>
@@ -58,6 +68,7 @@ struct Buffers {
 };
 // Only payloads/dispatch-owned radio live in PSRAM. SPSC atomics and the task
 // stack remain in internal memory; no shared LocalRadio calls cross tasks.
+constexpr uint32_t aliasBit(unsigned alias) { return 1u << alias; }
 struct Service final : NativeNetworkService {
   cloudroom::RadioBridge bridge;
   Buffers *buffers = nullptr;
@@ -69,7 +80,10 @@ struct Service final : NativeNetworkService {
   unsigned aliases = 0;
   std::atomic<uint32_t> advertisements{0};
   std::atomic<uint32_t> connectedAliases{0};
+  std::atomic<uint32_t> revokedAliases{0};      // upgrade refused with 401 or 403: stop retrying
+  std::atomic<uint32_t> flaggedAdverts{0};      // aliases whose saved advert-once flag is being served
   std::atomic<uint32_t> stackMinimumBytes{0};
+  CloudRoomRegistration registration;
   char lastError[96]{};
   uint8_t keys[cloudroom::AliasLimit][32]{};
   struct Job { uint32_t native = 0; cloudroom::Receipt receipt; } jobs[MaxJobs];
@@ -91,7 +105,32 @@ struct Service final : NativeNetworkService {
     c.retryAt = millis() + c.backoffMs;
     c.backoffMs = c.backoffMs < 16000 ? c.backoffMs * 2 : 30000;
   }
+#if ONCHIP_CLOUD_ROOM_LINK
+  // A link job needs the one TLS context: close the live sockets first and let their
+  // normal backoff reopen them afterwards.
+  void pauseForLink() {
+    for (unsigned alias = 0; alias < aliases; ++alias) {
+      auto &c = connections[alias];
+      if (!c.connected) continue;
+      xSemaphoreTake(admission, portMAX_DELAY);
+      bridge.disconnect(alias);
+      connectedAliases.fetch_and(~(1u << alias), std::memory_order_relaxed);
+      xSemaphoreGive(admission);
+      c.socket->close(); c.connected = false;
+      driver->disconnected(alias);
+      c.retryAt = millis() + 2000; c.backoffMs = 2000;
+    }
+  }
+#endif
   void poll(unsigned work) override {
+#if ONCHIP_CLOUD_ROOM_LINK
+      if (cloudRoomLinkWork()) {
+        if (cloudRoomLinkPending() && active.load(std::memory_order_acquire)) pauseForLink();
+        cloudRoomLinkRun();
+        stackMinimumBytes.store(uxTaskGetStackHighWaterMark(nullptr),std::memory_order_relaxed);
+        return;
+      }
+#endif
       if (!active.load(std::memory_order_acquire)) return;
       cloudroom::Reception packet;
       // Bounded work per iteration lets every alias drain its incoming socket.
@@ -102,6 +141,7 @@ struct Service final : NativeNetworkService {
         if (result.generation == bridge.generation(result.alias)) driver->receipt(result);
       for (unsigned alias = 0; alias < aliases && work; ++alias, --work) {
         auto &c = connections[alias];
+        if (revokedAliases.load(std::memory_order_relaxed) & (1u << alias)) continue;
         if (!c.connected) {
           if (int32_t(millis() - c.retryAt) < 0) continue;
           char error[96]{};
@@ -112,19 +152,37 @@ struct Service final : NativeNetworkService {
             snprintf(lastError,sizeof(lastError),"%s",error);
             xSemaphoreGive(admission);
             Serial.printf("Cloud room %s WSS unavailable: %s\n",driver->peer(alias).alias,error);
+            const unsigned refused = c.socket->upgradeStatus();
+            if (refused == 401 || refused == 403) {
+              revokedAliases.fetch_or(1u << alias, std::memory_order_relaxed);
+              Serial.printf("Cloud room %s refused by the server (HTTP %u); unlink it\n",driver->peer(alias).alias,refused);
+            }
             lost(alias); continue;
           }
           c.connected = true; c.backoffMs = 2000;
           connectedAliases.fetch_or(1u << alias, std::memory_order_relaxed);
           driver->opened(alias, bridge.generation(alias));
+#if ONCHIP_CLOUD_ROOM_LINK
+          // A created or converted room announces itself once, on its first connection.
+          CloudRoomAliasInfo info;
+          if (cloudRoomAliasInfo(alias, info) && (info.flags & CloudFlagAdvertOnce) &&
+              !(flaggedAdverts.load(std::memory_order_relaxed) & aliasBit(alias))) {
+            flaggedAdverts.fetch_or(aliasBit(alias), std::memory_order_relaxed);
+            advertisements.fetch_or(aliasBit(alias), std::memory_order_relaxed);
+          }
+#endif
         }
         const int size = c.socket->receive(buffers->inbound, sizeof(buffers->inbound));
         if (size < 0 || (size && !driver->frame(alias, buffers->inbound, size_t(size)))) {
           lost(alias); continue;
         }
         const uint32_t bit=1u<<alias;
-        if ((advertisements.load(std::memory_order_relaxed)&bit) && driver->advertise(alias))
+        if ((advertisements.load(std::memory_order_relaxed)&bit) && driver->advertise(alias)) {
           advertisements.fetch_and(~bit,std::memory_order_relaxed);
+#if ONCHIP_CLOUD_ROOM_LINK
+          if (flaggedAdverts.load(std::memory_order_relaxed) & bit) cloudRoomLinkAdvertised(alias);
+#endif
+        }
         const size_t out = driver->operation(alias, buffers->outbound, sizeof(buffers->outbound));
         if (out > sizeof(buffers->outbound) || (out && !c.socket->send(buffers->outbound, out)))
           lost(alias);
@@ -140,11 +198,30 @@ struct Service final : NativeNetworkService {
     delete driver; driver = nullptr;
     releaseRoleStorage(radio); releaseRoleStorage(buffers); aliases = 0;
   }
+#if ONCHIP_CLOUD_ROOM_LINK
+  // Link jobs run on the network task through this service. With no alias linked it stays
+  // unregistered, so the registry's slots and sockets are untouched until the first job.
+  bool ensureRegistered() {
+    NativeServiceRegistration reason = NativeServiceRegistration::Attached;
+    if (registration.ensure(*this, {"cloud-room", CLOUD_ROOM_SOCKETS, 1}, &reason)) return true;
+    Serial.printf("Cloud room link service registration failed: %s\n", nativeServiceRegistrationText(reason));
+    return false;
+  }
+#endif
   bool begin(WifiKissMultiplexer &mux,NativeNetworkHost &worker) {
-    if (active.load()) return true;
+    if (active.load() || registration.registered()) return true;
+    registration.bind(worker);
     if (!worker.ensureNativeHttps()) return false;
     driver = createCloudRoomDriver(bridge);
-    if (!driver) return false;
+    if (!driver) {
+#if ONCHIP_CLOUD_ROOM_LINK
+      // Nothing linked (or more aliases than this build has sockets): the lifecycle verbs still work.
+      if (cloudRoomConfiguration()) Serial.println("Cloud room aliases do not fit this build's sockets; only link commands run");
+      return true;
+#else
+      return false;
+#endif
+    }
     aliases = driver->aliases();
     if (!aliases || aliases > cloudroom::AliasLimit || aliases > CLOUD_ROOM_SOCKETS) { discard(); return false; }
     for (unsigned alias = 0; alias < aliases; ++alias) {
@@ -161,13 +238,14 @@ struct Service final : NativeNetworkService {
     admission = xSemaphoreCreateMutexStatic(&admissionControl);
     if (!admission) { discard(); return false; }
     active.store(true,std::memory_order_release);
-    const auto registration = worker.attachNetworkService(
+    const auto attached = worker.attachNetworkService(
         *this, {"cloud-room", CLOUD_ROOM_SOCKETS, 2 * cloudroom::QueueDepth + aliases});
-    if (registration != NativeServiceRegistration::Attached) {
-      Serial.printf("Cloud room registration failed: %s\n", nativeServiceRegistrationText(registration));
+    if (attached != NativeServiceRegistration::Attached) {
+      Serial.printf("Cloud room registration failed: %s\n", nativeServiceRegistrationText(attached));
       active.store(false,std::memory_order_release);
       discard(); return false;
     }
+    registration.adopted();
     return true;
   }
   void dispatch() {
@@ -212,9 +290,77 @@ struct Service final : NativeNetworkService {
   }
 };
 Service service;
+#if ONCHIP_CLOUD_ROOM_LINK
+// Production side of the link client's seams.
+class TlsStream final : public CloudTransport {
+  BotHttpsTransport *tls_ = createPersistentBotTlsTransport();
+public:
+  ~TlsStream() override { delete tls_; }
+  bool open(const CloudTlsTarget &target, CloudTlsFailure &failure) override {
+    if (!tls_) { failure = CloudTlsFailure::Memory; return false; }
+    char error[96]{};
+    tls_->resetDiagnostics();
+    const BotHttpsConfig config(target.address, target.host, target.ca ? target.ca : "", "", 443, 0, target.systemRoots);
+    if (tls_->open(config, error, sizeof(error))) return true;
+    const auto point = tls_->diagnostics().point;
+    failure = point == BotHttpsFailurePoint::Clock ? CloudTlsFailure::Clock
+        : tls_->failure() == BotHttpsTransport::Failure::Heap ? CloudTlsFailure::Memory
+        : (point == BotHttpsFailurePoint::Connect || point == BotHttpsFailurePoint::CaParse ||
+           point == BotHttpsFailurePoint::PeerCertificate || point == BotHttpsFailurePoint::CertificateTime)
+            ? CloudTlsFailure::Verify : CloudTlsFailure::Network;
+    return false;
+  }
+  int write(const uint8_t *data, size_t size) override { return tls_->write(data, size); }
+  int read(uint8_t *data, size_t size) override { return tls_->read(data, size); }
+  void close() override { tls_->close(); }
+  uint32_t now() const override { return tls_->now(); }
+  void idle() override { tls_->idle(); }
+};
+CloudTransport *linkTransport() { return new(std::nothrow) TlsStream; }
+bool linkResolve(const char *host, char address[16]) {
+  IPAddress ip;
+  if (WiFi.hostByName(host, ip) != 1) return false;
+  snprintf(address, 16, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+  return true;
+}
+bool linkNow(uint32_t &utc) {
+  uint32_t earliest, latest;
+  if (!trustedNetworkTime(earliest, latest)) return false;
+  utc = earliest + (latest - earliest) / 2;
+  return true;
+}
+size_t linkFree() { return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+size_t linkBlock() { return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+uint32_t linkMillis() { return millis(); }
+CloudAliasState linkAliasState(unsigned alias) {
+  if (alias >= service.aliases) return CloudAliasState::Off;
+  if (service.revokedAliases.load(std::memory_order_relaxed) & aliasBit(alias)) return CloudAliasState::Revoked;
+  return service.connectedAliases.load(std::memory_order_relaxed) & aliasBit(alias) ? CloudAliasState::Live : CloudAliasState::Down;
+}
+bool linkWake() { return service.ensureRegistered(); }
+bool linkRoomName(char name[32]) { return nativeRoleName(Role::Room, name); }
+void installLinkPorts() {
+  CloudRoomLinkPorts ports;
+  ports.transport = linkTransport; ports.resolve = linkResolve; ports.now = linkNow;
+  ports.freeInternal = linkFree; ports.largestBlock = linkBlock; ports.millis = linkMillis;
+  ports.aliasState = linkAliasState; ports.wake = linkWake; ports.roomName = linkRoomName;
+  ports.roomGuestPassword = roomGuestPassword; ports.roomSetGuestPassword = roomSetGuestPassword;
+  cloudRoomLinkSetPorts(ports);
+}
+#endif
 } // namespace
-bool beginCloudRoom(WifiKissMultiplexer &mux,NativeNetworkHost &worker) { return service.begin(mux,worker); }
-void loopCloudRoom() { service.dispatch(); }
+bool beginCloudRoom(WifiKissMultiplexer &mux,NativeNetworkHost &worker) {
+#if ONCHIP_CLOUD_ROOM_LINK
+  installLinkPorts();
+#endif
+  return service.begin(mux,worker);
+}
+void loopCloudRoom() {
+  service.dispatch();
+#if ONCHIP_CLOUD_ROOM_LINK
+  cloudRoomLinkLoop();
+#endif
+}
 unsigned cloudRoomAliases() { return service.aliases; }
 const uint8_t *cloudRoomPublicKey(unsigned alias) { return alias < service.aliases ? service.keys[alias] : nullptr; }
 bool requestCloudRoomAdvertisement(unsigned alias) {
@@ -222,15 +368,27 @@ bool requestCloudRoomAdvertisement(unsigned alias) {
   service.advertisements.fetch_or(1u<<alias,std::memory_order_relaxed);return true;
 }
 void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
+#if ONCHIP_CLOUD_ROOM_LINK
+  if (cloudRoomLinkCommand(command, reply, capacity)) return;
+#endif
   if (cloudRoomPreferencesCommand(command, reply, capacity)) return;
   if (!*command || !strcmp(command, "status")) {
-    snprintf(reply, capacity, "Cloud room aliases=%u sockets=%u wss-mask=%u advert-pending=%u",
+    int n = snprintf(reply, capacity, "Cloud room aliases=%u sockets=%u wss-mask=%u advert-pending=%u",
              service.aliases, CLOUD_ROOM_SOCKETS,
              unsigned(service.connectedAliases.load(std::memory_order_relaxed)),
              unsigned(service.advertisements.load(std::memory_order_relaxed)));
+#if ONCHIP_CLOUD_ROOM_LINK
+    if (n > 0 && size_t(n) < capacity) cloudRoomLinkStatus(reply + n, capacity - size_t(n));
+#endif
+    (void)n;
     return;
   }
   if (!strcmp(command, "error")) {
+#if ONCHIP_CLOUD_ROOM_LINK
+    if (service.revokedAliases.load(std::memory_order_relaxed)) {
+      snprintf(reply,capacity,"Server revoked this node. Run \"cloudroom unlink ALIAS local\".");return;
+    }
+#endif
     if (!service.active.load()) {
       snprintf(reply,capacity,"Cloud room is not configured");return;
     }
@@ -242,14 +400,19 @@ void cloudRoomCommand(const char *command, char *reply, size_t capacity) {
              *service.lastError?service.lastError:"none");
     xSemaphoreGive(service.admission);return;
   }
-  if (!strncmp(command, "advertise ", 10)) {
-    for (unsigned alias = 0; alias < service.aliases; ++alias)
-      if (!strcmp(command + 10, service.driver->peer(alias).alias)) {
+  if (!strncmp(command, "advertise", 9) && (command[9] == ' ' || !command[9])) {
+    const char *name = command[9] ? command + 10 : "";
+    // An alias id, its 1-based number, or nothing when exactly one alias is running.
+    for (unsigned alias = 0; alias < service.aliases; ++alias) {
+      const char *id = service.driver->peer(alias).alias;
+      const bool numbered = name[0] == char('1' + alias) && !name[1];
+      if (!strcmp(name, id) || numbered || (!*name && service.aliases == 1)) {
         const bool queued = requestCloudRoomAdvertisement(alias);
         snprintf(reply, capacity, queued ? "Queued room advert %s" :
-                 "Error: room advert %s unavailable", command + 10);
+                 "Error: room advert %s unavailable", id);
         return;
       }
+    }
     snprintf(reply, capacity, "Error: cloud room alias is not active; inspect cloudroom config status and cloudroom status");
     return;
   }

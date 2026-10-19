@@ -20,6 +20,8 @@ public:
   // >0 complete JSON frame bytes, 0 no data/control handled, -1 disconnected.
   virtual int receive(char *frame,size_t capacity) = 0;
   virtual void close() = 0;
+  // HTTP status of the last refused WebSocket upgrade, 0 when there was none.
+  virtual unsigned upgradeStatus() const { return 0; }
 };
 CloudRoomSocket *createCloudRoomSocket();
 } // namespace onchip

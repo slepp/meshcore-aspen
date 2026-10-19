@@ -37,7 +37,7 @@ class EspWss final:public CloudRoomSocket {
   const CloudRoomPeer *peer_=nullptr;
   char address_[16]{};
   char error_[96]{};
-  unsigned upgradeHttp_=0;
+  unsigned upgradeHttp_=0,upgradeStatusCode_=0;
   int peek_=-1;
   size_t upgradeBytes_=0;
   uint32_t upgradeStarted_=0;
@@ -75,7 +75,7 @@ class EspWss final:public CloudRoomSocket {
   static EspWss &self(esp_transport_handle_t h) {return *static_cast<EspWss *>(esp_transport_get_context_data(h));}
   static int connect(esp_transport_handle_t h,const char *,int,int) {
     auto &s=self(h);
-    const BotHttpsConfig cfg(s.address_,s.peer_->host,s.peer_->ca,"",443,0);
+    const BotHttpsConfig cfg(s.address_,s.peer_->host,s.peer_->ca?s.peer_->ca:"","",443,0,s.peer_->systemRoots);
     return s.tls_->open(cfg,s.error_,sizeof(s.error_))?0:-1;
   }
   int read(char *out,int size,int ms) {
@@ -141,7 +141,7 @@ public:
   ~EspWss() override {close();delete tls_;}
   bool open(const CloudRoomPeer &peer,char *error,size_t capacity) override {
     close();
-    if(!ascii(peer.host,127)||!ascii(peer.token,256)||!ascii(peer.alias,64,true)||!peer.ca||strnlen(peer.ca,4097)>4096) {
+    if(!ascii(peer.host,127)||!ascii(peer.token,256)||!ascii(peer.alias,64,true)||(!peer.systemRoots&&(!peer.ca||strnlen(peer.ca,4097)>4096))) {
       snprintf(error,capacity,"Invalid cloud-room peer settings");return false;
     }
     if(peer.address&&*peer.address) {
@@ -180,12 +180,13 @@ public:
     const auto configured=esp_transport_ws_set_config(ws_,&config);
     memset(headers,0,sizeof(headers));
     upgradeBytes_=upgradeLineSize_=0;upgradeOverflow_=upgradeStatus_=upgradeProtocol_=false;
-    upgradeHttp_=0;
+    upgradeHttp_=0;upgradeStatusCode_=0;
     firstUpgradeLine_=true;upgrading_=true;
     upgradeStarted_=tls_->now();
     const int status=configured==ESP_OK?esp_transport_connect(ws_,peer.host,443,IoTimeoutMs):-1;
     upgrading_=false;peer_=nullptr;
     if(status<0||!upgradeStatus_||!upgradeProtocol_) {
+      upgradeStatusCode_=upgradeHttp_;
       const auto tls=tls_->diagnostics();
       if(tls.point!=BotHttpsFailurePoint::None)
         snprintf(error,capacity,"TLS %s sdk=%ld free=%lu block=%lu",botHttpsFailureName(tls.point),
@@ -226,6 +227,7 @@ public:
     if(op!=WS_TRANSPORT_OPCODES_TEXT||!size||n!=size){close();return -1;}
     return n;
   }
+  unsigned upgradeStatus() const override {return upgradeStatusCode_;}
   void close() override {
     if(ws_){esp_transport_destroy(ws_);ws_=nullptr;}
     if(parent_){esp_transport_destroy(parent_);parent_=nullptr;}
