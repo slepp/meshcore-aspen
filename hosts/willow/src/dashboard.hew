@@ -508,6 +508,19 @@ fn flag(value: json.Value, name: string, expected: bool) -> bool {
     }
 }
 
+// The host omits the observer role when observer.enabled=0 and reports
+// observer_enabled=false in its readiness snapshot. A host that does not
+// report the field keeps the observer required.
+fn observer_disabled(name: string, snapshot: Option<json.Value>) -> bool {
+    if name != "observer" {
+        return false;
+    }
+    match snapshot {
+        .Some(value) => flag(value, "observer_enabled", false),
+        .None => false,
+    }
+}
+
 fn status_snapshot(samples: Vec<Sample>) -> json.Value {
     var status = json.object();
     for i in 0..3 {
@@ -519,6 +532,13 @@ fn status_snapshot(samples: Vec<Sample>) -> json.Value {
             ["bot_companion"]
         };
         for name in names {
+            if observer_disabled(name, samples[i * 2 + 1].value) {
+                var disabled = json.object();
+                disabled.set("state", json.from_string("disabled")).expect("status state");
+                disabled.set("radio_connected", json.from_bool(false)).expect("status connection");
+                status.set(name, disabled).expect("status role field");
+                continue;
+            }
             let item = match samples[i * 2].value {
                 .Some(value) => member(value, name),
                 .None => .None,
@@ -561,6 +581,9 @@ fn readiness(samples: Vec<Sample>) -> json.Value {
             }
         }
         for name in names {
+            if observer_disabled(name, snapshot) {
+                continue;
+            }
             var reason = if available {
                 ""
             } else {

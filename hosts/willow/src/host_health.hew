@@ -54,7 +54,11 @@ pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: rad
         durations.push(json.from_int(duration)).expect("airtime item");
     }
     var mqtt_checked = false;
+    var observer_enabled = false;
     for role in roles {
+        if role.name == "observer" {
+            observer_enabled = true;
+        }
         var item = json.object();
         item.set("public_key", json.from_string(role.key)).expect("role field");
         if role.name == "bot" {
@@ -157,5 +161,6 @@ pub fn snapshot(roles: Vec<Role>, connected: bool, endpoint: string, sample: rad
     readiness.set("ready", json.from_bool(ready)).expect("readiness field");
     readiness.set("not_ready", not_ready).expect("readiness field");
     readiness.set("mqtt_connection_checked", json.from_bool(mqtt_checked)).expect("readiness field");
+    readiness.set("observer_enabled", json.from_bool(observer_enabled)).expect("readiness field");
     Snapshot { roles: status.stringify().expect("status JSON"), readiness: readiness.stringify().expect("readiness JSON") }
 }

@@ -69,7 +69,7 @@ class CompanionHealth:
 
 
 class OwnerHealth:
-    def __init__(self, root):
+    def __init__(self, root, observer_enabled=None):
         self.health_requests = 0
         self.stop = threading.Event()
         self.listeners = []
@@ -90,6 +90,10 @@ class OwnerHealth:
                 "has_mcu_temperature": True, "mcu_temperature_c": 31.5,
                 "has_battery": False, "battery_mv": 0}
         ready = {"ready": True, "not_ready": {}, "mqtt_connection_checked": True}
+        if observer_enabled is not None:
+            ready["observer_enabled"] = observer_enabled
+        if observer_enabled is False:
+            del roles["observer"]
         for name in ("owner.sock", "admin.sock"):
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
             listener.bind(str(root/name))
@@ -389,6 +393,67 @@ class Dashboard(unittest.TestCase):
                     base.close()
                     secondary.close()
 
+    def test_disabled_observer_is_not_required_for_readiness(self):
+        for binary in ("hew-dashboard", "hew-dashboard-release"):
+            # None models a host that predates the field: the observer stays required.
+            for enabled, observer_missing in ((False, True), (True, True), (None, True), (True, False)):
+                with self.subTest(binary=binary, observer_enabled=enabled, observer_missing=observer_missing), \
+                        tempfile.TemporaryDirectory(dir=ROOT.parents[1], prefix=".dash-") as name:
+                    root = Path(name)
+                    owner = OwnerHealth(root, observer_enabled=enabled)
+                    if enabled is not False and observer_missing:
+                        del owner.roles["observer"]
+                    base = CompanionHealth("companion")
+                    secondary = CompanionHealth("bot_companion")
+                    process = None
+                    try:
+                        base.resume.set()
+                        secondary.resume.set()
+                        configuration = root/"dashboard.conf"
+                        configuration.write_text(f"port=0\nstate={root}\nbase_port={base.server.server_port}\n"
+                            f"page={ROOT.parents[1]/'internal/app/admin_page.html'}\n"
+                            f"bot_companion_port={secondary.server.server_port}\n"
+                            "token_env=MESHCORE_DASHBOARD_FIXTURE_TOKEN\n")
+                        configuration.chmod(0o600)
+                        process = subprocess.Popen([str(ROOT/"build"/binary), str(configuration)],
+                            env=os.environ|{"HEW_WORKERS": "4", "MESHCORE_DASHBOARD_FIXTURE_TOKEN": "fixture-token-"+32*"a"},
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        port = int(process.stdout.readline().strip().split("port=")[1].split()[0])
+
+                        def get(path):
+                            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=4)
+                            try:
+                                connection.request("GET", path)
+                                response = connection.getresponse()
+                                return response.status, response.read()
+                            finally:
+                                connection.close()
+
+                        code, body = get("/readyz")
+                        _, metrics = get("/metrics")
+                        status = json.loads(get("/status")[1])
+                        if enabled is False:
+                            self.assertEqual((code, json.loads(body)["not_ready"]), (200, {}))
+                            self.assertEqual(status["observer"]["state"], "disabled")
+                            self.assertIn(b'willow_role_health_available{role="observer"} 1', metrics)
+                            self.assertNotIn(b'willow_role_ready{role="observer"}', metrics)
+                        elif observer_missing:
+                            self.assertEqual(code, 503)
+                            self.assertEqual(json.loads(body)["not_ready"],
+                                             {"observer": "health_connection_unavailable"})
+                        else:
+                            self.assertEqual(code, 200)
+                            self.assertIn(b'willow_role_ready{role="observer"} 1', metrics)
+                        process.terminate()
+                        process.communicate(timeout=6)
+                    finally:
+                        if process is not None and process.poll() is None:
+                            process.terminate()
+                            process.communicate(timeout=6)
+                        owner.close()
+                        base.close()
+                        secondary.close()
+
     def test_http_owner_health_and_restart(self):
         from service_demo import RunningService
         for binary in ("hew-dashboard", "hew-dashboard-release"):
@@ -457,10 +522,9 @@ class Dashboard(unittest.TestCase):
                     self.assertEqual(code, 200)
                     self.assertTrue(json.loads(body)["capabilities"]["native_owner"])
                     self.assertEqual(set(json.loads(body)["capabilities"]["role_owner_commands"]), {"room", "repeater"})
-                    code, body, _ = request("/readyz", method="GET")
-                    self.assertEqual(code, 503)
-                    self.until(lambda: json.loads(request("/readyz", method="GET")[1])["not_ready"] ==
-                               {"observer": "health_connection_unavailable"})
+                    # The service runs with observer.enabled=0, which readiness does not require.
+                    self.until(lambda: request("/readyz", method="GET")[0] == 200)
+                    self.assertEqual(json.loads(request("/status", method="GET")[1])["observer"]["state"], "disabled")
                     for command in (b"bot status", b"bot key", b"bot name"):
                         self.assertEqual(request("/admin/command", command)[0], 200)
                     self.assertEqual(request("/admin/command", b"bot name Dashboard Fixture")[1],

@@ -102,7 +102,7 @@ check: export HEW_WORKERS = 4
 check: release acceptance-test packet-workflow-test firmware-negotiation-test observer-queue-test supervision-test build/roles-interrupt build/worker-checks build/companion-checks-release build/hew-dashboard build/endpoint-checks build/endpoint-checks-release
 	./build/endpoint-checks
 	./build/endpoint-checks-release
-	PYTHONDONTWRITEBYTECODE=1 python3 tests/dashboard.py Dashboard.test_health_refresh_is_demand_driven_shared_and_bounded
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/dashboard.py Dashboard.test_health_refresh_is_demand_driven_shared_and_bounded Dashboard.test_disabled_observer_is_not_required_for_readiness
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/observer_service.py IntegratedObserver.test_restart_retains_pending_and_queued_observations
 	MESHCORE_HEW_HOST=$(CURDIR)/build/hew-host-release PYTHONDONTWRITEBYTECODE=1 python3 tests/worker_binding.py
 	MESHCORE_HEW_BIN=$(CURDIR)/build/roles-release PYTHONDONTWRITEBYTECODE=1 python3 tests/storage_recovery.py

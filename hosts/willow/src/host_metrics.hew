@@ -61,7 +61,7 @@ fn at(value: json.Value, index: i64) -> json.Value {
 fn packet_reports(bot: json.Value) -> string {
     let key = text(bot, "public_key");
     if key.len() != 64 { return ""; }
-    let device = label("willow_" + key.slice(0, 16));
+    let device = label("willow_" + key[0..16]);
     let reports = member(bot, "packet_reports");
     var out = "";
     for i in 0..count(reports, 2) {
@@ -98,7 +98,11 @@ pub fn render(status: json.Value, ready: json.Value) -> string {
             out += sample("willow_role_health_available", labels, if available { 1.0 } else { 0.0 });
             if available {
                 if role == "bot" { out += packet_reports(value); }
-                if let .Some(failures) = field(ready, "not_ready") {
+                var off = false;
+                if let .Some(item) = field(value, "state") {
+                    if let .Ok(text) = item.get_string() { off = text == "disabled"; }
+                }
+                if !off { if let .Some(failures) = field(ready, "not_ready") {
                     let failure = field(failures, role);
                     var known = true;
                     if let .Some(error) = failure {
@@ -107,7 +111,7 @@ pub fn render(status: json.Value, ready: json.Value) -> string {
                         }
                     }
                     if known { out += sample("willow_role_ready", labels, if failure.is_none() { 1.0 } else { 0.0 }); }
-                }
+                } }
                 if let .Some(state) = field(value, "state") {
                     if let .Ok(text) = state.get_string() { out += sample("willow_role_running", labels, if text == "running" { 1.0 } else { 0.0 }); }
                 }
