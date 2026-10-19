@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
         "function marker() return 'marker' end command('marker','','Override marker')");
   check("!ping", "Pong regional");
   check("!marker", "marker");
-  check("!help marker", "!marker : Override marker");
+  check("!help marker", "!marker: Override marker");
   check("!wseen", "seen");
   {
     const auto suspension = module("c-suspension");
