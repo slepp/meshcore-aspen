@@ -1219,15 +1219,16 @@ static void deferred_receive_metadata() {
     assert(replies.size() == 1 && replies[0] == "Paths: 2 in 1s; a1 | b2");
     assert(f.bot.counters().observationsDropped == 0);
 
+    // A locally reflected DM has no native policy context and is never answered.
     timeMs += 61000; f.radio.sent.clear();
+    const auto rejected = f.bot.counters().rejected;
     f.reflect(peer.command(f.bot.publicKey(), "!test", 1, {0xc3}));
     f.step();
-    replies = peer.replies(f.bot.publicKey(), f.radio);
-    assert(replies.size() == 1 &&
-           replies[0] == "Connected: local reflection; RF unmeasured; path c3");
+    assert(peer.replies(f.bot.publicKey(), f.radio).empty());
+    assert(f.bot.counters().rejected == rejected + 1 && f.bot.jobsInUse() == 0);
   }
   puts("PASS deferred flood receive metadata survives unrelated RF/local packets; "
-       "!test signal and !mt RF-only paths remain packet-specific");
+       "!test signal and !mt RF-only paths remain packet-specific; reflected DMs are denied");
 }
 static void worker_install_hooks_and_budgets() {
   Fixture f; f.start();
