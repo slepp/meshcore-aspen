@@ -10,6 +10,7 @@ const file = args[args.indexOf("--file") + 1];
 const account = args[args.indexOf("--account") + 1];
 const keyFile = args[args.indexOf("--keys") + 1];
 const validate = args.includes("--validate");
+const worker = args.includes("--worker") ? args[args.indexOf("--worker") + 1] : "aspen-shared-room";
 function reject(message) {throw new Error(message);}
 function record(value) {return value && typeof value === "object" && !Array.isArray(value);}
 const id = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -25,7 +26,8 @@ try {
   if (!args.includes("--file") || !file || file.startsWith("--") ||
       !args.includes("--keys") || !keyFile || keyFile.startsWith("--") ||
       (!validate && (!args.includes("--account") || !/^[a-f0-9]{32}$/.test(account ?? ""))))
-    reject("Use --file PRIVATE_JSON --keys PRIVATE_WORKER_KEYS --account ACCOUNT_ID, or add --validate without --account.");
+    reject("Use --file PRIVATE_JSON --keys PRIVATE_WORKER_KEYS --account ACCOUNT_ID [--worker NAME], or add --validate without --account.");
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(worker ?? "")) reject("Use --worker with a Worker name: lowercase letters, digits and hyphens.");
   const info = await stat(file);
   if (!info.isFile() || info.size > 128 * 1024 || (info.mode & 0o077) ||
       (process.getuid && info.uid !== process.getuid()))
@@ -66,7 +68,7 @@ try {
   let keyConfig;
   try {keyConfig = JSON.parse(await readFile(keyFile, "utf8"));}
   catch {reject("Cannot read a valid private Worker-key JSON file.");}
-  if (!record(keyConfig) || keyConfig.worker !== "aspen-shared-room" || keyConfig.keyLocation !== "worker" ||
+  if (!record(keyConfig) || keyConfig.worker !== worker || keyConfig.keyLocation !== "worker" ||
       !record(keyConfig.expandedKeys) || Object.keys(keyConfig).sort().join(",") !== "expandedKeys,keyLocation,worker" ||
       Object.keys(keyConfig.expandedKeys).sort().join(",") !== Object.keys(config.ALIASES).sort().join(","))
     reject("Invalid/duplicate Worker-key target or alias set.");
@@ -87,7 +89,8 @@ try {
     // Ordinary tool stdin is not a secret handoff. This process is run by the
     // operator and reads their private mount/file locally, outside model input.
     const wrangler = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
-    const workerConfig = fileURLToPath(new URL("../wrangler.jsonc", import.meta.url));
+    // A named Worker is deployed from wrangler.local.jsonc (tools/setup.mjs).
+    const workerConfig = fileURLToPath(new URL(worker === "aspen-shared-room" ? "../wrangler.jsonc" : "../wrangler.local.jsonc", import.meta.url));
     const childEnv = {...process.env, CLOUDFLARE_ACCOUNT_ID: account, WRANGLER_LOG_SANITIZE: "true", WRANGLER_LOG: "error", WRANGLER_SEND_METRICS: "false"};
     // Inspect live binding names/types before sending any private JSON.
     // Capture Wrangler's response locally; never echo it to logs.
@@ -104,7 +107,7 @@ try {
       try {return JSON.parse(output);}
       catch {reject("Cannot inspect live Worker binding names/types; no secret upload performed.");}
     });
-    const child = spawn(process.execPath, [wrangler, "secret", "bulk", "--name", "aspen-shared-room", "--config", workerConfig], {
+    const child = spawn(process.execPath, [wrangler, "secret", "bulk", "--name", worker, "--config", workerConfig], {
       stdio: ["pipe", "inherit", "inherit"],
       env: childEnv,
     });
@@ -112,7 +115,7 @@ try {
     const done = new Promise((resolve, fail) => {child.once("error", fail); child.once("exit", code => resolve(code));});
     child.stdin.end(JSON.stringify({ALIASES: JSON.stringify(config.ALIASES), FRONTENDS: JSON.stringify(config.FRONTENDS), ROOM_KEYS: JSON.stringify(keyConfig.expandedKeys)}));
     if (await done !== 0) reject("Wrangler did not confirm the secret upload.");
-    console.log("ALIASES/FRONTENDS/ROOM_KEYS uploaded to aspen-shared-room. The existing opaque Worker now has the private room configuration; enable frontends only when ready.");
+    console.log(`ALIASES/FRONTENDS/ROOM_KEYS uploaded to ${worker}. The opaque Worker now has the private room configuration; enable frontends only when ready.`);
   }
 } catch (error) {
   // Only our fixed validation messages are printable; never echo parser input,
