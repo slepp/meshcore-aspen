@@ -10,7 +10,7 @@
 //   E2E_AGENT_PROVIDER=.tmp/onchip-tests/<variant>/cloudroom-e2e-agent-provider \
 //     node --test test/e2e/lifecycle.test.mjs
 //
-// It takes about two minutes: one case waits out the 60 s minimum lifetime of an invite code.
+// It takes about four minutes: three cases wait 60 s for an invite code to expire or a rate window to lapse.
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {createHash, randomBytes} from "node:crypto";
@@ -83,6 +83,20 @@ function upgrade(server, alias, token) {
     req.on("response", res => { res.resume(); done(res.statusCode); });
     req.on("error", fail);
     req.end();
+  });
+}
+
+// The operator tool of this repository (tools/admin.mjs) against a live Worker.
+function operator(server, ...args) {
+  return new Promise((done, fail) => {
+    const child = spawn(process.execPath, [join(root, "tools/admin.mjs"), "--url", server.base, "--token-stdin", ...args],
+      {cwd: root, stdio: ["pipe", "pipe", "pipe"]});
+    let out = "", err = "";
+    child.stdout.on("data", d => { out += d; });
+    child.stderr.on("data", d => { err += d; });
+    child.on("error", fail);
+    child.on("close", code => done({code, out, err}));
+    child.stdin.end(ADMIN + "\n");
   });
 }
 
@@ -369,6 +383,43 @@ describe("shared-room lifecycle, node to Worker", {skip}, () => {
     assert.equal((await hosted.admin("room", {alias: room.alias, action: "enable"})).status, 200);
     assert.equal(await upgrade(hosted, room.alias, room.token), 101);
   });
+  test("the operator tool: mint, list, disable, ban, invite and audit", {timeout: 120000}, async () => {
+    const minted = await operator(hosted, "mint", "--count", "2");
+    assert.equal(minted.code, 0, minted.err);
+    const codes = minted.out.match(/[0-9A-Z]{4}(?:-[0-9A-Z]{4}){3}/g);
+    assert.equal(codes?.length, 2, minted.out);
+    // A minted code opens a room.
+    const toolNode = nodeFromSeed(randomBytes(32).toString("hex"));
+    const made = await post(hosted.base, "/v1/node/redeem", redeemBody(toolNode, "https://127.0.0.1", "create", {code: codes[0], name: "Tool"}));
+    assert.equal(made.status, 200);
+    const listed = await operator(hosted, "rooms");
+    assert.equal(listed.code, 0, listed.err);
+    assert.ok(listed.out.includes(made.body.alias), listed.out);
+    assert.equal((await operator(hosted, "disable", made.body.alias)).code, 0);
+    assert.equal(await upgrade(hosted, made.body.alias, made.body.token), 403);
+    assert.equal((await operator(hosted, "enable", made.body.alias)).code, 0);
+    assert.equal(await upgrade(hosted, made.body.alias, made.body.token), 101);
+    await sleep(62000);   // the operator API allows ten calls a minute per client
+    const list = await operator(hosted, "codes");
+    assert.equal(list.code, 0, list.err);
+    assert.ok(list.out.includes(sha256("aspen-node.v1.code\n" + codes[1].replace(/-/g, "")).slice(0, 8)), list.out);
+    const hashPrefix = sha256("aspen-node.v1.code\n" + codes[1].replace(/-/g, "")).slice(0, 12);
+    assert.equal((await operator(hosted, "revoke-code", hashPrefix)).code, 0);
+    const refused = await post(hosted.base, "/v1/node/redeem", redeemBody(nodeFromSeed(randomBytes(32).toString("hex")), "https://127.0.0.1", "create", {code: codes[1], name: "Revoked"}));
+    assert.equal(refused.body.e, "code_invalid");
+    assert.equal((await operator(hosted, "ban", toolNode.pub)).code, 0);
+    assert.equal(await upgrade(hosted, made.body.alias, made.body.token), 401, "a banned node's tokens stop working");
+    assert.equal((await operator(hosted, "unban", toolNode.pub)).code, 0);
+    const invite = await operator(hosted, "invite", made.body.alias);
+    assert.equal(invite.code, 0, invite.err);
+    assert.match(invite.out, /[0-9A-Z]{4}(?:-[0-9A-Z]{4}){3}/);
+    const audit = await operator(hosted, "audit");
+    assert.equal(audit.code, 0, audit.err);
+    assert.ok(audit.out.length > 20);
+    assert.ok(!audit.out.includes(codes[0]) && !audit.out.includes(made.body.token), "the audit trail holds no code or token");
+    secrets.add(made.body.token);
+  });
+
   test("the node's console never shows a code, token or password", async () => {
     const printed = await agent.send("serial");
     assert.ok(secrets.size > 5);
