@@ -2714,6 +2714,14 @@ static void runtime_role_passwords() {
       for (const auto &file : before)
         if (file.first != path) assert(filesystem_test::files.at(file.first) == file.second);
       assert(roomGuestAccess() == 0 && MastAdmin::passwordMatches("mast-pass-12"));
+      {
+        // The shared-room conversion reads the guest password and can put one back.
+        char guest[16]{};
+        assert(roomGuestPassword(guest) && !strcmp(guest, "test-room"));
+        assert(roomSetGuestPassword("GUEST-PW") && roomGuestPassword(guest) && !strcmp(guest, "GUEST-PW"));
+        assert(!roomSetGuestPassword("0123456789abcdef") && roomGuestPassword(guest) && !strcmp(guest, "GUEST-PW"));
+        assert(roomSetGuestPassword("test-room") && roomGuestPassword(guest) && !strcmp(guest, "test-room"));
+      }
       // Native password changes retain existing administrator ACL admissions.
       auto login = role_password_login(f, roleAdmin, role, "");
       assert(login.size() >= 13 && login[6] == 1 && (login[7] & 3) == 3);

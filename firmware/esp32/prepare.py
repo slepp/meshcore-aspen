@@ -805,6 +805,45 @@ RolePasswordUpdate {role}SetPassword(const char* password) {{
 }}
 }}
 """
+        if role == "room":
+            wrapper += """
+namespace onchip {
+bool roomGuestPassword(char out[16]) {
+  if (!meshInstance) return false;
+  const auto& prefs = *meshInstance->getNodePrefs();
+  const size_t length = strnlen(prefs.guest_password, sizeof(prefs.guest_password));
+  if (length >= sizeof(prefs.guest_password)) return false;
+  memcpy(out, prefs.guest_password, length + 1);
+  return true;
+}
+bool roomSetGuestPassword(const char* password) {
+  if (!meshInstance || !password) return false;
+  auto& prefs = *meshInstance->getNodePrefs();
+  if (strlen(password) >= sizeof(prefs.guest_password)) return false;
+  char before[sizeof(prefs.guest_password)];
+  memcpy(before, prefs.guest_password, sizeof(before));
+  memset(prefs.guest_password, 0, sizeof(prefs.guest_password));
+  strcpy(prefs.guest_password, password);
+  roleFS.clearErrors();
+  const bool written = meshInstance->onchipSavePrefs() && !roleFS.failed();
+  NodePrefs readback{};
+  auto file = roleFS.open("/prefs.json", "r");
+  const bool verified = file && readback.loadSerial(file) &&
+      !strcmp(readback.guest_password, password) && !roleFS.failed();
+  file.close();
+  const auto clear = [](char* value, size_t size) {
+    auto* secret = reinterpret_cast<volatile char*>(value);
+    while (size--) *secret++ = 0;
+  };
+  clear(readback.password, sizeof(readback.password));
+  clear(readback.guest_password, sizeof(readback.guest_password));
+  clear(readback.bridge_secret, sizeof(readback.bridge_secret));
+  if (!written || !verified) memcpy(prefs.guest_password, before, sizeof(before));
+  clear(before, sizeof(before));
+  return written && verified;
+}
+}
+"""
         if role == "companion":
             wrapper += COMPANION_DASHBOARD_BRIDGE + """
 namespace onchip {

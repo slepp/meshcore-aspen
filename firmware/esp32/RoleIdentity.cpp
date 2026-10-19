@@ -193,6 +193,55 @@ bool identityPublicKey(const char *name, uint8_t publicKey[32], bool pending) {
   wipe(&record, sizeof(record));
   return ok;
 }
+ExportResult exportRoleKey(const char *name, uint8_t out[PRV_KEY_SIZE]) {
+  Record record{};
+  bool found = false;
+  ExportResult result = ExportResult::Invalid;
+  if (read(name, record, found)) {
+    if (!found) result = ExportResult::Absent;
+    else if (record.flags & RESET) result = ExportResult::Reset;
+    else if (record.flags & STAGED) result = ExportResult::Staged;
+    else {
+      memcpy(out, record.active, PRV_KEY_SIZE);
+      result = ExportResult::Ok;
+    }
+  }
+  wipe(&record, sizeof(record));
+  return result;
+}
+bool identityPublicKeyIfPresent(const char *name, uint8_t publicKey[32]) {
+  Record record{};
+  bool found = false;
+  const bool ok = read(name, record, found) && found;
+  if (ok) {
+    mesh::LocalIdentity identity;
+    identity.readFrom(record.active, PRV_KEY_SIZE);
+    memcpy(publicKey, identity.pub_key, PUB_KEY_SIZE);
+    wipe(&identity, sizeof(identity));
+  }
+  wipe(&record, sizeof(record));
+  return ok;
+}
+bool identityFirstByte(const char *name, uint8_t &first) {
+  uint8_t publicKey[32];
+  const bool ok = identityPublicKeyIfPresent(name, publicKey);
+  if (ok) first = publicKey[0];
+  return ok;
+}
+bool signManagement(const uint8_t *message, size_t size, uint8_t signature[64], uint8_t publicKey[32]) {
+  Record record{};
+  bool found = false;
+  bool ok = read("management", record, found) && found && !record.flags;
+  if (ok) {
+    mesh::LocalIdentity identity;
+    identity.readFrom(record.active, PRV_KEY_SIZE);
+    identity.sign(signature, message, int(size));
+    memcpy(publicKey, identity.pub_key, PUB_KEY_SIZE);
+    wipe(&identity, sizeof(identity));
+  }
+  wipe(&record, sizeof(record));
+  return ok;
+}
 bool rotateIdentity(const char *name, uint8_t pendingPublicKey[32]) {
   Record record{}, actual{};
   bool found = false;

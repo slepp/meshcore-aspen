@@ -72,6 +72,11 @@ uint8_t roomPathWidth();
 uint8_t companionPathWidth();
 uint8_t managementPathWidth();
 int roomGuestAccess();
+// The Room role's guest password, for a shared-room conversion; false when it is not running.
+bool roomGuestPassword(char out[16]);
+// Saves a new guest password through the Room role's preferences; false when the role is
+// not running or the save could not be verified (the previous password stays).
+bool roomSetGuestPassword(const char *password);
 bool repeaterSetPathWidth(uint8_t width);
 bool roomSetPathWidth(uint8_t width);
 bool companionSetPathWidth(uint8_t width);
