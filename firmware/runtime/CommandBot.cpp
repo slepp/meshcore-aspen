@@ -21,7 +21,6 @@
 #include <cstdarg>
 #include <cassert>
 #include <memory>
-#include <string>
 #if !defined(NRF52_PLATFORM) && !(defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE)
 #include "RoleProfile.h"
 #endif
@@ -52,6 +51,26 @@ bool repeaterName(const char *name) {
     if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= '0' && name[i] <= '9') ||
           name[i] == '-' || name[i] == '_')) return false;
   return true;
+}
+// Appends to a fixed buffer with snprintf truncation: `length` counts every
+// byte offered, and the buffer holds the first `capacity - 1` of them.
+struct TextOut {
+  char *buffer;
+  size_t capacity, length = 0;
+  void add(const char *text, size_t limit = SIZE_MAX) {
+    for (; *text && limit; ++text, --limit, ++length)
+      if (length + 1 < capacity) buffer[length] = *text;
+  }
+  void finish() { if (capacity) buffer[length < capacity ? length : capacity - 1] = 0; }
+};
+// Comma-separated aliases of the targets a group selects.
+void addGroupMembers(TextOut &out, const BotRepeaterPolicy &policy, const BotRepeaterPolicy::Group &group) {
+  const size_t start = out.length;
+  for (unsigned i = 0; i < BotRepeaterLimit; ++i)
+    if (group.members & (1u << i)) {
+      if (out.length != start) out.add(",");
+      out.add(policy.targets[i].alias);
+    }
 }
 constexpr size_t ReadMarkerSize = 7;
 void readMarker(char *output, const uint8_t *request) {
@@ -1066,16 +1085,28 @@ struct CommandBot::Core : mesh::Mesh {
   }
   // Refuses the whole selection and lists what the owner can choose from.
   void unknownRepeaterTarget(Invocation &job, const char *name) {
-    std::string aliases, groups;
+    char text[sizeof(job.result.error)];
+    TextOut out{text, sizeof(text)};
+    out.add("Unknown repeater ");
+    out.add(name, 16);
+    out.add("; configured: ");
+    const size_t aliasesAt = out.length;
     for (const auto &target : repeaterPolicy.targets)
-      if (target.used) aliases += (aliases.empty() ? "" : ",") + std::string(target.alias);
+      if (target.used) {
+        if (out.length != aliasesAt) out.add(",");
+        out.add(target.alias);
+      }
+    if (out.length == aliasesAt) out.add("none");
+    const size_t groupsAt = out.length;
     for (const auto &group : repeaterPolicy.groups)
-      if (group.name[0]) groups += (groups.empty() ? "" : ",") + std::string(group.name);
-    std::string text = "Unknown repeater " + std::string(name).substr(0, 16) + "; configured: " +
-        (aliases.empty() ? "none" : aliases);
-    if (!groups.empty()) text += "; groups: " + groups;
-    if (text.size() >= sizeof(job.result.error)) text = text.substr(0, sizeof(job.result.error) - 4) + "...";
-    finishRadio(job, text.c_str());
+      if (group.name[0]) {
+        out.add(out.length == groupsAt ? "; groups: " : ",");
+        out.add(group.name);
+      }
+    // A selection too long for the error text ends in "...".
+    if (out.length >= sizeof(text)) { out.length = sizeof(text) - 4; out.add("..."); }
+    out.finish();
+    finishRadio(job, text);
   }
   // Expands owner-defined groups in a comma-separated target list to distinct
   // configured aliases. An unknown name refuses the selection before any RF.
@@ -4161,18 +4192,20 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
       snprintf(reply, capacity, "on|off|enable ALIAS on|off; status|timing [ALIAS]|config ALIAS|route ALIAS|storage; add ALIAS KEY FREQ [W:HEX]|remove ALIAS; help groups; interval|discovery SEC");
     return;
   }
-  const auto memberNames = [&](const BotRepeaterPolicy &policy, const BotRepeaterPolicy::Group &group) {
-    std::string names;
-    for (unsigned i = 0; i < BotRepeaterLimit; ++i)
-      if (group.members & (1u << i)) names += (names.empty() ? "" : ",") + std::string(policy.targets[i].alias);
-    return names;
-  };
   if (!strcmp(action, "groups")) {
     if (strtok_r(nullptr, " ", &cursor)) { error("bot repeaters groups"); return; }
-    std::string text;
+    TextOut out{reply, capacity};
+    out.add("Repeater groups ");
+    const size_t groupsAt = out.length;
     for (const auto &group : core_->repeaterPolicy.groups)
-      if (group.name[0]) text += (text.empty() ? "" : " ") + std::string(group.name) + "=" + memberNames(core_->repeaterPolicy, group);
-    snprintf(reply, capacity, "Repeater groups %s", text.empty() ? "none" : text.c_str());
+      if (group.name[0]) {
+        if (out.length != groupsAt) out.add(" ");
+        out.add(group.name);
+        out.add("=");
+        addGroupMembers(out, core_->repeaterPolicy, group);
+      }
+    if (out.length == groupsAt) out.add("none");
+    out.finish();
     return;
   }
   auto candidate = core_->repeaterPolicy;
@@ -4185,7 +4218,8 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     for (auto &entry : candidate.groups) if (entry.name[0] && !strcmp(entry.name, name)) group = &entry;
     if (!members) {
       if (!group) { error("repeater group is not configured"); return; }
-      snprintf(reply, capacity, "%s=%s", group->name, memberNames(candidate, *group).c_str()); return;
+      TextOut out{reply, capacity};
+      out.add(group->name); out.add("="); addGroupMembers(out, candidate, *group); out.finish(); return;
     }
     if (!strcmp(members, "-")) {
       if (!group) { error("repeater group is not configured"); return; }
@@ -4232,7 +4266,11 @@ void CommandBot::repeaterCommand(const char *command, char *reply, size_t capaci
     }
     core_->repeaterPolicy = candidate;
     if (!strcmp(members, "-")) snprintf(reply, capacity, "Saved/applied: repeater group %s removed", name);
-    else snprintf(reply, capacity, "Saved/applied repeater group %s=%s", name, memberNames(candidate, *group).c_str());
+    else {
+      TextOut out{reply, capacity};
+      out.add("Saved/applied repeater group "); out.add(name); out.add("=");
+      addGroupMembers(out, candidate, *group); out.finish();
+    }
     return;
   }
   int changedTarget = -1;
