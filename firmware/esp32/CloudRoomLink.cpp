@@ -480,7 +480,8 @@ void runControl(Job &job, CloudTransport &transport, Work &work, const char *add
       if (!control(job, transport, work, address, body, reply, root)) return;
       uint64_t pending = 0;
       if (Document::field(root, "pending").unsignedNumber(pending, 2592000)) {
-        setText(true, false, "Delete scheduled in 24 h; another owner can cancel it. Unlink this node now with \"cloudroom unlink\".");
+        if (job.converted) setText(true, false, "Delete scheduled in 24 h. Unlink this node now with \"cloudroom unlink %s force\".", job.alias);
+        else setText(true, false, "Delete scheduled in 24 h. Unlink this node now with \"cloudroom unlink\".");
         job.kind = Kind::None;   // nothing to change locally
         return;
       }
@@ -821,7 +822,7 @@ bool lifecycle(const cloudroom::Command &cmd, char *reply, size_t capacity) {
       const bool defaultHost = !cmd.host[0] || sameHost(cmd.host, DefaultHost);
       const bool confirmed = cmd.yes && (defaultHost ? !cmd.yesHost[0] || sameHost(cmd.yesHost, job.host) : sameHost(cmd.yesHost, job.host));
       if (!confirmed) {
-        if (defaultHost) say(reply, capacity, "Key goes to %s; it can speak as the room. Admin logins stay. Add \"yes\".", job.host);
+        if (!cmd.host[0]) say(reply, capacity, "Key goes to %s; it can speak as the room. Admin logins stay. Add \"yes\".", job.host);
         else say(reply, capacity, "Key goes to %s; it can speak as the room. Admin logins stay. Add \"yes %s\".", job.host, job.host);
         return true;
       }

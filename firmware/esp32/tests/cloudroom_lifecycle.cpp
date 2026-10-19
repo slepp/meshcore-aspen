@@ -482,6 +482,9 @@ void convertRoom() {
   assert(say(std::string("convert ") + Code + "@" + Host + " yes") == preview + Host + "\".");
   assert(say(std::string("convert ") + Code + "@" + Host + " yes other.example") == preview + Host + "\".");
   assert(say(std::string("convert ") + Code) == "Key goes to rooms.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes\".");
+  // Naming the default host explicitly asks for the host to be retyped; a bare "yes" would loop.
+  assert(say(std::string("convert ") + Code + "@rooms.ve6slp.ca yes") ==
+         "Key goes to rooms.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes rooms.ve6slp.ca\".");
   assert(opens == 0 && seen.empty() && wakes == 0);
   server = [&](const Seen &) { return Response{200, redeemOk(Alias, "Backyard Room", publicHex(2), Token, "owner")}; };
   assert(say(std::string("convert ") + Code + "@" + Host + " yes " + Host) == QueuedHost);
@@ -932,7 +935,7 @@ void unlinking() {
   assert(say("unlink delete") == QueuedHost);
   pump();
   assert(seen.back().body == std::string("{\"op\":\"delete\",\"confirm\":\"") + Alias + "\"}");
-  assert(say("result") == "Delete scheduled in 24 h; another owner can cancel it. Unlink this node now with \"cloudroom unlink\"." &&
+  assert(say("result") == "Delete scheduled in 24 h. Unlink this node now with \"cloudroom unlink\"." &&
          savedHash() == hash);
   server = [&](const Seen &) { return okJson("{\"ok\":1}"); };
   say("unlink delete"); pump();
@@ -940,6 +943,13 @@ void unlinking() {
   begin();
   bootWith(linked(CloudRoleFrontend));
   assert(say("unlink delete") == "Only an owner node can do that. Ask the owner for \"cloudroom invite owner\".");
+
+  // A deferred delete on a converted alias names the command that works while other nodes remain.
+  begin();
+  bootWith(linked(CloudRoleOwner, true, CloudFlagConverted, Alias, Host, 2));
+  server = [&](const Seen &) { return okJson("{\"ok\":1,\"pending\":86400}"); };
+  say("unlink delete"); pump();
+  assert(say("result") == std::string("Delete scheduled in 24 h. Unlink this node now with \"cloudroom unlink ") + Alias + " force\".");
 
   // A converted node reads the node list first and leaves only when nobody else uses the room.
   begin();
