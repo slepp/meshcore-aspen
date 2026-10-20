@@ -1079,12 +1079,12 @@ void sharing() {
 void probing() {
   begin();
   server = [&](const Seen &) {
-    return okJson("{\"service\":\"aspen-shared-room\",\"version\":\"0.1.20\",\"protocol\":\"aspen-node.v1\",\"signup\":\"code\",\"time\":1790000001}");
+    return okJson("{\"service\":\"aspen-shared-room\",\"version\":\"0.1.21\",\"protocol\":\"aspen-node.v1\",\"signup\":\"code\",\"time\":1790000001}");
   };
   assert(say(std::string("probe ") + Host) == QueuedHost.substr(0, 0) + std::string("Contacting ") + Host +
          " (up to 20 s). Send \"cloudroom result\" for the outcome; the node restarts when linked.");
   pump();
-  assert(say("result") == std::string("Server ") + Host + " ok: aspen-shared-room 0.1.20 signup=code clock+1s");
+  assert(say("result") == std::string("Server ") + Host + " ok: aspen-shared-room 0.1.21 signup=code clock+1s");
   assert(seen.back().method == "GET" && seen.back().path == "/v1/info" && seen.back().bearer.empty());
   assert(say("probe").rfind("Contacting rooms.ve6slp.ca", 0) == 0);
   pump();
@@ -1107,10 +1107,10 @@ void probing() {
   // Probing needs no trusted clock for its own sake; the skew is omitted.
   wire = Wire::Normal; clockTrusted = false;
   server = [&](const Seen &) {
-    return okJson("{\"service\":\"aspen-shared-room\",\"version\":\"0.1.20\",\"protocol\":\"aspen-node.v1\",\"signup\":\"open\",\"time\":1790000001}");
+    return okJson("{\"service\":\"aspen-shared-room\",\"version\":\"0.1.21\",\"protocol\":\"aspen-node.v1\",\"signup\":\"open\",\"time\":1790000001}");
   };
   say(std::string("probe ") + Host); pump();
-  assert(say("result") == std::string("Server ") + Host + " ok: aspen-shared-room 0.1.20 signup=open");
+  assert(say("result") == std::string("Server ") + Host + " ok: aspen-shared-room 0.1.21 signup=open");
 }
 void advertOnce() {
   // The first connection of a created room announces it; the saved flag then clears, once.

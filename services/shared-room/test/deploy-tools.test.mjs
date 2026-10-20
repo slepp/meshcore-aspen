@@ -55,7 +55,7 @@ before(async () => {
   server = createServer(async (req, res) => {
     let body = ""; for await (const c of req) body += c;
     const reply = (status, json) => {res.writeHead(status, {"content-type": "application/json"}); res.end(JSON.stringify(json));};
-    if (req.url === "/v1/info") return reply(200, {service: "aspen-shared-room", version: "0.1.20", protocol: "aspen-node.v1", signup: "code", time: 1790000000});
+    if (req.url === "/v1/info") return reply(200, {service: "aspen-shared-room", version: "0.1.21", protocol: "aspen-node.v1", signup: "code", time: 1790000000});
     if (req.url.startsWith("/v1/admin/")) {
       const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
       const adminHash = await currentHash();
@@ -218,7 +218,7 @@ test("admin refuses a token file that other users can read", async () => {
 test("doctor reports a healthy deployment and warns when logs are on", async () => {
   const good = await run("doctor.mjs", ["--url", origin]);
   assert.equal(good.code, 0, good.stdout + good.stderr);
-  assert.match(good.stdout, /ok .*aspen-shared-room 0\.1\.20/);
+  assert.match(good.stdout, /ok .*aspen-shared-room 0\.1\.21/);
   assert.match(good.stdout, /ok .*Operator API accepts/);
   const path = join(pkg, "wrangler.local.jsonc");
   const text = await readFile(path, "utf8");

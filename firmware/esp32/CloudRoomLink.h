@@ -21,7 +21,7 @@
 namespace onchip {
 // Free internal heap and largest free block a link job needs before it opens TLS, on top of
 // the 32 KiB radio reserve the TLS layer keeps. Provisional: set from the lab minimum-free
-// log of a handshake (README of the 0.1.20 release checks).
+// log of a handshake (README of the 0.1.21 release checks).
 constexpr size_t CloudLinkMinFreeInternal = 48 * 1024;
 constexpr size_t CloudLinkMinLargestBlock = 16 * 1024;
 constexpr uint32_t CloudLinkTimeoutMs = 20000;

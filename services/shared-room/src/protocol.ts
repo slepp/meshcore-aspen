@@ -51,6 +51,6 @@ export type ServerEvent = Delivery
   | {type: "ready"; version: 1; alias: string; publicKey: string; name: string};
 
 /** Shared-room Worker release; bumped with the Aspen tag. */
-export const SERVICE_VERSION = "0.1.20";
+export const SERVICE_VERSION = "0.1.21";
 /** Node link protocol (redeem and control), matched exactly by the device. */
 export const NODE_PROTOCOL = "aspen-node.v1";

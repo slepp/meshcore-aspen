@@ -49,7 +49,7 @@ domain, then:
 4. mints one create code and prints the command to use it:
 
 ```text
-Worker aspen-rooms runs at https://aspen-rooms.example.workers.dev (version 0.1.20, signup code).
+Worker aspen-rooms runs at https://aspen-rooms.example.workers.dev (version 0.1.21, signup code).
 Copy .deploy/room-kek.json to your password manager. Without it, hosted rooms cannot be recovered.
 
 Create your first room from the companion app's Management console on an Aspen node:

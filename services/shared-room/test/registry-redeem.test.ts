@@ -8,7 +8,7 @@ it("serves a static info document and tracks the signup mode", async () => {
   const r = await call("/v1/info");
   expect(r.status).toBe(200);
   const body = await r.json<any>();
-  expect(body).toMatchObject({service: "aspen-shared-room", version: "0.1.20", protocol: "aspen-node.v1", signup: "code"});
+  expect(body).toMatchObject({service: "aspen-shared-room", version: "0.1.21", protocol: "aspen-node.v1", signup: "code"});
   expect(Math.abs(body.time - now())).toBeLessThan(5);
   expect((await (await call("/v1/info", {env: {ROOM_KEK: undefined}})).json<any>()).signup).toBe("closed");
   expect((await (await call("/v1/info", {env: {SIGNUP_MODE: "open"}})).json<any>()).signup).toBe("open");

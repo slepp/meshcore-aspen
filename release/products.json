@@ -9,7 +9,7 @@
     "companion_protocol": 14
   },
   "products": {
-    "aspen": {"version": "0.1.20"},
+    "aspen": {"version": "0.1.21"},
     "birch": {"version": "0.1.5"},
     "pine": {"version": "0.1.5"},
     "willow": {"version": "0.0.13"}

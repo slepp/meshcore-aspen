@@ -20,7 +20,7 @@ async function main() {
     if (r.status === 200 && r.json?.protocol === "aspen-node.v1") {
       info = r.json;
       ok(`${base.origin} answers: ${info.service} ${info.version}, signup ${info.signup}`);
-    } else bad(`${base.origin}/v1/info returned HTTP ${r.status}. Deploy the 0.1.20 Worker (node tools/setup.mjs).`);
+    } else bad(`${base.origin}/v1/info returned HTTP ${r.status}. Deploy the 0.1.21 Worker (node tools/setup.mjs).`);
   } catch {bad(`${base.origin} did not answer. Check the Worker name, route and DNS.`);}
 
   const source = await readFile(new URL("../src/protocol.ts", import.meta.url), "utf8").catch(() => "");

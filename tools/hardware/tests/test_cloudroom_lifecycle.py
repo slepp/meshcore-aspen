@@ -166,7 +166,7 @@ class Polling(unittest.TestCase):
             self.assertEqual(text, failure)
         for success in ("Linked. Restarts in 10 s.", "Owner code ABCD-EFGH-JKMN-PQRS (120 s, once). Run: cloudroom join X",
                         "Nodes 1-5 of 2: ab12cd34 owner 2h; 77e1f0aa node 3d", "Room password 7QX2M9KDAB (open: x)",
-                        "Unlinked. Restarting in 10 s.", f"Server {HOST} ok: aspen-shared-room 0.1.20 signup=code clock+1s",
+                        "Unlinked. Restarting in 10 s.", f"Server {HOST} ok: aspen-shared-room 0.1.21 signup=code clock+1s",
                         "Sharing off. Restarting in 10 s; send \"cloudroom share on\" to resume."):
             self.assertTrue(admin.cloudroom_lifecycle(FakeNode([success]), namespace("result"))[1], success)
 

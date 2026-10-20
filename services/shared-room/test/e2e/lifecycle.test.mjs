@@ -166,7 +166,7 @@ describe("shared-room lifecycle, node to Worker", {skip}, () => {
     await agent.device("A");
     assert.match(await agent.say(`probe ${HOSTED}`), /^Contacting /);
     await agent.send("pump");
-    assert.match(await agent.say("result"), new RegExp(`^Server ${HOSTED} ok: aspen-shared-room 0\\.1\\.20 signup=code`));
+    assert.match(await agent.say("result"), new RegExp(`^Server ${HOSTED} ok: aspen-shared-room 0\\.1\\.21 signup=code`));
     assert.equal((await self.info()).signup, "open");
   });
 
