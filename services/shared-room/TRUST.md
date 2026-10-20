@@ -24,7 +24,7 @@ AES-256-GCM under a per-room key derived from the `ROOM_KEK` secret and keeps
 it in that room's Durable Object. Copying the storage yields nothing without
 `ROOM_KEK`, and `ROOM_KEK` alone opens nothing. **Whoever operates the Worker
 can read each hosted room and send as it.** The hosted service at
-`rooms.ve6slp.ca` and any Worker you deploy work the same way; choose the
+`aspen.ve6slp.ca` and any Worker you deploy work the same way; choose the
 server accordingly. Members keep their room password and contact. Operator
 reach goes no further than the rooms on that Worker.
 

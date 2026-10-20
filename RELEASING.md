@@ -28,7 +28,7 @@ the source archive.
 An Aspen release that changes the shared-room protocol ships with its Worker.
 Deploy the matching Worker from `services/shared-room` before announcing the
 firmware (`npm run setup` for a self-hosted Worker; the hosted Worker's
-`rooms.ve6slp.ca` deployment uses its own name, `ROOM_KEK` and Durable Object
+`aspen.ve6slp.ca` deployment uses its own name, `ROOM_KEK` and Durable Object
 namespace). State the minimum Worker version in the release notes; a node
 reports the Worker's version with `cloudroom probe`. Never deploy the hosted
 Worker over the project's static `aspen-shared-room` Worker.

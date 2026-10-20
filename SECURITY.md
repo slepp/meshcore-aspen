@@ -23,7 +23,7 @@ expose these ports directly to the Internet. Use encrypted authenticated RF
 or a protected local owner socket for the secret imports that those transports
 support.
 
-The hosted shared-room service (`rooms.ve6slp.ca`) is in scope for security
+The hosted shared-room service (`aspen.ve6slp.ca`) is in scope for security
 reports, including code redemption, key custody and quota bypass. A Worker you
 deploy yourself is yours to operate; report flaws in the shared Worker source
 here. The service operator can read and send as every room it hosts

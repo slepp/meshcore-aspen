@@ -23,7 +23,7 @@ settings. Shared rooms stay off until you join, create or convert one.
 `CODE` is a one-time code of 16 letters and digits, written
 `ABCD-EFGH-JKMN-PQRS`. `HOST` is the server the code belongs to, such as
 `aspen-rooms.example.workers.dev`. Leave `@HOST` off for the default hosted
-service, `rooms.ve6slp.ca`. A server you run yourself is covered in
+service, `aspen.ve6slp.ca`. A server you run yourself is covered in
 [Host your own shared rooms](SELF_HOSTING.md). The node needs a trusted
 clock (`get sntp.server`) and sends each command over encrypted Management RF:
 use the companion app's Management console, or `admin.py` with the native

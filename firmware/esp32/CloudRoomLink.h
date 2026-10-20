@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #ifndef ONCHIP_CLOUD_ROOM_DEFAULT_HOST
-#define ONCHIP_CLOUD_ROOM_DEFAULT_HOST "rooms.ve6slp.ca"
+#define ONCHIP_CLOUD_ROOM_DEFAULT_HOST "aspen.ve6slp.ca"
 #endif
 // Where an operator asks for a code on the default host (a short, human-typable pointer).
 #ifndef ONCHIP_CLOUD_ROOM_REQUEST_POINTER

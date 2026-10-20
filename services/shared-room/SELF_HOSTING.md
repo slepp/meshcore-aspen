@@ -7,7 +7,7 @@ and about ten minutes.
 
 ## Hosted service or your own server
 
-| | Hosted (`rooms.ve6slp.ca`) | Your own Worker |
+| | Hosted (`aspen.ve6slp.ca`) | Your own Worker |
 |---|---|---|
 | Setup | Request a create code, then run `cloudroom create` | `npm run setup`, then mint your own codes |
 | Who can read and speak as the room | The hosted service operator | You |

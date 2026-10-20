@@ -481,10 +481,10 @@ void convertRoom() {
   assert(say(std::string("convert ") + Code + "@" + Host) == preview + Host + "\".");
   assert(say(std::string("convert ") + Code + "@" + Host + " yes") == preview + Host + "\".");
   assert(say(std::string("convert ") + Code + "@" + Host + " yes other.example") == preview + Host + "\".");
-  assert(say(std::string("convert ") + Code) == "Key goes to rooms.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes\".");
+  assert(say(std::string("convert ") + Code) == "Key goes to aspen.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes\".");
   // Naming the default host explicitly asks for the host to be retyped; a bare "yes" would loop.
-  assert(say(std::string("convert ") + Code + "@rooms.ve6slp.ca yes") ==
-         "Key goes to rooms.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes rooms.ve6slp.ca\".");
+  assert(say(std::string("convert ") + Code + "@aspen.ve6slp.ca yes") ==
+         "Key goes to aspen.ve6slp.ca; it can speak as the room. Admin logins stay. Add \"yes aspen.ve6slp.ca\".");
   assert(opens == 0 && seen.empty() && wakes == 0);
   server = [&](const Seen &) { return Response{200, redeemOk(Alias, "Backyard Room", publicHex(2), Token, "owner")}; };
   assert(say(std::string("convert ") + Code + "@" + Host + " yes " + Host) == QueuedHost);
@@ -507,9 +507,9 @@ void convertRoom() {
   // Default host: "yes" alone confirms it.
   begin();
   server = [&](const Seen &) { return Response{200, redeemOk(Alias, "Backyard Room", publicHex(2), Token, "owner")}; };
-  assert(say(std::string("convert ") + Code + " yes").rfind("Contacting rooms.ve6slp.ca", 0) == 0);
+  assert(say(std::string("convert ") + Code + " yes").rfind("Contacting aspen.ve6slp.ca", 0) == 0);
   pump();
-  assert(lastHost == "rooms.ve6slp.ca" && !strcmp(current().aliases[0].base.host, "rooms.ve6slp.ca"));
+  assert(lastHost == "aspen.ve6slp.ca" && !strcmp(current().aliases[0].base.host, "aspen.ve6slp.ca"));
 
   // The response must name this room's key and name; anything else saves nothing.
   const std::string refusals[] = {
@@ -607,9 +607,9 @@ void serverErrors() {
   // The default host adds a pointer for a code it does not know and for a closed signup.
   begin();
   server = [&](const Seen &) { return Response{400, error("code_invalid")}; };
-  assert(say(std::string("join ") + Code).rfind("Contacting rooms.ve6slp.ca", 0) == 0);
+  assert(say(std::string("join ") + Code).rfind("Contacting aspen.ve6slp.ca", 0) == 0);
   pump();
-  assert(say("result") == "Link failed: code not valid for create or join on rooms.ve6slp.ca. Check the code and the @host."
+  assert(say("result") == "Link failed: code not valid for create or join on aspen.ve6slp.ca. Check the code and the @host."
                           " Request one at github.com/slepp/meshcore-aspen");
   begin();
   server = [&](const Seen &) { return Response{503, error("closed")}; };
@@ -1086,9 +1086,9 @@ void probing() {
   pump();
   assert(say("result") == std::string("Server ") + Host + " ok: aspen-shared-room 0.1.21 signup=code clock+1s");
   assert(seen.back().method == "GET" && seen.back().path == "/v1/info" && seen.back().bearer.empty());
-  assert(say("probe").rfind("Contacting rooms.ve6slp.ca", 0) == 0);
+  assert(say("probe").rfind("Contacting aspen.ve6slp.ca", 0) == 0);
   pump();
-  assert(lastHost == "rooms.ve6slp.ca");
+  assert(lastHost == "aspen.ve6slp.ca");
   server = [&](const Seen &) { return Response{404, "nope"}; };
   say(std::string("probe ") + Host); pump();
   assert(say("result") == std::string("Server ") + Host + " failed: HTTP 404 not an Aspen server");
