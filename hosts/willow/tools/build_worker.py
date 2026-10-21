@@ -20,8 +20,10 @@ NATIVE = BUILD/"native"
 WORKER = BUILD/"native-worker"
 SPEC = BUILD/"native-worker.json"
 INPUTS = BUILD/"native-worker.inputs"
-UPSTREAM = json.loads((ROOT/"release/products.json").read_text())["upstream"]
+PRODUCTS = json.loads((ROOT/"release/products.json").read_text())
+UPSTREAM = PRODUCTS["upstream"]
 PIN = UPSTREAM["commit"]
+PRODUCT_IDENTITY = "willow-" + PRODUCTS["products"]["willow"]["version"]
 SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".inc", ".py", ".mk", ".cmake", ".S", ".s", ".patch"}
 
 def source_identity(root=ROOT):
@@ -291,7 +293,8 @@ def ensure():
         clock.write_text("// Build-day clock baseline for offline startup.\n"
                          "#pragma once\n#ifndef ONCHIP_CLOCK_BUILD_EPOCH\n"
                          f"#define ONCHIP_CLOCK_BUILD_EPOCH {baseline}u\n#endif\n"
-                         f'#define ONCHIP_NATIVE_REVISION "{PIN[:12]}"\n')
+                         f'#define ONCHIP_NATIVE_REVISION "{PIN[:12]}"\n'
+                         f'#define ONCHIP_PRODUCT_VERSION "{PRODUCT_IDENTITY}"\n')
         # This shared helper explicitly delegates build-tree verification to
         # its caller. Keep its parser hooks and c_stack_limit=40 unchanged.
         prepare_bot.stage_lua(output/"bot")

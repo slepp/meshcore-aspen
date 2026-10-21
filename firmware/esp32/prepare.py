@@ -10,6 +10,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from product_versions import native_identity  # noqa: E402
+
 COMPANION_DASHBOARD_BRIDGE = """
 #include "DashboardContacts.h"
 namespace onchip {
@@ -219,7 +222,8 @@ def generate(upstream, target):
         f"#define ONCHIP_CLOCK_BUILD_EPOCH {baseline}u\n#endif\n"
         '#define ONCHIP_NATIVE_REVISION "' +
         subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "HEAD"],
-                                text=True).strip()[:12] + '"\n')
+                                text=True).strip()[:12] + '"\n'
+        f'#define ONCHIP_PRODUCT_VERSION "{native_identity("aspen")}"\n')
     stage_field_network(target)
     stage_radio_preferences(target)
     stage_packet_pool(target, dest)

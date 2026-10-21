@@ -37,6 +37,11 @@ def identity(name, version):
     return f"{name}-{version}"
 
 
+def native_identity(name, root=ROOT):
+    """Identity string (for example aspen-0.1.21) a native build reports from !version."""
+    return identity(name, load(root)["products"][name]["version"])
+
+
 def tag(name, version):
     return f"{name}-v{version}"
 

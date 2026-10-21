@@ -161,8 +161,9 @@ class BuildIsolation(unittest.TestCase):
             revision = subprocess.check_output(
                 ["git", "-C", str(ROOT / ".tmp/onchip-upstream"), "rev-parse", "HEAD"],
                 text=True).strip()[:12]
-            self.assertIn(f'#define ONCHIP_NATIVE_REVISION "{revision}"',
-                          (build / "examples/kiss_modem/onchip/BuildClock.h").read_text())
+            clock = (build / "examples/kiss_modem/onchip/BuildClock.h").read_text()
+            self.assertIn(f'#define ONCHIP_NATIVE_REVISION "{revision}"', clock)
+            self.assertIn(f'#define ONCHIP_PRODUCT_VERSION "{prepare.native_identity("aspen")}"', clock)
             native = build / "examples/kiss_modem/onchip"
             network_headers = (build / "examples/kiss_modem/RadioNetwork.h",
                                native / "RadioNetwork.h")

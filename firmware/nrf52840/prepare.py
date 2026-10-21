@@ -14,7 +14,7 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "tools"))
-from product_versions import load
+from product_versions import load, native_identity
 UPSTREAM = load()["upstream"]
 REVISION = UPSTREAM["commit"]
 
@@ -129,6 +129,7 @@ def prepare(source, output):
     (shared / "BuildClock.h").write_text(
         f"#pragma once\n#define ONCHIP_CLOCK_BUILD_EPOCH {int(time.time())}u\n"
         f'#define ONCHIP_NATIVE_REVISION "{REVISION[:12]}"\n'
+        f'#define ONCHIP_PRODUCT_VERSION "{native_identity("pine")}"\n'
     )
     chat = output / "src/helpers/BaseChatMesh.h"
     text = chat.read_text()
