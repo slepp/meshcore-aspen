@@ -144,6 +144,9 @@ public:
   BotNativeHarness &operator=(const BotNativeHarness &) = delete;
 
   void step(unsigned count = 80);
+  // Runs the loops without advancing the simulated clock until the worker
+  // publishes a source result, so pending timers keep their position.
+  bool waitSourceResult(onchip::BotWorker::Result &result, unsigned maxPolls = 2000);
   void start();
 #ifdef BOT_HOST_RUNNER
   bool startReplay(std::string &error);

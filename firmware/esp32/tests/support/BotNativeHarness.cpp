@@ -109,6 +109,20 @@ void BotNativeHarness::step(unsigned count) {
   }
 }
 
+bool BotNativeHarness::waitSourceResult(onchip::BotWorker::Result &result, unsigned maxPolls) {
+  while (maxPolls--) {
+    onchip::loopClocks();
+    bot.loop();
+#ifdef BOT_HOST_RUNNER
+    if (management_) management_->loop();
+#endif
+    mux.serviceTransmit();
+    if (bot.pollSourceResult(result)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
+}
+
 void BotNativeHarness::start() {
   assert(bot.begin(mux));
   step();

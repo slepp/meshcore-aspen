@@ -1842,8 +1842,8 @@ static void authorized_packet_forwarding() {
   assert(recipient.replies(f.bot.publicKey(), f.radio).empty());
   start(sender, "!delayed");
   f.deliver(sender.command(f.bot.publicKey(), "cancelled")); f.step(10);
-  assert(f.bot.stageSource(source, strlen(source))); f.step(5);
-  assert(f.bot.pollSourceResult(result) && result.ok && f.bot.activateStaged()); f.step();
+  assert(f.bot.stageSource(source, strlen(source)));
+  assert(f.waitSourceResult(result) && result.ok && f.bot.activateStaged()); f.step();
   assert(f.bot.pollSourceResult(result) && result.ok);
   assert(recipient.replies(f.bot.publicKey(), f.radio).empty());
   f.deliver(recipient.pathReturn(f.bot.publicKey(), 1, {})); f.step(10);
@@ -1981,8 +1981,8 @@ static void filtered_packet_continuations() {
   timeMs += 61000; f.radio.sent.clear();
   f.deliver(first.command(f.bot.publicKey(), "!split")); f.step(15);
   sent = traces(); assert(sent.size() == 1);
-  assert(f.bot.stageSource(source, strlen(source))); f.step(5);
-  assert(f.bot.pollSourceResult(result) && result.ok && f.bot.activateStaged()); f.step(20);
+  assert(f.bot.stageSource(source, strlen(source)));
+  assert(f.waitSourceResult(result) && result.ok && f.bot.activateStaged()); f.step(20);
   assert(f.bot.pollSourceResult(result) && result.ok);
   const auto cancelled = first.replies(f.bot.publicKey(), f.radio);
   f.deliver(traceReply(sent[0])); f.step();
