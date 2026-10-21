@@ -37,7 +37,7 @@ constexpr BotCommand BotBuiltinCommands[] = {
   {BotCommand::Public, "test", "test", "", "Received route, SNR and RSSI", "!test"},
   {BotCommand::Public, "trace", "trace", "route?:string:154", "Send TRACE along width:hex or the received route", "!trace 1:a1b2"},
   {BotCommand::Public, "uptime", "uptime", "", "Elapsed time since boot", "!uptime"},
-  {BotCommand::Public, "version", "version", "", "MeshCore/Lua versions and build date", "!version"},
+  {BotCommand::Public, "version", "version", "", "Product release, MeshCore and Lua versions, build date", "!version"},
   {BotCommand::Home, "weather", "weather", "place?:text:80", "Weather for PLACE from the configured home service", "!weather Calgary"},
 };
 constexpr BotManifestView BotBuiltinManifest{BotBuiltinCommands,

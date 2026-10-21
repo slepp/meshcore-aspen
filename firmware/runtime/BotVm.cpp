@@ -321,7 +321,7 @@ void pushNode(lua_State *s, const onchip::BotNodeSnapshot &n) {
   boolean(s, "wifi_known", n.wifiKnown); boolean(s, "wifi_connected", n.wifiConnected);
   boolean(s, "battery_available", false);
   integer(s, "uptime_ms", n.uptimeMs);
-  text(s, "native_revision", n.nativeRevision); text(s, "build", n.build);
+  text(s, "native_revision", n.nativeRevision); text(s, "build", n.build); text(s, "product", n.product);
   text(s, "name", n.name); integer(s, "source_generation", n.sourceGeneration);
   text(s, "lua_version", LUA_VERSION_MAJOR "." LUA_VERSION_MINOR "." LUA_VERSION_RELEASE);
   if (n.hasIdentity) {

@@ -1338,6 +1338,9 @@ static void diagnosticCommands() {
            "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins shows loaded commands");
     e.replyLimit = limit;
     assert(command("!version").find("Version: MeshCore d92964352441; Lua 5.5.1; built fixture compilation") == 0);
+    strcpy(e.node.product, "aspen-0.1.21");
+    assert(command("!version").find("Version: aspen-0.1.21; MeshCore d92964352441; Lua 5.5.1; built fixture compilation") == 0);
+    e.node.product[0] = 0;
     assert(command("!uptime") == "Uptime: 49d 17h 2m 49s");
     auto status = command("!status");
     assert(status.find("WiFi disconnected") != std::string::npos &&

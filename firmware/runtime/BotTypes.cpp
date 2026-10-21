@@ -568,7 +568,7 @@ function plugins(page) return node.plugins(page) end
 function neighbors(page) return node.neighbors(page) end
 function admin(text) return node.admin(text or "bot help") end
 command("about","","Bot introduction and command help")
-command("version","","MeshCore/Lua versions and build date")
+command("version","","Product release, MeshCore and Lua versions, build date")
 command("uptime","","Elapsed time since boot")
 command("status","","Bot readiness, radio roles and WiFi")
 command("signal","","Received signal strength and repeater hops")
@@ -645,6 +645,9 @@ bool formatBotDiagnostic(const BotEvent &e, const char *name, unsigned page,
   } else if (!strcmp(name, "version")) {
     if (!n.available || !n.nativeRevision[0] || !n.build[0])
       size = snprintf(output, capacity, "Error: build metadata unavailable");
+    else if (n.product[0])
+      size = snprintf(output, capacity, "Version: %s; MeshCore %s; Lua %s; built %s",
+                      n.product, n.nativeRevision, luaVersion, n.build);
     else size = snprintf(output, capacity, "Version: MeshCore %s; Lua %s; built %s",
                          n.nativeRevision, luaVersion, n.build);
   } else if (!strcmp(name, "uptime")) {

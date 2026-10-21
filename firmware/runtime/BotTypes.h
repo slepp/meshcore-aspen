@@ -169,7 +169,7 @@ struct BotNodeSnapshot {
   bool rolesKnown = false, wifiKnown = false, wifiConnected = false;
   uint8_t selectedRoles = 0, readyRoles = 0, publicKey[32]{};
   uint64_t uptimeMs = 0;
-  char nativeRevision[13]{}, build[24]{}, name[33]{};
+  char nativeRevision[13]{}, build[24]{}, name[33]{}, product[20]{};
   uint32_t sourceGeneration = 0;
 };
 struct BotAirSnapshot {

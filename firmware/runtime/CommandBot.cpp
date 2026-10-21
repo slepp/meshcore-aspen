@@ -8,6 +8,9 @@
 #include "AdaptiveAdmission.h"
 #include "Config.h"
 #include "BuildClock.h"
+#ifndef ONCHIP_PRODUCT_VERSION
+#define ONCHIP_PRODUCT_VERSION ""
+#endif
 #include "RoleStorage.h"
 #include "ReplyRouting.h"
 #include "BotLearnedState.h"
@@ -3889,6 +3892,8 @@ void CommandBot::nodeSnapshot(BotNodeSnapshot &snapshot) const {
   snapshot.ready = sourceReady() && !core_->administratorBlocked && !sourceStartupBlocked_;
   snapshot.fault = status_.fault[0] != 0 || adaptivePolicyFault_ || sourceStartupBlocked_;
   strcpy(snapshot.nativeRevision, ONCHIP_NATIVE_REVISION);
+  static_assert(sizeof(ONCHIP_PRODUCT_VERSION) <= sizeof(snapshot.product), "product identity exceeds BotNodeSnapshot::product");
+  strcpy(snapshot.product, ONCHIP_PRODUCT_VERSION);
   strcpy(snapshot.build, __DATE__ " " __TIME__);
   snprintf(snapshot.name, sizeof(snapshot.name), "%s", core_ ? core_->meshPolicy.name : status_.name);
   snapshot.sourceGeneration = worker_.sourceGeneration();

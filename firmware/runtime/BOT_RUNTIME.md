@@ -967,7 +967,7 @@ without resetting role identities, channels, destinations or airtime settings.
 | `!find-best-path PREFIX` | Aspen/native host: compare up to three distinct routes with two probes each; report delivery and mean latency, retaining the learned route unless a candidate improves it |
 | `!trace [width:hex]` | Sends a native **direct** TRACE and awaits its correlated return for up to five seconds; reports native quarter-dB SNR samples or an explicit failure/timeout. Explicit native route widths are 1/2/4/8 bytes; width 3 is rejected. Inferred routes use only ordinary 1/2-byte paths |
 | `!about` | Bot introduction and pointers to command help and loaded commands |
-| `!version` | Upstream MeshCore revision, linked Lua version and compilation date/time |
+| `!version` | Product release (`aspen-0.1.21`, `pine-0.1.5`, `willow-0.0.13`), upstream MeshCore revision, linked Lua version and compilation date/time. Builds without a product identity omit the first item |
 | `!uptime` | Boot uptime snapshot, extended across the 32-bit millisecond clock rollover |
 | `!status` | Bot readiness and faults, ready/selected role counts, waiting role names and WiFi connection state |
 | `!signal` | This request's measured RSSI/SNR and comma-separated repeater hashes; local reflection and missing measurements are identified |
@@ -1196,7 +1196,7 @@ The firmware-supplied read-only `ctx` contains metadata, not command arguments:
 - `node.available`, `public_key` (only with an identity), `enabled`, `ready`,
   `fault` (boolean only), `roles_known`, `selected_roles`, `ready_roles`,
   `wifi_known`, `wifi_connected`, `battery_available` (false), `uptime_ms`,
-  `native_revision`, `build`, `name`, `source_generation`, and `lua_version`.
+  `native_revision`, `build`, `product`, `name`, `source_generation`, and `lua_version`.
 - `air.available`, `transmitting` (aggregate), `queued`, `aggregate_queued`,
   `generation`, `configuration_generation`, `captured_ms`, `credit_ms`,
   `aggregate_credit_ms`, `rf_ms`, `aggregate_rf_ms`, `successes`, `failures`,

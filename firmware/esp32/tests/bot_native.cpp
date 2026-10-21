@@ -3994,7 +3994,9 @@ static void native_diagnostics() {
          "Mesh command bot; !help lists commands; !help NAME shows usage; !plugins shows loaded commands");
   const auto version = f.command(first, "!version");
   BotNodeSnapshot snapshot; f.bot.nodeSnapshot(snapshot);
-  assert(version.find(std::string("Version: MeshCore ") + snapshot.nativeRevision + "; Lua 5.5.1; built ") == 0 &&
+  assert(snapshot.product[0] && version.find(std::string("Version: ") + snapshot.product + "; MeshCore " +
+                                             snapshot.nativeRevision + "; Lua 5.5.1; built ") == 0 &&
+         version.size() <= 151 &&
          version.find("image hash unavailable") == std::string::npos);
   assert(f.command(first, "!uptime").find("Uptime:") == 0);
   RadioDashboard::RoleStatus botStatus; f.bot.dashboardStatus(botStatus);
