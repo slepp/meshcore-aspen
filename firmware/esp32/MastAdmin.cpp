@@ -574,6 +574,10 @@ void MastAdmin::roleCommand(char *command, Reply &reply, Transport transport,
           strcpy(reply.text, "Error: channel name must be printable ASCII without NUL"); return;
         }
       if (!nonzero) { strcpy(reply.text, "Error: channel key must be nonzero; use off to disable"); return; }
+      if (transport == Transport::AuthenticatedWeb) {
+        clearSecret(key, sizeof(key));
+        strcpy(reply.text, "Error: channel keys require encrypted Management RF; web/Lua denied"); return;
+      }
     }
     bool ok;
     if (bot) {

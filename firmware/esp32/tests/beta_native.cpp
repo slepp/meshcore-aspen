@@ -2350,6 +2350,15 @@ static void runtime_role_configuration() {
     assert(channel.find("name=Ops key-id=") != std::string::npos &&
            channel.find(encode(channelKey, sizeof(channelKey))) == std::string::npos);
     assert(f.action("role channel companion 99 off").find("Error:") == 0);
+    {
+      // The plaintext web transport must not carry a channel key.
+      const std::string other = " 4f7073 " + std::string(32, 'a');
+      MastAdmin::Reply reply;
+      f.management.admin().execute(("role channel companion 2" + other).c_str(), reply, 0,
+                                   MastAdmin::Transport::AuthenticatedWeb);
+      assert(strstr(reply.text, "web/Lua denied"));
+      assert(f.action("role channel companion 2").find("name=off ") != std::string::npos);
+    }
     assert(f.action("role channel companion 1 4f7073 bad").find("Error:") == 0);
     filesystem_test::failOpen = true;
     assert(f.action("role name companion Should Not Apply").find("Error:") == 0);
