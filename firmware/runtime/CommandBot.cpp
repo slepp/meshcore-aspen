@@ -3638,7 +3638,12 @@ void CommandBot::radioPolicyCommand(const char *command, char *reply, size_t cap
   snprintf(reply, capacity, core_ ? "Saved and applied native command policy; in-flight work may finish or fail" :
                                   "Saved native command policy; applied on next bot startup");
 }
-bool CommandBot::flushLearnedState() { return !core_ || core_->checkpointLearned(true); }
+bool CommandBot::learnedClockWait() const { return core_ && core_->learnedPending && core_->learned.dirty; }
+bool CommandBot::flushLearnedState() {
+  // Saved records stay quarantined until trusted UTC arrives, so there is nothing
+  // safe to write. A restart or update must not be refused for that.
+  return !core_ || learnedClockWait() || core_->checkpointLearned(true);
+}
 void CommandBot::stop() {
   if (core_ && !flushLearnedState()) fault("Learned contacts checkpoint failed before bot stop");
   if (core_) {

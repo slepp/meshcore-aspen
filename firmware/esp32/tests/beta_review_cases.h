@@ -405,9 +405,10 @@ static void selected_source_boot_health() {
       identity_test::durable = selected;
       filesystem_test::files = selectedFiles;
       if (failure == 0) filesystem_test::files.erase(path);
-      if (failure == 1) filesystem_test::failOpen = true;
+      // Fail the selected Lua and Wasm files; management replay storage must stay readable.
+      if (failure == 1) filesystem_test::failOpenPrefix = "/command-bot/";
       if (failure == 2) filesystem_test::files[path].push_back(' ');
-      if (failure == 3) filesystem_test::readLimit = 0;
+      if (failure == 3) { filesystem_test::readLimitPrefix = "/command-bot/"; filesystem_test::readLimit = 0; }
       if (failure == 4) {
         auto &bytes = filesystem_test::files[path];
         const char bad[] = "--@meshcore-bot/9;";
@@ -434,8 +435,8 @@ static void selected_source_boot_health() {
         f.radio.sent.clear();
         f.mux.received(ping.data(), ping.size(), -90, 4); f.step();
         assert(peer.replies(f.bot.publicKey(), f.radio).empty());
-        filesystem_test::failOpen = false;
-        filesystem_test::readLimit = SIZE_MAX;
+        filesystem_test::failOpenPrefix.clear();
+        filesystem_test::readLimit = SIZE_MAX; filesystem_test::readLimitPrefix.clear();
         filesystem_test::files[path] = selectedFiles.at(path);
         if (failure >= 6) identity_test::durable = selected;
         const auto retry = f.action((selector + "retry").c_str());

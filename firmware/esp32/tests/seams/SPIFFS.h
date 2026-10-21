@@ -7,11 +7,15 @@
 namespace filesystem_test {
 inline std::map<std::string, std::vector<uint8_t>> files;
 inline bool failRemove = false, failOpen = false;
+// Fails opens under this path prefix, leaving every other file readable.
+inline std::string failOpenPrefix;
 inline bool failReadAfterRename = false;
 inline unsigned directoryReads = 0;
 inline size_t maxPathLength = std::numeric_limits<size_t>::max();
 inline size_t writeLimit = std::numeric_limits<size_t>::max();
 inline std::atomic<size_t> readLimit{std::numeric_limits<size_t>::max()};
+// Restricts readLimit to paths under this prefix when set.
+inline std::string readLimitPrefix;
 inline unsigned long readDelayMs = 0;
 inline unsigned long existsDelayMs = 0;
 inline size_t bytesRead = 0, readCalls = 0, largestRead = 0;
@@ -54,7 +58,8 @@ public:
     if (!opened)
       return 0;
     const auto &bytes = files.at(filename);
-    size = std::min(std::min(size, bytes.size() - offset), readLimit.load());
+    const bool limited = readLimitPrefix.empty() || !filename.compare(0, readLimitPrefix.size(), readLimitPrefix);
+    size = std::min(std::min(size, bytes.size() - offset), limited ? readLimit.load() : std::numeric_limits<size_t>::max());
     if (!size)
       return 0;
     memcpy(data, bytes.data() + offset, size);
@@ -115,7 +120,7 @@ class Impl : public StorageDriver {
 public:
   fs::FileImplPtr open(const char *path, const char *mode, bool) override {
     checkpoint(mode[0] == 'w' ? "file.before-open-write" : "file.before-open-read");
-    if (failOpen || strlen(path) > maxPathLength)
+    if (failOpen || (!failOpenPrefix.empty() && !strncmp(path, failOpenPrefix.c_str(), failOpenPrefix.size())) || strlen(path) > maxPathLength)
       return {};
     const bool writable = mode[0] != 'r' || strchr(mode, '+');
     if (!writable && strcmp(path, "/") && !exists(path))

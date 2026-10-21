@@ -636,6 +636,10 @@ uint8_t BotWorker::invocationRuntimes(const BotEvent &event) const {
     if (event.runtimeMask) runtimes &= event.runtimeMask;
   } else {
     const auto *installed = storage_->active.manifest().find(event.name);
+    // A selected Lua or Wasm source that failed to load may override any bundled
+    // command, so bundled handlers wait with it. Owner administration stays available.
+    if (botReservedCommand(event.name) && strcmp(event.name, "admin") &&
+        (control_->deploymentBlocked[Lua].load() || control_->deploymentBlocked[Wasm].load())) return 0;
 #if ONCHIP_BOT_SEPARATE_DIAGNOSTICS
     if (botReservedCommand(event.name) && (!installed || botReservedCommand(installed->function)))
       return runtimeGeneration(Diagnostics) ? 1u << Diagnostics : 0;
