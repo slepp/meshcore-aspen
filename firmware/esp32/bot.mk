@@ -8,6 +8,9 @@ $(error ONCHIP_BOT_WASM must be 0 or 1)
 endif
 export ONCHIP_BOT_WASM
 BOT_BUILD := $(ROOT)/.tmp/onchip-bot-$(TEST_VARIANT)-wasm$(ONCHIP_BOT_WASM)
+# The native storage fixtures fsync every commit against the device's 2 s I/O
+# deadline. Prefer memory-backed storage when the checkout's filesystem has slow sync.
+BOT_STATE_ROOT ?= $(if $(wildcard /dev/shm),/dev/shm,$(ROOT)/.tmp)
 PLUGIN_SCHEMA ?= none
 PLUGIN_ROLLBACK ?= none
 BOT_LUA_NATIVE := $(BOT_BUILD)/lib/OnchipLua
@@ -497,7 +500,7 @@ bot-schedule-native-test: prepare bot-lua bot-prepare-phy
 		../runtime/BotWorker.cpp ../runtime/BotStore.cpp ../runtime/BotTimers.cpp ../runtime/BotReminders.cpp ../runtime/BotHttps.cpp ../runtime/BotNetworkConfig.cpp \
 		../runtime/BotVm.cpp $(BOT_WASM_SOURCE) ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp Clock.cpp $(BOT_LUA_OBJECTS) \
 		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o -lm -o $(BOT_BUILD)/bot-schedule-native
-	$(BOT_BUILD)/bot-schedule-native $(ROOT)/.tmp
+	$(BOT_BUILD)/bot-schedule-native $(BOT_STATE_ROOT)
 bot-kv-files-test: prepare bot-prepare-phy
 	@mkdir -p $(BOT_BUILD)
 	$(CXX) $(BOT_FLAGS) -I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
@@ -512,7 +515,7 @@ bot-kv-native-test: prepare bot-lua bot-prepare-phy
 		../runtime/BotWorker.cpp ../runtime/BotStore.cpp ../runtime/BotTimers.cpp ../runtime/BotReminders.cpp ../runtime/BotHttps.cpp ../runtime/BotNetworkConfig.cpp \
 		../runtime/BotVm.cpp $(BOT_WASM_SOURCE) ../runtime/BotUtilities.cpp ../runtime/BotTypes.cpp ../runtime/BotRegistry.cpp Clock.cpp $(BOT_LUA_OBJECTS) \
 		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o -lm -o $(BOT_BUILD)/bot-kv-native
-	$(BOT_BUILD)/bot-kv-native $(ROOT)/.tmp
+	$(BOT_BUILD)/bot-kv-native $(BOT_STATE_ROOT)
 bot-storage-test: prepare bot-lua bot-prepare-phy
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	$(CXX) $(BOT_FLAGS) -DONCHIP_CLOCK_BUILD_EPOCH=1767225600u \
