@@ -1077,8 +1077,9 @@ bool MastAdmin::passwordMatches(const char *password) {
   const char *expected = present ? record.password : mastPassword();
   const size_t n = strlen(expected), size = strlen(password);
   unsigned difference = unsigned(n ^ size) | unsigned(!n);
-  for (size_t i = 0; i < n; ++i)
-    difference |= uint8_t(expected[i]) ^ (i < size ? uint8_t(password[i]) : 0);
+  // Fixed width, so timing does not reveal the configured password length.
+  for (size_t i = 0; i < 16; ++i)
+    difference |= uint8_t(i < n ? expected[i] : 0) ^ uint8_t(i < size ? password[i] : 0);
   clearSecret(&record, sizeof(record));
   return difference == 0;
 }

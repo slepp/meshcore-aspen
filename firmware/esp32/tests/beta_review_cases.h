@@ -98,23 +98,28 @@ static void web_expiry_and_host() {
   TestHTTPServer server;
   assert(registerMastWeb(&server) == ESP_OK);
   const auto request = [&](const char *path, const std::string &body = "",
-                           const std::string &token = "", const std::string &host = "mast.test") {
+                           const std::string &token = "", const std::string &host = "mast.test",
+                           const std::string &origin = "") {
     httpd_req_t r;
     r.body = body; r.content_len = body.size();
-    r.headers["Host"] = host; r.headers["Origin"] = "http://" + host;
+    r.headers["Host"] = host; r.headers["Origin"] = origin.empty() ? "http://" + host : origin;
     if (!token.empty()) r.headers["X-Mast-Session"] = token;
     assert(server.routes.at(path).handler(&r) == ESP_OK);
     return r;
   };
   assert(request("/admin", "", "", "attacker.test").status == "403 Forbidden");
   assert(request("/admin/login", "mast-pass-12", "", "attacker.test").status == "403 Forbidden");
+  assert(request("/admin", "", "", "mast.test:80", "https://mast.test:80").status == "200 OK");
+  assert(request("/admin", "", "", "mast.test:80", "https://other.test").status == "403 Forbidden");
   assert(request("/admin", "", "", "mast.test:80").status == "200 OK");
   assert(request("/admin", "", "", "mast.test:81").status == "403 Forbidden");
   for (uint32_t start : {0x7fffff00u, 0xfffff000u}) {
     timeMs = start;
     serviceMastWeb(f.management.admin());
+    const auto delaysBefore = mastWebFailedLoginDelaysForTest();
     for (unsigned i = 0; i < 20; ++i)
       assert(request("/admin/login", "not-the-password").status == "403 Forbidden");
+    assert(mastWebFailedLoginDelaysForTest() - delaysBefore == 20);
     const auto login = request("/admin/login", "mast-pass-12");
     assert(login.status == "200 OK" && login.response.size() == 32);
     const auto token = login.response;

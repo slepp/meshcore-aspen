@@ -31,6 +31,25 @@
 namespace onchip {
 #if defined(ARDUINO_ARCH_ESP32) || defined(MESHCORE_MAST_WEB_TEST)
 namespace {
+// Wrong passwords wait here before the 403. esp_httpd serves one request at a
+// time, so this caps guessing at a few attempts per second without storing
+// lockout state that another LAN host could use against the owner.
+constexpr uint32_t FailedLoginDelayMs = 300;
+#ifdef MESHCORE_MAST_WEB_TEST
+std::atomic<uint32_t> failedLoginDelays{0};
+#endif
+void failedLoginDelay() {
+#ifdef MESHCORE_MAST_WEB_TEST
+  ++failedLoginDelays;
+#else
+  vTaskDelay(pdMS_TO_TICKS(FailedLoginDelayMs));
+#endif
+}
+bool sameToken(const char *a, const char *b) {
+  unsigned difference = 0;
+  for (unsigned i = 0; i < 32; ++i) difference |= uint8_t(a[i] ^ b[i]);
+  return !difference;
+}
 void pauseHTTP() {
 #ifdef MESHCORE_MAST_WEB_TEST
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -86,7 +105,10 @@ bool origin(httpd_req_t *request) {
   char value[128], expected[128];
   if (httpd_req_get_hdr_value_str(request, "Origin", value, sizeof(value)) != ESP_OK ||
       httpd_req_get_hdr_value_str(request, "Host", host, sizeof(host)) != ESP_OK) return false;
+  // An HTTPS reverse proxy that preserves Host makes the browser send https://.
   snprintf(expected, sizeof(expected), "http://%s", host);
+  if (!strcmp(value, expected)) return true;
+  snprintf(expected, sizeof(expected), "https://%s", host);
   return !strcmp(value, expected);
 }
 bool body(httpd_req_t *request, char *text, size_t capacity) {
@@ -111,9 +133,7 @@ bool authenticated(httpd_req_t *request) {
   if (httpd_req_get_hdr_value_str(request, "X-Mast-Session", token, sizeof(token)) != ESP_OK ||
       strlen(token) != 32) return false;
   for (const auto &session : sessions) {
-    unsigned difference = 0;
-    for (unsigned i = 0; i < 32; ++i) difference |= uint8_t(token[i] ^ session.token[i]);
-    if (session.used && !difference) return true;
+    if (session.used && sameToken(token, session.token)) return true;
   }
   return false;
 }
@@ -124,12 +144,16 @@ esp_err_t login(httpd_req_t *request) {
   char password[16];
   const bool valid = body(request, password, sizeof(password)) && MastAdmin::passwordMatches(password);
   memset(password, 0, sizeof(password));
-  if (!valid)
+  if (!valid) {
+    failedLoginDelay();
     return error(request, "403 Forbidden", "Login denied");
-  if (lastLogin && uint32_t(now - lastLogin) < 1000)
-    return error(request, "429 Too Many Requests", "Wait before login");
+  }
   Session *slot = nullptr;
   std::unique_lock<std::mutex> lock(sessionsMutex);
+  if (lastLogin && uint32_t(now - lastLogin) < 1000) {
+    lock.unlock();
+    return error(request, "429 Too Many Requests", "Wait before login");
+  }
   expireSessions();
   for (auto &session : sessions)
     if (!session.used) { slot = &session; break; }
@@ -140,10 +164,10 @@ esp_err_t login(httpd_req_t *request) {
   uint8_t random[16]; esp_fill_random(random, sizeof(random));
   for (unsigned i = 0; i < 16; ++i) snprintf(slot->token + 2 * i, 3, "%02x", random[i]);
   slot->issued = now; slot->used = true;
+  lastLogin = now ? now : 1;
   char token[33];
   memcpy(token, slot->token, sizeof(token));
   lock.unlock();
-  lastLogin = now ? now : 1;
   headers(request);
   return httpd_resp_sendstr(request, token);
 }
@@ -236,7 +260,7 @@ esp_err_t logout(httpd_req_t *request) {
   {
     std::lock_guard<std::mutex> lock(sessionsMutex);
     for (auto &session : sessions)
-      if (!strcmp(token, session.token)) session = {};
+      if (session.used && strlen(token) == 32 && sameToken(token, session.token)) session = {};
   }
   headers(request);
   return httpd_resp_sendstr(request, "Logged out");
@@ -354,6 +378,7 @@ esp_err_t backupDownload(httpd_req_t *request) {
 } // namespace
 #ifdef MESHCORE_MAST_WEB_TEST
 bool mastWebPendingForTest() { return state.load() == Pending; }
+uint32_t mastWebFailedLoginDelaysForTest() { return failedLoginDelays.load(); }
 #endif
 void serviceMastWebRecovery() {
   recoveryOnly = true;

@@ -29,6 +29,11 @@ private `key ROLE HEX128` imports, telemetry `endpoint ca/token` and
 `bot https ca/token`. Use encrypted Management RF for ESP32 secret provisioning;
 backend authentication and transport restrictions still apply.
 
+A wrong password waits about 300 ms before the 403 and never locks out the owner.
+A session lasts ten minutes from login with no refresh; sign in again when it
+expires. Behind an HTTPS reverse proxy that preserves the `Host` header, the
+page's `https://` origin is accepted.
+
 ## Choose the operation
 
 | Section | What you can do | What to inspect afterward |

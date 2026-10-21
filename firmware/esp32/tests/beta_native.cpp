@@ -3793,6 +3793,11 @@ int main(int argc, char **argv) {
     corrupt_replay_keeps_services();
     return 0;
   }
+  if (argc == 2 && !strcmp(argv[1], "--web-login-test")) {
+    assert(saveRoleProfile({0}) && saveBotEnabled(true));
+    web_expiry_and_host();
+    return 0;
+  }
   if (argc == 2 && !strcmp(argv[1], "--web-admin-test")) {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     interrupted_upload();
