@@ -1094,6 +1094,12 @@ static void commands_and_packets() {
   f.deliver(damaged); f.step();
   assert(peer.replies(f.bot.publicKey(), f.radio).empty());
   assert(f.bot.counters().malformed >= 2);
+  {
+    // Over-air malformed packets are counted; they must not set or replace a fault.
+    RadioDashboard::RoleStatus status;
+    f.bot.dashboardStatus(status);
+    assert(!status.fault[0]);
+  }
   timeMs += 61000; f.radio.sent.clear();
   const auto mt = peer.command(f.bot.publicKey(), "!mt 1", 1, {1});
   for (unsigned path = 1; path <= 9; ++path) {

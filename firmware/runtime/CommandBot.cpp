@@ -560,15 +560,15 @@ struct CommandBot::Core : mesh::Mesh {
   mesh::DispatcherAction onRecvPacket(mesh::Packet *p) override {
     const unsigned type = p->getPayloadType();
     if (p->getPayloadVer() != PAYLOAD_VER_1 ||
-        p->path_len > 255 || !mesh::Packet::isValidPathLen(p->path_len)) {
+        !mesh::Packet::isValidPathLen(p->path_len)) {
+      // Any node on the PHY can send these; count them without replacing a real fault.
       ++stats.malformed;
-      owner.fault("Invalid command packet version/path");
       return ACTION_RELEASE;
     }
     // Reject malformed ciphertext before entering the pinned native decoder.
     if (type == PAYLOAD_TYPE_ADVERT) {
       if (p->payload_len < 32 + 4 + 64 || p->payload_len > 132) {
-        ++stats.malformed; owner.fault("Malformed bot contact advert");
+        ++stats.malformed;
         return ACTION_RELEASE;
       }
     } else if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_PATH || type == PAYLOAD_TYPE_REQ ||
@@ -577,7 +577,7 @@ struct CommandBot::Core : mesh::Mesh {
       const unsigned overhead = type == PAYLOAD_TYPE_GRP_TXT ? 3 : 4;
       if (p->payload_len < overhead + 16 || p->payload_len > MAX_PACKET_PAYLOAD ||
           (p->payload_len - overhead) % 16) {
-        ++stats.malformed; owner.fault("Malformed encrypted bot packet");
+        ++stats.malformed;
         return ACTION_RELEASE;
       }
       if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_GRP_TXT) {
@@ -591,13 +591,13 @@ struct CommandBot::Core : mesh::Mesh {
       if (!p->isRouteDirect() || p->payload_len < 9 || p->payload_len > MAX_PACKET_PAYLOAD ||
           p->path_len >= MAX_PATH_SIZE || p->payload[8] > 3 ||
           (p->payload_len - 9) % (1u << p->payload[8])) {
-        ++stats.malformed; owner.fault("Malformed native TRACE"); return ACTION_RELEASE;
+        ++stats.malformed; return ACTION_RELEASE;
       }
     } else if (type == PAYLOAD_TYPE_ACK) {
       // A local copy must not occupy the RF ACK dedup entry.
       if (p->_localReflection) return ACTION_RELEASE;
       if (p->payload_len < 4 || p->payload_len > MAX_PACKET_PAYLOAD) {
-        ++stats.malformed; owner.fault("Malformed native ACK"); return ACTION_RELEASE;
+        ++stats.malformed; return ACTION_RELEASE;
       }
     } else {
       return ACTION_RELEASE;

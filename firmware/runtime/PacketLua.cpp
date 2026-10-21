@@ -221,12 +221,12 @@ struct PacketLua::Impl : VmHeap {
       return s.fail(state, "Packet composition failed; inspect identity, channel, envelope and capability");
     lua_pushlstring(state, reinterpret_cast<const char *>(result), size); return 1;
   }
-  static void reportName(lua_State *state, int table, const char *key, char *out) {
+  static void reportName(Impl &s, lua_State *state, int table, const char *key, char *out) {
     lua_getfield(state, table, key);
     size_t length;
     const char *text = luaL_checklstring(state, -1, &length);
     if (!length || length >= MP_REPORT_NAME || memchr(text, 0, length))
-      luaL_error(state, "Packet report name must contain 1..23 bytes without NUL");
+      s.fail(state, "Packet report name must contain 1..23 bytes without NUL", Fault::Bounds);
     memcpy(out, text, length);
     lua_pop(state, 1);
   }
@@ -234,7 +234,7 @@ struct PacketLua::Impl : VmHeap {
     auto &s = self(state); s.native(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     auto &r = s.reportScratch; r = {}; r.version = MP_REPORT_VERSION;
-    reportName(state, 1, "name", r.name);
+    reportName(s, state, 1, "name", r.name);
     lua_getfield(state, 1, "fields"); luaL_checktype(state, -1, LUA_TTABLE);
     r.field_count = lua_rawlen(state, -1);
     if (!r.field_count || r.field_count > MP_REPORT_FIELDS)
@@ -254,7 +254,7 @@ struct PacketLua::Impl : VmHeap {
       return s.fail(state, "Packet report permits at most 16 rows", Fault::Bounds);
     for (unsigned i = 0; i < r.row_count; ++i) {
       lua_rawgeti(state, -1, i + 1); luaL_checktype(state, -1, LUA_TTABLE);
-      reportName(state, lua_gettop(state), "label", r.rows[i].label);
+      reportName(s, state, lua_gettop(state), "label", r.rows[i].label);
       lua_getfield(state, -1, "values"); luaL_checktype(state, -1, LUA_TTABLE);
       if (lua_rawlen(state, -1) != r.field_count)
         return s.fail(state, "Packet report row values must match its fields", Fault::Bounds);
