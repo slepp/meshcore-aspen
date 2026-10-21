@@ -65,6 +65,11 @@ int main() {
   assert(command("uri") == initial.uri);
   assert(command("status").find(initial.password) == std::string::npos);
   assert(command("status").find("warning=credentials-sent-unencrypted") != std::string::npos);
+  const auto endsWith = [](const std::string &text, const char *suffix) {
+    const size_t length = strlen(suffix);
+    return text.size() >= length && !text.compare(text.size() - length, length, suffix);
+  };
+  assert(endsWith(command("status"), "; saved changes apply after reboot"));
   command("uri mqtt://replacement:11883");
   command("format 1");
   command("iata YEG");
@@ -84,6 +89,13 @@ int main() {
   assert(loadObserverConfig(saved));
   assert(strlen(saved.ca) == 4096 && strlen(saved.password) == 256 && saved.format == 1);
   assert(!strcmp(saved.name, "Saved Aspen observer"));
+  reboot();
+  {
+    // Widest cleartext status: 4096-byte CA, IATA and basic auth must keep the reboot guidance.
+    const std::string status = command("status");
+    assert(status.find("iata=YEG auth=basic ca-bytes=4096 warning=credentials-sent-unencrypted") != std::string::npos);
+    assert(endsWith(status, "; saved changes apply after reboot"));
+  }
   assert(filesystem_test::files.size() == 2);
   reboot();
   expect(saved);

@@ -219,7 +219,7 @@ void observerConfigCommand(const char *command, char *reply, size_t capacity) {
              store->active.format, store->active.iata,
              store->active.audience[0] ? "jwt" : store->active.username[0] ? "basic" : "none",
              unsigned(strlen(store->active.ca)),
-             cleartext ? " warning=credentials-sent-unencrypted (use mqtts:// or wss:// beyond a trusted LAN)" : "");
+             cleartext ? " warning=credentials-sent-unencrypted" : "");
     return;
   }
   if (!strcmp(command, "help")) {
