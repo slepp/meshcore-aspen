@@ -407,6 +407,17 @@ static void native_channel_policy() {
   assert(group("operator: !ping", "#second") == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "Private", privateChannel.secret) == std::vector<std::string>{"Pong"});
   assert(group("operator: !ping", "Public", publicChannel.secret).empty());
+  {
+    // Channel keys of public hashtags are known to anyone, so policy denials and
+    // malformed channel text count in stats and must not occupy the fault slot.
+    const auto malformedBefore = f.bot.counters().malformed;
+    assert(group("no-space:x", "#first", nullptr, false).empty());
+    assert(group("bad\x01nick: !ping", "#first", nullptr, false).empty());
+    assert(f.bot.counters().malformed == malformedBefore + 2);
+    RadioDashboard::RoleStatus status;
+    f.bot.dashboardStatus(status);
+    assert(!status.fault[0]);
+  }
   assert(audit.find("phase=rejected") != std::string::npos &&
          audit.find("channel=\"Public\" outcome=policy") != std::string::npos);
   policy("access 2 ping 12");

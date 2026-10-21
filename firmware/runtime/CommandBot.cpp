@@ -750,7 +750,8 @@ struct CommandBot::Core : mesh::Mesh {
                      uint32_t(millis() - contact.heard) >= (BotLearnedState::FreshRouteSeconds * 1000)))))
         slot = &contact;
     }
-    if (!slot) { reject("Bot contact table full (16)"); return; }
+    // Any node can advertise a new identity, so a full table counts without taking the fault slot.
+    if (!slot) { ++stats.rejected; return; }
     if (!slot->used || !slot->id.matches(id)) *slot = {};
     slot->used = true;
     slot->observed = true;
@@ -2720,7 +2721,7 @@ struct CommandBot::Core : mesh::Mesh {
       return;
     }
     if (type != PAYLOAD_TYPE_TXT_MSG || size < 6 || (data[4] >> 2) != 0) {
-      ++stats.malformed; owner.fault("Bot accepts plain native text only"); return;
+      ++stats.malformed; return;
     }
     const auto *end = static_cast<const uint8_t *>(memchr(data + 5, 0, size - 5));
     const size_t length = end ? size_t(end - data - 5) : size - 5;
@@ -2730,7 +2731,7 @@ struct CommandBot::Core : mesh::Mesh {
       acknowledge(packet, sender, secret, data, length, size);
     if (!length) return;
     if (length > BotReplyLimit) {
-      ++stats.malformed; owner.fault("Bot native text exceeds capacity"); return;
+      ++stats.malformed; return;
     }
 #if defined(MESHCORE_HOST_BOT_SOURCE) && MESHCORE_HOST_BOT_SOURCE
     ownerMessage(sender, packet, data, length);
@@ -2739,7 +2740,7 @@ struct CommandBot::Core : mesh::Mesh {
       if (packet->_localReflection || sender.id.matches(self_id.pub_key)) return;
       for (size_t i = 0; i < length; ++i)
         if (data[5 + i] < 32 || data[5 + i] > 126) {
-          ++stats.malformed; owner.fault("Follow-up DM requires printable text"); return;
+          ++stats.malformed; return;
         }
       uint8_t hash[16];
       uint32_t timestamp;
@@ -2809,7 +2810,7 @@ struct CommandBot::Core : mesh::Mesh {
     // Retry flags and encrypted block padding are deliberately excluded.
     uint8_t canonical[4 + BotTextLimit]{};
     if (length > sizeof(canonical) - 4) {
-      ++stats.malformed; owner.fault("Bot command text exceeds capacity"); return;
+      ++stats.malformed; return;
     }
     memcpy(canonical, data, 4); memcpy(canonical + 4, data + 5, length);
     mesh::Utils::sha256(event.request, sizeof(event.request), canonical, length + 4,
@@ -2829,19 +2830,19 @@ struct CommandBot::Core : mesh::Mesh {
       }
     if (type != PAYLOAD_TYPE_GRP_TXT || size < 6 || (data[4] >> 2) != 0 ||
         membership == BotRadioPolicy::ChannelLimit) {
-      ++stats.malformed; owner.fault("Malformed native channel text"); return;
+      ++stats.malformed; return;
     }
     const auto *end = static_cast<const uint8_t *>(memchr(data + 5, 0, size - 5));
     const size_t length = end ? size_t(end - data - 5) : size - 5;
     const auto *colon = static_cast<const uint8_t *>(memchr(data + 5, ':', length));
     if (!colon || colon == data + 5 || size_t(colon - data - 5) > 31 ||
         size_t(colon - data - 5) + 2 >= length || colon[1] != ' ') {
-      ++stats.malformed; owner.fault("Malformed native channel sender prefix"); return;
+      ++stats.malformed; return;
     }
     const size_t nicknameSize = size_t(colon - data - 5);
     for (size_t i = 0; i < nicknameSize; ++i)
       if (data[5 + i] < 32 || data[5 + i] == 127) {
-        ++stats.malformed; owner.fault("Invalid channel nickname"); return;
+        ++stats.malformed; return;
       }
     BotEvent event{};
     event.local = packet->_localReflection;
@@ -2876,7 +2877,7 @@ struct CommandBot::Core : mesh::Mesh {
     else if (!event.local && meshPolicy.channelWait && messageSize <= BotReplyLimit) {
       bool printable = true;
       for (size_t i = 0; i < messageSize; ++i) printable = printable && message[i] >= 32 && message[i] <= 126;
-      if (!printable) { ++stats.malformed; owner.fault("Channel follow-up requires printable text"); return; }
+      if (!printable) { ++stats.malformed; return; }
       for (auto &job : invocations) if (job.used && !job.cancelled && job.event.channelVerified &&
                                        job.event.meshGrant == meshGrant && job.event.channelWait &&
                                        !memcmp(job.event.channelId, event.channelId, 32)) {
@@ -2939,7 +2940,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!slot) { reject("Bot dedup capacity exhausted"); return; }
     const auto syntaxError = [&](const char *message) {
       audit(event, 0, "rejected", "syntax");
-      ++stats.malformed; reject(message);
+      ++stats.malformed; ++stats.rejected;
       if (!sender || event.local || sender->id.matches(self_id.pub_key)) return;
       if (!(policy.flags(event, event.name) &
             (event.targeted ? BotRadioPolicy::AddressedReply : BotRadioPolicy::BareReply))) return;
@@ -2995,7 +2996,7 @@ struct CommandBot::Core : mesh::Mesh {
     if (!(event.policyFlags & (event.targeted ? BotRadioPolicy::AddressedExecute :
                                              BotRadioPolicy::BareExecute))) {
       audit(event, 0, "rejected", "policy");
-      reject("Native command policy denies this command/context"); return;
+      ++stats.rejected; return;
     }
     if (event.channel[0] && !event.targeted && !botReadOnlyQuery(event.name) &&
         strcmp(event.name, "trace") && strcmp(event.name, "find-path")) {
@@ -3013,7 +3014,7 @@ struct CommandBot::Core : mesh::Mesh {
     }
     if (administratorBlocked && !botReservedCommand(event.name)) {
       audit(event, 0, "rejected", "source-unavailable");
-      reject("Command source unavailable; use mast recovery"); return;
+      ++stats.rejected; return;
     }
     Invocation *invocation = nullptr;
     for (auto &candidate : invocations) {
