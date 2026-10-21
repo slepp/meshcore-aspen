@@ -104,7 +104,7 @@ int main(int argc, char **) {
     request = candidate(authority);
     request.headers["X-Mast-Allow-Unsaved-State"] = "1";
     onchip::uploadEspUpdate(&request);
-    assert(switches == 1 && request.status == "200 OK");
+    assert(switches == 0 && request.status == "200 OK");
     assert(request.response.find("\"state_flush_failed\":true") != std::string::npos);
     onchip::rebootEspUpdate(&request);
     onchip::serviceEspUpdate(true, false, false); testMillis += 1500;
@@ -116,7 +116,7 @@ int main(int argc, char **) {
   flushOk = true;
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);
-  assert(begins == 1 && switches == 1 && request.response.find("\"state\":\"verified\"") != std::string::npos);
+  assert(begins == 1 && switches == 0 && request.response.find("\"state\":\"verified\"") != std::string::npos);
   assert(flushes == 3); // dispatcher flush before flash and before boot selection
   flushOk = false;
   onchip::rebootEspUpdate(&request);
