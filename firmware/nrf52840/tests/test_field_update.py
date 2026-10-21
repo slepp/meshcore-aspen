@@ -85,6 +85,12 @@ class FieldUpdateTests(unittest.TestCase):
             write(extra="bootloader.bin")
             with self.assertRaises(ValueError):
                 ble_field.validate_package(path)
+            with zipfile.ZipFile(path, "w") as z:
+                z.writestr("manifest.json", b" " * (1 << 20))
+                z.writestr("firmware.bin", binary)
+                z.writestr("firmware.dat", init)
+            with self.assertRaisesRegex(ValueError, "manifest.json is larger"):
+                ble_field.validate_package(path)
             manifest["softdevice_bootloader"] = {}
             write()
             with self.assertRaises(ValueError):

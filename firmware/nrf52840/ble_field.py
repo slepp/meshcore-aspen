@@ -27,6 +27,10 @@ def validate_package(path, *, application_start=APP_START, softdevice_id=0x123):
         if len(names) != len(set(names)) or set(names) != {
                 "firmware.bin", "firmware.dat", "manifest.json"}:
             raise ValueError("ZIP must contain only firmware.bin, firmware.dat and manifest.json")
+        limits = {"firmware.bin": APP_LIMIT, "firmware.dat": 64, "manifest.json": 4096}
+        for info in archive.infolist():
+            if info.file_size > limits[info.filename]:
+                raise ValueError(f"{info.filename} is larger than a Pine update package allows")
         manifest = json.loads(archive.read("manifest.json"))["manifest"]
         if set(manifest) != {"application", "dfu_version"} or manifest["dfu_version"] != 0.5:
             raise ValueError("Use the Adafruit Nordic legacy app-only ZIP, not Secure DFU/fullflash")

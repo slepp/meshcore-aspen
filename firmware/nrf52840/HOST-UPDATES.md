@@ -6,6 +6,10 @@ Pine product and selected hardware, application layout, dependencies, file hash
 and inner Legacy DFU package. The tool uploads only the application. Legacy 0.6.1 DFU applications must
 end by `0xEA000`; saved InternalFS remains at `0xED000`.
 
+`pine_update.py` targets the XIAO and SenseCAP Solar boards. For a RAK4631,
+check the package with `ble_field.py --board rak4631` and update it from a phone
+with Legacy DFU; see [RAK4631.md](RAK4631.md).
+
 **Signature enforcement is on the host.** The installed Legacy DFU bootloader
 checks CRC, not this signature. It has no transfer timeout or automatic rollback.
 This is not secure boot or device-enforced signed DFU. Keep USB recovery
