@@ -2643,7 +2643,9 @@ static void runtime_role_passwords() {
       records.erase("/mast-config-a.bin");
       records.erase("/mast-config-b.bin");
       // Signed role adverts can independently update the companion contact cache.
+      // Companion contact checkpoints are runtime data; they keep the previous snapshot beside the current one.
       records.erase("/companion/contacts3");
+      records.erase("/companion/contacts3-prev");
       for (auto entry = records.begin(); entry != records.end();)
         if (entry->first.find("/companion/bl/") == 0) entry = records.erase(entry);
         else ++entry;
@@ -3559,7 +3561,9 @@ static void cross_runtime_source_credentials() {
       auto records = filesystem_test::files;
       records.erase("/mast-replay-a.bin");
       records.erase("/mast-replay-b.bin");
+      // Companion contact checkpoints are runtime data; they keep the previous snapshot beside the current one.
       records.erase("/companion/contacts3");
+      records.erase("/companion/contacts3-prev");
       for (auto entry = records.begin(); entry != records.end();)
         if (entry->first.find("/companion/bl/") == 0) entry = records.erase(entry);
         else ++entry;
