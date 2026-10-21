@@ -17,8 +17,8 @@ requires that setup before roles,
 identities, administration or OTA can start. A private image with compiled
 credentials uses the separate source-build procedure below.
 
-New source builds use the **Aspen 0.1.21** product version, based on MeshCore
-1.18.0. `ver` and companion device information report `aspen-0.1.21`,
+New source builds use the **Aspen 0.1.22** product version, based on MeshCore
+1.18.0. `ver` and companion device information report `aspen-0.1.22`,
 independently of saved device/role names,
 keys and enabled services. Start administration with `help`, `help wifi` and
 `get owner.info`; see the [app endpoint guide](../shared/ANDROID.md#choose-the-endpoint-for-app-settings).
