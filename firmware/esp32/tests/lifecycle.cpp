@@ -843,7 +843,25 @@ static void companion_contact_capacity() {
     SHA256 hash; uint8_t digest[32];
     hash.update(legacy.data(), legacy.size()); hash.finalize(digest, sizeof(digest));
     assert(!memcmp(migrated.data() + legacy.size(), digest, sizeof(digest)));
+    // Adverts from the other roles can add a contact at any time; clear them so the fixture can use every slot.
+    const auto clearStrangers = [&]() {
+      client.command({4});
+      std::vector<Bytes> strangers;
+      for (;;) {
+        const auto frame = client.response(f);
+        if (frame[0] == 4) break;
+        assert(frame[0] == 3 || frame[0] == 2);
+        if (frame[0] == 3 && memcmp(frame.data() + 100, "retained-", 9)) strangers.push_back(frame);
+      }
+      for (const auto &frame : strangers) {
+        Bytes request{15};
+        request.insert(request.end(), frame.begin() + 1, frame.begin() + 33);
+        client.command(request);
+        assert(client.response(f) == Bytes{0});
+      }
+    };
     for (unsigned i = 64; i < MAX_CONTACTS; ++i) {
+      if (i == MAX_CONTACTS - 2) clearStrangers();
       client.command(contacts[i]);
       assert(client.response(f) == Bytes{0});
     }
