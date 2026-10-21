@@ -33,17 +33,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld binaryen pkg-config zlib1g-dev libzstd-dev
           python3 -m pip install --require-hashes -r requirements-linux.lock
-          python3 -m pip install platformio
-      # The published rc7 SDK predates Willow's actor syntax. Build current
-      # Hew through its supported target; fork PRs need no cross-repo token.
+          python3 -m pip install platformio==6.1.19
+      # The published rc7 SDK predates Willow's actor syntax. Build the Hew
+      # source documented in hosts/willow/docs/LIBRARIES.md through its
+      # supported target; raise the pin deliberately. Fork PRs need no
+      # cross-repo token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hew-lang/hew
-          ref: main
+          ref: dce0bc72da487bf4c9307df84b738c2caa58b8f7
           path: .tmp/hew
           persist-credentials: false
       - uses: ./.tmp/hew/.github/actions/setup-llvm
-      - name: Build current Hew development toolchain
+      - name: Build pinned Hew development toolchain
         env:
           CARGO_BUILD_JOBS: '2'
           CARGO_INCREMENTAL: '0'
