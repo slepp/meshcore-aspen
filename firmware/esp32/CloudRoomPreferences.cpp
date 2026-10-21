@@ -217,7 +217,8 @@ bool matchesProvider(const Settings &settings, const CloudRoomConfiguration &pro
 }
 enum class Source { Off, Saved, Provider, Adopt };
 // The saved record wins unless a version 1 record disagrees with the provider in
-// the image (a rebuilt private image); a lifecycle write is always version 2.
+// the image (a rebuilt private image). A lifecycle write uses version 1 only when
+// the settings fit it, so a version 2 record is always an operator-saved choice.
 Source choose(Saved state, uint8_t version, const Settings &settings,
               const CloudRoomConfiguration *provider, const char *&warning) {
   warning = nullptr;
@@ -277,6 +278,29 @@ void publishBootConfiguration(const Settings &settings) {
     memcpy(bootConfig.aliases[i].publicKey, alias.base.publicKey, 32);
   }
 }
+const char *sourceName(Source source) {
+  switch (source) {
+  case Source::Saved: return "saved";
+  case Source::Provider: return "compiled provider";
+  case Source::Adopt: return "compiled provider (first boot, saving)";
+  default: return "none";
+  }
+}
+// One line per boot: which settings serve this boot and the saved record's
+// version and digest prefix. A saved version 2 record that differs from the
+// compiled provider says so, because it overrides a rebuilt image's token or CA.
+void logSource(Source source, Saved state, uint8_t version, const Settings &settings,
+               const CloudRoomConfiguration *provider) {
+  char hash[65]; hashText(settings.digest, hash); hash[8] = 0;
+  if (state == Saved::Valid)
+    Serial.printf("Cloud room source=%s saved=v%u hash=%s aliases=%u\n", sourceName(source),
+                  unsigned(version), hash, unsigned(settings.count));
+  else
+    Serial.printf("Cloud room source=%s saved=%s\n", sourceName(source),
+                  state == Saved::None ? "none" : "invalid");
+  if (source == Source::Saved && provider && !matchesProvider(settings, *provider))
+    Serial.println("Cloud room saved settings differ from the compiled provider; the saved settings stay in use");
+}
 }
 const CloudRoomConfiguration *cloudRoomConfiguration() {
   if (bootRead) return bootActive;
@@ -293,6 +317,7 @@ const CloudRoomConfiguration *cloudRoomConfiguration() {
   const char *warning = nullptr;
   const Source source = choose(state, version, *buffer.value, provider, warning);
   if (warning) Serial.println(warning);
+  logSource(source, state, version, *buffer.value, provider);
   switch (source) {
   case Source::Off: return nullptr;
   case Source::Provider: bootActive = provider; return provider;

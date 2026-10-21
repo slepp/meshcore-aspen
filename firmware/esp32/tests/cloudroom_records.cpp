@@ -459,9 +459,14 @@ void savedWins() {
   auto settings = owner();
   assert(publish(settings));
   const auto hash = stored();
+  std::string log;
+  serial_test::capture = &log;
   const auto *config = cloudRoomConfiguration();
+  serial_test::capture = nullptr;
   assert(config && config != cloudRoomCompiledConfiguration() && !strcmp(config->peers[0].host, "rooms.example") &&
          config->peers[0].systemRoots);
+  assert(log.find("source=saved saved=v2 hash=") != std::string::npos &&
+         log.find("differ from the compiled provider; the saved settings stay in use") != std::string::npos);
   assert(stored() == hash && psram_test::allocations.size() == 1);
   // A version 2 record also beats the provider after a lifecycle change on a frontend.
   reset();
@@ -475,7 +480,11 @@ void staleVersion1() {
   putLegacy(stale);
   const auto before = filesystem_test::files;
   const auto *provider = cloudRoomCompiledConfiguration();
+  std::string log;
+  serial_test::capture = &log;
   assert(cloudRoomConfiguration() == provider && filesystem_test::files == before && records.empty());
+  serial_test::capture = nullptr;
+  assert(log.find("source=compiled provider saved=v1") != std::string::npos);
   assert(!cloudRoomOwnsLocalRoom());
   // A record with the same fields as the provider, or any version 2 record, is not stale.
   reset();

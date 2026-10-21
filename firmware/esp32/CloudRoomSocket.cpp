@@ -141,7 +141,7 @@ public:
   ~EspWss() override {close();delete tls_;}
   bool open(const CloudRoomPeer &peer,char *error,size_t capacity) override {
     close();
-    if(!ascii(peer.host,127)||!ascii(peer.token,256)||!ascii(peer.alias,64,true)||(!peer.systemRoots&&(!peer.ca||strnlen(peer.ca,4097)>4096))) {
+    if(!ascii(peer.host,127)||!ascii(peer.token,256)||!ascii(peer.alias,64,true)||(!peer.systemRoots&&(!peer.ca||!*peer.ca||strnlen(peer.ca,4097)>4096))) {
       snprintf(error,capacity,"Invalid cloud-room peer settings");return false;
     }
     if(peer.address&&*peer.address) {

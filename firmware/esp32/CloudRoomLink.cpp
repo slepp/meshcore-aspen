@@ -255,13 +255,13 @@ struct Work {
   char body[1280];
   char path[96];
 };
-Fail netFail(Net net, bool probe = false) {
+Fail netFail(Net net) {
   switch (net) {
   case Net::Clock: return Fail::Clock;
   case Net::Verify: return Fail::Tls;
   case Net::Memory: return Fail::Memory;
   case Net::Dns: return Fail::Dns;
-  default: return probe ? Fail::Unavailable : Fail::Unavailable;
+  default: return Fail::Unavailable;
   }
 }
 void hexText(const uint8_t *bytes, size_t n, char *out) {
