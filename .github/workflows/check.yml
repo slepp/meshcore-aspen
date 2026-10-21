@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hew-lang/hew
-          ref: dce0bc72da487bf4c9307df84b738c2caa58b8f7
+          ref: 3e4970c379d0ca5856d4bb47c08d7d80a29934db
           path: .tmp/hew
           persist-credentials: false
       - uses: ./.tmp/hew/.github/actions/setup-llvm

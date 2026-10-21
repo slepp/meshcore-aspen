@@ -432,8 +432,11 @@ targets retain the complete debug/release protocol, management, login,
 readiness and migration suites.
 
 A compatible toolchain is Hew source
-`dce0bc72da487bf4c9307df84b738c2caa58b8f7`, with its matching optimized
-runtime and standard library. Normal builds select the current `hew` from
+`3e4970c379d0ca5856d4bb47c08d7d80a29934db`, with its matching optimized
+runtime and standard library. This revision types declared supervisor
+children as their actor and still takes `i64` millisecond arguments in
+`datetime.format`; Willow does not type-check with older or newer Hew
+revisions. Normal builds select the current `hew` from
 `PATH`. For a Hew source checkout, run `make hew` and select its `build/bin`
 launcher. The published rc7 SDK predates Willow's actor syntax.
 See [building a Linux bundle](BINARY_RELEASE.md) for the Debian 12 build

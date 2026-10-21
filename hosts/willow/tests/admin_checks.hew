@@ -8,7 +8,7 @@ fn main() {
         for i in 1..args.len() {
             let arg = args[i];
             assert(arg.len() >= 2);
-            let command = arg.slice(2, arg.len());
+            let command = arg[2..arg.len()];
             let allowed = if arg.starts_with("b:") {
                 host_admin.bot_allowed(command)
             } else {
