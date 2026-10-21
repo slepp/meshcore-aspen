@@ -690,7 +690,8 @@ static void workerBoard() {
   assert(worker.begin(bot));
   const char *source =
       "function rawput(key,value) kv.put(key,value,'channel') return 'raw committed' end "
-      "function rawget(key) return kv.get(key,'channel') or 'raw absent' end";
+      "function rawget(key) return kv.get(key,'channel') or 'raw absent' end "
+      "function boardput(key,value) local ok,state=kv.put('board:'..key,value,'channel') return state end";
   const auto install = [&] {
     assert(worker.stage(source, strlen(source)) && poll(worker).ok);
     assert(worker.activate() && poll(worker).ok);
@@ -709,7 +710,7 @@ static void workerBoard() {
   assert(worker.setSharedState(true));
   result = run("!rawput plan unrelated"); assert(result.ok);
   result = run("!board put plan initial");
-  assert(result.ok && !strcmp(result.action.text, "Board plan created; committed"));
+  assert(result.ok && !strcmp(result.action.text, "Saved board entry plan"));
   result = run("!board get plan", 1, "Bob");
   assert(result.ok && !strcmp(result.action.text, "initial"));
   result = run("!rawget plan"); assert(result.ok && !strcmp(result.action.text, "unrelated"));
@@ -721,14 +722,14 @@ static void workerBoard() {
   result = run("!remember plan personal", 0); assert(result.ok);
   result = run("!board get plan"); assert(result.ok && !strcmp(result.action.text, "initial"));
   result = run("!recall plan", 0); assert(result.ok && !strcmp(result.action.text, "personal"));
-  auto a = event("!board put race alpha", true), b = event("!board put race beta", true);
+  auto a = event("!boardput race alpha", true), b = event("!boardput race beta", true);
   a.channelId[31] = b.channelId[31] = 1; strcpy(a.nickname, "Alice"); strcpy(b.nickname, "Bob");
   assert(worker.invoke(a, ++job) && worker.invoke(b, ++job));
   unsigned created = 0, replaced = 0;
   for (unsigned i = 0; i < 2; ++i) {
     result = poll(worker); assert(result.ok);
-    created += strstr(result.action.text, "created; committed") != nullptr;
-    replaced += strstr(result.action.text, "replaced; committed") != nullptr;
+    created += !strcmp(result.action.text, "created");
+    replaced += !strcmp(result.action.text, "replaced");
   }
   assert(created == 1 && replaced == 1);
   result = run("!board get race");
