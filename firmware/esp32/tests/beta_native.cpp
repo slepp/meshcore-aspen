@@ -2971,6 +2971,8 @@ static void bot_facing_owner_admin() {
   f.mux.received(cancel.data(), cancel.size(), -91, 6); f.step();
   const auto replay = owner.replies(f.bot.publicKey(), f.radio);
   assert(replay.size() == 1 && replay[0].find("replay/old timestamp") != std::string::npos);
+  // Learned contacts heard before trusted UTC cannot be saved; that must not refuse a reboot.
+  assert(f.action("bot contacts flush").find("wait for trusted UTC") != std::string::npos);
   timeMs += 61000; f.radio.sent.clear(); f.radio.airtime = 1000; f.radio.holdTx = true;
   const auto reboot = owner.command(f.bot.publicKey(), "!admin reboot", 3, {}, false);
   f.mux.received(reboot.data(), reboot.size(), -91, 6); f.step(80);

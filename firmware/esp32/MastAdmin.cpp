@@ -1764,9 +1764,11 @@ void MastAdmin::execute(const char *input, Reply &reply, uint32_t invokingBotJob
   } else if (!strcmp(command, "bot admission")) {
     commandBotService().admissionStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot contacts flush")) {
-    strcpy(reply.text, commandBotService().flushLearnedState() ?
-           "Saved learned contacts; dirty=0" :
-           "Error: learned contacts checkpoint failed; dirty=1; inspect bot contacts");
+    auto &bot = commandBotService();
+    if (bot.learnedClockWait()) strcpy(reply.text, "Learned contacts wait for trusted UTC; not saved; dirty=1");
+    else strcpy(reply.text, bot.flushLearnedState() ?
+                "Saved learned contacts; dirty=0" :
+                "Error: learned contacts checkpoint failed; dirty=1; inspect bot contacts");
   } else if (!strcmp(command, "bot contacts")) {
     commandBotService().contactStatus(reply.text, sizeof(reply.text));
   } else if (!strcmp(command, "bot diagnostics")) {

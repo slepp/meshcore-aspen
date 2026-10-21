@@ -3077,9 +3077,10 @@ For profile sizes and allocation lifetimes, use
 The command bot retains up to 16 signed contacts and its authenticated learned
 routes. `bot contacts` shows pending changes, checkpoint errors and writes since
 boot. Changed state is checkpointed every five minutes; idle state causes no
-writes. `bot contacts flush` saves pending changes immediately. A controlled
-radio reboot or application update also flushes native state and reports a
-failure before proceeding. Automatic recovery rollback remains available when
+writes. `bot contacts flush` saves pending changes immediately, or reports that
+they wait for trusted UTC. A controlled radio reboot or application update also
+flushes native state and reports a failure before proceeding; contacts still
+waiting for UTC are not saved and do not block it. Automatic recovery rollback remains available when
 an application cannot start.
 
 After a reset, cached contacts wait for trusted local UTC. Signed contacts

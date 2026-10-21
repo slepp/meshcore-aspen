@@ -3004,9 +3004,11 @@ struct CommandBot::Core : mesh::Mesh {
     }
     const bool readQuery = event.channel[0] && !event.targeted && botReadOnlyQuery(event.name);
     if (readQuery) event.replyLimit -= ReadMarkerSize;
-    if (const char *error = owner.worker_.admissionError(event)) {
+    if (owner.worker_.admissionError(event)) {
+      // The dashboard already reports the source fault while the runtime is blocked;
+      // a bot fault here would outlast the recovery.
       audit(event, 0, "rejected", "source-admission");
-      reject(error);
+      ++stats.rejected;
       return;
     }
     if (administratorBlocked && !botReservedCommand(event.name)) {
