@@ -212,11 +212,14 @@ void observerConfigCommand(const char *command, char *reply, size_t capacity) {
   const bool loaded = initialize();
   if (!store) { error("observer configuration allocation failed"); return; }
   if (!command[0] || !strcmp(command, "status")) {
-    snprintf(reply, capacity, "MQTT saved=%u staged=%u storage=%s format=%u iata=%s auth=%s ca-bytes=%u; saved changes apply after reboot",
+    const bool cleartext = (store->active.audience[0] || store->active.username[0]) &&
+                           (!strncmp(store->active.uri, "mqtt://", 7) || !strncmp(store->active.uri, "ws://", 5));
+    snprintf(reply, capacity, "MQTT saved=%u staged=%u storage=%s format=%u iata=%s auth=%s ca-bytes=%u%s; saved changes apply after reboot",
              store->saved, store->dirty, store->fault ? "error" : "ok",
              store->active.format, store->active.iata,
              store->active.audience[0] ? "jwt" : store->active.username[0] ? "basic" : "none",
-             unsigned(strlen(store->active.ca)));
+             unsigned(strlen(store->active.ca)),
+             cleartext ? " warning=credentials-sent-unencrypted (use mqtts:// or wss:// beyond a trusted LAN)" : "");
     return;
   }
   if (!strcmp(command, "help")) {

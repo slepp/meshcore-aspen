@@ -46,7 +46,10 @@ Stage `mqtt username clear|HEX`, `mqtt password clear|HEX` and
 box. Hex chunks append decoded bytes; clear a field before replacing it.
 Limits are 128 username bytes, 256 password bytes and 4096 CA bytes.
 Do not put credentials in the saved URI. These fields are not printed by
-status or read commands. TLS requires a valid PEM CA bundle.
+status or read commands. TLS requires a valid PEM CA bundle. Credentials or an
+identity token sent over `mqtt://` or `ws://` travel unencrypted: `mqtt status`
+adds `warning=credentials-sent-unencrypted` in that case. Keep such a link on an
+isolated LAN, or use `mqtts://`/`wss://` with a CA.
 Saved settings use two SPIFFS files and a small NVS reference; a failed
 commit/readback reports an uncertain saved outcome. Reboot and inspect
 `mqtt status` before retrying. A missing configuration uses the build's initial

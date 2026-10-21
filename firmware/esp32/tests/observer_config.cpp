@@ -64,6 +64,7 @@ int main() {
   assert(identity_test::durable == before);
   assert(command("uri") == initial.uri);
   assert(command("status").find(initial.password) == std::string::npos);
+  assert(command("status").find("warning=credentials-sent-unencrypted") != std::string::npos);
   command("uri mqtt://replacement:11883");
   command("format 1");
   command("iata YEG");
