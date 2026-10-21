@@ -112,7 +112,7 @@ Successful command results and errors are plain text, without JSON wrapping.
 | `roles`, `roles list [1\|2]` | Read-only named applied/saved bits on page 1; Management availability, separate applied/saved bot and KISS service on page 2. `roles N` remains a mask write |
 | `bot on`, `bot off` | Save independent next-boot bot selection |
 | `apply`, `reboot` | Accept a deferred device reboot; saving native state must succeed before restart |
-| `reboot force` | Direct authenticated Management only; skip saving and restart the device after reply transmission plus 1.5 seconds. Unsaved data may be lost; selected boot partition is retained |
+| `reboot force` | Direct authenticated Management only; skip saving and restart the device after reply transmission plus 1.5 seconds. Unsaved data may be lost; a verified application awaiting reboot is selected, otherwise the running application boots again |
 | `wifi ssid TEXT`, `wifi password TEXT` | Encrypted RF only; literal printable SSID 1..32 bytes or password 8..63 bytes/64 ASCII hex digits; `wifi password -` explicitly selects an open network |
 | `wifi ssid hex HEX`, `wifi password hex HEX` | Explicit byte setters; no text/hex autodetection; pre-0.1.9 short-form hex clients must add `hex` |
 | `get wifi.enabled/ssid/pwd/ip/status` | Separate field commands, native `> VALUE` replies; nonprintable/non-ASCII SSIDs use `> hex HEX`. Enabled is saved 0/1, status is Arduino WiFi status, IP is current station IPv4. Exact password readback requires encrypted RF |

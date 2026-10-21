@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
     onchip::statusEspUpdate(&status);
     assert(status.response.find("\"running_sha256\":\"" + runningCandidate.headers.at("X-Mast-SHA256") + "\"") != std::string::npos);
     auto accepted = candidate(); onchip::uploadEspUpdate(&accepted);
-    assert(accepted.status == "200 OK" && switches == 1 && onchip::espUpdateBusy());
+    assert(accepted.status == "200 OK" && switches == 0 && onchip::espUpdateBusy());
     assert(transferAllocations == transferReleases && transferAllocations >= 2);
     std::cout << "ESP update scratch buffer: allocation failure, retry and release passed\n"; return 0;
   }
@@ -141,14 +141,14 @@ int main(int argc, char **argv) {
     assert(!onchip::espUpdateBusy() && !ESP.restarts);
     onWrite = duringWrite;
     auto image = candidate(); onchip::uploadEspUpdate(&image); onWrite = nullptr;
-    assert(image.status == "200 OK" && switches == 1 && onchip::espUpdateBusy());
+    assert(image.status == "200 OK" && switches == 0 && onchip::espUpdateBusy());
     unsigned flushes = 0;
     static unsigned *flushCount; flushCount = &flushes;
     onchip::setEspUpdateFlush([] { ++*flushCount; return false; });
     httpd_req_t normal; onchip::rebootEspUpdate(&normal);
     onchip::serviceEspUpdate(true, true, true);
     testMillis += 1500; onchip::serviceEspUpdate(true, true, true);
-    assert(flushes == 1 && !ESP.restarts);
+    assert(flushes == 1 && !ESP.restarts && switches == 0); // Cancelled reboot leaves the running slot selected.
     ticket = onchip::reserveEspForceRestart(error);
     assert(ticket && !onchip::acknowledgeEspForceRestart(ticket, false) && onchip::espUpdateBusy());
     ticket = onchip::reserveEspForceRestart(error);
@@ -166,6 +166,46 @@ int main(int argc, char **argv) {
     std::cout << "ESP forced restart: independent timer, save bypass, OTA fence and cancellation passed\n";
     return 0;
   }
+  if (argc > 1 && !strcmp(argv[1], "boot-selection")) {
+    // A failed boot selection cancels the reboot and the retry selects once.
+    auto image = candidate(); onchip::uploadEspUpdate(&image);
+    assert(image.status == "200 OK" && switches == 0);
+    failSwitch = true;
+    httpd_req_t reboot; onchip::rebootEspUpdate(&reboot);
+    onchip::serviceEspUpdate(true, true, true); testMillis += 1500;
+    onchip::serviceEspUpdate(true, true, true);
+    assert(ESP.restarts == 0 && switches == 0 && onchip::espUpdateBusy());
+    httpd_req_t status; onchip::statusEspUpdate(&status);
+    assert(status.response.find("Application boot selection failed; reboot cancelled") != std::string::npos);
+    assert(status.response.find("\"state\":\"verified\"") != std::string::npos);
+    failSwitch = false;
+    // The staged slot is kept, so the retry selects it and restarts once.
+    onchip::rebootEspUpdate(&reboot);
+    onchip::serviceEspUpdate(true, true, true); testMillis += 1500;
+    onchip::serviceEspUpdate(true, true, true);
+    assert(ESP.restarts == 1 && switches == 1);
+    std::cout << "ESP deferred boot selection cancel passed\n"; return 0;
+  }
+  if (argc > 1 && !strcmp(argv[1], "rollback-record")) {
+    // The reason is written before the rollback call and read on the next boot.
+    bootState = ESP_OTA_IMG_PENDING_VERIFY;
+    onchip::serviceEspUpdate(false, false, true);
+    testMillis += 300000; onchip::serviceEspUpdate(false, false, true);
+    assert(rollbacks == 1 && ESP.restarts == 1);
+    httpd_req_t status; onchip::statusEspUpdate(&status);
+    assert(status.response.find("\"last_rollback\":\"radio, role or HTTP startup was not ready after ") != std::string::npos);
+    assert(status.response.find("wifi not connected") != std::string::npos);
+    httpd_req_t again; onchip::statusEspUpdate(&again);
+    assert(again.response.find("\"last_rollback\":\"radio") != std::string::npos);
+    std::cout << "ESP rollback reason record passed\n"; return 0;
+  }
+  if (argc > 1 && !strcmp(argv[1], "wifi-outage")) {
+    bootState = ESP_OTA_IMG_PENDING_VERIFY;
+    onchip::serviceEspUpdate(true, false, true); testMillis += 599999;
+    onchip::serviceEspUpdate(true, false, true); assert(confirms == 0);
+    testMillis += 1; onchip::serviceEspUpdate(true, false, true); assert(confirms == 1);
+    std::cout << "ESP bounded WiFi-outage confirmation passed\n"; return 0;
+  }
   runningImage[400] ^= 1;
   assert(verifyRollbackLater()); assert(confirms == 0);
   auto r = candidate(); r.headers.erase("X-Mast-Signature"); rejected(r, true);
@@ -178,7 +218,6 @@ int main(int argc, char **argv) {
   rejected(candidate(9, false));
   failImage = true; rejected(candidate()); failImage = false;
   failWrite = true; rejected(candidate()); failWrite = false;
-  failSwitch = true; rejected(candidate()); failSwitch = false;
   failLength = true; rejected(candidate()); failLength = false;
   if (recover || automaticRecovery || rollbackError) {
     bootState = ESP_OTA_IMG_PENDING_VERIFY;
@@ -216,7 +255,7 @@ int main(int argc, char **argv) {
   r = candidate(); assert(onchip::uploadEspUpdate(&r) == ESP_OK);
   onWrite = nullptr;
   assert(r.response.find("\"state\":\"verified\"") != std::string::npos);
-  assert(switches == 1 && ESP.restarts == 0 && onchip::espUpdateBusy());
+  assert(switches == 0 && ESP.restarts == 0 && onchip::espUpdateBusy());
   auto second = candidate(); onchip::uploadEspUpdate(&second); assert(second.status == "409 Conflict");
   httpd_req_t status; onchip::statusEspUpdate(&status); assert(status.response.find("\"received\":8193") != std::string::npos);
   assert(status.response.find("\"sha256\":\"" + r.headers.at("X-Mast-SHA256") + "\"") != std::string::npos);
@@ -242,6 +281,6 @@ int main(int argc, char **argv) {
   onchip::serviceEspUpdate(true, true, true); assert(ESP.restarts == 0);
   reboot.failSend = false; onchip::rebootEspUpdate(&reboot);
   onchip::serviceEspUpdate(true, true, true); assert(ESP.restarts == 0);
-  testMillis += 1500; onchip::serviceEspUpdate(true, true, true); assert(ESP.restarts == 1);
+  testMillis += 1500; onchip::serviceEspUpdate(true, true, true); assert(ESP.restarts == 1 && switches == 1);
   std::cout << "ESP authenticated manifest/stream/boot-health tests passed\n";
 }

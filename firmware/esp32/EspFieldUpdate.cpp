@@ -11,6 +11,7 @@
 #include <esp_app_format.h>
 #include <esp_image_format.h>
 #include <esp_timer.h>
+#include <esp_attr.h>
 #include <mbedtls/sha256.h>
 #endif
 #include <atomic>
@@ -44,6 +45,16 @@ bool flushForUpdate() {
   while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 10000) delay(1);
   return acceptFlush(flushCompleted.load() == ticket && flushResult.load());
 }
+// A verified image is selected for boot only when the node is about to restart
+// into it, so a cancelled reboot leaves the running slot selected.
+std::atomic<const esp_partition_t *> stagedPartition{nullptr};
+bool selectStagedBoot() {
+  // A failed selection keeps the staged slot so the operator can retry the reboot.
+  const esp_partition_t *partition = stagedPartition.load();
+  if (!partition || esp_ota_set_boot_partition(partition) != ESP_OK) return false;
+  stagedPartition = nullptr;
+  return true;
+}
 void releaseForceRestart() {
   forceTicket = 0;
   busy = forcePriorBusy;
@@ -58,11 +69,44 @@ void forceRestartTimer(void *) {
     if (forceArmed) { forceFired = true; restart = true; }
     else releaseForceRestart();
   }
-  if (restart) ESP.restart();
+  if (restart) {
+    // The operator chose to restart into a verified image whose flush failed.
+    selectStagedBoot();
+    ESP.restart();
+  }
 }
-uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0;
+uint32_t rebootAt = 0, healthAt = 0, unhealthyAt = 0, rolesAt = 0;
 bool automaticRollbackAttempted = false;
 std::atomic<const char *> recovery{""};
+// The reason for a rollback survives the software reset in RTC memory. A power
+// loss clears it; the record is shown once, on the boot that follows.
+enum RollbackReason : uint8_t { RollbackNone, RollbackRoles, RollbackProvisioning, RollbackOperator };
+struct RollbackRecord { uint32_t magic, check; uint32_t uptimeSeconds; uint8_t reason, wifi; };
+constexpr uint32_t RollbackMagic = 0x52424b31;
+RTC_NOINIT_ATTR RollbackRecord rollbackRecord;
+char lastRollback[112]{};
+bool rollbackLoaded = false;
+uint32_t rollbackCheck(const RollbackRecord &r) {
+  return RollbackMagic ^ (r.uptimeSeconds * 2654435761u) ^ (uint32_t(r.reason) << 8) ^ r.wifi;
+}
+void recordRollback(RollbackReason reason, bool wifiReady) {
+  RollbackRecord next{RollbackMagic, 0, millis() / 1000, reason, uint8_t(wifiReady)};
+  next.check = rollbackCheck(next);
+  rollbackRecord = next;
+}
+void loadRollback() {
+  if (rollbackLoaded) return;
+  rollbackLoaded = true;
+  const RollbackRecord record = rollbackRecord;
+  rollbackRecord.magic = 0;
+  if (record.magic != RollbackMagic || record.check != rollbackCheck(record)) return;
+  const char *text = record.reason == RollbackRoles ? "radio, role or HTTP startup was not ready" :
+    record.reason == RollbackProvisioning ? "public setup record was not provisioned" :
+    record.reason == RollbackOperator ? "operator requested rollback" : nullptr;
+  if (!text) return;
+  snprintf(lastRollback, sizeof(lastRollback), "%s after %us; wifi %s",
+           text, unsigned(record.uptimeSeconds), record.wifi ? "connected" : "not connected");
+}
 const char imageTarget[] = "meshcore-esp-target-v1:" ONCHIP_UPDATE_TARGET ":";
 // Scratch for application hashing and upload chunks. It is allocated for the
 // duration of one operation instead of reserving 4 KiB of internal RAM.
@@ -179,7 +223,11 @@ struct Adapter final : EspUpdate::Backend {
     return esp_image_get_metadata(&position, &metadata) == ESP_OK &&
            metadata.image_len == expectedSize;
   }
-  bool activate() override { return flushForUpdate() && esp_ota_set_boot_partition(partition) == ESP_OK; }
+  bool activate() override {
+    if (!flushForUpdate()) return false;
+    stagedPartition = partition;
+    return true;
+  }
   void abort() override {
     if (open) esp_ota_abort(handle);
     open = false;
@@ -198,17 +246,18 @@ esp_err_t response(httpd_req_t *request, const char *status, const char *text) {
 }
 esp_err_t statusLocked(httpd_req_t *request, const char *code) {
   cacheRunningDigest();
+  loadRollback();
   const char *names[] = {"idle", "receiving", "failed", "verified"};
   static char bootId[17]{};
   if (!bootId[0]) snprintf(bootId, sizeof(bootId), "%08x%08x", unsigned(esp_random()), unsigned(esp_random()));
-  char text[1024];
+  char text[1280];
   snprintf(text, sizeof(text),
     "{\"boot_id\":\"%s\",\"state\":\"%s\",\"received\":%u,\"size\":%u,\"error\":\"%s\","
     "\"target\":\"%s\",\"boot_health\":\"%s\",\"recovery\":\"%s\","
     "\"force_restart_supported\":true,\"force_restart_pending\":%s,"
     "\"unsaved_state_supported\":true,\"allow_unsaved_state\":%s,\"state_flush_failed\":%s,"
     "\"reboot_ready\":%s,\"rollback_supported\":%s,\"rollback_ready\":%s,"
-    "\"sha256\":\"%s\",\"running_sha256\":\"%s\",\"running_size\":%u,\"running_hash_error\":\"%s\"}",
+    "\"sha256\":\"%s\",\"running_sha256\":\"%s\",\"running_size\":%u,\"running_hash_error\":\"%s\",\"last_rollback\":\"%s\"}",
     bootId, names[update.state()], unsigned(update.received()), unsigned(update.size()), update.error(),
     ONCHIP_UPDATE_TARGET, healthy ? "healthy" : "pending", recovery.load(),
     forceTicket ? "true" : "false",
@@ -216,7 +265,7 @@ esp_err_t statusLocked(httpd_req_t *request, const char *code) {
     update.state() == EspUpdate::Verified ? "true" : "false",
     rollbackObserved ? "true" : "false",
     !healthy && rollbackObserved && esp_ota_check_rollback_is_possible() ? "true" : "false",
-    updateDigest, runningDigest, unsigned(runningSize), runningHashError);
+    updateDigest, runningDigest, unsigned(runningSize), runningHashError, lastRollback);
   return response(request, code, text);
 }
 }
@@ -283,6 +332,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   if (!busy.compare_exchange_strong(expectedBusy, true))
     return response(request, "409 Conflict", "{\"error\":\"Application update already active; inspect status\"}");
   updateDigest[0] = 0;
+  stagedPartition = nullptr;
   allowUnsavedState = false; stateFlushFailed = false;
   Adapter adapter;
   adapter.partition = esp_ota_get_next_update_partition(nullptr);
@@ -354,7 +404,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   }
   if (update.state() == EspUpdate::Receiving) update.finish();
   busy = update.state() == EspUpdate::Verified;
-  if (!busy) allowUnsavedState = false;
+  if (!busy) { allowUnsavedState = false; stagedPartition = nullptr; }
   return statusLocked(request, busy ? "200 OK" : "400 Bad Request");
 }
 esp_err_t rebootEspUpdate(httpd_req_t *request) {
@@ -386,26 +436,35 @@ void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
     const auto flush = flushRuntime.load();
     flushResult = !flush || flush(); flushCompleted = requested;
   }
-  rolesReady = rolesReady && publicProvisioningReady();
+  const bool provisioned = publicProvisioningReady();
+  rolesReady = rolesReady && provisioned;
   esp_ota_img_states_t state;
   if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
       state == ESP_OTA_IMG_PENDING_VERIFY) rollbackObserved = true;
   // AP/NTP outages do not cause reset loops. Confirmation waits for a useful
-  // network service, unless station joining was deliberately disabled.
+  // network service, unless station joining was deliberately disabled. With
+  // ready roles and no WiFi, the image is confirmed after ten minutes so a
+  // later brownout does not revert a working radio.
+  if (!healthy && !rollbackRequested && rolesReady) {
+    if (!rolesAt) rolesAt = millis();
+  } else rolesAt = 0;
   if (!healthy && !rollbackRequested && rolesReady && (wifiReady || !wifiEnabled)) {
     if (!healthAt) healthAt = millis();
-    if (uint32_t(millis() - healthAt) >= 30000) {
-      if (!rollbackObserved || esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
-        healthy = true;
-    }
-  } else if (!healthy) healthAt = 0;
+  } else healthAt = 0;
+  if (!healthy && !rollbackRequested && rolesReady &&
+      ((healthAt && uint32_t(millis() - healthAt) >= 30000) ||
+       (rolesAt && uint32_t(millis() - rolesAt) >= 600000))) {
+    if (!rollbackObserved || esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+      healthy = true;
+  }
   if (!healthy && !rolesReady && rollbackObserved && !rollbackRequested) {
     if (!unhealthyAt) unhealthyAt = millis();
     if (!automaticRollbackAttempted && uint32_t(millis() - unhealthyAt) >= 300000 &&
         esp_ota_check_rollback_is_possible()) {
       automaticRollbackAttempted = true;
       recovery = "Radio, role or HTTP startup remained unhealthy; returning to previous application";
-      esp_ota_mark_app_invalid_rollback_and_reboot();
+      recordRollback(provisioned ? RollbackRoles : RollbackProvisioning, wifiReady);
+      if (esp_ota_mark_app_invalid_rollback_and_reboot() != ESP_OK) rollbackRecord.magic = 0;
       recovery = "Automatic application rollback failed; use retained USB recovery";
     }
   } else unhealthyAt = 0;
@@ -413,14 +472,17 @@ void serviceEspUpdate(bool rolesReady, bool wifiReady, bool wifiEnabled) {
   if (rebootAt && uint32_t(millis() - rebootAt) >= 1500) {
     if (rollbackRequested) {
       // On success this IDF call does not return.
-      esp_ota_mark_app_invalid_rollback_and_reboot();
+      recordRollback(RollbackOperator, wifiReady);
+      if (esp_ota_mark_app_invalid_rollback_and_reboot() != ESP_OK) rollbackRecord.magic = 0;
       rollbackRequested = false; rebootRequested = false; rebootAt = 0;
       recovery = "Application rollback failed; use retained USB recovery";
-    } else if (const auto flush = flushRuntime.load(); acceptFlush(!flush || flush())) ESP.restart();
-    else {
+    } else if (const auto flush = flushRuntime.load(); !acceptFlush(!flush || flush())) {
       rebootRequested = false; rebootAt = 0;
       recovery = "Native state flush failed; application reboot cancelled; inspect native role storage and bot contacts";
-    }
+    } else if (update.state() == EspUpdate::Verified && !selectStagedBoot()) {
+      rebootRequested = false; rebootAt = 0;
+      recovery = "Application boot selection failed; reboot cancelled; request reboot again";
+    } else ESP.restart();
   }
 }
 } // namespace onchip

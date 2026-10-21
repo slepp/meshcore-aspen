@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <openssl/evp.h>
 using esp_err_t = int;
+#define RTC_NOINIT_ATTR
 constexpr int ESP_OK = 0, ESP_ERR_INVALID_STATE = -1, HTTPD_SOCK_ERR_TIMEOUT = -2;
 struct httpd_req_t {
   size_t content_len = 0, offset = 0, stop = SIZE_MAX;

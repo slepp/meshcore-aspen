@@ -70,8 +70,9 @@ curl --fail --silent --show-error \
 
 Expect `"state":"verified"` and `"reboot_ready":true`. A truncated transfer,
 incorrect target/chip, oversized image, signature failure, image validation
-failure or SHA256 mismatch leaves the current boot selection unchanged. An
-upload error never requests a reboot. If the connection closes before the
+failure or SHA256 mismatch leaves the current boot selection unchanged. A
+verified upload does not change it either: the node selects the new image
+only after its pre-reboot state save succeeds. An upload error never requests a reboot. If the connection closes before the
 response arrives, inspect status instead of uploading again:
 
 ```sh
@@ -113,8 +114,9 @@ with encrypted Management `reboot force`, or choose **Force restart without
 saving** in the web Firmware section. This skips all state saves. Unsaved
 contacts, messages and settings may be lost. Forced restart does not erase
 saved identities or files.
-The selected boot partition is unchanged, so an already verified and selected
-application boots on restart. Active uploads and activation refuse the request.
+If a verified application is waiting for reboot, the forced restart selects it
+for boot first. Without one, the running application boots again. Active uploads
+refuse the request.
 
 For HTTP integrations, `GET /admin/update` reports
 `force_restart_supported:true`, `force_restart_pending` and a 16-digit hex
@@ -150,9 +152,10 @@ confirmation makes a rollback-enabled bootloader choose the previous valid slot.
 An unavailable AP or NTP server alone does not trigger repeated reboots.
 A brownout, power cycle or deliberate role/reboot operation before
 `boot_health:healthy` can revert an unconfirmed image. Check `running_sha256` and
-`running_size` after any early restart. This window lasts until confirmation,
-not a fixed five minutes; a normally healthy connected node confirms after
-its 30-second health window.
+`running_size` after any early restart. A normally healthy connected node confirms after its
+30-second health window. When the roles are ready but the WiFi station cannot
+connect, the image is confirmed after ten minutes of continuous role readiness,
+so a later brownout does not revert a working radio.
 If radio/roles or a connected WiFi station's HTTP service remain continuously
 unhealthy for five minutes while an image is
 unconfirmed and IDF finds a valid previous slot, the node attempts rollback once.
@@ -160,6 +163,12 @@ An AP outage alone does not run this deadline. Without a usable rollback slot,
 the node stays in recovery for operator intervention.
 If IDF returns an error from a rollback attempt, status reports USB recovery is
 required; the node does not follow that failure with a normal restart.
+
+Before a rollback, the node records its reason and uptime in RTC memory. After
+the previous application starts, `last_rollback` in `GET /admin/update` (and
+`firmware status`) names the reason once, for example `radio, role or HTTP
+startup was not ready after 312s; wifi not connected`. A power loss clears the
+record, and an application older than this feature does not read it.
 
 For a selected-source startup fault, inspect `source status` and
 `source wasm status` through native management. The bot dashboard reports
@@ -227,7 +236,7 @@ management Host/Origin checks:
 | Route | Result |
 | --- | --- |
 | `GET /admin/update` | JSON status; no flash or boot-state mutation |
-| `POST /admin/update` | Raw image, Content-Length, signed metadata; 200 only after verification and boot selection |
+| `POST /admin/update` | Raw image, Content-Length, signed metadata; 200 only after verification; the boot partition is selected when the reboot runs |
 | `POST /admin/update/reboot` | Empty body; 409 unless an image is verified; schedules reboot after response delivery |
 
 Signature input is UTF-8/ASCII with exactly these newline-terminated lines:
