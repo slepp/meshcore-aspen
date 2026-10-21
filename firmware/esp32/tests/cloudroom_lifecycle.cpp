@@ -871,6 +871,9 @@ void ownerControls() {
   assert(seen.back().body == "{\"op\":\"password\",\"mode\":\"open\"}");
   say("password MYPW"); pump();
   assert(seen.back().body == "{\"op\":\"password\",\"mode\":\"set\",\"pw\":\"MYPW\"}");
+  // Control bytes in a password are escaped, so the server receives valid JSON.
+  say("password a\tb\"c"); pump();
+  assert(seen.back().body == "{\"op\":\"password\",\"mode\":\"set\",\"pw\":\"a\\u0009b\\\"c\"}");
   server = [&](const Seen &) { return okJson("{\"ok\":1,\"pw\":\"\"}"); };
   say("password open"); pump();
   assert(say("result") == "Room is open (no password). Set one: cloudroom password PW|new");

@@ -30,6 +30,12 @@ void Writer::text(const char *value) { raw(value, strlen(value)); }
 void Writer::quoted(const char *value) {
   raw("\"", 1);
   for (; *value; ++value) {
+    const auto byte = static_cast<unsigned char>(*value);
+    if (byte < 32 || byte == 127) {
+      const char escape[6] = {'\\', 'u', '0', '0', Alphabet[byte >> 4], Alphabet[byte & 15]};
+      raw(escape, sizeof(escape));
+      continue;
+    }
     if (*value == '"' || *value == '\\') raw("\\", 1);
     raw(value, 1);
   }
