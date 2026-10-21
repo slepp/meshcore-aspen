@@ -30,6 +30,27 @@ def paced_command(client, text):
     return checked(client, text)
 
 
+def release_version(text):
+    """Return the MAJOR.MINOR.PATCH tuple in a product identity or `ver` reply, if any."""
+    found = re.search(r"(?<![\d.])(\d+)\.(\d+)\.(\d+)(?![\d.])", text or "")
+    return tuple(int(part) for part in found.groups()) if found else None
+
+
+def refuse_downgrade(client, metadata, allow):
+    """Updates move forward. Refuse an older application unless the operator asks."""
+    candidate = release_version(metadata.get("identity") or metadata.get("version"))
+    if candidate is None:
+        return {}
+    running = release_version(paced_command(client, "ver").split("\n", 1)[0])
+    record = {"candidate_version": ".".join(map(str, candidate))}
+    if running is not None:
+        record["running_version"] = ".".join(map(str, running))
+        if candidate < running and not allow:
+            raise ValueError(f"Application {record['candidate_version']} is older than the running "
+                             f"{record['running_version']}; use --allow-downgrade only for a deliberate downgrade; no upload")
+    return record
+
+
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -231,7 +252,7 @@ def artifact(args):
         raise ValueError("Unsaved-state recovery requires an encrypted backup downloaded within the last hour")
     _, files = node_backup.entries(node_backup.decrypt(backup, seed))
     return image, signed, {"path": str(args.backup.resolve()), "sha256": digest(backup),
-                            "bytes": len(backup), "records": len(files)}, digest(raw)
+                            "bytes": len(backup), "records": len(files)}, digest(raw), metadata
 
 
 def finish(client, record, receipt, connect, deadline, interval):
@@ -413,7 +434,7 @@ def maintain_locked(args):
     receipt_owned = False
     try:
         if args.action == "update":
-            image, signed, backup, build_hash = artifact(args)
+            image, signed, backup, build_hash, build_metadata = artifact(args)
             if not re.fullmatch(r"[0-9a-f]{64}", args.expected_current_sha256):
                 raise ValueError("Expected current application requires a full lowercase SHA256")
             if (args.sampler_slot is None) != (args.sampler_sha256 is None):
@@ -436,6 +457,7 @@ def maintain_locked(args):
                 raise ValueError("Running application differs, is unhealthy or update active; no upload")
             if args.allow_unsaved_state and status.get("unsaved_state_supported") is not True:
                 raise ValueError("Radio does not support unsaved-state application recovery; no upload")
+            record.update(refuse_downgrade(client, build_metadata, getattr(args, "allow_downgrade", False)))
             no_pending_identities(client)
             record.update(before_update=status, before=radio_state(client),
                           retained_before=retained(client, record["commands"]))
@@ -533,6 +555,8 @@ def arguments(parser):
     update.add_argument("--retain-command", action="append", default=[], help="Additional read-only stable setting to compare")
     update.add_argument("--sampler-slot", type=int, help="Known read-only Wasm sampler to pause for flash writes")
     update.add_argument("--sampler-sha256", help="Exact hash of that read-only sampler")
+    update.add_argument("--allow-downgrade", action="store_true",
+                        help="Install an application older than the running one (default: refuse)")
     update.add_argument("--allow-unsaved-state", action="store_true",
                         help="Recover with one signed application update despite failed state saves; recent unsaved state may be lost (backup must be less than one hour old)")
 

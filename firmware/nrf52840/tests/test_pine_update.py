@@ -145,6 +145,8 @@ class PineUpdateTests(unittest.TestCase):
                 return "application sha256=" + args.current_sha
             if command == "get update":
                 return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+            if command == "ver":
+                return "vpine-0.1.1 (build)"
             return self.retained()[command]
         endpoint = SimpleNamespace(vid=0x2886, serial_number="PINE", pid=0x44,
                                    device="selected-bootloader")
@@ -165,6 +167,54 @@ class PineUpdateTests(unittest.TestCase):
         self.assertEqual(record["usb_serial"], "PINE")
         self.assertEqual(record["previous_sha256"], args.current_sha)
         self.assertEqual(args.record.stat().st_mode & 0o777, 0o600)
+
+    def downgrade_args(self, **extra):
+        return SimpleNamespace(board=self.board, port=self.directory / "device", current_sha="0" * 64,
+                               zip=self.package, record=self.directory / "update.json", **extra)
+
+    def run_flash(self, running, **extra):
+        import hardware
+        args = self.downgrade_args(**extra)
+        def query(link, command, prefix):
+            if command == "get application":
+                return "application sha256=" + args.current_sha
+            if command == "get update":
+                return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+            if command == "ver":
+                return running
+            return self.retained()[command]
+        with patch.object(hardware, "connection", return_value=MagicMock()), \
+             patch.object(hardware, "bootloader") as handover, \
+             patch.object(pine_update, "read_command", side_effect=query), \
+             patch.object(pine_update.time, "sleep"):
+            try:
+                pine_update.flash_snapshot(self.data, args)
+            finally:
+                self.handover = handover
+        return args
+
+    def test_older_package_is_refused_before_record_or_handover(self):
+        with self.assertRaisesRegex(ValueError, "older than the running 0.1.2.*--allow-downgrade"):
+            self.run_flash("vpine-0.1.2 (build)")
+        self.handover.assert_not_called()
+        self.assertFalse((self.directory / "update.json").exists())
+
+    def test_explicit_downgrade_proceeds_to_handover(self):
+        import hardware
+        endpoint = SimpleNamespace(vid=0x2886, serial_number="PINE", pid=0x44, device="bootloader")
+        with patch.object(hardware, "usb_serial", return_value="PINE"), \
+             patch.object(hardware, "require_bootloader"), \
+             patch("serial.tools.list_ports.comports", return_value=[endpoint]), \
+             patch.object(pine_update, "upload_snapshot") as upload, \
+             patch.object(pine_update, "check_application"):
+            self.run_flash("vpine-0.1.2 (build)", allow_downgrade=True)
+        self.handover.assert_called_once()
+        upload.assert_called_once()
+
+    def test_unreadable_version_stops_before_handover(self):
+        with self.assertRaisesRegex(ValueError, "version readback unavailable"):
+            self.run_flash("vpine-dev")
+        self.handover.assert_not_called()
 
     def recovery(self):
         record = {"format": "pine-application-update-v1", "usb_serial": "PINE",
@@ -214,6 +264,8 @@ class PineUpdateTests(unittest.TestCase):
                 return "application sha256=" + args.current_sha
             if command == "get update":
                 return "BLE-DFU=1 boot=0x000601 boot-timeout=none"
+            if command == "ver":
+                return "vpine-0.1.1 (build)"
             return self.retained()[command]
         with patch.object(hardware, "connection", return_value=MagicMock()), \
                 patch.object(hardware, "usb_serial", return_value="PINE"), \

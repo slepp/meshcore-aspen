@@ -47,6 +47,10 @@ accessible; do not erase, replace the bootloader or install a full-device image.
      --record /private/pine-update.json
    ```
 
+   The tool refuses a package older than the running version before it saves a
+   record or touches the bootloader. Add `--allow-downgrade` for a deliberate
+   downgrade.
+
    The tool checks that running hash, reads retained public identities/settings,
    selects the same USB serial in the bootloader and performs one app-only
    upload. It checks the new running hash and retained identity/PHY/BLE/source

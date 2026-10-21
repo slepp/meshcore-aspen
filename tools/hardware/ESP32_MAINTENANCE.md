@@ -69,6 +69,12 @@ healthy and compares identities, settings and selected programs. Administrator c
 Selected custom programs retain their generation, slot, size and hash. Bundled
 handlers remain selected and may change with the application.
 
+The command reads the running version with `ver` and refuses an application
+whose build manifest names an older version before it uploads anything or
+pauses a sampler. Add `--allow-downgrade` for a deliberate downgrade; the
+receipt records `candidate_version` and `running_version`. A manifest without
+a version identity is not compared.
+
 If storage errors prevent saving native state, an authenticated signed
 application update can recover firmware with `--allow-unsaved-state`. Download
 and validate a fresh encrypted backup first; this option requires its local
@@ -135,9 +141,9 @@ when the command exits. Keep receipts and encrypted backups private. They contai
 On firmware that reports `force_restart_supported: true`, `force-restart`
 restarts the entire node without saving native state. Recent unsaved contacts,
 messages and settings may be lost. Download an encrypted backup first when
-storage permits. This command does not upload an application or change the
-selected boot partition; an already verified, selected application boots on
-restart.
+storage permits. This command does not upload an application. If a verified
+application is waiting for reboot, the restart selects and boots it; otherwise
+the running application boots again.
 
 ```sh
 python3 tools/admin.py --web "$RADIO_URL" --password-file "$PASSWORD_FILE" \

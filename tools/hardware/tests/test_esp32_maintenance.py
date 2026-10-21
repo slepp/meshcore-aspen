@@ -113,6 +113,8 @@ class RadioHandler(BaseHTTPRequestHandler):
             command = body.decode()
             if command.startswith("key ") and command.endswith(" pending"):
                 self.reply("KEY pending" if radio.pending_identity else "Error: identity or pending key unavailable")
+            elif command == "ver":
+                self.reply(radio.version)
             elif command == "bot contacts flush":
                 self.reply("Error: learned contacts checkpoint failed; dirty=1" if radio.flush_failure
                            else "Saved learned contacts; dirty=0")
@@ -208,6 +210,7 @@ class Radio:
         self.force_polls = 3
         self.unsaved_supported = True
         self.http_flush_failure = False
+        self.version = "aspen-0.1.21 (build)"
         self.changed_identity = self.changed_source = self.bundled = self.pending_identity = False
 
     def status(self):
@@ -527,6 +530,42 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authentication failed"):
             maintenance.maintain(self.args)
         self.assertEqual(self.radio.posts, [])
+
+    def identity(self, value):
+        metadata = json.loads(self.args.build_manifest.read_text())
+        metadata["identity"] = value
+        self.args.build_manifest.write_text(json.dumps(metadata))
+
+    def test_older_application_is_refused_before_upload_or_sampler_pause(self):
+        self.identity("aspen-0.1.20")
+        with self.assertRaisesRegex(ValueError, "older than the running 0.1.21.*--allow-downgrade"):
+            maintenance.maintain(self.args)
+        self.assertEqual((self.radio.uploads, self.radio.reboots), (0, 0))
+        commands = [body for path, body in self.radio.posts if path == "/admin/command"]
+        self.assertNotIn(b"packet 0 enable off", commands)
+        self.assertNotIn(b"bot contacts flush", commands)
+
+    def test_explicit_downgrade_is_recorded_and_proceeds(self):
+        self.identity("aspen-0.1.20")
+        self.args.allow_downgrade = True
+        maintenance.maintain(self.args)
+        record = self.receipt()
+        self.assertEqual((record["candidate_version"], record["running_version"]), ("0.1.20", "0.1.21"))
+        self.assertEqual(self.radio.uploads, 1)
+
+    def test_same_version_needs_no_flag(self):
+        self.identity("aspen-0.1.21")
+        maintenance.maintain(self.args)
+        self.assertEqual(self.radio.uploads, 1)
+
+    def test_newer_version_needs_no_flag(self):
+        self.identity("aspen-0.2.0")
+        maintenance.maintain(self.args)
+        self.assertEqual(self.radio.uploads, 1)
+
+    def test_manifest_without_identity_keeps_existing_behaviour(self):
+        maintenance.maintain(self.args)
+        self.assertNotIn("candidate_version", self.receipt())
 
     def test_failed_contact_flush_refuses_upload_and_leaves_sampler_enabled(self):
         self.radio.flush_failure = True

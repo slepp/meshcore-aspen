@@ -33,6 +33,17 @@ def source_selection(responses):
     return int(status[1]), int(status[2])
 
 
+def refuse_downgrade(running, version, allow):
+    """Updates move forward; an older signed package needs an explicit flag."""
+    found = re.match(r"vpine-(\d+)\.(\d+)\.(\d+)(?![\d.])", running)
+    if not found:
+        raise ValueError("Pine version readback unavailable; no update attempted")
+    current = tuple(int(part) for part in found.groups())
+    if tuple(int(part) for part in version.split(".")) < current and not allow:
+        raise ValueError(f"Signed Pine {version} is older than the running "
+                         f"{'.'.join(map(str, current))}; use --allow-downgrade only for a deliberate downgrade; no update attempted")
+
+
 def sha(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -129,6 +140,8 @@ def flash_snapshot(data, args):
         update = read_command(link, "get update", "BLE-DFU=")
         if " boot=0x000601 " not in update:
             raise ValueError("Pine bootloader differs from supported Legacy 0.6.1; no update attempted")
+        refuse_downgrade(read_command(link, "ver", "vpine-"), data["version"],
+                         getattr(args, "allow_downgrade", False))
         before = {command: read_command(link, command, prefix) for command, prefix in QUERIES.items()}
         source_selection(before)
     record = {"format": "pine-application-update-v1", "usb_serial": usb_serial(),
@@ -255,6 +268,8 @@ def main():
             command.add_argument("--port", type=Path, required=True)
             command.add_argument("--current-sha", required=True, help="Previously read running application SHA256")
             command.add_argument("--record", type=Path, help="New private update record; default .build/pine-update-TIME.json")
+            command.add_argument("--allow-downgrade", action="store_true",
+                                 help="Install a package older than the running application (default: refuse)")
         elif name in ("recover", "check"):
             command.add_argument("--port", type=Path, required=True,
                                  help="Inventoried Pine in serial DFU for recover, or running application for check")
