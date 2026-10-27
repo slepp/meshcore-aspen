@@ -1,7 +1,7 @@
 //! Named region policy, owner-scoped imports and bounded durable records.
 import willow.src.wire;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.utf8;
 
@@ -132,7 +132,7 @@ pub fn validate(table: Table) -> Result<Table, string> {
 }
 
 pub fn public_key(name: string) -> bytes {
-    wire.cut(crypto.sha256((if name.starts_with("#") {
+    wire.cut(hash.sha256((if name.starts_with("#") {
         name
     } else {
         "#" + name

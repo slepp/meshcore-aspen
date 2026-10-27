@@ -15,7 +15,7 @@ import willow.src.session;
 
 import willow.src.wire;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.utf8;
 
@@ -276,7 +276,7 @@ pub actor Control {
                 return error(1);
             }
         }
-        let digest = crypto.sha256(wire.cut(data, 18, data.len()));
+        let digest = hash.sha256(wire.cut(data, 18, data.len()));
         if index >= 0 {
             return if wire.equal(sends[index].digest, digest) {
                 result(index)

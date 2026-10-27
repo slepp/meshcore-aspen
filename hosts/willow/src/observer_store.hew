@@ -3,7 +3,7 @@ import willow.src.hostlib.binary;
 
 import willow.src.meshproto.observation;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.utf8;
 
@@ -68,7 +68,7 @@ pub fn encode(config: observation.Config, snapshot: Snapshot) -> bytes {
         data.append(token);
         data.append(entry.payload);
     }
-    data.append(crypto.sha256(data));
+    data.append(hash.sha256(data));
     data
 }
 
@@ -78,7 +78,7 @@ pub fn decode(config: observation.Config, data: bytes, capacity: i64) -> Result<
     }
     let end = data.len() - 32;
     let body = binary.slice(data, 0, end).expect("checkpoint body");
-    if crypto.sha256(body) != binary.slice(data, end, data.len()).expect("checkpoint checksum") {
+    if hash.sha256(body) != binary.slice(data, end, data.len()).expect("checkpoint checksum") {
         return .Err("observer checkpoint checksum failed");
     }
     if binary.slice(body, 0, 8).expect("header") != b"WOBS0001" {

@@ -3,7 +3,7 @@ import willow.src.meshproto.companion_state as state;
 
 import std.encoding.json;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import willow.src.wire;
 
@@ -105,7 +105,7 @@ pub fn channel(doc: json.Value, index: i64) -> Option<json.Value> {
 }
 
 pub fn hash(channel: json.Value) -> i64 {
-    crypto.sha256(state.blob(state.field(channel, "PSK")))[0] as i64
+    hash.sha256(state.blob(state.field(channel, "PSK")))[0] as i64
 }
 
 pub fn reply_flood(packet: wire.Packet, received: wire.Packet, doc: json.Value) -> wire.Packet {
@@ -132,7 +132,7 @@ pub fn reply_flood(packet: wire.Packet, received: wire.Packet, doc: json.Value) 
                 } else {
                     "#" + name
                 };
-                keys.push(state.array(wire.cut(crypto.sha256(scoped_name.to_bytes()), 0, 16))).expect("region key");
+                keys.push(state.array(wire.cut(hash.sha256(scoped_name.to_bytes()), 0, 16))).expect("region key");
             }
             for j in 0..state.count(keys) {
                 let key = state.blob(state.item(keys, j));

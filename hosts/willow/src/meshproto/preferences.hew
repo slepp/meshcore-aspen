@@ -210,10 +210,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
     var p = value;
     match key {
         "lat" | "lon" => {
-            let n = match string.to_float(text) {
-                .Ok(coordinate) => coordinate,
-                .Err(_) => return .Err("invalid coordinate"),
-            };
+            let n = text.to_float() handle failure { return .Err("invalid coordinate"); };
             if key == "lat" {
                 p.latitude = n;
             } else {
@@ -235,12 +232,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
             p.guest = management.truncate(text, 15);
         }
         "multi.acks" => {
-            let n = match string.to_int(text) {
-                .Ok(n) => n,
-                .Err(_) => {
-                    return .Err("multi.acks must be 0 or 1");
-                }
-            };
+            let n = text.to_int() handle failure { return .Err("multi.acks must be 0 or 1"); };
             if n < 0 || n > 1 {
                 return .Err("multi.acks must be 0 or 1");
             }
@@ -275,12 +267,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
             if key == "rxdelay" && (special == "NAN" || special == "INF" || special == "+INF" || special == "-INF" || special == "INFINITY" || special == "+INFINITY" || special == "-INFINITY") {
                 return .Err("rxdelay must be finite and in 0..20");
             }
-            let n = match string.to_float(text) {
-                .Ok(n) => (n as f32) as f64,
-                .Err(_) => {
-                    return .Err("invalid numeric value");
-                }
-            };
+            let n = ((text.to_float() handle failure { return .Err("invalid numeric value"); }) as f32) as f64;
             if key == "rxdelay" {
                 p.rxdelay = n;
             } else if key == "txdelay" {
@@ -290,10 +277,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
             }
         }
         "af" | "dutycycle" => {
-            let n = match string.to_float(text) {
-                .Ok(parsed) => (parsed as f32) as f64,
-                .Err(_) => return .Err("invalid airtime value"),
-            };
+            let n = ((text.to_float() handle failure { return .Err("invalid airtime value"); }) as f32) as f64;
             if !n.is_finite() || n < 0.0 {
                 return .Err("invalid airtime value");
             }
@@ -307,12 +291,7 @@ pub fn change(value: Preferences, key: string, text: string) -> Result<Preferenc
             }
         }
         "path.hash.mode" | "flood.max" | "flood.max.unscoped" | "flood.max.advert" | "advert.interval" | "flood.advert.interval" => {
-            let n = match string.to_int(text) {
-                .Ok(n) => n,
-                .Err(_) => {
-                    return .Err("invalid integer");
-                }
-            };
+            let n = text.to_int() handle failure { return .Err("invalid integer"); };
             if n < 0 || n > 255 {
                 return .Err("invalid integer");
             }

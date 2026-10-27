@@ -1,7 +1,7 @@
 //! Local dashboard permissions, bounded HTTP messages and expiring sessions.
 import std.text.regex;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.hex;
 
@@ -14,11 +14,11 @@ pub fn bot_allowed(command: string) -> bool {
     if command.to_bytes().len() > 160 {
         return false;
     }
-    let packet_read = regex.new("^packet (?:api|[01] (?:status|hash|stats|memory|timing|budget|read [0-9]+))$");
-    let packet_write = regex.new("^packet [01] (?:(?:enable (?:on|off))|budget 1 [0-9]{1,6} [0-9]{1,5} [0189]|begin [0-9a-f]{16} (?:lua|wasm) [0-9]{1,5} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel [0-9a-f]{16}|rollback|remove|retry)$");
+    let packet_read = regex.new("^packet (?:api|[01] (?:status|hash|stats|memory|timing|budget|read [0-9]+))$").expect("valid fixed permission pattern");
+    let packet_write = regex.new("^packet [01] (?:(?:enable (?:on|off))|budget 1 [0-9]{1,6} [0-9]{1,5} [0189]|begin [0-9a-f]{16} (?:lua|wasm) [0-9]{1,5} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}|cancel [0-9a-f]{16}|rollback|remove|retry)$").expect("valid fixed permission pattern");
     if packet_read.is_match(command) || packet_write.is_match(command) { return true; }
-    let read = regex.new("^(?:help(?: (?:bot|source|data|role|stats|grants))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|contacts|name|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|shared(?: status)?|home|reminders(?: status)?|events(?: status)?|channel-wait|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:wasm )?(?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch|sources|bundled|grants|storage|atomic|threads|data|overrides|events|repeaters|find-path|mesh|paths|reminders|notes|utility|services|board|diagnostics))?|read [0-9]+)|data (?:help|status|read [0-9a-f]{16} [0-9]+))$");
-    let write = regex.new("^(?:bot (?:name [\\x20-\\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|events (?:[0-9]|[12][0-9]|3[01])|cancel)|source (?:wasm )?(?:begin [0-9a-f]{16} [0-9]{1,5} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}(?: [0-9a-f]{64})?|cancel|rollback|remove|retry|help [\\x20-\\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel) [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$");
+    let read = regex.new("^(?:help(?: (?:bot|source|data|role|stats|grants))?|status|ver|board|job|stats(?: (?:sensors|memory|observer|companion))?|bot (?:help|status|contacts|name|key|stats|log|diagnostics|admission|policy|mesh|limits|contention|shared(?: status)?|home|reminders(?: status)?|events(?: status)?|channel-wait|discovery(?: status)?|forward(?: from|to)?|destination(?: [1-4])?|https(?: status)?)|role (?:help|config (?:bot|repeater|room|companion)|name (?:bot|repeater|room|companion))|source (?:wasm )?(?:help|status|hash|metadata|helptext|api(?: (?:runtimes|package|modules|fetch|sources|bundled|grants|storage|atomic|threads|data|overrides|events|repeaters|find-path|mesh|paths|reminders|notes|utility|services|board|diagnostics))?|read [0-9]+)|data (?:help|status|read [0-9a-f]{16} [0-9]+))$").expect("valid fixed permission pattern");
+    let write = regex.new("^(?:bot (?:name [\\x20-\\x7e]{1,31}|(?:shared|home|reminders|channel-wait|discovery) (?:on|off)|events (?:[0-9]|[12][0-9]|3[01])|cancel)|source (?:wasm )?(?:begin [0-9a-f]{16} [0-9]{1,5} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|commit [0-9a-f]{16}(?: [0-9a-f]{64})?|cancel|rollback|remove|retry|help [\\x20-\\x7e]{1,96})|data (?:export (?:kv|timers|reminders) (?:caller|conversation|bot|channel) [0-9a-f]{64}|begin [0-9a-f]{16} [0-9a-f]{64}|chunk [0-9a-f]{16} [0-9]+ [0-9a-f]{2,96}|stage [0-9a-f]{16}|restore [0-9a-f]{16}(?: no-rearm)?|clear))$").expect("valid fixed permission pattern");
     read.is_match(command) || write.is_match(command)
 }
 
@@ -26,8 +26,8 @@ pub fn role_allowed(command: string) -> bool {
     if command.to_bytes().len() > 160 {
         return false;
     }
-    let read = regex.new("^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\\.info|radio|freq|tx|stats|repeat|path\\.hash\\.mode|advert\\.interval|flood\\.advert\\.interval|rxdelay|txdelay|direct\\.txdelay|af|dutycycle))$");
-    let write = regex.new("^(?:set (?:name [\\x20-\\x7e]{1,31}|repeat (?:on|off)|path\\.hash\\.mode [012]|advert\\.interval [0-9]{1,3}|flood\\.advert\\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$");
+    let read = regex.new("^(?:help(?: (?:get|set|stats|region))?|region(?: (?:home|default|list (?:allowed|denied)|get [#a-zA-Z0-9*-]{1,30}))?|ver|board|clock|stats(?: (?:role|help|radio|signal|tx|airtime|admission|sensors|memory))?|get (?:name|owner\\.info|radio|freq|tx|stats|repeat|path\\.hash\\.mode|advert\\.interval|flood\\.advert\\.interval|rxdelay|txdelay|direct\\.txdelay|af|dutycycle))$").expect("valid fixed permission pattern");
+    let write = regex.new("^(?:set (?:name [\\x20-\\x7e]{1,31}|repeat (?:on|off)|path\\.hash\\.mode [012]|advert\\.interval [0-9]{1,3}|flood\\.advert\\.interval [0-9]{1,3})|region (?:save|(?:home|allowf|denyf|remove) [#a-zA-Z0-9*-]{1,30}|default (?:<null>|[#a-zA-Z0-9*-]{1,30})|put [#a-zA-Z0-9-]{1,30}(?: [#a-zA-Z0-9*-]{1,30})?|def [#a-zA-Z0-9*|,-]+(?: [#a-zA-Z0-9*|,-]+)*))$").expect("valid fixed permission pattern");
     read.is_match(command) || write.is_match(command)
 }
 
@@ -54,7 +54,7 @@ pub fn native_command(command: string) -> string {
 }
 
 pub fn role_error(reply: string) -> bool {
-    let pattern = regex.new("^(?:Error(?:[:, ]|$)|Err(?:[ -]|$))");
+    let pattern = regex.new("^(?:Error(?:[:, ]|$)|Err(?:[ -]|$))").expect("valid fixed permission pattern");
     pattern.is_match(reply)
 }
 
@@ -78,7 +78,7 @@ fn token(text: string) -> bool {
     if text.is_empty() {
         return false;
     }
-    let pattern = regex.new("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$");
+    let pattern = regex.new("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$").expect("valid fixed permission pattern");
     pattern.is_match(text)
 }
 
@@ -190,7 +190,7 @@ pub fn decode(data: bytes) -> Decode {
             }
         }
     }
-    let authority = regex.new("^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(?::[0-9]{1,5})?$");
+    let authority = regex.new("^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(?::[0-9]{1,5})?$").expect("valid fixed permission pattern");
     if !authority.is_match(host) {
         return .Invalid;
     }
@@ -270,35 +270,35 @@ pub actor Authentication {
             return Login { code: 429, text: "Host login limit reached; wait one minute" };
         }
         attempts += 1;
-        if body.len() > 256 || !valid || !crypto.constant_time_eq(expected, crypto.sha256(body)) {
+        if body.len() > 256 || !valid || !hash.constant_time_eq(expected, hash.sha256(body)) {
             return Login { code: 401, text: "Host admin authentication required" };
         }
         expire(now);
         if sessions.len() >= 4 {
             return Login { code: 429, text: "Host admin sessions full; logout or wait ten minutes" };
         }
-        let random = match crypto.random_bytes(32) {
+        let random = match hash.random_bytes(32) {
             .Ok(value) => value,
             .Err(_) => return Login { code: 503, text: "Host session creation unavailable" },
         };
         let id = hex.encode(random);
-        sessions.push(Session { digest: crypto.sha256(id.to_bytes()), expires: now + 600000 });
+        sessions.push(Session { digest: hash.sha256(id.to_bytes()), expires: now + 600000 });
         Login { code: 200, text: id }
     }
     receive fn authenticated(id: string, now: i64) -> bool {
         expire(now);
-        let digest = crypto.sha256(id.to_bytes());
+        let digest = hash.sha256(id.to_bytes());
         var session = false;
         for item in sessions {
-            session = crypto.constant_time_eq(item.digest, digest) || session;
+            session = hash.constant_time_eq(item.digest, digest) || session;
         }
-        session || (direct_token && valid && crypto.constant_time_eq(expected, digest))
+        session || (direct_token && valid && hash.constant_time_eq(expected, digest))
     }
     receive fn logout(id: string) {
-        let digest = crypto.sha256(id.to_bytes());
+        let digest = hash.sha256(id.to_bytes());
         var retained: Vec<Session> = Vec.new();
         for item in sessions {
-            if !crypto.constant_time_eq(item.digest, digest) {
+            if !hash.constant_time_eq(item.digest, digest) {
                 retained.push(item);
             }
         }
@@ -316,5 +316,5 @@ pub fn authentication(secret: string, direct_token: bool) -> Authentication {
     for byte in secret.to_bytes() {
         valid = valid && byte >= 33 && byte <= 126;
     }
-    spawn Authentication { expected: crypto.sha256(secret.to_bytes()), valid: valid, direct_token: direct_token }
+    spawn Authentication { expected: hash.sha256(secret.to_bytes()), valid: valid, direct_token: direct_token }
 }

@@ -6,7 +6,7 @@ import willow.src.transport;
 
 import willow.src.meshproto.observation;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.hex;
 
@@ -140,7 +140,7 @@ pub actor Outbox {
             closed = true;
             return false;
         }
-        match crypto.random_bytes(16) {
+        match hash.random_bytes(16) {
             .Ok(nonce) => {
                 session = hex.encode(nonce);
             }

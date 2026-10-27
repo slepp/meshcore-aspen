@@ -19,25 +19,25 @@ fn main() {
     assert(args.len() == 3);
     let base = companion.open(args[1], hex.decode(args[2]).expect("valid hexadecimal")).expect("open companion");
     let radio = companion_radio.create(base);
-    while let .Some(line) = io.read_line() {
+    while let .Some(line) = (io.read_line() handle failure { panic(f"stdin read failed: {failure}"); }) {
         let words = line.trim().split(" ");
         if words.is_empty() {
             continue;
         }
         match words[0] {
             "DELAY" => {
-                let sf = string.to_int(words[1]).expect("spreading factor");
+                let sf = words[1].to_int().expect("spreading factor");
                 radio.set_spreading(sf).expect("shared spreading factor");
                 let prefs = json.parse("{\"rxdelay\":" + words[5] + "}").expect("receive preferences");
-                println(policy.receive_delay(prefs, string.to_float(words[2]).expect("snr"), sf, string.to_int(words[3]).expect("packet size"), string.to_int(words[4]).expect("airtime")));
+                println(policy.receive_delay(prefs, words[2].to_float().expect("snr"), sf, words[3].to_int().expect("packet size"), words[4].to_int().expect("airtime")));
             }
-            "CONNECT" => println(f"CONNECTED {base.connect(string.to_int(words[1]).expect("client")).expect("connect")}"),
+            "CONNECT" => println(f"CONNECTED {base.connect(words[1].to_int().expect("client")).expect("connect")}"),
             "DISCONNECT" => {
-                base.disconnect(string.to_int(words[1]).expect("client")).expect("disconnect");
+                base.disconnect(words[1].to_int().expect("client")).expect("disconnect");
                 println("DISCONNECTED");
             }
             "CMD" => {
-                for event in base.command(string.to_int(words[1]).expect("client"), hex.decode(words[2]).expect("valid hexadecimal"), string.to_int(words[3]).expect("time")).expect("command") {
+                for event in base.command(words[1].to_int().expect("client"), hex.decode(words[2]).expect("valid hexadecimal"), words[3].to_int().expect("time")).expect("command") {
                     println(f"FRAME {event.client} {hex.encode(event.frame)}");
                 }
                 println("END");
@@ -49,21 +49,21 @@ fn main() {
                 println("END");
             }
             "SEND" => {
-                let client = string.to_int(words[1]).expect("client");
-                let plan = radio.prepare(client, hex.decode(words[2]).expect("valid hexadecimal"), string.to_int(words[3]).expect("wall time"), string.to_int(words[4]).expect("monotonic")).expect("prepare");
+                let client = words[1].to_int().expect("client");
+                let plan = radio.prepare(client, hex.decode(words[2]).expect("valid hexadecimal"), words[3].to_int().expect("wall time"), words[4].to_int().expect("monotonic")).expect("prepare");
                 if !plan.raw.is_empty() {
                     println(f"TX {plan.priority} {plan.delay} {hex.encode(plan.raw)}");
                     if words[5] == "1" {
                         radio.transmitted(plan.raw).expect("origin dedup");
                     }
                 }
-                for event in radio.admitted(plan, words[5] == "1", string.to_int(words[4]).expect("monotonic")).expect("admission") {
+                for event in radio.admitted(plan, words[5] == "1", words[4].to_int().expect("monotonic")).expect("admission") {
                     println(f"FRAME {event.client} {hex.encode(event.frame)}");
                 }
                 println("END");
             }
             "RX" => {
-                let batch = radio.receive_packet(hex.decode(words[1]).expect("valid hexadecimal"), string.to_int(words[2]).expect("snr"), string.to_int(words[3]).expect("rssi"), string.to_int(words[4]).expect("wall"), string.to_int(words[5]).expect("monotonic")).expect("RF ingress");
+                let batch = radio.receive_packet(hex.decode(words[1]).expect("valid hexadecimal"), words[2].to_int().expect("snr"), words[3].to_int().expect("rssi"), words[4].to_int().expect("wall"), words[5].to_int().expect("monotonic")).expect("RF ingress");
                 for tx in batch.transmissions {
                     println(f"TX {tx.priority} {tx.delay} {hex.encode(tx.raw)}");
                 }

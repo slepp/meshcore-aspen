@@ -94,7 +94,7 @@ fn framing_checks() {
 fn main() {
     let args = os.args();
     if args.len() > 1 && args[1] == "network" {
-        let connection = duplex.connect("127.0.0.1", string.to_int(args[2]).expect("port"), 1500).expect("connect");
+        let connection = duplex.connect("127.0.0.1", args[2].to_int().expect("port"), 1500).expect("connect");
         let probe = spawn Probe;
         let waiting = fork connection.read(100);
         assert(probe.next().expect("unaffected actor") == 1);
@@ -140,7 +140,7 @@ fn main() {
         return;
     }
     if args.len() > 1 && args[1] == "tcp-backpressure" {
-        let connection = duplex.connect_with_deadlines("127.0.0.1", string.to_int(args[2]).expect("port"), 1500, 30).expect("connect");
+        let connection = duplex.connect_with_deadlines("127.0.0.1", args[2].to_int().expect("port"), 1500, 30).expect("connect");
         var payload = bytes.new();
         for index in 0..65536 {
             payload.push(7);

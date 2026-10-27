@@ -5,7 +5,7 @@ import std.encoding.json;
 
 import std.encoding.utf8;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.crypto.sign;
 
@@ -603,7 +603,7 @@ pub actor Base {
                 var ch = json.object();
                 ch.set("Name", json.from_string(name)).expect("channel");
                 ch.set("PSK", state.array(psk)).expect("channel");
-                ch.set("Hash", json.from_int(crypto.sha256(psk)[0] as i64)).expect("channel");
+                ch.set("Hash", json.from_int(hash.sha256(psk)[0] as i64)).expect("channel");
                 next.set("Channels", state.replace(state.field(document, "Channels"), b[1] as i64, ch)).expect("channels");
                 changed = true;
             }
@@ -1016,7 +1016,7 @@ pub actor Base {
             }
             semantic[1] = 0;
         }
-        let digest = crypto.sha256(wire.cat(wire.byte(frame[0] as i64), semantic));
+        let digest = hash.sha256(wire.cat(wire.byte(frame[0] as i64), semantic));
         let messages = state.field(document, "Messages");
         var next = document;
         var transient_contact = json.null();

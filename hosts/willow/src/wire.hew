@@ -1,4 +1,4 @@
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.crypto.sign;
 
@@ -79,11 +79,11 @@ pub fn uint(data: bytes) -> i64 {
 }
 
 pub fn equal(a: bytes, b: bytes) -> bool {
-    crypto.constant_time_eq(a, b)
+    hash.constant_time_eq(a, b)
 }
 
 pub fn ack(plain: bytes, key: bytes) -> bytes {
-    cut(crypto.sha256(cat(plain, key)), 0, 4)
+    cut(hash.sha256(cat(plain, key)), 0, 4)
 }
 
 pub fn seal(key: bytes, plain: bytes) -> bytes {
@@ -100,7 +100,7 @@ pub fn seal(key: bytes, plain: bytes) -> bytes {
     if encrypted.is_empty() {
         return encrypted;
     }
-    cat(cut(crypto.hmac_sha256(key, encrypted), 0, 2), encrypted)
+    cat(cut(hash.hmac_sha256(key, encrypted), 0, 2), encrypted)
 }
 
 pub fn open(key: bytes, body: bytes) -> bytes {
@@ -108,7 +108,7 @@ pub fn open(key: bytes, body: bytes) -> bytes {
         return bytes.new();
     }
     let encrypted = cut(body, 2, body.len());
-    if !equal(cut(body, 0, 2), cut(crypto.hmac_sha256(key, encrypted), 0, 2)) {
+    if !equal(cut(body, 0, 2), cut(hash.hmac_sha256(key, encrypted), 0, 2)) {
         return bytes.new();
     }
     unsafe {
@@ -193,11 +193,11 @@ pub fn hash(p: Packet) -> string {
     if p.kind == 9 {
         data.append(le(p.pathlen, 2));
     }
-    hex.encode(cut(crypto.sha256(cat(data, p.payload)), 0, 8))
+    hex.encode(cut(hash.sha256(cat(data, p.payload)), 0, 8))
 }
 
 pub fn region_code(key: bytes, p: Packet) -> i64 {
-    var n = uint(cut(crypto.hmac_sha256(key, cat(byte(p.kind), p.payload)), 0, 2));
+    var n = uint(cut(hash.hmac_sha256(key, cat(byte(p.kind), p.payload)), 0, 2));
     if n == 0 {
         n = 1;
     }

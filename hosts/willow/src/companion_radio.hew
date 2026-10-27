@@ -9,7 +9,7 @@ import willow.src.meshproto.companion_policy as policy;
 
 import std.encoding.json;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import willow.src.wire;
 
@@ -602,7 +602,7 @@ pub actor RF {
                 plain.append(wire.cat(wire.byte(3), wire.le(0, 4)));
             } else if cmd == 52 {
                 plain.append(wire.cat(wire.cat(wire.byte(3), wire.byte(254)), wire.le(0, 3)));
-                plain.append(crypto.random_bytes(4).expect("path discovery nonce"));
+                plain.append(hash.random_bytes(4).expect("path discovery nonce"));
                 force_flood = true;
             } else {
                 let data = wire.cut(b, offset + 32, b.len());
@@ -1141,7 +1141,7 @@ pub actor RF {
                             batch.events.push(e);
                         }
                         if flood {
-                            let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(255), crypto.random_bytes(4).expect("reciprocal path nonce")));
+                            let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(255), hash.random_bytes(4).expect("reciprocal path nonce")));
                             let updated = match find(json.parse(base.contacts().expect("contacts")).expect("contacts JSON"), peer) {
                                 .Some(c) => c,
                                 .None => contact,
@@ -1214,12 +1214,12 @@ pub actor RF {
                             } else {
                                 0
                             });
-                            extra.append(crypto.random_bytes(1).expect("ACK nonce"));
+                            extra.append(hash.random_bytes(1).expect("ACK nonce"));
                         }
                     }
                     if flood {
                         if extra.is_empty() {
-                            extra = crypto.random_bytes(4).expect("path nonce");
+                            extra = hash.random_bytes(4).expect("path nonce");
                         }
                         let body = wire.cat(wire.cat(wire.byte(packet.pathlen), packet.path), wire.cat(wire.byte(extra_type), extra));
                         var p = packets.routed(packets.encrypted(key, peer, 8, body, false), contact, document, .None, true);
