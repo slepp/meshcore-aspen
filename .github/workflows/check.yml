@@ -34,14 +34,12 @@ jobs:
           sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld binaryen pkg-config zlib1g-dev libzstd-dev
           python3 -m pip install --require-hashes -r requirements-linux.lock
           python3 -m pip install platformio==6.1.19
-      # The published rc7 SDK predates Willow's actor syntax. Build the Hew
-      # source documented in hosts/willow/docs/LIBRARIES.md through its
-      # supported target; raise the pin deliberately. Fork PRs need no
-      # cross-repo token.
+      # Build Hew 0.10.0-rc1, the standard library version Willow uses.
+      # Fork PRs need no cross-repo token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: hew-lang/hew
-          ref: 3e4970c379d0ca5856d4bb47c08d7d80a29934db
+          ref: 5672a4d39318d99785a863cd5002d33952eb269e
           path: .tmp/hew
           persist-credentials: false
       - uses: ./.tmp/hew/.github/actions/setup-llvm

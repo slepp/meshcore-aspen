@@ -431,14 +431,11 @@ The contributor CI runs this same command. The broader `make test test-release`
 targets retain the complete debug/release protocol, management, login,
 readiness and migration suites.
 
-A compatible toolchain is Hew source
-`3e4970c379d0ca5856d4bb47c08d7d80a29934db`, with its matching optimized
-runtime and standard library. This revision types declared supervisor
-children as their actor and still takes `i64` millisecond arguments in
-`datetime.format`; Willow does not type-check with older or newer Hew
-revisions. Normal builds select the current `hew` from
-`PATH`. For a Hew source checkout, run `make hew` and select its `build/bin`
-launcher. The published rc7 SDK predates Willow's actor syntax.
+Use Hew 0.10.0-rc1 (source
+`5672a4d39318d99785a863cd5002d33952eb269e`) with its matching standard
+library and runtime. The released SDK provides these together. Normal builds
+select the current `hew` from `PATH`; for a Hew source checkout, run `make hew`
+and select its `build/bin` launcher.
 See [building a Linux bundle](BINARY_RELEASE.md) for the Debian 12 build
 and the included source, notices and relinking material.
 Compiler-specific probe results are documented separately in
