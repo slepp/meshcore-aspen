@@ -10,7 +10,7 @@ import std.encoding.hex;
 
 import std.encoding.utf8;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.io;
 
@@ -29,7 +29,7 @@ import willow.src.meshproto.radio as rxradio;
 import willow.src.hostlib.binary;
 
 fn number(value: string) -> i64 {
-    string.to_int(value).expect("integer argument")
+    value.to_int().expect("integer argument")
 }
 
 fn output(frames: Vec<roles.Tx>, role: roles.Role, state: string) {
@@ -99,7 +99,7 @@ fn main() {
         }
         // Identity creation is exclusive: never overwrite an existing key.
         assert(storage.absent(args[2]));
-        let seed = crypto.random_bytes(32).expect("identity entropy");
+        let seed = hash.random_bytes(32).expect("identity entropy");
         assert(storage.commit(args[2], seed) == 0);
         println(hex.encode(wire.public_key(seed)));
         storage.unlock(lock);
@@ -127,7 +127,7 @@ fn main() {
     var state = "-";
     var lock: i32 = -1;
     println("READY " + hex.encode(wire.public_key(seed)));
-    while let .Some(line) = io.read_line() {
+    while let .Some(line) = (io.read_line() handle failure { panic(f"stdin read failed: {failure}"); }) {
         let words = line.split(" ");
         if words.is_empty() {
             continue;

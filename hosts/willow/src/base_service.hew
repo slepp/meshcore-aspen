@@ -129,7 +129,7 @@ fn address(text: string) -> (string, i64) {
     if host.starts_with("[") && host.ends_with("]") {
         host = host[1..host.len() - 1];
     }
-    let port = string.to_int(text[at + 1..]).expect("TCP port");
+    let port = text[at + 1..].to_int().expect("TCP port");
     assert(port >= 0 && port <= 65535);
     (host, port)
 }

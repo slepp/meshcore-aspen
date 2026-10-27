@@ -127,7 +127,7 @@ pub fn parse(text: string) -> Result<Endpoint, string> {
                 return .Err("MQTT port must be an integer from 1 through 65535");
             }
         }
-        port = string.to_int(digits).expect("bounded decimal port");
+        port = digits.to_int().expect("bounded decimal port");
         if port < 1 || port > 65535 {
             return .Err("MQTT port must be an integer from 1 through 65535");
         }

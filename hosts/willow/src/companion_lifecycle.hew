@@ -7,7 +7,7 @@ import std.encoding.base64;
 
 import std.encoding.utf8;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import willow.src.wire;
 
@@ -116,7 +116,7 @@ pub fn fresh(key: bytes, name: string, retention: string, flood_seconds: i64, pa
     let psk = base64.decode("izOH6cXN6mrJ5e26oRXNcg==").expect("public channel key");
     public.set("Name", json.from_string("Public")).expect("public channel");
     public.set("PSK", state.array(psk)).expect("public channel");
-    public.set("Hash", json.from_int(crypto.sha256(psk)[0] as i64)).expect("public channel");
+    public.set("Hash", json.from_int(hash.sha256(psk)[0] as i64)).expect("public channel");
     channels.push(public).expect("channel table");
     for _ in 1..40 {
         channels.push(json.null()).expect("channel table");
@@ -127,7 +127,7 @@ pub fn fresh(key: bytes, name: string, retention: string, flood_seconds: i64, pa
 }
 
 pub fn reset(root: string, name: string, retention: string, flood_seconds: i64, path_mode: i64) -> bool {
-    let seed = crypto.random_bytes(32).expect("new factory-reset role identity");
+    let seed = hash.random_bytes(32).expect("new factory-reset role identity");
     let identity = wire.expanded_key(seed);
     let document = fresh(identity, name, retention, flood_seconds, path_mode);
     var envelope = json.object();

@@ -119,11 +119,11 @@ fn settings(root: string, options: string, lock: i32, apply: bool) -> Settings {
                 radio = value;
             }
             "queue_size" => {
-                capacity = string.to_int(value).expect("observer.queue_size requires an integer");
+                capacity = value.to_int().expect("observer.queue_size requires an integer");
             }
             "packet_filter" => {
                 if !value.is_empty() {
-                    filter = .Some(string.to_int(value).expect("observer.packet_filter requires a decimal uint16 mask"));
+                    filter = .Some(value.to_int().expect("observer.packet_filter requires a decimal uint16 mask"));
                 }
             }
             _ => panic("unknown observer configuration field: " + key),

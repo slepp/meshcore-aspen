@@ -47,12 +47,7 @@ pub fn configuration(path: string) -> Result<Config, string> {
                 host = value;
             }
             "port" => {
-                port = match string.to_int(value) {
-                    .Ok(number) => number,
-                    .Err(_) => {
-                        return .Err("MQTT port must be an integer");
-                    }
-                };
+                port = value.to_int() handle failure { return .Err("MQTT port must be an integer"); };
                 if port < 0 || port > 65535 {
                     return .Err("MQTT port must be 0..65535");
                 }

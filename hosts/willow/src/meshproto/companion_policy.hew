@@ -5,7 +5,7 @@ import willow.src.meshproto.radio;
 
 import std.encoding.json;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.math;
 
@@ -42,9 +42,9 @@ pub fn retransmit_delay(prefs: json.Value, direct: bool, airtime: i64) -> i64 {
     }
     let maximum = 5 * (product as i64) + 1;
     let limit = (4294967296 / maximum) * maximum;
-    var random = wire.uint(crypto.random_bytes(4).expect("retransmit random bytes"));
+    var random = wire.uint(hash.random_bytes(4).expect("retransmit random bytes"));
     while random >= limit {
-        random = wire.uint(crypto.random_bytes(4).expect("retransmit random bytes"));
+        random = wire.uint(hash.random_bytes(4).expect("retransmit random bytes"));
     }
     random % maximum
 }

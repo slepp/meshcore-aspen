@@ -38,7 +38,7 @@ import willow.src.observer_queue;
 
 import willow.src.observer_client;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.hex;
 
@@ -122,10 +122,7 @@ type TelemetryCache {
 }
 
 fn config_int(number: i64, key: string, value: string) -> i64 {
-    match string.to_int(value) {
-        .Ok(parsed) => parsed,
-        _ => panic(f"configuration line {number}: {key} must be an integer"),
-    }
+    value.to_int() handle failure { panic(f"configuration line {number}: {key} must be an integer"); }
 }
 
 fn config_require(valid: bool, problem: string) {
@@ -322,7 +319,7 @@ fn launch_native(owner: process.WorkerOwner, executable: string, root: string) -
 
 fn identity(path: string) -> bytes {
     if storage.absent(path) {
-        let seed = crypto.random_bytes(32).expect("role identity entropy");
+        let seed = hash.random_bytes(32).expect("role identity entropy");
         assert(storage.commit(path, seed) == 0);
     }
     let seed = storage.read(path);
@@ -355,7 +352,7 @@ fn init_credential(path: string, label: string) -> string {
 
 fn init_generated() -> string {
     let alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
-    let entropy = crypto.random_bytes(15).expect("credential entropy");
+    let entropy = hash.random_bytes(15).expect("credential entropy");
     var out = "";
     for b in entropy {
         let at = (b & 31) as i64;
@@ -469,9 +466,9 @@ pub fn initialize(args: Vec<string>) {
     }
     let worker = worker_identity.path();
     verify_native(worker);
-    let relay_seed = crypto.random_bytes(32).expect("role identity entropy");
-    let room_seed = crypto.random_bytes(32).expect("role identity entropy");
-    let bot_seed = crypto.random_bytes(32).expect("role identity entropy");
+    let relay_seed = hash.random_bytes(32).expect("role identity entropy");
+    let room_seed = hash.random_bytes(32).expect("role identity entropy");
+    let bot_seed = hash.random_bytes(32).expect("role identity entropy");
     let settings = f"address={address}\nport={port}\nprofile={hex.encode(profile)}\nworker={worker}\nadmin={admin}\nroom.password={room_password}\n";
     if !transport.directory(staging) {
         storage.remove_private_directory(staging);
@@ -501,7 +498,7 @@ pub fn initialize(args: Vec<string>) {
 }
 
 fn expanded(seed: bytes) -> bytes {
-    let hash = crypto.sha512(seed);
+    let hash = hash.sha512(seed);
     var out = bytes.new();
     for i in 0..64 {
         var c = hash[i];

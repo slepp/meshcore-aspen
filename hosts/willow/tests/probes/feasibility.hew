@@ -1,4 +1,4 @@
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.hex;
 
@@ -33,6 +33,6 @@ fn main() {
     let data = hex.decode("00010200ff").expect("valid hexadecimal");
     assert(data.len() == 5);
     assert(hex.encode(data) == "00010200ff");
-    assert(hex.encode(crypto.sha256("abc".to_bytes())) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    assert(hex.encode(hash.sha256("abc".to_bytes())) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     println("PASS actors, tasks, structured records, bytes, SHA256");
 }

@@ -36,7 +36,7 @@ fn main() {
     if args.len() == 2 {
         let branch = spawn duplex.Branch;
         let endpoint = branch.endpoint;
-        assert(duplex.open(endpoint, "127.0.0.1", string.to_int(args[1]).expect("test port"), 3000).is_ok());
+        assert(duplex.open(endpoint, "127.0.0.1", args[1].to_int().expect("test port"), 3000).is_ok());
         let decoder = spawn wire.Decoder { buffer: bytes.new() };
         let value = session.request(endpoint, decoder, 0, 15, wire.byte(64));
         println(f"MODEM_BUSY_RESULT value={hex.encode(value)}");

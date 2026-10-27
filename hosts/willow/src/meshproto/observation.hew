@@ -4,7 +4,7 @@ import willow.src.hostlib.binary;
 
 import willow.src.hostlib.mqtt;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.hex;
 
@@ -135,7 +135,7 @@ fn put_int(value: json.Value, name: string, number: i64) -> json.Value {
 }
 
 pub fn timestamp(stamp: i64) -> Result<string, string> {
-    let base = datetime.format(stamp, "%Y-%m-%dT%H:%M:%S") handle failure { return .Err(to_string(failure)); };
+    let base = datetime.format(timestamp.from_unix_millis(stamp), "%Y-%m-%dT%H:%M:%S") handle failure { return .Err(to_string(failure)); };
     let millis = ((stamp % 1000) + 1000) % 1000;
     if millis == 0 {
         return .Ok(base + "Z");
@@ -224,7 +224,7 @@ fn packet_hash(p: Packet) -> string {
         content.append(binary.little(p.encoded, 2).expect("TRACE packed path length"));
     }
     content.append(p.payload);
-    upper_hex(binary.slice(crypto.sha256(content), 0, 8).expect("packet hash"))
+    upper_hex(binary.slice(hash.sha256(content), 0, 8).expect("packet hash"))
 }
 
 fn fallback(value: string, default_value: string) -> string {
@@ -324,8 +324,8 @@ pub fn event(cfg: Config, session: string, item: Reception) -> Result<string, st
         out = put_text(out, "timestamp", at);
         out = put_text(out, "type", "PACKET");
         out = put_text(out, "direction", "rx");
-        out = put_text(out, "time", datetime.format(item.timestamp_ms, "%H:%M:%S") handle failure { return .Err(to_string(failure)); });
-        out = put_text(out, "date", datetime.format(item.timestamp_ms, "%d/%m/%Y") handle failure { return .Err(to_string(failure)); });
+        out = put_text(out, "time", datetime.format(timestamp.from_unix_millis(item.timestamp_ms), "%H:%M:%S") handle failure { return .Err(to_string(failure)); });
+        out = put_text(out, "date", datetime.format(timestamp.from_unix_millis(item.timestamp_ms), "%d/%m/%Y") handle failure { return .Err(to_string(failure)); });
         out = put_text(out, "len", to_string(item.raw.len()));
         out = put_text(out, "packet_type", to_string(p.kind));
         out = put_text(out, "route", route);
