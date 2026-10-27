@@ -34,27 +34,19 @@ jobs:
           sudo apt-get install -y libssl-dev libcurl4-openssl-dev libsodium-dev libcjson-dev cmake clang lld binaryen pkg-config zlib1g-dev libzstd-dev
           python3 -m pip install --require-hashes -r requirements-linux.lock
           python3 -m pip install platformio==6.1.19
-      # Build Hew 0.10.0-rc1, the standard library version Willow uses.
-      # Fork PRs need no cross-repo token.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: hew-lang/hew
-          ref: 5672a4d39318d99785a863cd5002d33952eb269e
-          path: .tmp/hew
-          persist-credentials: false
-      - uses: ./.tmp/hew/.github/actions/setup-llvm
-      - name: Build pinned Hew development toolchain
-        env:
-          CARGO_BUILD_JOBS: '2'
-          CARGO_INCREMENTAL: '0'
+      # Use the same published compiler, standard library and runtime tested
+      # by Willow contributors, without rebuilding Hew's dependencies.
+      - name: Install Hew 0.10.0-rc1 SDK
         run: |
-          channel=$(awk -F '"' '/^channel =/ {print $2; exit}' .tmp/hew/rust-toolchain.toml)
-          test -n "$channel"
-          rustup toolchain install "$channel" --profile minimal
-          RUSTUP_TOOLCHAIN="$channel" make -C .tmp/hew -j2 hew
-          echo "$GITHUB_WORKSPACE/.tmp/hew/build/bin" >> "$GITHUB_PATH"
-          echo "HEW_STD=$GITHUB_WORKSPACE/.tmp/hew/std" >> "$GITHUB_ENV"
-          echo "Hew source: $(git -C .tmp/hew rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 300 \
+            -o hew-v0.10.0-rc1-linux-x86_64.tar.gz \
+            https://github.com/hew-lang/hew/releases/download/v0.10.0-rc1/hew-v0.10.0-rc1-linux-x86_64.tar.gz
+          echo 'c9fcb49d4bf7520dfad73942849019e3fa4e4278d7eb38a0601bc9ca5b0907b4  hew-v0.10.0-rc1-linux-x86_64.tar.gz' | sha256sum -c -
+          mkdir -p .tmp/hew-sdk
+          tar -xzf hew-v0.10.0-rc1-linux-x86_64.tar.gz -C .tmp/hew-sdk --strip-components=1
+          .tmp/hew-sdk/bin/hew --version
+          echo "$GITHUB_WORKSPACE/.tmp/hew-sdk/bin" >> "$GITHUB_PATH"
+          echo "HEW_STD=$GITHUB_WORKSPACE/.tmp/hew-sdk/std" >> "$GITHUB_ENV"
       - name: Test independent Lua and WebAssembly packages
         run: |
           python3 packages/hew-lua/tests/run.py
