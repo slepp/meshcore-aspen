@@ -334,7 +334,7 @@ pub fn event(cfg: Config, session: string, item: Reception) -> Result<string, st
         out = put_text(out, "SNR", signal(item.snr_quarter, capture));
         out = put_text(out, "RSSI", to_string(item.rssi));
         out = put_text(out, "hash", packet_hash(p));
-        if (!capture && p.count > 0) || (capture && route == "D") {
+        if (!capture && route == "D" && p.count > 0) || (capture && route == "D") {
             var path = json.array();
             var joined = "";
             for hop in 0..p.count {
