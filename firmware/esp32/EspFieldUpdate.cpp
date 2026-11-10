@@ -34,6 +34,8 @@ std::atomic<bool> rollbackObserved{false};
 std::atomic<bool (*)()> flushRuntime{nullptr};
 std::atomic<uint32_t> flushRequested{0}, flushCompleted{0};
 std::atomic<bool> flushResult{false}, allowUnsavedState{false}, stateFlushFailed{false};
+std::atomic<uint32_t> stateFlushMs{0};
+std::atomic<const char *> stateFlushError{""};
 bool acceptFlush(bool saved) {
   if (!saved) stateFlushFailed = true;
   return saved || allowUnsavedState.load();
@@ -42,8 +44,14 @@ bool flushForUpdate() {
   if (!flushRuntime.load()) return true;
   const uint32_t ticket = flushRequested.fetch_add(1) + 1;
   const uint32_t started = millis();
-  while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 10000) delay(1);
-  return acceptFlush(flushCompleted.load() == ticket && flushResult.load());
+  // Dispatch and storage work can exceed ten seconds on a populated node.
+  // Keep the save mandatory, with time for that work and a finite HTTP wait.
+  while (flushCompleted.load() != ticket && uint32_t(millis() - started) < 30000) delay(1);
+  const bool completed = flushCompleted.load() == ticket;
+  const bool saved = completed && flushResult.load();
+  stateFlushMs = uint32_t(millis() - started);
+  stateFlushError = !completed ? "dispatch timeout" : saved ? "" : "storage save failed";
+  return acceptFlush(saved);
 }
 // A verified image is selected for boot only when the node is about to restart
 // into it, so a cancelled reboot leaves the running slot selected.
@@ -256,12 +264,14 @@ esp_err_t statusLocked(httpd_req_t *request, const char *code) {
     "\"target\":\"%s\",\"boot_health\":\"%s\",\"recovery\":\"%s\","
     "\"force_restart_supported\":true,\"force_restart_pending\":%s,"
     "\"unsaved_state_supported\":true,\"allow_unsaved_state\":%s,\"state_flush_failed\":%s,"
+    "\"state_flush_ms\":%u,\"state_flush_error\":\"%s\","
     "\"reboot_ready\":%s,\"rollback_supported\":%s,\"rollback_ready\":%s,"
     "\"sha256\":\"%s\",\"running_sha256\":\"%s\",\"running_size\":%u,\"running_hash_error\":\"%s\",\"last_rollback\":\"%s\"}",
     bootId, names[update.state()], unsigned(update.received()), unsigned(update.size()), update.error(),
     ONCHIP_UPDATE_TARGET, healthy ? "healthy" : "pending", recovery.load(),
     forceTicket ? "true" : "false",
     allowUnsavedState ? "true" : "false", stateFlushFailed ? "true" : "false",
+    unsigned(stateFlushMs.load()), stateFlushError.load(),
     update.state() == EspUpdate::Verified ? "true" : "false",
     rollbackObserved ? "true" : "false",
     !healthy && rollbackObserved && esp_ota_check_rollback_is_possible() ? "true" : "false",
@@ -334,6 +344,7 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   updateDigest[0] = 0;
   stagedPartition = nullptr;
   allowUnsavedState = false; stateFlushFailed = false;
+  stateFlushMs = 0; stateFlushError = "";
   Adapter adapter;
   adapter.partition = esp_ota_get_next_update_partition(nullptr);
   if (!adapter.partition || adapter.partition == esp_ota_get_running_partition()) {
@@ -379,7 +390,10 @@ esp_err_t uploadEspUpdate(httpd_req_t *request) {
   if (authorized) memcpy(updateDigest, digest, sizeof(updateDigest));
   if (authorized && !flushForUpdate()) {
     busy = false;
-    return response(request, "503 Service Unavailable", "{\"error\":\"Native state flush failed before update; inspect native role storage and bot contacts\"}");
+    char error[224];
+    snprintf(error, sizeof(error), "{\"error\":\"Native state flush failed before update: %s after %u ms; inspect native role storage and bot contacts\"}",
+             stateFlushError.load(), unsigned(stateFlushMs.load()));
+    return response(request, "503 Service Unavailable", error);
   }
   if (!update.start(adapter, request->content_len, adapter.partition ? adapter.partition->size : 0, authorized)) {
     allowUnsavedState = false;

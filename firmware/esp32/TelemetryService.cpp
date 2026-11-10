@@ -135,6 +135,10 @@ void telemetryLoop(RadioDashboard &dashboard, const RadioDashboard::RadioStatus 
   if (!publisher.config().enabled && !publisher.status().pending) releaseRoleStorage(workspace);
   if (!publisher.due(now)) return;
   if (!radio.wifi_connected) { publisher.drop(now, TelemetryError::Wifi); return; }
+  // This runs on the dispatch task after radio and storage work. Refresh the
+  // UTC publication from its original SNTP/GPS receipt time before checking
+  // trust; a slow state save must not make an otherwise fresh sample stale.
+  loopClocks();
   if (!botHttpsClockTrusted()) { publisher.drop(now, TelemetryError::Clock); return; }
   if (!telemetryEndpointConfigured()) { publisher.drop(now, TelemetryError::Endpoint); return; }
   if (!identityReady) { publisher.drop(now, TelemetryError::Snapshot); return; }

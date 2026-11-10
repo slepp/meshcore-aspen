@@ -47,9 +47,22 @@ inline bool resolveNetworkHost(const char *host, IPAddress &address, char *error
     snprintf(error, capacity, "DNS unavailable while WiFi is offline"); return false;
   }
   auto &state = network_dns::lookup();
-  std::unique_lock<std::mutex> guard(state.mutex, std::try_to_lock);
-  if (!guard.owns_lock() || (state.pending && !state.done.load(std::memory_order_acquire))) {
-    snprintf(error, capacity, "DNS lookup still pending; retry on the next connection attempt"); return false;
+  const uint32_t started = millis();
+  std::unique_lock<std::mutex> guard(state.mutex, std::defer_lock);
+  // HTTPS and diagnostics share lwIP callback storage. Let a short lookup
+  // finish instead of treating normal contention as a DNS outage. The same
+  // deadline covers waiting for ownership, a late callback and our own query.
+  while (!guard.try_lock()) {
+    if (uint32_t(millis() - started) >= 3000) {
+      snprintf(error, capacity, "DNS lookup timed out waiting for another query"); return false;
+    }
+    vTaskDelay(1);
+  }
+  while (state.pending && !state.done.load(std::memory_order_acquire)) {
+    if (uint32_t(millis() - started) >= 3000) {
+      snprintf(error, capacity, "DNS lookup timed out waiting for a late reply"); return false;
+    }
+    vTaskDelay(1);
   }
   const uint32_t local = WiFi.localIP(), gateway = WiFi.gatewayIP(), server = WiFi.dnsIP();
   state.resetCache = local != state.local || gateway != state.gateway || server != state.server;
@@ -64,7 +77,6 @@ inline bool resolveNetworkHost(const char *host, IPAddress &address, char *error
     state.done.store(true, std::memory_order_release);
     snprintf(error, capacity, "DNS request queue is full"); return false;
   }
-  const uint32_t started = millis();
   while (!state.done.load(std::memory_order_acquire)) {
     if (uint32_t(millis() - started) >= 3000) {
       snprintf(error, capacity, "DNS lookup timed out"); return false;

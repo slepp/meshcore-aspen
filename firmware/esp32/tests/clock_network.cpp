@@ -113,6 +113,14 @@ int main() {
   assert(!onchip::trustedNetworkTime(earliest, latest));
   assert(registered.handler(&request) == ESP_OK);
   assert(responseStatus == "503 Service Unavailable");
+  // A delayed dispatch publication recovers without renewing the SNTP sample.
+  onchip::ClockSnapshot beforeRefresh, afterRefresh;
+  assert(onchip::clockSnapshot(beforeRefresh));
+  onchip::loopClocks();
+  assert(onchip::clockSnapshot(afterRefresh));
+  assert(afterRefresh.network_epoch == beforeRefresh.network_epoch &&
+         afterRefresh.network_age_ms >= beforeRefresh.network_age_ms + 3001);
+  if (ONCHIP_SNTP_SERVER[0]) assert(onchip::trustedNetworkTime(earliest, latest));
   registrationResult = ESP_FAIL;
   assert(onchip::registerClockHTTP(nullptr) == ESP_FAIL);
   onchip::beginClocks();

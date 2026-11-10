@@ -694,6 +694,7 @@ bool runtimeFlushFailed(const char *affected) {
   return false;
 }
 bool flushRuntimeState() {
+  const uint32_t started = millis();
   flushError[0] = 0;
   bool ok = true;
   for (unsigned i = 0; i < 3; ++i) {
@@ -709,6 +710,12 @@ bool flushRuntimeState() {
 #if defined(MESHCORE_ONCHIP_BOT) && MESHCORE_ONCHIP_BOT
   if (!commandBotService().flushLearnedState()) { runtimeFlushFailed("bot learned contacts; inspect bot contacts"); ok = false; }
 #endif
+  if (!ok) {
+    char message[160];
+    snprintf(message, sizeof(message), "State save failed: %s elapsed_ms=%u", flushError,
+             unsigned(uint32_t(millis() - started)));
+    diagnosticEvent(message);
+  }
   return ok;
 }
 void loop() {

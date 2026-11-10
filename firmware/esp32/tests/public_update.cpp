@@ -87,6 +87,7 @@ int main(int argc, char **) {
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);
   assert(begins == 0 && switches == 0 && request.status == "503 Service Unavailable" && flushes == 1);
+  assert(request.response.find("storage save failed") != std::string::npos);
   if (argc > 2) {
     request = candidate(authority == 1 ? 0 : 1);
     request.headers["X-Mast-Allow-Unsaved-State"] = "1";
@@ -113,10 +114,24 @@ int main(int argc, char **) {
     puts("Signed application recovery survives failed upload, activation and reboot flushes; exception clears after failed upload");
     return 0;
   }
+  onDelay = nullptr;
+  const auto timeoutStart = testMillis;
+  request = candidate(authority);
+  onchip::uploadEspUpdate(&request);
+  assert(begins == 0 && request.status == "503 Service Unavailable" && flushes == 1);
+  assert(testMillis - timeoutStart == 30000 && request.response.find("dispatch timeout") != std::string::npos);
   flushOk = true;
+  // A populated filesystem can delay dispatch beyond the former 10 s wait.
+  const auto slowStart = testMillis;
+  onDelay = [] {
+    static unsigned ticks = 0;
+    if (++ticks >= 14000) onchip::serviceEspUpdate(true, false, false);
+  };
   request = candidate(authority);
   onchip::uploadEspUpdate(&request);
   assert(begins == 1 && switches == 0 && request.response.find("\"state\":\"verified\"") != std::string::npos);
+  assert(testMillis - slowStart >= 14000);
+  onDelay = [] { onchip::serviceEspUpdate(true, false, false); };
   assert(flushes == 3); // dispatcher flush before flash and before boot selection
   flushOk = false;
   onchip::rebootEspUpdate(&request);
