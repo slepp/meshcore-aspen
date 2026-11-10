@@ -76,6 +76,6 @@ python3 tools/admin.py --gateway MODEM_IP --seed-file /private/admin.seed \
 
 This replaces the node's telemetry endpoint and enables publishing after
 the settings commit. Add `--disabled` to save the endpoint with publishing
-off. Use `--address IPV4` when the receiver needs a specific address; the
-hostname is still used for TLS verification. See [telemetry](firmware/esp32/TELEMETRY.md)
+off. Aspen resolves the receiver hostname through DNS and verifies that hostname
+during TLS connection setup. See [telemetry](firmware/esp32/TELEMETRY.md)
 for metrics and receiver setup.

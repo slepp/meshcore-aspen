@@ -206,8 +206,7 @@ required. Schema 2 also accepts, per alias, `"role"` (`"frontend"` or
 `converted` needs `"owner"`). `admin.py configure` sends schema 2 to a node that
 supports it and schema 1 otherwise; a record that schema 1 can express stays in
 the earlier format. Add a second object for another alias; use a distinct public key
-and endpoint/alias pair. Limits: hostname 127 bytes, optional IPv4 address
-15, PEM CA 4096, token 256, alias ID 64, room name 32. IDs contain letters,
+and endpoint/alias pair. Limits: hostname 127 bytes, PEM CA 4096, token 256, alias ID 64, room name 32. IDs contain letters,
 digits, `_` or `-`. Public keys are lowercase 64-digit hex. The hostname
 has no scheme, port or path: transport is WSS on port 443 with
 `/v1/aliases/ID/socket`. Connections resolve `host` through DNS; the legacy
