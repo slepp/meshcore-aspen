@@ -228,7 +228,7 @@ constexpr Help topics[] = {
     {"radio-controls", "get/set cad on|off; int.thresh 0..255; agc.reset.interval 0..1020 seconds (4s units); rxboost on|off; af 0..9; saved after reply"},
     {"autoadvert", "get autoadvert; set autoadvert on|off; saved/live device-wide startup/periodic adverts; manual app/admin adverts unchanged"},
     {"sntp", "get sntp.current|server|interval; set sntp.server HOST|off; set sntp.interval 60..86400; seconds; saved/live; current: fresh SNTP/GPS only"},
-    {"syslog", "get syslog|syslog.stats; set syslog IP[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
+    {"syslog", "get syslog|syslog.stats; set syslog HOST[:PORT]|off; syslog test; UDP default port 514; saved/live; get diagnostics; stats system"},
     {"mqtt", "mqtt status|uri|name|iata|prefix|audience|format|filter; FIELD VALUE; username|password|ca clear|HEX; commit|discard; reboot applies"},
     {"cloudroom", "cloudroom join CODE[@HOST]|create CODE[@HOST] NAME|convert CODE[@HOST]|invite|unlink [ALIAS]; Management RF"},
     {"cloudroom", "cloudroom 2/3: list [N]|nodes [N]|revoke ID|password [PW|open|new]|share on|off|probe [HOST]|result; help cloudroom 3", 2},

@@ -4,7 +4,7 @@ An ESP32 bot or the production Go `native_lua` bot can run `!weather`,
 `!service health` and owner-installed HTTP/RPC commands through an approved
 HTTPS service. Local radio, notes and utility commands continue while a
 network invocation waits. Start the [reference host service](../../cmd/meshcore-bot-service/README.md),
-configure its fixed IP, TLS hostname, CA and bearer token, then enable the
+configure its hostname, CA and bearer token, then enable the
 bot's network grant.
 
 Choose the [ESP32 HTTPS image](../esp32/README.md#choose-an-image) or
@@ -31,10 +31,10 @@ total); a Lua source set or Wasm package is at most 32,768 bytes.
 Use authenticated mast administration for ESP32, or the private native owner
 socket (`admin.py --unix-socket /absolute/state/bot/native/admin.sock command ...`).
 The ESP32 command prefix is `bot https`; the native owner socket uses `https`.
-For example, replacing the IP/hostname/port with your service:
+For example, replacing the hostname/port with your service:
 
 ```text
-bot https endpoint home 192.0.2.10 service.example 8787 /v1/rpc post
+bot https endpoint home service.example 8787 /v1/rpc post
 bot https ca home HEX_CHUNK
 bot https token home HEX_CHUNK
 bot https ops home 7
@@ -58,7 +58,7 @@ native host's private owner socket permits provisioning.
 
 To move a configured private Aspen application to a generic build, use
 `bot https retain home` followed by `bot https commit`. This stages the initial
-home address, CA, token and allowed operations without printing or transporting
+home hostname, CA, token and allowed operations without printing or transporting
 them. It refuses an absent initial configuration or an already staged/saved
 home endpoint. The saved route takes priority over build defaults and remains
 available after a generic application update. This operation requires direct
@@ -68,8 +68,11 @@ Stage secrets only through encrypted authenticated RF administration or the
 local protected Unix socket. Plaintext web administration rejects CA/token
 staging. Do not paste token hex into shell history, log files or source.
 TLS always checks CA, hostname and dates; there is no insecure fallback.
-The pinned IP avoids DNS rebinding and restricts local-LAN access to the exact
-operator-approved destination. Redirects are rejected rather than followed.
+Aspen resolves the configured hostname through network DNS, uses answers until
+their TTL expires, and waits at most three seconds for a lookup. A changed local
+address, gateway or DNS server clears cached answers. Older saved IP fields are
+ignored. Choose a hostname you trust to route the endpoint; TLS still verifies
+that hostname against its configured CA. Redirects are rejected.
 
 ## HTTP, JSON and named RPC
 
@@ -82,7 +85,7 @@ Install [`examples/network_api.lua`](examples/network_api.lua) after configuring
 | `home_rpc` | `/v1/rpc post`, plus `rpc home_rpc sum /v1/rpc` | `!net_sum 13 29` |
 | `home_rpc` | Add `rpc home_rpc digest /v1/rpc`, enable service `-compute` | `!net_digest hello` |
 
-Each endpoint needs its own staged IP/hostname/CA/token and commit. Four
+Each endpoint needs its own staged hostname/CA/token and commit. Four
 endpoints and eight exact service/operation mappings fit the configuration.
 Choose the slots you need; a package endpoint needs one of the four slots.
 To keep weather, status, echo and package fetch together, reuse `home` for named

@@ -210,8 +210,8 @@ and endpoint/alias pair. Limits: hostname 127 bytes, optional IPv4 address
 15, PEM CA 4096, token 256, alias ID 64, room name 32. IDs contain letters,
 digits, `_` or `-`. Public keys are lowercase 64-digit hex. The hostname
 has no scheme, port or path: transport is WSS on port 443 with
-`/v1/aliases/ID/socket`. An empty `address` uses DNS; a fixed IPv4 address
-keeps hostname/SNI and certificate verification.
+`/v1/aliases/ID/socket`. Connections resolve `host` through DNS; the legacy
+`address` field can be omitted and is ignored if supplied. TLS verifies `host`.
 
 ```sh
 chmod 600 "$HOME/.config/aspen-private/cloudroom.json"
@@ -333,8 +333,9 @@ Aspen's persistent TLS transport, preserving trusted time, SNI/certificate
 verification and the 32KiB radio heap reserve. It bounds handshake/frame reads,
 checks 101/v2 subprotocol, preserves a ready frame coalesced with the upgrade,
 and rejects fragmented, extended or masked server frames. Protocol pings get
-pongs. DNS runs on the network task; a fixed address can retain hostname/SNI
-verification. Blocking DNS can delay that task while RF dispatch continues.
+pongs. DNS uses the shared network resolver with a three-second lookup timeout
+and TTL caching. A changed local address, gateway or DNS server clears the cache;
+reconnections resolve the hostname again. RF dispatch continues during a lookup.
 A pinned internal SDK foundation header is included for the parent adapter.
 
 The generic image reserves a sixth local radio source and two persistent alias

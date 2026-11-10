@@ -39,8 +39,7 @@ struct Peer : BotHttpsTransport {
   bool validate(char *, size_t) override { return true; }
   bool open(const BotHttpsConfig &config, char *, size_t) override {
     ++opens;
-    assert(!strcmp(config.address, "192.0.2.1") &&
-           !strcmp(config.host, "home.example") && !strcmp(config.token, token));
+    assert(!strcmp(config.host, "home.example") && !strcmp(config.token, token));
     return true;
   }
   int write(const uint8_t *bytes, size_t size) override {
@@ -135,7 +134,7 @@ int main() {
   }
 #endif
   assert(!botNetworkConfigured());
-  assert(admin("endpoint service 192.0.2.1 home.example 443 /v1/data both"));
+  assert(admin("endpoint service home.example 443 /v1/data both"));
   assert(!admin("ca service xyz"));
   const auto certificate = hex(ca);
   for (size_t offset = 0; offset < certificate.size(); offset += 80)
@@ -191,7 +190,7 @@ int main() {
   result = perform(deniedOperation, bundled);
   assert(!result.ok && !strcmp(result.rpcCode, "permission_denied") &&
          !deniedOperation.opens);
-  assert(admin("endpoint service 192.0.2.1 home.example 443 /v1/new get"));
+  assert(admin("endpoint service home.example 443 /v1/new get"));
   assert(!admin("commit"));
   assert(admin("discard"));
   assert(admin("rpc service second /v1/second"));

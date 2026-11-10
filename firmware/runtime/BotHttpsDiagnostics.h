@@ -6,13 +6,13 @@ namespace onchip {
 enum class BotHttpsFailurePoint : uint8_t {
   None, AdmissionTotal, AdmissionBlock, AdmissionInput, AdmissionOutput,
   AdmissionReserve, Client, Connect, CaParse, PeerCertificate, Clock,
-  CertificateTime, ConnectedReserve, IoReserve
+  CertificateTime, ConnectedReserve, IoReserve, Dns
 };
 inline const char *botHttpsFailureName(BotHttpsFailurePoint point) {
   static const char *const names[] = {
       "none", "admission-total", "admission-block", "admission-input", "admission-output",
       "admission-reserve", "client", "connect", "ca-parse", "peer-certificate", "clock",
-      "certificate-time", "connected-reserve", "io-reserve"};
+      "certificate-time", "connected-reserve", "io-reserve", "dns"};
   const auto index = unsigned(point);
   return index < sizeof(names) / sizeof(*names) ? names[index] : "unknown";
 }

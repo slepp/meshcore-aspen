@@ -363,7 +363,12 @@ bool botHttpsAdmin(const char *command, char *reply, size_t capacity) {
     e->port = initial.port;
     e->methods = 2;
     e->operations = initial.operations;
-  } else if (!strcmp(verb, "endpoint") && count == 6) {
+  } else if (!strcmp(verb, "endpoint") && (count == 5 || count == 6)) {
+    // Accept old command framing while resolving every connection by hostname.
+    if (count == 5) {
+      for (unsigned i = 5; i > 1; --i) args[i] = args[i - 1];
+      args[1] = const_cast<char *>("");
+    }
     if (!name(args[0], BotNameLimit) ||
         !path(args[4])) return false;
     unsigned port = 0; char extra;
@@ -376,7 +381,7 @@ bool botHttpsAdmin(const char *command, char *reply, size_t capacity) {
     Endpoint *e = endpoint(stage, args[0], true);
     if (!e) return false;
     *e = {};
-    strcpy(e->name, args[0]); strcpy(e->address, args[1]);
+    strcpy(e->name, args[0]);
     strcpy(e->host, args[2]); strcpy(e->path, args[4]);
     e->port = uint16_t(port); e->methods = methods;
     e->operations = !strcmp(args[0], "home") ? 0 : 7;

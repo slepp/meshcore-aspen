@@ -4,7 +4,6 @@
 import argparse
 import fcntl
 import hashlib
-import ipaddress
 import json
 import math
 import os
@@ -54,20 +53,17 @@ def settings(path):
 
 
 def configuration(values):
-    required = ("ONCHIP_BOT_HOME_ADDRESS", "ONCHIP_BOT_HOME_HOST",
+    required = ("ONCHIP_BOT_HOME_HOST",
                 "ONCHIP_BOT_HOME_CA_FILE", "ONCHIP_BOT_HOME_OPERATIONS")
     if any(not values.get(name) for name in required):
-        raise ValueError("Approved HTTPS address, hostname, CA file, operation allowlist and service token are required")
+        raise ValueError("Approved HTTPS hostname, CA file, operation allowlist and service token are required")
     try:
-        address = ipaddress.IPv4Address(values["ONCHIP_BOT_HOME_ADDRESS"])
         port = int(values.get("ONCHIP_BOT_HOME_PORT", "443"))
         operations = int(values["ONCHIP_BOT_HOME_OPERATIONS"])
     except ValueError:
-        raise ValueError("Invalid HTTPS address, port or operation mask; values withheld") from None
-    if (address.is_loopback or address.is_multicast or address.is_unspecified or
-            int(address) >> 24 == 0 or int(address) & 255 == 255 or
-            not 1 <= port <= 65535 or not 1 <= operations <= 7):
-        raise ValueError("HTTPS requires a unicast LAN address, valid port and explicit operation mask")
+        raise ValueError("Invalid HTTPS port or operation mask; values withheld") from None
+    if not 1 <= port <= 65535 or not 1 <= operations <= 7:
+        raise ValueError("HTTPS requires a valid port and explicit operation mask")
     host = values["ONCHIP_BOT_HOME_HOST"]
     if len(host) > 253 or not re.fullmatch(r"[A-Za-z0-9.-]+", host):
         raise ValueError("Invalid HTTPS verification hostname; value withheld")
@@ -90,7 +86,7 @@ def configuration(values):
             raise ValueError("Private HTTPS token file unavailable; contents withheld") from None
     if not 32 <= len(token) <= 256 or any(not 33 <= ord(c) <= 126 for c in token):
         raise ValueError("Approved bounded HTTPS service token is required; value withheld")
-    return {"ONCHIP_BOT_HOME_ADDRESS": str(address), "ONCHIP_BOT_HOME_HOST": host,
+    return {"ONCHIP_BOT_HOME_ADDRESS": "", "ONCHIP_BOT_HOME_HOST": host,
             "ONCHIP_BOT_HOME_PORT": port, "ONCHIP_BOT_HOME_CA": ca,
             "ONCHIP_BOT_HOME_TOKEN": token, "ONCHIP_BOT_HOME_OPERATIONS": operations}
 

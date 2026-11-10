@@ -9,45 +9,77 @@
 #include <inttypes.h>
 
 namespace onchip {
-struct SyslogConfig {
-  uint8_t version = 1;
-  uint8_t enabled = 0;
-  uint8_t address[4]{};
+struct LegacySyslogConfig {
+  uint8_t version = 1, enabled = 0, address[4]{};
   uint16_t port = 514;
   bool valid() const {
     return version == 1 && enabled <= 1 && port &&
            (!enabled || (address[0] && address[0] < 224));
   }
 };
-static_assert(sizeof(SyslogConfig) == 8, "Syslog NVS record layout changed");
-
+static_assert(sizeof(LegacySyslogConfig) == 8, "Legacy syslog NVS layout changed");
+struct SyslogConfig {
+  uint8_t version = 2, enabled = 0;
+  uint16_t port = 514;
+  char host[254]{};
+  bool valid() const {
+    if (version != 2 || enabled > 1 || !port || !memchr(host, 0, sizeof(host))) return false;
+    if (!enabled) return true;
+    const size_t n = strlen(host);
+    if (!n || host[0] == '-' || host[n - 1] == '-') return false;
+    size_t label = 0;
+    for (size_t i = 0; i < n; ++i) {
+      const char c = host[i];
+      if (c == '.') {
+        if (!label || host[i - 1] == '-') return false;
+        label = 0;
+      } else {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || (c == '-' && label)) || ++label > 63) return false;
+      }
+    }
+    if (!label) return false;
+    // Numeric destinations remain usable when reading an older installation.
+    bool numeric = true;
+    for (const char *p = host; *p; ++p) numeric &= (*p >= '0' && *p <= '9') || *p == '.';
+    if (numeric) {
+      unsigned octets[4]; char extra;
+      if (sscanf(host, "%u.%u.%u.%u%c", &octets[0], &octets[1], &octets[2], &octets[3], &extra) != 4 ||
+          !octets[0] || octets[0] >= 224 || octets[1] > 255 || octets[2] > 255 || octets[3] >= 255) return false;
+    }
+    return true;
+  }
+};
 inline bool parseSyslogDestination(const char *text, SyslogConfig &config) {
   SyslogConfig next;
   if (!strcmp(text, "off")) { config = next; return true; }
-  for (unsigned i = 0; i < 4; ++i) {
+  const char *colon = strchr(text, ':');
+  const size_t n = colon ? size_t(colon - text) : strlen(text);
+  if (!n || n >= sizeof(next.host)) return false;
+  memcpy(next.host, text, n);
+  if (colon) {
+    const char *p = colon + 1;
     unsigned value = 0, digits = 0;
-    while (*text >= '0' && *text <= '9') {
-      value = value * 10 + unsigned(*text++ - '0');
-      if (++digits > 3 || value > 255) return false;
-    }
-    if (!digits) return false;
-    next.address[i] = uint8_t(value);
-    if (i != 3 && *text++ != '.') return false;
-  }
-  if (*text == ':') {
-    ++text;
-    unsigned value = 0, digits = 0;
-    while (*text >= '0' && *text <= '9') {
-      value = value * 10 + unsigned(*text++ - '0');
+    while (*p >= '0' && *p <= '9') {
+      value = value * 10 + unsigned(*p++ - '0');
       if (++digits > 5 || value > 65535) return false;
     }
-    if (!digits || !value) return false;
+    if (*p || !digits || !value) return false;
     next.port = uint16_t(value);
   }
   next.enabled = 1;
-  if (*text || !next.valid()) return false;
+  if (!next.valid()) return false;
   config = next;
   return true;
+}
+inline bool upgradeSyslog(const LegacySyslogConfig &old, SyslogConfig &config) {
+  if (!old.valid()) return false;
+  config = {};
+  config.enabled = old.enabled;
+  config.port = old.port;
+  if (old.enabled) snprintf(config.host, sizeof(config.host), "%u.%u.%u.%u",
+                           old.address[0], old.address[1], old.address[2], old.address[3]);
+  return config.valid();
 }
 
 inline const char *syslogSubsystemName(DiagnosticSubsystem subsystem) {

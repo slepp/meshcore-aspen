@@ -20,6 +20,7 @@ constexpr size_t BotHttpsWorkBudgetBytes = 68 * 1024;
 constexpr size_t BotHttpsClientBudgetBytes = 8 * 1024;
 struct BotHttpsConfig {
   enum : uint8_t { Health = 1, Echo = 2, Weather = 4 };
+  // address is retained for stored configuration compatibility; connections use host.
   const char *address, *host, *ca, *token;
   uint16_t port;
   uint8_t operations;
@@ -37,7 +38,7 @@ const BotHttpsConfig &botHttpsConfig();
 bool botHttpsConfigured();
 bool botHttpsClockTrusted();
 // Authenticated mast-admin entry; command excludes "bot https ".
-// status | discard | commit | endpoint NAME IPV4 HOST PORT PATH get|post|both
+// status | discard | commit | endpoint NAME HOST PORT PATH get|post|both
 // ca|token NAME HEX (up to 128 hex characters per append)
 // rpc SERVICE OPERATION PATH | drop NAME | unmap SERVICE OPERATION | retain home
 bool botHttpsAdmin(const char *command, char *reply, size_t capacity);

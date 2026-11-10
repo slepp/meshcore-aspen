@@ -95,6 +95,9 @@ int main(int argc, char **argv) {
   assert(token && strlen(token) == 32);
   BotHttpsConfig config{"127.0.0.1", "localhost", certificate.c_str(),
       token, uint16_t(std::stoi(argv[1])), 7};
+#ifdef ONCHIP_BOT_NATIVE_HTTPS
+  config.address = "198.51.100.99"; // An obsolete address must not override localhost DNS.
+#endif
   std::atomic<uint32_t> generation{1}, grant{1};
   std::atomic<bool> enabled{true}, stopping{false};
   if (!strcmp(argv[4], "unknown") || !strcmp(argv[4], "cancel")) {

@@ -33,6 +33,7 @@ inline mbedtls_x509_crt leaf, intermediate, root;
 inline mbedtls_x509_crt *peer = &leaf;
 inline unsigned connections = 0, writes = 0, stops = 0, parses = 0, frees = 0;
 inline unsigned strayCloses = 0;
+inline uint32_t connectedAddress = 0;
 inline unsigned clients = 0;
 inline size_t parseBytes = 0, clientBytes = 0, connectionBytes[3]{};
 inline void *parseAllocation = nullptr;
@@ -76,12 +77,24 @@ inline void mbedtls_x509_crt_free(mbedtls_x509_crt *out) {
   *out = {};
 }
 class IPAddress {
+  uint32_t value_ = 0;
 public:
-  bool fromString(const char *address) { return !strcmp(address, "192.0.2.1"); }
+  IPAddress() = default;
+  IPAddress(uint32_t value) : value_(value) {}
+  operator uint32_t() const { return value_; }
+  uint8_t operator[](size_t n) const { return uint8_t(value_ >> (n * 8)); }
+  bool fromString(const char *address) { value_ = 0x010200c0; return !strcmp(address, "192.0.2.1"); }
 };
 constexpr int WL_CONNECTED = 3;
-struct TestWiFi { int status() const { return WL_CONNECTED; } };
+struct TestWiFi {
+  inline static uint32_t local = 0x020200c0, gateway = 0x010200c0, server = 0x010200c0;
+  int status() const { return WL_CONNECTED; }
+  IPAddress localIP() const { return IPAddress(local); }
+  IPAddress gatewayIP() const { return IPAddress(gateway); }
+  IPAddress dnsIP() const { return IPAddress(server); }
+};
 inline TestWiFi WiFi;
+
 class WiFiClientSecure {
 protected:
   sslclient_context storage_;
@@ -110,8 +123,9 @@ public:
   void setTimeout(unsigned seconds) { assert(seconds == 1); }
   void setHandshakeTimeout(unsigned seconds) { assert(seconds == 8); }
   void setCACert(const char *) {}
-  int connect(IPAddress, uint16_t, const char *host, const char *ca, const char *cert, const char *key) {
+  int connect(IPAddress address, uint16_t, const char *host, const char *ca, const char *cert, const char *key) {
     assert(!strcmp(host, "home.example") && ca && !cert && !key);
+    device_tls_test::connectedAddress = uint32_t(address);
     ++device_tls_test::connections;
     sslclient->socket = 48;
     for (unsigned i = 0; i < 3; ++i) if (device_tls_test::connectionBytes[i]) {

@@ -50,6 +50,12 @@ class CloudRoomConfig(unittest.TestCase):
         self.profile["enabled"] = False
         self.assertEqual(config.encode(json.dumps(self.profile))[:8], b"CRC\1\0\2\0\0")
 
+    def test_hostname_profile_does_not_require_a_saved_address(self):
+        del self.profile["aliases"][0]["address"]
+        alias = config.ALIAS.unpack_from(config.encode(json.dumps(self.profile)), 8)
+        self.assertEqual(alias[0].rstrip(b"\0"), b"room.example")
+        self.assertEqual(alias[1], bytes(16))
+
     def test_rejects_malformed_unknown_fields_and_duplicates(self):
         for content in ("{}", "[]", '{"schema":1,"schema":1}', b"\xff", "[" * 1500 + "]" * 1500,
                         " " * (config.LIMIT + 1)):

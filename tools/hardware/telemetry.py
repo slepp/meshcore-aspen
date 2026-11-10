@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Prepare telemetry configuration for encrypted Management administration."""
-import ipaddress
 import re
-import socket
 import ssl
 from urllib.parse import urlsplit
 
@@ -31,11 +29,8 @@ def commands(args):
         path += "?" + endpoint.query
     if len(path) > 121 or path.startswith("//") or any(ord(c) < 33 or ord(c) > 126 or c == "\\" for c in path):
         raise ValueError("Telemetry path requires at most 121 printable URL characters")
-    address = ipaddress.IPv4Address(args.address or socket.gethostbyname(endpoint.hostname))
-    if address.is_unspecified or address.is_multicast or address.is_loopback:
-        raise ValueError("Telemetry address must be a reachable unicast IPv4 address")
     result = ["telemetry off", "telemetry endpoint discard",
-              f"telemetry endpoint address {address}",
+              "telemetry endpoint address dns",
               f"telemetry endpoint host {endpoint.hostname}",
               f"telemetry endpoint port {port}",
               f"telemetry endpoint path {path}",

@@ -160,8 +160,12 @@ void telemetryEndpointCommand(const char *command, char *reply, size_t capacity)
   if (!strcmp(command, "host") || !strcmp(command, "path") || !strcmp(command, "address")) {
     const auto &a = store->active;
     snprintf(reply, capacity, "%s", !strcmp(command, "host") ? a.host :
-             !strcmp(command, "path") ? a.path : a.address);
+             !strcmp(command, "path") ? a.path : "dns");
     return;
+  }
+  if (!strcmp(command, "address dns")) {
+    store->staged.address[0] = 0; store->dirty = true;
+    snprintf(reply, capacity, "Staged DNS destination; commit to save"); return;
   }
   if (!strcmp(command, "port")) {
     snprintf(reply, capacity, "%u", store->active.port);
@@ -173,7 +177,7 @@ void telemetryEndpointCommand(const char *command, char *reply, size_t capacity)
     snprintf(reply, capacity, "Discarded staged telemetry endpoint"); return;
   }
   if (!strcmp(command, "commit")) {
-    if (!store->staged.valid()) { error("complete HTTPS address/host/path/port/CA required; token optional"); return; }
+    if (!store->staged.valid()) { error("complete HTTPS host/path/port/CA required; token optional"); return; }
     const bool verified = save(store->staged, store->check);
     store->check = {};
     if (!verified) {

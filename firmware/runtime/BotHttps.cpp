@@ -26,6 +26,7 @@
 #define ONCHIP_TLS_SYSTEM_ROOTS 0
 #endif
 #include <WiFiClientSecure.h>
+#include "NetworkDns.h"
 #include <mbedtls/pem.h>
 #include <mbedtls/ssl_internal.h>
 #if ONCHIP_TLS_PSRAM
@@ -69,23 +70,9 @@ void failure(BotIoResult &result, const char *code, const char *message) {
 bool bounded(const char *text, size_t maximum) {
   return text && strnlen(text, maximum + 1) <= maximum;
 }
-bool ipv4(const char *address) {
-  if (!bounded(address, 15)) return false;
-  unsigned octets[4]{};
-  const char *p = address;
-  for (unsigned i = 0; i < 4; ++i) {
-    unsigned digits = 0;
-    while (*p >= '0' && *p <= '9') {
-      if (++digits > 3) return false;
-      octets[i] = octets[i] * 10 + unsigned(*p++ - '0');
-    }
-    if (!digits || octets[i] > 255 || (i < 3 ? *p++ != '.' : *p != 0)) return false;
-  }
-  return octets[0] != 0 && octets[0] < 224 && octets[3] != 255;
-}
 }
 bool BotHttpsConfig::validPeer() const {
-  if (!ipv4(address) || !port ||
+  if (!port ||
       !bounded(host, 253) || !host[0] || !bounded(token, 256) ||
       !bounded(ca, 4096) || strncmp(ca, "-----BEGIN CERTIFICATE-----", 27) ||
       !strstr(ca, "-----END CERTIFICATE-----")) return false;
@@ -990,8 +977,8 @@ public:
     };
     if (!admit()) return false;
     IPAddress address;
-    if (!address.fromString(config.address)) {
-      snprintf(error, capacity, "Invalid configured HTTPS address"); return false;
+    if (!resolveNetworkHost(config.host, address, error, capacity)) {
+      failedAt(BotHttpsFailurePoint::Dns); return false;
     }
     if (config.systemRoots) {
 #if !ONCHIP_TLS_SYSTEM_ROOTS
@@ -1016,8 +1003,7 @@ public:
     phase("client-created");
     client_->setTimeout(1);
     client_->setHandshakeTimeout(8);
-    // Fixed native address avoids the SDK's potentially 31-second blocking DNS.
-    // Supplying host explicitly retains SNI and certificate hostname validation.
+    // DNS supplies the connection address; the hostname remains the TLS identity.
     const auto connect = [&]() {
 #if ONCHIP_TLS_SYSTEM_ROOTS
       if (config.systemRoots) {

@@ -64,13 +64,12 @@ class HttpsPreparation(unittest.TestCase):
             path = Path(directory) / "approved-ca.pem"
             path.write_text(ssl.DER_cert_to_PEM_cert(roots[0]))
             path.chmod(0o600)
-            values = {"ONCHIP_BOT_HOME_ADDRESS": "192.0.2.1", "ONCHIP_BOT_HOME_HOST": "home.example",
+            values = {"ONCHIP_BOT_HOME_HOST": "home.example",
                       "ONCHIP_BOT_HOME_CA_FILE": str(path), "ONCHIP_BOT_HOME_OPERATIONS": "7",
                       "MESHCORE_BOT_SERVICE_TOKEN": "fixture-" * 4}
             self.assertEqual(hardware.configuration(values)["ONCHIP_BOT_HOME_PORT"], 443)
-            for key, value in (("ONCHIP_BOT_HOME_ADDRESS", "127.0.0.1"),
-                               ("ONCHIP_BOT_HOME_ADDRESS", "224.0.0.1"),
-                               ("ONCHIP_BOT_HOME_PORT", "0"),
+            self.assertEqual(hardware.configuration(values)["ONCHIP_BOT_HOME_ADDRESS"], "")
+            for key, value in (("ONCHIP_BOT_HOME_PORT", "0"),
                                ("ONCHIP_BOT_HOME_HOST", "host\r\nInjected"),
                                ("ONCHIP_BOT_HOME_OPERATIONS", "8"),
                                ("MESHCORE_BOT_SERVICE_TOKEN", "short")):

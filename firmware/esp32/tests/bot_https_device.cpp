@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "BotHttps.h"
+#include "NetworkDns.h"
 #include "TelemetryEndpoint.h"
 #include "Clock.h"
 #include "Config.h"
@@ -59,7 +60,7 @@ static void reset(bool trusted = true) {
   }
 }
 static BotIoResult query() {
-  BotHttpsConfig config{"192.0.2.1", "home.example",
+  BotHttpsConfig config{"198.51.100.99", "home.example",
       "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----",
       "fixture-fixture-fixture-fixture-fixture", 443, 1};
   std::unique_ptr<BotHttpsTransport> transport(createBotHttpsTransport());
@@ -74,6 +75,7 @@ static BotIoResult query() {
   BotIoResult result;
   provider.perform(request, result, generation, grant, enabled, stopping);
   transport.reset();
+  if (sdk::connections) assert(sdk::connectedAddress == dns_test::answer);
   assert(!sdk::strayCloses);
   assert(sdk::parses == sdk::frees);
   assert(device_heap_test::allocations.empty() && !device_heap_test::used);
@@ -289,6 +291,13 @@ static void caWorkspaceLifetime() {
        "changed CA invalidates cache, PSRAM cache pressure falls back to an uncached date parse");
 }
 int main() {
+  reset();
+  dns_test::failure = true;
+  auto dnsFailure = query();
+  assert(!dnsFailure.ok && !sdk::connections && strstr(dnsFailure.error, "DNS"));
+  dns_test::failure = false;
+  assert(query().ok);
+
   repeatedCleanup();
   telemetryReuseAndHeapPressure();
   caWorkspaceLifetime();

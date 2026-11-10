@@ -2,6 +2,8 @@
 #include "Syslog.h"
 #if defined(ARDUINO_ARCH_ESP32) && defined(MESHCORE_MAST_ADMIN) && MESHCORE_MAST_ADMIN
 #include "SyslogCodec.h"
+#include "NetworkDns.h"
+#include <nvs.h>
 #include "Runtime.h"
 #include "RadioNetwork.h"
 #include <Arduino.h>
@@ -16,11 +18,12 @@ namespace {
 SyslogConfig liveConfig;
 bool configReady = false;
 portMUX_TYPE configMux = portMUX_INITIALIZER_UNLOCKED;
-std::atomic<uint32_t> submitted{0}, failed{0}, limited{0}, offline{0};
+std::atomic<uint32_t> submitted{0}, failed{0}, limited{0}, offline{0}, dnsFailed{0};
 SyslogRateLimit rate;
 struct UdpSend {
   tcpip_api_call_data call;
-  SyslogConfig config;
+  uint32_t address;
+  uint16_t port;
   const char *message;
   size_t size;
 };
@@ -34,9 +37,8 @@ err_t udpSend(tcpip_api_call_data *call) {
     result = pbuf_take(buffer, send.message, send.size);
     if (result == ERR_OK) {
       ip_addr_t address;
-      IP_ADDR4(&address, send.config.address[0], send.config.address[1],
-               send.config.address[2], send.config.address[3]);
-      result = udp_sendto(pcb, buffer, &address, send.config.port);
+      ip_addr_set_ip4_u32(&address, send.address);
+      result = udp_sendto(pcb, buffer, &address, send.port);
     }
     pbuf_free(buffer);
   }
@@ -59,27 +61,39 @@ bool snapshot(SyslogConfig &config) {
 } // namespace
 bool beginSyslog() {
   SyslogConfig config;
-  bool present = false;
-  const bool ready = mastRecord("syslog", &config, sizeof(config), false, present) && config.valid();
+  nvs_handle_t handle;
+  const auto opened = nvs_open("mc-mast-admin", NVS_READONLY, &handle);
+  bool ready = opened == ESP_ERR_NVS_NOT_FOUND;
+  if (opened == ESP_OK) {
+    size_t size = 0;
+    const auto result = nvs_get_blob(handle, "syslog", nullptr, &size);
+    ready = result == ESP_ERR_NVS_NOT_FOUND;
+    if (result == ESP_OK && size == sizeof(config))
+      ready = nvs_get_blob(handle, "syslog", &config, &size) == ESP_OK && config.valid();
+    else if (result == ESP_OK && size == sizeof(LegacySyslogConfig)) {
+      LegacySyslogConfig old;
+      ready = nvs_get_blob(handle, "syslog", &old, &size) == ESP_OK && upgradeSyslog(old, config);
+    }
+    nvs_close(handle);
+  }
   publishConfig(ready ? config : SyslogConfig{}, ready);
-  if (!ready) Serial.println("Syslog settings unavailable; use set syslog IP:PORT|off to repair");
+  if (!ready) Serial.println("Syslog settings unavailable; use set syslog HOST:PORT|off to repair");
   return ready;
 }
 bool syslogCommand(const char *command, char *reply, size_t capacity) {
   if (!strcmp(command, "get syslog")) {
     SyslogConfig config;
-    if (!snapshot(config)) snprintf(reply, capacity, "Error: syslog settings unavailable; use set syslog IP:PORT|off");
+    if (!snapshot(config)) snprintf(reply, capacity, "Error: syslog settings unavailable; use set syslog HOST:PORT|off");
     else if (!config.enabled) snprintf(reply, capacity, "Syslog off");
-    else snprintf(reply, capacity, "Syslog UDP %u.%u.%u.%u:%u",
-                  config.address[0], config.address[1], config.address[2], config.address[3], config.port);
+    else snprintf(reply, capacity, "Syslog UDP %s:%u", config.host, config.port);
   } else if (!strcmp(command, "get syslog.stats")) {
-    snprintf(reply, capacity, "UDP submitted=%u failed=%u limited=%u offline=%u; since boot",
-             submitted.load(), failed.load(), limited.load(), offline.load());
+    snprintf(reply, capacity, "UDP submitted=%u failed=%u limited=%u offline=%u dns-failed=%u; since boot",
+             submitted.load(), failed.load(), limited.load(), offline.load(), dnsFailed.load());
   } else if (!strncmp(command, "set syslog ", 11)) {
     SyslogConfig config, actual;
     bool present = false;
     if (!parseSyslogDestination(command + 11, config)) {
-      snprintf(reply, capacity, "Error: use set syslog IP[:PORT]|off; unicast IPv4; port 1..65535");
+      snprintf(reply, capacity, "Error: use set syslog HOST[:PORT]|off; hostname or unicast IPv4; port 1..65535");
     } else if (!mastRecord("syslog", &config, sizeof(config), true, present) ||
                !mastRecord("syslog", &actual, sizeof(actual), false, present) ||
                !present || memcmp(&config, &actual, sizeof(config))) {
@@ -92,7 +106,7 @@ bool syslogCommand(const char *command, char *reply, size_t capacity) {
   } else if (!strcmp(command, "syslog test")) {
     SyslogConfig config;
     if (!snapshot(config) || !config.enabled)
-      snprintf(reply, capacity, "Error: syslog is off or unavailable; use set syslog IP:PORT");
+      snprintf(reply, capacity, "Error: syslog is off or unavailable; use set syslog HOST:PORT");
     else if (!diagnosticEvent("Syslog test"))
       snprintf(reply, capacity, "Error: diagnostics queue full or unavailable; inspect get diagnostics");
     else snprintf(reply, capacity, "Syslog test queued");
@@ -108,8 +122,17 @@ void sendSyslog(const char *message, DiagnosticSubsystem subsystem, uint32_t utc
   const size_t size = formatSyslog(radio_network::hostname(), subsystem, utc, uptimeMs,
                                  message, packet, sizeof(packet));
   if (!size) { ++failed; return; }
+  static uint32_t retryAt = 0;
+  if (retryAt && int32_t(millis() - retryAt) < 0) { ++failed; return; }
+  IPAddress destination;
+  char error[96];
+  if (!resolveNetworkHost(config.host, destination, error, sizeof(error))) {
+    retryAt = millis() + 30000; ++dnsFailed; ++failed; return;
+  }
+  retryAt = 0;
   UdpSend send{};
-  send.config = config;
+  send.address = uint32_t(destination);
+  send.port = config.port;
   send.message = packet;
   send.size = size;
   const auto result = tcpip_api_call(udpSend, &send.call);

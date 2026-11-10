@@ -141,7 +141,7 @@ On an ESP32 mast, enter these commands through authenticated Management RF
 or the browser's command console:
 
 ```text
-set syslog 192.0.2.10:514
+set syslog logs.example:514
 get syslog
 syslog test
 get syslog.stats
@@ -152,7 +152,7 @@ stats psram
 stats vm
 ```
 
-Replace the destination with your UDP syslog collector's IPv4 address. The
+Replace the destination with your UDP syslog collector's hostname or IPv4 address. The
 default port is 514. The setting survives reboot; `set syslog off` stops remote
 logging. The collector receives BSD/RFC 3164 `local0.info` messages. The
 hostname identifies the device; the program tag identifies `system`, `wifi`,

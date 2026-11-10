@@ -687,7 +687,7 @@ static void management_cli_core() {
     assert(saveRoleProfile({0}) && saveBotEnabled(true));
     BetaFixture f;
     Peer owner, outsider;
-    assert(f.action("help syslog").find("set syslog IP[:PORT]|off") != std::string::npos);
+    assert(f.action("help syslog").find("set syslog HOST[:PORT]|off") != std::string::npos);
     assert(f.action("get diagnostics").find("Diagnostics completed=") == 0);
     assert(f.action("stats system") == "Error: device task measurements unavailable");
     assert(!f.send(owner, "mast-pass-12", true).empty());

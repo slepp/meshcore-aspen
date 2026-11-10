@@ -112,8 +112,8 @@ static void protocol() {
   assert(!result.ok && untrusted.sent.empty());
   for (const char *address : {"", "home.example", "127.1", "256.0.0.1", "0.0.0.0", "224.0.0.1"}) {
     auto config = configuration(); config.address = address;
-    Transport peer; result = perform(peer, query, config);
-    assert(!result.ok && peer.opens == 0);
+    Transport peer; peer.body(health); result = perform(peer, query, config);
+    assert(result.ok && peer.opens == 1);
   }
   for (const char *host : {"https://home.example", "home.example\r\nX:bad", "user@home.example"}) {
     auto config = configuration(); config.host = host;

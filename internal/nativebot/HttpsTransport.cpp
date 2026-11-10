@@ -3,6 +3,7 @@
 #include "NativeClock.h"
 #include <Arduino.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -16,8 +17,61 @@
 #include <cstdio>
 #include <ctime>
 #include <new>
+#include <mutex>
+#include <cstring>
 
 namespace onchip {
+namespace {
+// glibc owns the asynchronous lookup until gai_error reports completion. Keep
+// the request and hostname alive after a timeout, as on the ESP32 transport.
+bool resolveHost(const char *host, in_addr &address, char *error, size_t size) {
+  struct Lookup {
+    std::mutex mutex;
+    gaicb request{};
+    addrinfo hints{};
+    char host[254]{};
+    bool pending = false;
+  };
+  static Lookup state;
+  std::unique_lock<std::mutex> guard(state.mutex, std::try_to_lock);
+  if (!guard.owns_lock() || (state.pending && gai_error(&state.request) == EAI_INPROGRESS)) {
+    snprintf(error, size, "Host DNS lookup still pending"); return false;
+  }
+  if (state.request.ar_result) freeaddrinfo(state.request.ar_result);
+  state.request = {};
+  state.hints = {};
+  state.hints.ai_family = AF_INET;
+  state.hints.ai_socktype = SOCK_STREAM;
+  snprintf(state.host, sizeof(state.host), "%s", host);
+  state.request.ar_name = state.host;
+  state.request.ar_request = &state.hints;
+  gaicb *requests[] = {&state.request};
+  if (getaddrinfo_a(GAI_NOWAIT, requests, 1, nullptr)) {
+    state.pending = false;
+    snprintf(error, size, "Host DNS lookup could not start"); return false;
+  }
+  state.pending = true;
+  const gaicb *waiting[] = {&state.request};
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (gai_error(&state.request) == EAI_INPROGRESS) {
+    const auto left = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - std::chrono::steady_clock::now()).count();
+    if (left <= 0) {
+      gai_cancel(&state.request);
+      snprintf(error, size, "Host DNS lookup timed out"); return false;
+    }
+    const timespec timeout{time_t(left / 1000000000), long(left % 1000000000)};
+    gai_suspend(waiting, 1, &timeout);
+  }
+  state.pending = false;
+  if (gai_error(&state.request) || !state.request.ar_result) {
+    snprintf(error, size, "Host DNS lookup returned no IPv4 address"); return false;
+  }
+  address = reinterpret_cast<const sockaddr_in *>(state.request.ar_result->ai_addr)->sin_addr;
+  freeaddrinfo(state.request.ar_result);
+  state.request.ar_result = nullptr;
+  return true;
+}
+} // namespace
 NativeBotHttpsTransport::NativeBotHttpsTransport() {
   size_t received = 0;
   auto *bytes = reinterpret_cast<uint8_t *>(&nonce_);
@@ -83,7 +137,7 @@ bool NativeBotHttpsTransport::open(const BotHttpsConfig &config, char *error, si
   sockaddr_in target{};
   target.sin_family = AF_INET;
   target.sin_port = htons(config.port);
-  if (inet_pton(AF_INET, config.address, &target.sin_addr) != 1) return fail();
+  if (!resolveHost(config.host, target.sin_addr, error, size)) { close(); return false; }
   const uint32_t deadline = now() + 2000;
   const auto ready = [&](short events) {
     while (int32_t(deadline - now()) > 0) {

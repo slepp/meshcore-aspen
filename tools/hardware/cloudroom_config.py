@@ -46,8 +46,9 @@ def encode(content):
     entries, identifiers, keys = [], set(), set()
     for alias in profile["aliases"]:
         allowed = FIELDS | (OPTIONAL_V2 if schema == 2 else set())
-        if type(alias) is not dict or not FIELDS <= set(alias) <= allowed:
+        if type(alias) is not dict or not (FIELDS - {"address"}) <= set(alias) <= allowed:
             raise ValueError("Cloud room alias requires exactly the documented fields")
+        alias = {"address": "", **alias}
         role = alias.get("role", "frontend")
         mode = alias.get("ca_mode", "pem")
         advert = alias.get("advert_once", False)

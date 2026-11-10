@@ -7,7 +7,7 @@ setting. Runtime configuration survives application updates and restarts.
 It does not change role selection, radio settings, identities or MQTT.
 
 Use this guide after [building the HTTPS image](README.md#choose-an-image).
-Choose a receiver, approved fixed IP, TLS hostname/CA and any required bearer
+Choose a receiver hostname, TLS CA and any required bearer
 token. Then stage through encrypted Management RF, commit, enable publishing
 and inspect `telemetry counts` after one configured interval. Expect `ok` to
 increase for a completed 2xx response; admission alone is not delivery.
@@ -33,7 +33,7 @@ enable/interval and status remain available through authenticated same-origin
 
 ```text
 telemetry identity
-telemetry endpoint address 192.0.2.10
+telemetry endpoint address dns
 telemetry endpoint host metrics.example
 telemetry endpoint port 443
 telemetry endpoint path /write
@@ -52,7 +52,7 @@ telemetry tls-blocks
 telemetry off
 ```
 
-Replace the example address/hostname and append the CA PEM as repeated `ca HEX`
+Replace the example hostname and append the CA PEM as repeated `ca HEX`
 commands (at most 64 decoded bytes per command; use 56-byte chunks with the RF
 client's nonce overhead). A hostname and path are each at most 121 bytes, CA
 4096 bytes, optional bearer token 256 bytes. `token HEX` similarly appends
@@ -102,18 +102,17 @@ Repair the storage fault, then restart to retry a retained legacy migration,
 or restage the endpoint and commit it through the existing management commands.
 Do not erase NVS or format SPIFFS to make room: both contain other role data.
 
-The address is a provisioned IPv4 literal, while `host` supplies TLS SNI and
-certificate hostname verification. This reuses the existing HTTPS transport's
-bounded-connect policy instead of adding blocking ESP32 DNS lookups.
-Reprovision the address if DNS moves the receiver. HTTP, insecure TLS, alternate
-certificate-verification bypasses, redirects and public Lua access are not
-supported. This native POST feature does not enable general Lua HTTP/JSON APIs.
+Aspen resolves the receiver hostname before each connection using its network's
+DNS servers. DNS answers are cached until their TTL expires and the cache is
+cleared when the local address, gateway or DNS server changes. A lookup waits at
+most three seconds; a failure uses the publisher's existing retry backoff.
+`telemetry tls` reports `detail=dns` when resolution fails. The hostname also
+supplies TLS SNI and certificate verification. Older saved endpoint addresses are
+ignored, so existing endpoints follow DNS without replacing their CA or token.
+`endpoint address` reports `dns`; `endpoint address dns` clears the legacy field.
 
-The interval is 30..86400 seconds, default 60. `on` also clears a suspended
-HTTP error after the endpoint has been repaired. `off` cancels an outstanding
-write; it cannot retract a request already received by the server. Persistence
-errors disable live publishing and explicitly report that the saved outcome
-is unknown. Inspect the setting again after repairing storage.
+Requests use HTTPS with CA, hostname and date verification and reject redirects.
+The publisher does not grant Lua access to arbitrary URLs or credentials.
 
 ## Delivery and privacy
 

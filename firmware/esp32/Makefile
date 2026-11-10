@@ -550,7 +550,7 @@ telemetry-https-test: prepare bot-prepare-phy
 telemetry-storage-test: telemetry-https-test
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_HTTPS=1 -DONCHIP_TELEMETRY_TEST=1 \
 		-I. -Itests/seams -I$(ROOT)/test_support/phy_parity/seams \
-		-I$(UPSTREAM)/src -I$(BOT_JSON_INCLUDE) \
+		-I$(UPSTREAM)/src -I$(BOT_JSON_INCLUDE) -I$(CRYPTO) \
 		tests/telemetry_storage.cpp TelemetryEndpoint.cpp ../runtime/BotHttps.cpp ../runtime/BotStore.cpp ../runtime/BotTypes.cpp \
 		$(PHY_BUILD)/Utils.o $(PHY_BUILD)/crypto/*.o $(BOT_JSON_LIBS) \
 		-o $(TEST_BUILD)/telemetry-storage

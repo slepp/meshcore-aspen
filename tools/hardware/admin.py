@@ -1186,7 +1186,6 @@ def main():
     telemetry_sub = telemetry_group.add_subparsers(dest="telemetry_action", required=True)
     telemetry_config = telemetry_sub.add_parser("configure")
     telemetry_config.add_argument("--endpoint", required=True, help="HTTPS receiver URL")
-    telemetry_config.add_argument("--address", help="receiver IPv4 address; defaults to DNS lookup")
     telemetry_config.add_argument("--ca-file", type=Path, required=True)
     telemetry_config.add_argument("--token-file", type=Path, help="0600 bearer-token file")
     telemetry_config.add_argument("--interval", type=int, default=60, help="seconds, 30..86400")

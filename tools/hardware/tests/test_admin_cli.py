@@ -61,11 +61,12 @@ class AdminCLITests(unittest.TestCase):
             client = MagicMock(command=MagicMock(return_value="Saved"))
             arguments = ["admin.py", "--gateway", "modem", "--seed-file", str(seed),
                          "--target", "ab" * 32, "telemetry", "configure", "--endpoint", "https://metrics.example/write",
-                         "--address", "192.0.2.1", "--ca-file", str(ca), "--token-file", str(token)]
+                         "--ca-file", str(ca), "--token-file", str(token)]
             with patch.object(sys, "argv", arguments), patch.object(admin, "NativeClient", return_value=client), \
                     patch("sys.stdout", new_callable=io.StringIO):
                 cli.main()
             commands = [call.args[0] for call in client.command.call_args_list]
+            self.assertIn("telemetry endpoint address dns", commands)
             self.assertLess(commands.index("telemetry endpoint commit"), commands.index("telemetry on"))
             for name, expected in (("ca", ca.read_bytes()), ("token", token.read_bytes())):
                 chunks = [text.rsplit(" ", 1)[1] for text in commands

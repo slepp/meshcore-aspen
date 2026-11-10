@@ -45,7 +45,7 @@ static void command(const char *text, bool good = true) {
 static void config() {
   assert(!telemetryEndpointConfigured());
   command("commit", false);
-  command("address 192.0.2.1");
+  command("address dns");
   command("host vm.example");
   command("path /write?precision=ns");
   command("port 443");

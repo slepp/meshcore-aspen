@@ -555,8 +555,14 @@ bot-network-retain-test:
 		-DONCHIP_BOT_HOME_CA=\"-----BEGIN\ CERTIFICATE-----\\nfixture\\n-----END\ CERTIFICATE-----\" \
 		-DONCHIP_BOT_HOME_TOKEN=\"tttttttttttttttttttttttttttttttt\" -DONCHIP_BOT_HOME_OPERATIONS=7'
 .PHONY: bot-https-tls-test
+.PHONY: network-dns-test
+network-dns-test:
+	@mkdir -p $(BOT_BUILD)
+	$(CXX) $(BOT_FLAGS) -Itests/https_device -Itests/seams -I$(ROOT)/test_support/phy_parity/seams -I../runtime \
+		tests/network_dns.cpp -o $(BOT_BUILD)/network-dns
+	$(BOT_BUILD)/network-dns
 .PHONY: bot-https-device-test
-bot-https-device-test: prepare
+bot-https-device-test: prepare network-dns-test
 	$(PHY_MAKE) prepare $(PHY_BUILD)/combined
 	@mkdir -p $(BOT_BUILD)
 	$(CXX) $(BOT_FLAGS) -DONCHIP_BOT_HTTPS=1 \

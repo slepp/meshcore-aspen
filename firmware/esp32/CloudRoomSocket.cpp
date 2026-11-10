@@ -35,7 +35,6 @@ class EspWss final:public CloudRoomSocket {
   BotHttpsTransport *tls_=nullptr;
   esp_transport_handle_t parent_=nullptr,ws_=nullptr;
   const CloudRoomPeer *peer_=nullptr;
-  char address_[16]{};
   char error_[96]{};
   unsigned upgradeHttp_=0,upgradeStatusCode_=0;
   int peek_=-1;
@@ -75,7 +74,7 @@ class EspWss final:public CloudRoomSocket {
   static EspWss &self(esp_transport_handle_t h) {return *static_cast<EspWss *>(esp_transport_get_context_data(h));}
   static int connect(esp_transport_handle_t h,const char *,int,int) {
     auto &s=self(h);
-    const BotHttpsConfig cfg(s.address_,s.peer_->host,s.peer_->ca?s.peer_->ca:"","",443,0,s.peer_->systemRoots);
+    const BotHttpsConfig cfg("",s.peer_->host,s.peer_->ca?s.peer_->ca:"","",443,0,s.peer_->systemRoots);
     return s.tls_->open(cfg,s.error_,sizeof(s.error_))?0:-1;
   }
   int read(char *out,int size,int ms) {
@@ -143,18 +142,6 @@ public:
     close();
     if(!ascii(peer.host,127)||!ascii(peer.token,256)||!ascii(peer.alias,64,true)||(!peer.systemRoots&&(!peer.ca||!*peer.ca||strnlen(peer.ca,4097)>4096))) {
       snprintf(error,capacity,"Invalid cloud-room peer settings");return false;
-    }
-    if(peer.address&&*peer.address) {
-      if(!ascii(peer.address,15)){snprintf(error,capacity,"Invalid cloud-room IPv4 address");return false;}
-      strcpy(address_,peer.address);
-    }else {
-#ifndef CLOUD_ROOM_SOCKET_TEST
-      IPAddress ip;
-      if(WiFi.hostByName(peer.host,ip)!=1){snprintf(error,capacity,"Cloud-room DNS lookup failed");return false;}
-      snprintf(address_,sizeof(address_),"%u.%u.%u.%u",ip[0],ip[1],ip[2],ip[3]);
-#else
-      snprintf(error,capacity,"Host test requires fixed peer address");return false;
-#endif
     }
     if(!tls_)tls_=createPersistentBotTlsTransport();
     if(!tls_){snprintf(error,capacity,"Cloud-room TLS transport unavailable");return false;}
