@@ -10,9 +10,9 @@
   },
   "products": {
     "aspen": {"version": "0.1.24"},
-    "birch": {"version": "0.1.5"},
-    "pine": {"version": "0.1.5"},
-    "willow": {"version": "0.0.13"}
+    "birch": {"version": "0.1.6"},
+    "pine": {"version": "0.1.6"},
+    "willow": {"version": "0.0.14"}
   },
   "compatibility": {
     "queued_phy": 1,
