@@ -399,7 +399,7 @@ $(BOT_NATIVE_WORKER): $(BOT_HOST_PACKET_SOURCES) $(BOT_LUA_OBJECTS) $(BOT_NATIVE
 		$(ROOT)/internal/nativebot/NativeClock.cpp \
 		TelemetryEndpoint.cpp TelemetryHttps.cpp \
 		$(BOT_BUILD)/host-worker.o $(BOT_BUILD)/host-mast-source.o $(BOT_NATIVE_SOURCES) $(BOT_HOST_WORKER_SOURCES) $(BOT_HOST_PACKET_SOURCES) \
-		$(BOT_NATIVE_OBJECTS) $(BOT_JSON_LIBS) -lssl -lcrypto -lm -o $@
+		$(BOT_NATIVE_OBJECTS) $(BOT_JSON_LIBS) -lssl -lcrypto -lm -Wl,-z,noexecstack -o $@
 bot-native-worker: bot-prepare bot-lua bot-prepare-phy $(BOT_NATIVE_WORKER)
 .PHONY: bot-native-host-test
 bot-native-host-test: bot-native-worker
