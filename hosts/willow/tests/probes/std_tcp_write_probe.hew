@@ -7,18 +7,28 @@ import std.os;
 actor Writer {
     let input: stream.Stream<bytes>;
     let output: stream.Sink<bytes>;
-    receive fn fill() {
+    receive fn fill() -> i64 {
+        var committed: i64 = 0;
         var data = bytes.new();
         for index in 0..65536 {
             data.push(7);
         }
         for attempt in 0..256 {
-            if output.send(data).is_err() {
-                println("STD_TCP_RETURNED_ERROR");
-                return;
+            match output.send(data) {
+                .Ok(_) => {
+                    committed += data.len();
+                }
+                .Err(SendError.WriteTimedOut(prefix)) => {
+                    assert(prefix >= 0 && prefix < data.len());
+                    return committed + prefix;
+                }
+                .Err(error) => panic(f"unexpected write failure: {error}"),
             }
         }
         panic("peer buffer did not fill");
+    }
+    receive fn ping() -> bool {
+        true
     }
 }
 
@@ -30,12 +40,17 @@ actor Healthy {
 
 fn main() {
     let args = os.args();
-    let connection = net.connect_timeout(args[1], 1, 0).expect("connect");
-    connection.set_write_timeout(30).expect("write timeout");
+    let connection = net.connect_timeout(args[1], 1s).expect("connect");
+    connection.set_write_timeout(30ms).expect("write timeout");
     let (input, output) = connection.split();
     let writer = spawn Writer { input: input, output: output };
     let healthy = spawn Healthy;
-    assert(writer.fill().is_err());
+    assert(writer.fill().expect("write deadline result") > 0);
+    assert(writer.ping().expect("writer remains usable"));
     assert(healthy.ping().expect("healthy actor"));
-    println("STD_TCP_TIMEOUT_IS_ACTOR_FAILURE");
+    stop(writer);
+    stopped(writer);
+    stop(healthy);
+    stopped(healthy);
+    println("STD_TCP_TIMEOUT_RETURNED_AS_RESULT");
 }

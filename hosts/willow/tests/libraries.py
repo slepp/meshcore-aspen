@@ -65,7 +65,7 @@ class Libraries(unittest.TestCase):
                 done.set(); thread.join(timeout=6)
             self.assertFalse(thread.is_alive())
 
-    def test_std_tcp_timeout_is_caught_actor_failure_not_result(self):
+    def test_std_tcp_timeout_reports_prefix_and_keeps_actor_usable(self):
         with socket.socket() as listener:
             listener.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,4096)
             listener.bind(("127.0.0.1",0)); listener.listen()
@@ -76,10 +76,8 @@ class Libraries(unittest.TestCase):
             try:
                 result=subprocess.run([str(STD_TCP),f"127.0.0.1:{listener.getsockname()[1]}"],
                                       capture_output=True,text=True,timeout=5)
-                self.assertEqual(result.returncode,1,result.stdout+result.stderr)
-                self.assertIn("STD_TCP_TIMEOUT_IS_ACTOR_FAILURE",result.stdout)
-                self.assertIn("TCP I/O timeout",result.stderr)
-                self.assertNotIn("STD_TCP_RETURNED_ERROR",result.stdout)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertIn("STD_TCP_TIMEOUT_RETURNED_AS_RESULT",result.stdout)
             finally:
                 done.set(); thread.join(timeout=6)
             self.assertFalse(thread.is_alive())

@@ -6,12 +6,13 @@ import std.encoding.hex;
 
 import willow.src.hostlib.framing;
 
+import willow.src.hostlib.binary;
+
 pub fn cut(data: bytes, start: i64, end: i64) -> bytes {
-    var out = bytes.new();
-    for i in start..end {
-        out.push(data[i]);
+    if end <= start {
+        return bytes.new();
     }
-    out
+    binary.slice(data, start, end).expect("wire byte range")
 }
 
 extern "C" {

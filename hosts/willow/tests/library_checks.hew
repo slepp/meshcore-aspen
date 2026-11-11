@@ -1,5 +1,7 @@
 import willow.src.hostlib.binary;
 
+import willow.src.wire;
+
 import willow.src.hostlib.duplex;
 
 import willow.src.hostlib.framing;
@@ -276,6 +278,19 @@ fn main() {
         println("ARGV_FIDELITY_BOUNDS_OK");
         return;
     }
+    var original = "prefix-payload-suffix".to_bytes();
+    var middle = binary.slice(original, 7, 14).expect("middle slice");
+    let nested = binary.slice(middle, 1, 6).expect("nested slice");
+    original.push(33);
+    middle.push(63);
+    assert(original == "prefix-payload-suffix!".to_bytes());
+    assert(middle == "payload?".to_bytes());
+    assert(nested == "ayloa".to_bytes());
+    assert(binary.integer(nested).expect("integer from nonzero offset") == 0x616f6c7961);
+    assert(binary.slice(original, 5, 5).expect("empty slice").is_empty());
+    assert(binary.slice(original, 7, 6).is_none());
+    assert(wire.cut(original, 7, 6).is_empty());
+    assert(wire.cut(original, 7, 14) == "payload".to_bytes());
     assert(binary.slice("abc".to_bytes(), -1, 2).is_none());
     assert(binary.slice("abc".to_bytes(), 0, 4).is_none());
     assert(binary.integer(binary.little(4294967295, 4).expect("integer")).expect("integer") == 4294967295);
