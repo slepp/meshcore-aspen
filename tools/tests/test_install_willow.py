@@ -41,6 +41,33 @@ class Install(unittest.TestCase):
                                "airtime_factor": 0, "txdelay": 0, "direct_txdelay": 0}}
         (path / "companion.json").write_text(json.dumps(doc))
 
+    def test_snapshot_retains_identities_with_disabled_observer(self):
+        state = self.root / "host"
+        state.mkdir()
+        plan = {"ready_url": "http://local/readyz", "status_url": "http://local/status",
+                "services": [{"kind": "host", "state": str(state)}]}
+        roles = {"bot": {"public_key": "a" * 64}, "observer": {"state": "faulted"}}
+        failure = {"ready": False, "not_ready": {"observer": "health_connection_unavailable"}}
+        for enabled in ("0", "1"):
+            with self.subTest(enabled=enabled):
+                (state / "config").write_text("observer.enabled=" + enabled + "\n")
+                error = urllib.error.HTTPError(plan["ready_url"], 503, "Unavailable", {},
+                                               io.BytesIO(json.dumps(failure).encode()))
+                with patch.object(installer, "health", side_effect=[error, roles]):
+                    if enabled == "0":
+                        self.assertEqual(installer.snapshot(plan), {"bot": "a" * 64})
+                    else:
+                        with self.assertRaisesRegex(ValueError, "readiness check failed"):
+                            installer.snapshot(plan)
+        roles["observer"] = {"state": "disabled"}
+        with patch.object(installer, "health", side_effect=[{"ready": True}, roles]):
+            self.assertEqual(installer.snapshot(plan), {"bot": "a" * 64})
+        failure["not_ready"]["bot"] = "radio_disconnected"
+        (state / "config").write_text("observer.enabled=0\n")
+        with patch.object(installer, "health", return_value=failure):
+            with self.assertRaisesRegex(ValueError, "readiness check failed"):
+                installer.snapshot(plan)
+
     def test_actual_base_transfer_and_rollback_keep_new_traffic(self):
         old, candidate, recovered = [self.root / n for n in ("old", "candidate", "recovered")]
         self.base(old, 9)

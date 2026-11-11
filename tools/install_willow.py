@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.request
 
 BINARIES = {"host": "hew-host-release", "base": "hew-base-release",
@@ -162,9 +163,33 @@ def health(url):
 
 
 def snapshot(plan):
-    if not health(plan["ready_url"]).get("ready"):
-        raise ValueError("Willow readiness check failed")
-    return {name: value["public_key"] for name, value in health(plan["status_url"]).items()}
+    try:
+        readiness = health(plan["ready_url"])
+    except urllib.error.HTTPError as error:
+        if error.code != 503:
+            raise
+        readiness = json.load(error)
+    disabled_observer = False
+    if not readiness.get("ready"):
+        # Older hosts omit observer_enabled when the observer is disabled.
+        # Their dashboard still requires that missing role in its snapshot.
+        if readiness.get("not_ready") == {"observer": "health_connection_unavailable"}:
+            hosts = [item for item in plan["services"] if item["kind"] == "host" and "state" in item]
+            if len(hosts) == 1:
+                configuration = dict(line.split("=", 1) for line in
+                                     (Path(hosts[0]["state"]) / "config").read_text().splitlines() if "=" in line)
+                disabled_observer = configuration.get("observer.enabled") == "0"
+        if not disabled_observer:
+            raise ValueError("Willow readiness check failed")
+    identities = {}
+    for name, value in health(plan["status_url"]).items():
+        if name == "observer" and (disabled_observer or value.get("state") == "disabled"):
+            continue
+        key = value.get("public_key", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            raise ValueError(name + ": readiness snapshot has no valid public identity")
+        identities[name] = key
+    return identities
 
 
 def observer_retention(status):
