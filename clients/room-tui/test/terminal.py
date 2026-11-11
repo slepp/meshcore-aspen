@@ -223,7 +223,7 @@ try:
         sys.exit(0)
     send(b"PTY shared conversation")
     until(lambda: state()["rooms"]["A"]["draft"] == "PTY shared conversation", "durable draft")
-    send(b"\x13")
+    send(b"\r")
     until(lambda: state()["rooms"]["A"]["draft"] == "" and
           "PTY shared conversation" in visible() and "Saved to shared history" in visible(), "confirmed post")
     saved = state()
@@ -236,8 +236,20 @@ try:
         history = json.load(response)
     assert sum(m["author"] == public_key and m["text"] == "Alice: PTY shared conversation"
                for m in history["messages"]) == 1
-    send(b"Draft after restart")
-    until(lambda: state()["rooms"]["A"]["draft"] == "Draft after restart", "restart draft")
+    send(b"\x1b[200~Draft after restart\nsecond line\x1b[201~")
+    until(lambda: state()["rooms"]["A"]["draft"] == "Draft after restart\nsecond line", "multiline pasted draft")
+    assert state()["rooms"]["A"].get("pending") is None, "pasted newline submitted a post"
+    send(b"\x1bOP")  # F1 opens help without changing the draft.
+    until(lambda: "Keyboard help" in visible(), "keyboard help")
+    send(b"\x1b")
+    until(lambda: "Keyboard help" not in visible(), "close help")
+    assert state()["rooms"]["A"]["draft"] == "Draft after restart\nsecond line"
+    send(b"\x0c")  # Ctrl+L redraws without logging out.
+    until(lambda: "151 bytes" in visible(), "redraw without leaving")
+    size(40, 18)
+    for _ in range(10):
+        pump()
+    assert "F1: help" in visible() and "151 bytes" in visible(), "chat controls clipped at 40x18"
     size(60, 24)
     for _ in range(10):
         pump()

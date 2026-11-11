@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func fixtureModel(t *testing.T) (*fixtureServer, *model) {
@@ -165,6 +167,7 @@ func TestModelKeyboardResizeAndNoColor(t *testing.T) {
 			t.Error("NO_COLOR emitted foreground/background colors")
 		}
 	}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.active().session = nil
 	m.focus = 2
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -174,5 +177,146 @@ func TestModelKeyboardResizeAndNoColor(t *testing.T) {
 	m.password.SetValue("fixture password only")
 	if strings.Contains(m.View().Content, "fixture password only") {
 		t.Fatal("password appeared in the terminal")
+	}
+}
+
+func press(m *model, code rune, mod tea.KeyMod) tea.Cmd {
+	_, cmd := m.Update(tea.KeyPressMsg{Code: code, Mod: mod})
+	return cmd
+}
+
+func TestChatKeysAndSafeLeave(t *testing.T) {
+	_, m := fixtureModel(t)
+	m.focus = 2
+	m.setFocus()
+	m.composer.SetValue("first")
+	press(m, tea.KeyEnter, tea.ModAlt)
+	if m.composer.Value() != "first\n" {
+		t.Fatalf("Alt+Enter: %q", m.composer.Value())
+	}
+	m.composer.SetValue("hello")
+	if cmd := press(m, tea.KeyEnter, 0); cmd == nil || m.saved.Rooms["A"].Pending == nil {
+		t.Fatal("Enter did not prepare a persisted post")
+	}
+	m.active().busy = false
+	if cmd := press(m, 'l', tea.ModCtrl); cmd == nil || m.leaveConfirm || m.active().session == nil {
+		t.Fatal("Ctrl+L must redraw without leaving")
+	}
+	press(m, 'x', tea.ModCtrl)
+	if !m.leaveConfirm {
+		t.Fatal("leave confirmation missing")
+	}
+	press(m, tea.KeyEscape, 0)
+	if m.leaveConfirm || m.active().session == nil {
+		t.Fatal("cancel left the room")
+	}
+	press(m, 'x', tea.ModCtrl)
+	if cmd := press(m, tea.KeyEnter, 0); cmd == nil || !m.active().busy {
+		t.Fatal("confirmed leave did not start")
+	}
+}
+
+func TestReadingHistoryWhileTypingAndPrepending(t *testing.T) {
+	_, m := fixtureModel(t)
+	m.focus = 2
+	m.composer.SetValue("keep my draft")
+	var messages []message
+	for i := int64(20); i < 50; i++ {
+		messages = append(messages, message{Seq: i, Timestamp: uint32(100 + i), OriginAlias: "A", Author: strings.Repeat("aa", 32), Text: "line"})
+	}
+	room := m.active()
+	if err := m.merge(room, messages, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	m.refreshHistory(true)
+	press(m, tea.KeyPgUp, 0)
+	if m.history.AtBottom() || m.focus != 2 || m.composer.Value() != "keep my draft" {
+		t.Fatal("paging disturbed compose or failed to scroll")
+	}
+	before := m.history.View()
+	incoming := message{Seq: 50, Timestamp: 150, OriginAlias: "A", Author: strings.Repeat("aa", 32), Text: "new arrival"}
+	if err := m.merge(room, []message{incoming}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if room.unread != 1 || m.history.View() != before {
+		t.Fatal("live message moved history or failed to mark unread")
+	}
+	older := message{Seq: 19, Timestamp: 119, OriginAlias: "A", Author: strings.Repeat("aa", 32), Text: "earlier"}
+	m.handleResult(roomResult{Alias: "A", Generation: room.generation, Kind: "older", Page: historyPage{Messages: []message{older}}})
+	if m.history.View() != before {
+		t.Fatal("older page changed the visible conversation")
+	}
+	press(m, tea.KeyEnd, tea.ModCtrl)
+	if !m.history.AtBottom() || room.unread != 0 {
+		t.Fatal("latest did not resume live view")
+	}
+}
+
+func TestLayoutKeepsComposerHelpAndSelectedRoomVisible(t *testing.T) {
+	_, m := fixtureModel(t)
+	for i := 0; i < 30; i++ {
+		m.rooms = append(m.rooms, &roomState{info: roomInfo{ID: fmt.Sprint(i), Name: fmt.Sprintf("Room %d", i)}, messages: map[int64]message{}, profiles: map[string]profile{}})
+	}
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 24}, {40, 18}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		view := m.View().Content
+		for _, label := range []string{"151 bytes", "F1: help", "Enter: send"} {
+			if !strings.Contains(view, label) {
+				t.Errorf("%dx%d missing %q", size[0], size[1], label)
+			}
+		}
+		if lipgloss.Height(view) > size[1] || lipgloss.Width(view) > size[0] {
+			t.Fatalf("overflow %dx%d", size[0], size[1])
+		}
+		press(m, tea.KeyF1, 0)
+		if !strings.Contains(m.View().Content, "Keyboard help") {
+			t.Fatal("help missing")
+		}
+		press(m, tea.KeyEscape, 0)
+	}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.choose(len(m.rooms) - 1)
+	if !strings.Contains(m.View().Content, "> Room 29") {
+		t.Fatal("selected room scrolled out of sidebar")
+	}
+}
+
+func TestDeviceApprovalFitsNarrowTerminal(t *testing.T) {
+	_, m := fixtureModel(t)
+	m.active().session = nil
+	m.loginMode = "passkey"
+	m.handoff = &deviceLink{Code: strings.Repeat("A", 24), PublicKey: strings.Repeat("ab", 32), URL: "https://aspen.ve6slp.ca/devices?code=" + strings.Repeat("A", 24)}
+	for _, size := range [][2]int{{40, 18}, {80, 24}, {120, 40}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		view := m.View().Content
+		plain := ansi.Strip(view)
+		// A full public key must be readable even when it wraps over multiple lines.
+		compact := strings.ReplaceAll(strings.ReplaceAll(plain, " ", ""), "\n", "")
+		if !strings.Contains(compact, m.handoff.PublicKey) || !strings.Contains(plain, "Ctrl+X cancels") || !strings.Contains(plain, "F1: help") {
+			t.Fatalf("approval controls/key clipped at %dx%d:\n%s", size[0], size[1], plain)
+		}
+		if lipgloss.Height(view) > size[1] || lipgloss.Width(view) > size[0] {
+			t.Fatalf("approval overflows %dx%d", size[0], size[1])
+		}
+	}
+}
+
+func TestHiddenComposerDoesNotSendOrEdit(t *testing.T) {
+	_, m := fixtureModel(t)
+	m.focus = 2
+	m.composer.SetValue("keep this")
+	m.Update(tea.WindowSizeMsg{Width: 39, Height: 17})
+	if cmd := press(m, tea.KeyEnter, 0); cmd != nil || m.saved.Rooms["A"].Pending != nil {
+		t.Fatal("hidden composer submitted a post")
+	}
+	m.Update(tea.PasteMsg{Content: "hidden paste"})
+	if m.composer.Value() != "keep this" {
+		t.Fatal("hidden paste changed draft")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	press(m, tea.KeyF1, 0)
+	m.Update(tea.PasteMsg{Content: "hidden paste"})
+	if m.composer.Value() != "keep this" {
+		t.Fatal("help overlay changed draft")
 	}
 }

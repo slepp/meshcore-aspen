@@ -8,14 +8,14 @@ does not run room services or require a local radio.
 
 Download the archive for **amd64** (Intel/AMD 64-bit) or **arm64** (64-bit ARM,
 including a Raspberry Pi running a 64-bit OS) from
-[Room TUI 0.1.0](https://github.com/slepp/meshcore-aspen/releases/tag/room-tui-v0.1.0).
+[Room TUI 0.1.1](https://github.com/slepp/meshcore-aspen/releases/tag/room-tui-v0.1.1).
 These are static Linux binaries; no Go compiler or local radio is needed.
 Download `SHA256SUMS` alongside the archive, then, for amd64:
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf room-tui-v0.1.0-linux-amd64.tar.gz
-cd room-tui-v0.1.0-linux-amd64
+tar -xzf room-tui-v0.1.1-linux-amd64.tar.gz
+cd room-tui-v0.1.1-linux-amd64
 ./room-tui --version
 ./room-tui --service https://aspen.ve6slp.ca
 ```
@@ -44,11 +44,17 @@ origin, without a path; HTTP is accepted only for loopback development.
 Isolated services that have not enabled passkeys retain their older
 account-password or room-password development flows.
 
+Enter sends a message. Use Alt+Enter or Ctrl+J for a new line; pasted multiline
+text stays in the composer until you send it. Press F1 for keyboard help.
+
 Joined channels remain connected while you switch, with unread counts for
-other channels. Messages show the author's name and key fingerprint. Radio names
+other channels. Scrolling back keeps your place as new messages arrive;
+Ctrl+End returns to the latest message. Loading earlier messages keeps the
+conversation you were reading in view. Messages show the author's name and key fingerprint. Radio names
 come from signed adverts verified by the Worker; repeated names remain separate
 full-key identities. **Saved** means the service stored the post in room history.
-Check its RF and recipient-ACK status for radio delivery.
+Check its RF and recipient-ACK status for radio delivery. F2 shows full delivery
+details and message sequence numbers.
 [Account setup and the shared API](../../services/shared-room/WEB.md)
 also apply to this client.
 
@@ -65,13 +71,19 @@ also cover multiple room aliases and history saved before ACK tracking.
 | --- | --- |
 | Tab / Shift+Tab | Focus channels, history or input |
 | Up / Down, Enter in channels | Select a channel and focus its input |
-| Ctrl+N / Ctrl+P | Next / previous channel |
-| Enter in composer | Add a line break |
-| Ctrl+S | Send, within 151 UTF-8 bytes including `Name: ` |
+| Alt+Down / Alt+Up, Ctrl+N / Ctrl+P | Next / previous channel |
+| Enter in composer (also Ctrl+S) | Send, within 151 UTF-8 bytes including `Name: ` |
+| Alt+Enter / Ctrl+J | Add a line break; Shift+Enter also works in terminals that report it |
+| Page Up / Page Down | Scroll the conversation while keeping input focus |
+| Ctrl+Home / Ctrl+End | Oldest / latest loaded messages; resume following new messages |
+| F1 / Ctrl+G | Open keyboard help; Esc returns to chat |
+| F2 | Toggle message sequence numbers and full RF status |
+| Ctrl+L | Redraw the screen |
 | Ctrl+R | Explicitly check/retry an uncertain post, or reconnect |
 | Ctrl+O | Load older history |
-| Ctrl+L | Leave the selected room or cancel a pending device request; retain unsent work |
-| Ctrl+Q | Save and quit |
+| Ctrl+X | Leave the selected room after confirmation, or cancel device sign-in; keep drafts |
+| Ctrl+Z | Save and suspend; `fg` resumes the client |
+| Ctrl+Q / Ctrl+C | Save and quit |
 
 The layout uses a sidebar at 80 columns, collapses it below that, and requires
 at least 40 columns by 18 rows. It follows the terminal's reported background;

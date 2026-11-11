@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -65,31 +66,34 @@ func radioRefreshTick() tea.Cmd {
 }
 
 type model struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	client      *roomClient
-	store       *stateStore
-	saved       *savedState
-	events      chan streamEvent
-	rooms       []*roomState
-	selected    int
-	focus       int
-	width       int
-	height      int
-	loginMode   string
-	name        textinput.Model
-	password    textinput.Model
-	composer    textarea.Model
-	history     viewport.Model
-	notice      string
-	dark        bool
-	noColor     bool
-	quitting    bool
-	quitWarned  bool
-	exitErr     error
-	handoff     *deviceLink
-	handoffQR   string
-	handoffBusy bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	client       *roomClient
+	store        *stateStore
+	saved        *savedState
+	events       chan streamEvent
+	rooms        []*roomState
+	selected     int
+	focus        int
+	width        int
+	height       int
+	loginMode    string
+	name         textinput.Model
+	password     textinput.Model
+	composer     textarea.Model
+	history      viewport.Model
+	notice       string
+	dark         bool
+	noColor      bool
+	quitting     bool
+	quitWarned   bool
+	exitErr      error
+	handoff      *deviceLink
+	handoffQR    string
+	handoffBusy  bool
+	help         bool
+	details      bool
+	leaveConfirm bool
 }
 
 func newModel(ctx context.Context, cancel context.CancelFunc, client *roomClient, store *stateStore, saved *savedState) *model {
@@ -101,6 +105,7 @@ func newModel(ctx context.Context, cancel context.CancelFunc, client *roomClient
 	composer := textarea.New()
 	composer.Prompt, composer.Placeholder, composer.CharLimit = "> ", "Message this room", 2048
 	composer.ShowLineNumbers = false
+	composer.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "shift+enter", "ctrl+j"))
 	composer.SetHeight(3)
 	m := &model{ctx: ctx, cancel: cancel, client: client, store: store, saved: saved,
 		events: make(chan streamEvent, 128), width: 100, height: 30, dark: true,
@@ -206,6 +211,7 @@ func (m *model) choose(index int) tea.Cmd {
 	if len(m.rooms) == 0 {
 		return nil
 	}
+	m.leaveConfirm = false
 	m.selected = (index + len(m.rooms)) % len(m.rooms)
 	room := m.active()
 	room.unread = 0
@@ -246,7 +252,7 @@ func (m *model) merge(room *roomState, messages []message, profiles []profile, l
 			return fmt.Errorf("room returned conflicting content at sequence %d", incoming.Seq)
 		}
 		room.messages[incoming.Seq] = incoming
-		if !exists && live && room != m.active() {
+		if !exists && live && (room != m.active() || !m.history.AtBottom()) {
 			room.unread++
 		}
 	}
@@ -329,27 +335,43 @@ func (m *model) refreshHistory(bottom bool) {
 	}
 	slices.Sort(keys)
 	var text strings.Builder
+	day := ""
 	for _, seq := range keys {
 		message := room.messages[seq]
 		source := "RADIO"
 		if message.WebName != nil {
 			source = "IP"
 		}
-		meta := fmt.Sprintf("%s  %s [%s]  %s  #%d",
-			time.Unix(int64(message.Timestamp), 0).Local().Format("Jan 02 15:04"),
-			clean(authorLabel(message, room.profiles)), message.Author[:8], source, message.Seq)
-		text.WriteString(m.accent().Render(ansi.Hardwrap(meta, m.history.Width(), true)))
+		stamp := time.Unix(int64(message.Timestamp), 0).Local()
+		if date := stamp.Format("Mon, 02 Jan 2006"); date != day {
+			day = date
+			text.WriteString(m.muted().Render(day) + "\n")
+		}
+		meta := fmt.Sprintf("%s  %s [%s]  %s",
+			stamp.Format("15:04"),
+			clean(authorLabel(message, room.profiles)), message.Author[:8], source)
+		if m.details {
+			meta += fmt.Sprintf("  #%d", message.Seq)
+		}
+		text.WriteString(m.accent().Render(ansi.Wrap(meta, m.history.Width(), "")))
 		text.WriteByte('\n')
-		text.WriteString(ansi.Hardwrap(clean(messageBody(message)), m.history.Width(), true))
+		text.WriteString(ansi.Wrap(clean(messageBody(message)), m.history.Width(), ""))
 		text.WriteByte('\n')
-		text.WriteString(ansi.Hardwrap(radioDeliveryLabel(message.RF), m.history.Width(), true))
-		text.WriteString("\n\n")
+		if m.details || message.WebName != nil {
+			label := radioDeliveryLabel(message.RF)
+			if !m.details && message.RF != nil && message.RF.Recipients == 0 {
+				label = "Saved"
+			}
+			text.WriteString(m.muted().Render(ansi.Wrap(label, m.history.Width(), "")) + "\n")
+		}
+		text.WriteByte('\n')
 	}
 	if len(keys) == 0 {
-		text.WriteString("No messages loaded. IP and radio participants share this conversation.")
+		text.WriteString(ansi.Wrap("No messages yet. Write a message to start the conversation.", m.history.Width(), ""))
 	}
 	m.history.SetContent(text.String())
 	if follow {
+		room.unread = 0
 		m.history.GotoBottom()
 	}
 }
@@ -474,7 +496,7 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 		}
 	case "session", "login":
 		if (m.loginMode == "account" || m.loginMode == "passkey") && result.Session.Author != m.saved.PublicKey {
-			m.notice = "Saved session belongs to a different device. Ctrl+L leaves it; keep the original device state."
+			m.notice = "Saved session belongs to a different device. Ctrl+X leaves it; keep the original device state."
 			room.session = &result.Session
 			return nil
 		}
@@ -491,6 +513,7 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 		}
 		return tea.Batch(focus, m.historyCommand(room, "initial", ""))
 	case "initial", "older":
+		oldLines, oldOffset := m.history.TotalLineCount(), m.history.YOffset()
 		if err := m.merge(room, result.Page.Messages, result.Page.Profiles, false); err != nil {
 			m.notice = room.info.Name + ": " + err.Error()
 			return nil
@@ -506,7 +529,7 @@ func (m *model) handleResult(result roomResult) tea.Cmd {
 				m.refreshHistory(true)
 			}
 		} else if room == m.active() {
-			m.history.GotoTop()
+			m.history.SetYOffset(oldOffset + m.history.TotalLineCount() - oldLines)
 		}
 	case "post":
 		if err := m.merge(room, []message{result.Post.Message}, nil, false); err != nil {
@@ -651,7 +674,61 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(focus, m.waitEvent())
 	case tea.KeyPressMsg:
 		room := m.active()
+		if value.String() == "ctrl+z" {
+			if m.persist() {
+				return m, tea.Suspend
+			}
+			return m, nil
+		}
+		if (m.width < 40 || m.height < 18) && value.String() != "ctrl+q" && value.String() != "ctrl+c" {
+			return m, nil
+		}
+		if m.help && value.String() != "ctrl+q" && value.String() != "ctrl+c" {
+			if value.String() == "esc" || value.String() == "f1" || value.String() == "ctrl+g" {
+				m.help = false
+			}
+			return m, nil
+		}
+		if m.leaveConfirm {
+			m.leaveConfirm = false
+			if value.String() == "enter" && room != nil && room.session != nil && !room.busy {
+				room.busy = true
+				alias, generation := room.info.ID, room.generation
+				return m, func() tea.Msg {
+					return roomResult{Alias: alias, Generation: generation, Kind: "logout", Err: m.client.logout(m.ctx, alias)}
+				}
+			}
+			if value.String() != "ctrl+q" && value.String() != "ctrl+c" {
+				return m, nil
+			}
+		}
 		switch value.String() {
+		case "f1", "ctrl+g":
+			m.help = true
+			return m, nil
+		case "f2":
+			m.details = !m.details
+			m.refreshHistory(false)
+			return m, nil
+		case "pgup", "pgdown", "ctrl+home", "ctrl+end":
+			if room != nil && room.session != nil {
+				switch value.String() {
+				case "pgup":
+					m.history.HalfPageUp()
+				case "pgdown":
+					m.history.HalfPageDown()
+				case "ctrl+home":
+					m.history.GotoTop()
+				case "ctrl+end":
+					m.history.GotoBottom()
+				}
+			}
+			if room != nil && m.history.AtBottom() {
+				room.unread = 0
+			}
+			return m, nil
+		case "ctrl+l":
+			return m, tea.ClearScreen
 		case "ctrl+q", "ctrl+c":
 			if !m.persist() {
 				if !m.quitWarned {
@@ -664,9 +741,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			m.cancel()
 			return m, tea.Quit
-		case "ctrl+n":
+		case "ctrl+n", "alt+down":
 			return m, m.choose(m.selected + 1)
-		case "ctrl+p":
+		case "ctrl+p", "alt+up":
 			return m, m.choose(m.selected - 1)
 		case "tab", "shift+tab":
 			count, delta := 3, 1
@@ -680,7 +757,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.setFocus()
 		case "esc":
 			m.notice = ""
-			m.focus = 0
+			m.focus = 2
 			return m, m.setFocus()
 		case "ctrl+r":
 			if room == nil {
@@ -712,18 +789,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.historyCommand(room, "older", fmt.Sprintf("?before=%d", first))
 			}
 			return m, nil
-		case "ctrl+l":
+		case "ctrl+x":
 			if m.handoff != nil {
 				m.handoff, m.handoffQR = nil, ""
 				m.notice = "Device approval request cancelled on this TUI; its code expires after five minutes."
 				return m, nil
 			}
 			if room != nil && room.session != nil && !room.busy {
-				room.busy = true
-				alias, generation := room.info.ID, room.generation
-				return m, func() tea.Msg {
-					return roomResult{Alias: alias, Generation: generation, Kind: "logout", Err: m.client.logout(m.ctx, alias)}
-				}
+				m.leaveConfirm = true
 			}
 			return m, nil
 		}
@@ -742,6 +815,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if room.session != nil && m.focus == 2 && value.String() == "enter" {
+			return m, m.send(room, false)
+		}
 		if room.session == nil && value.String() == "enter" {
 			if m.loginMode == "passkey" {
 				return m, m.login(room)
@@ -756,9 +832,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	room := m.active()
+	if m.help || m.leaveConfirm || m.width < 40 || m.height < 18 {
+		return m, nil
+	}
 	var command tea.Cmd
 	if m.focus == 1 && room != nil && room.session != nil {
 		m.history, command = m.history.Update(msg)
+		if m.history.AtBottom() {
+			room.unread = 0
+		}
 	} else if m.focus == 2 && room != nil && room.session != nil {
 		if !room.busy && m.saved.Rooms[room.info.ID].Pending == nil {
 			m.composer, command = m.composer.Update(msg)
@@ -840,107 +922,9 @@ func (m *model) resize() {
 	m.password.SetWidth(width - 2)
 	m.composer.SetWidth(width)
 	m.history.SetWidth(width)
-	m.history.SetHeight(max(3, m.height-14))
-}
-
-func (m *model) View() tea.View {
-	view := tea.NewView("")
-	view.AltScreen = true
-	if m.width < 40 || m.height < 18 {
-		view.SetContent("Aspen Rooms\nResize: 40 columns x 18 rows\nCtrl+Q saves and quits.")
-		return view
+	overhead := 8
+	if m.width < 80 {
+		overhead++
 	}
-	room := m.active()
-	if room == nil {
-		text := "Aspen Rooms\n" + clean(m.client.origin) + "\n\nNo rooms loaded.\n" + clean(m.notice) + "\n\nCtrl+R reloads   Ctrl+Q quits"
-		view.SetContent(ansi.Hardwrap(text, m.width, true))
-		return view
-	}
-	title := fmt.Sprintf("# %s  |  %s", clean(room.info.Name), clean(room.status))
-	title = ansi.Truncate(title, m.contentWidth(), "...")
-	var body strings.Builder
-	body.WriteString(m.accent().Render(title))
-	body.WriteString("\n" + ansi.Truncate(clean(m.client.origin), m.contentWidth(), "...") + "\n")
-	if room.session == nil {
-		if m.loginMode == "passkey" {
-			if m.handoff == nil {
-				body.WriteString("\nSign in through your browser passkey.\n\nEnter resumes an approved device or creates a five-minute QR / copy-code request.\nApprove the request in Devices on a signed-in browser.\nPrivate message-author keys stay on this device.\n")
-			} else {
-				link := m.handoff
-				body.WriteString("\nApprove this TUI on a signed-in browser.\nCode: " + link.Code + "\n" + link.URL +
-					"\nRequesting device key:\n" + link.PublicKey + fmt.Sprintf("\nExpires in %d seconds.\n", max(0, link.Expires-time.Now().Unix())))
-				if m.contentWidth() >= 60 {
-					body.WriteString(m.handoffQR)
-				}
-				body.WriteString("\nCompare the full key on both devices before approving. Ctrl+L cancels.\n")
-			}
-		} else {
-			userLabel, passwordLabel := "Username", "Account password"
-			if m.loginMode != "account" {
-				userLabel, passwordLabel = "Display name", "Room password"
-			}
-			body.WriteString("\nJoin the shared IP / radio conversation.\n\n" + userLabel + "\n" + m.name.View() + "\n\n" +
-				passwordLabel + "\n" + m.password.View() + "\n\nEnter signs in. Private keys stay on this device.\n")
-		}
-	} else {
-		header := fmt.Sprintf("%s [%s]  |  History %d%%", clean(room.session.Name), room.session.Author[:8], int(m.history.ScrollPercent()*100))
-		if m.focus == 1 {
-			header += " [focus]"
-		}
-		if room.more {
-			header += "  |  Ctrl+O earlier"
-		}
-		body.WriteString(ansi.Truncate(header, m.contentWidth(), "...") + "\n" + m.history.View() + "\n")
-		work := m.saved.Rooms[room.info.ID]
-		if work.Pending != nil {
-			body.WriteString("Send uncertain. Ctrl+R checks the saved post ID.\n")
-		} else {
-			label := fmt.Sprintf("Compose (%d / 151 bytes) Ctrl+S sends", len(room.session.Name+": "+m.composer.Value()))
-			if m.focus == 2 {
-				label = "[focus] " + label
-			}
-			body.WriteString(ansi.Truncate(label, m.contentWidth(), "...") + "\n")
-		}
-		body.WriteString(m.composer.View() + "\n")
-	}
-	notice := clean(m.notice)
-	if notice == "" {
-		notice = "Saved means stored in the room; it does not confirm RF reception."
-	}
-	body.WriteString(ansi.Truncate(strings.ReplaceAll(notice, "\n", " "), m.contentWidth(), "...") + "\n")
-	body.WriteString("Tab focus | Ctrl+N/P room | Ctrl+Q quit\n")
-	body.WriteString("Ctrl: S send, R check, O old, L leave")
-	content := lipgloss.NewStyle().Width(m.contentWidth()).MaxHeight(m.height - 2).Render(body.String())
-	var channels strings.Builder
-	channels.WriteString("CHANNELS")
-	if m.focus == 0 {
-		channels.WriteString(" [focus]")
-	}
-	channels.WriteString("\n\n")
-	for i, candidate := range m.rooms {
-		mark, state := "  ", "locked"
-		if i == m.selected {
-			mark = "> "
-		}
-		if candidate.session != nil {
-			state = "joined"
-		}
-		line := fmt.Sprintf("%s%s", mark, clean(candidate.info.Name))
-		if candidate.unread != 0 {
-			line += fmt.Sprintf(" (%d)", candidate.unread)
-		}
-		channels.WriteString(ansi.Truncate(line, 21, "...") + "\n  " + state + "\n")
-	}
-	if m.width >= 80 {
-		sidebar := lipgloss.NewStyle().Width(22).MaxHeight(m.height - 2).Render(channels.String())
-		content = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, "  ", content)
-	} else {
-		focus := "Tab: channels/history/input"
-		if m.focus == 0 {
-			focus = "CHANNELS [focus]  Up/Down selects"
-		}
-		content = m.accent().Render(focus) + "\n" + content
-	}
-	view.SetContent(content)
-	return view
+	m.history.SetHeight(max(3, m.height-overhead))
 }
