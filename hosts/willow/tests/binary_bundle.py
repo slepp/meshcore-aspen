@@ -32,7 +32,7 @@ def run(args):
 class BinaryBundle(unittest.TestCase):
     def test_relocated_init_current_writes_and_rollback(self):
         bundle = Path(os.environ["WILLOW_TEST_BUNDLE"]).resolve()
-        with tempfile.TemporaryDirectory(prefix="willow-bin-", dir="/tmp") as name:
+        with tempfile.TemporaryDirectory(prefix="willow-bin-") as name:
             root = Path(name)
             first, second = (root / p for p in ("install-a", "install-b"))
             extra = bundle / "unexpected-directory"

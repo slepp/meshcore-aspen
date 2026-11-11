@@ -106,8 +106,7 @@ func adminTestConfig(t *testing.T) Config {
 	cfg.AdminHTTPTokenEnv = "MESHCORE_TEST_HOST_ADMIN"
 	cfg.BotRuntime = "native_lua"
 	cfg.EnabledRoles = RoleSelection{"bot"}
-	// Unix socket paths must fit even when the checkout or TMPDIR is long.
-	root, err := os.MkdirTemp("/tmp", "mc-admin-http-")
+	root, err := os.MkdirTemp("", "mc-admin-http-")
 	if err != nil {
 		t.Fatal(err)
 	}
