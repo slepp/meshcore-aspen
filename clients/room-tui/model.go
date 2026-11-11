@@ -686,6 +686,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.help && value.String() != "ctrl+q" && value.String() != "ctrl+c" {
 			if value.String() == "esc" || value.String() == "f1" || value.String() == "ctrl+g" {
 				m.help = false
+				return m, m.setFocus()
 			}
 			return m, nil
 		}
@@ -699,7 +700,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if value.String() != "ctrl+q" && value.String() != "ctrl+c" {
-				return m, nil
+				return m, m.setFocus()
 			}
 		}
 		switch value.String() {
